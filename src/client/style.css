@@ -152,17 +152,24 @@ body {
   color: #ffd166;
 }
 
+#room-name {
+  font-size: 0.85rem;
+  font-weight: bold;
+  color: #e6edf3;
+  margin-top: 0.3rem;
+}
+
 #room-description {
   font-size: 0.8rem;
   color: #8b949e;
-  margin-top: 0.15rem;
+  margin-top: 0.1rem;
 }
 
 #minimap {
   flex-shrink: 0;
   display: grid;
-  grid-template-columns: repeat(3, 1.6em);
-  grid-template-rows: repeat(3, 1.6em);
+  grid-template-columns: repeat(4, 1.6em);
+  grid-template-rows: repeat(4, 1.6em);
   gap: 2px;
   background: rgba(22, 27, 34, 0.85);
   border: 1px solid #30363d;

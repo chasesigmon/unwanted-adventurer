@@ -75,7 +75,12 @@ export function GameScreen({ player, minimap, room, actionMessage, onCommand }: 
         <div id="status-row">
           <div id="action-log">
             <div id="action-message">{actionMessage}</div>
-            {room && <div id="room-description">{room.description}</div>}
+            {room && (
+              <>
+                <div id="room-name">{room.name}</div>
+                <div id="room-description">{room.description}</div>
+              </>
+            )}
           </div>
           <div className="side-box" id="minimap-box">
             <div className="side-box-label">Minimap</div>

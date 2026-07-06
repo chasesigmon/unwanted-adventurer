@@ -4,7 +4,7 @@ A small authoritative-server multiplayer text game: players register/log in
 with a username and password, then navigate named map instances (currently
 "Labyrinth", a 15x15 starting area, and "World", a 60x60 open map) by typing
 commands into a text box. There is no graphical rendering — the whole client
-is DOM/text (React): a position readout, a one-line action log, a 3x3
+is DOM/text (React): a position readout, a one-line action log, a 4x4
 minimap, and a full-width command input.
 
 The whole codebase — client, server, and shared modules — is TypeScript.
@@ -90,10 +90,10 @@ direction via `DIRECTION_ALIASES` (`w`/`up` → north, `s`/`down` → south,
 `a` → west, `d` → east), and either moves the player, blocks them at the
 map's edge, or — if the target cell is a registered exit — transitions them
 onto a different map at that exit's destination coordinates (and
-reassigns them to a room for the new map). The ack always carries back the
-resulting `{map, row, col}`, a message, and a 3x3 minimap view. The client
-never decides its own position — it only renders whatever the ack (or a
-`sync` event) contains.
+reassigns them to a world instance for the new map). The ack always
+carries back the resulting `{map, row, col}`, a message, and a 4x4 minimap
+view. The client never decides its own position — it only renders whatever
+the ack (or a `sync` event) contains.
 
 ### Maps and exits
 
@@ -105,19 +105,22 @@ Currently defined in `src/server/game/maps.ts`:
 | World     | 60x60 | `(0, 10)` → Labyrinth `(14, 7)`         |
 
 New players spawn in the center of `STARTING_MAP` (`Labyrinth`, `(7, 7)`);
-returning players resume wherever they last were. The minimap renders `@`
-for the player's own cell, `*` for an exit tile within view, `.` for a
-normal in-bounds cell, and `#` for out of bounds. Adding another map/exit is
-just another `GameMap` entry in `maps.ts`.
+returning players resume wherever they last were. The minimap is a 4x4
+view (there's no exact center on an even grid, so the player sits one cell
+in from the top-left — 1 cell of context behind/left, 2 ahead/right on
+each axis) and renders `@` for the player's own cell, `*` for an exit tile
+within view, `.` for a normal in-bounds cell, and `#` for out of bounds.
+Adding another map/exit is just another `GameMap` entry in `maps.ts`.
 
 ### Rooms
 
 Every grid space is also a "room" (`game/room.ts`) with its own `id`
-(`"Labyrinth:7:7"`) and `description` — for now just the map name and
-position (`"Labyrinth (7, 7)"`), which is the seam where real authored
-per-room content would plug in later. The server includes the current
-room in the `sync` event and in command acks; the client shows the
-description as a line beneath the "entered"/"moved" message. This is
+(`"Labyrinth:7:7"`), `name`, and `description` — for now the name is just
+the map name (`"Labyrinth"`) and the description adds the position
+(`"Labyrinth (7, 7)"`), which is the seam where real authored per-room
+content would plug in later. The server includes the current room in the
+`sync` event and in command acks; the client shows the name and then the
+description as two lines beneath the "entered"/"moved" message. This is
 unrelated to the world-instance sharding described below — the shared word
 is coincidental.
 
@@ -306,6 +309,9 @@ This repo is a single-process reference implementation. To take it further:
   player about themselves. A shared world at scale would want a broadcast
   scoped to the player's world instance (e.g. "Bob moved into view") rather
   than every client polling.
-- **Persistence**: player state is upserted on connect/disconnect only.
-  For crash resilience, add periodic autosave and a write-behind queue
-  instead of writing to MongoDB directly from the socket handler.
+- **Persistence**: position is saved after every successful move
+  (fire-and-forget, so it doesn't add latency to the command ack) and again
+  on disconnect, so a returning player always resumes at their last
+  position even after a hard crash. At high move rates this means one Mongo
+  write per move per player — a write-behind queue that batches/debounces
+  these would be the next step if that ever becomes a bottleneck.

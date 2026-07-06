@@ -23,6 +23,7 @@ import { STARTING_MAP } from '../../shared/constants.js';
 import { DIRECTION_ALIASES } from '../../shared/directions.js';
 import { commandSchema } from './command.schema.js';
 import type { AppConfig } from '../config/configuration.js';
+import type { Location } from '../game/types.js';
 import type { GameServer, GameSocket, CommandAck } from './types.js';
 
 // cors/heartbeat are configured centrally in ws-adapter.ts, not here — this
@@ -116,6 +117,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     });
   }
 
+  // Awaited on disconnect (nothing else to do but wait); fire-and-forget
+  // after a move (see handleCommand) so a background DB write never adds
+  // latency to the command ack. Called in both places so a hard crash
+  // between moves loses at most the in-flight write, not the whole session.
+  private async persistPosition(username: string, loc: Location): Promise<void> {
+    try {
+      await this.playersService.updatePosition(username, { map: loc.mapName, row: loc.row, col: loc.col });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[db] could not persist player position:', message);
+    }
+  }
+
   async handleDisconnect(client: GameSocket): Promise<void> {
     const { username } = client.data;
     this.commandLimiters.delete(client.id);
@@ -124,12 +138,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const loc = this.worldManager.getLocation(username);
     this.worldManager.removePlayer(username);
     if (loc) {
-      try {
-        await this.playersService.updatePosition(username, { map: loc.mapName, row: loc.row, col: loc.col });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn('[db] could not persist player on disconnect:', message);
-      }
+      await this.persistPosition(username, loc);
     }
   }
 
@@ -199,6 +208,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const loc = this.worldManager.getLocation(username);
     if (!loc) {
       return { ok: false, message: 'Your session was lost. Please reconnect.' };
+    }
+
+    if (result.ok) {
+      // Not awaited — a background save shouldn't add latency to the
+      // command ack. Also saved on disconnect (persistPosition above), so
+      // this is about surviving a hard crash between moves, not the
+      // primary persistence path.
+      void this.persistPosition(username, loc);
     }
 
     return {
