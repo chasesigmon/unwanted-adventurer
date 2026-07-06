@@ -7,53 +7,7 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <div id="login-overlay">
-      <form id="login-form">
-        <h1>Text Arena</h1>
-        <p>Type a command and press Enter: w/up, a, s/down, d. Type "logout" to end your session.</p>
-        <input
-          id="username-input"
-          type="text"
-          placeholder="Username"
-          maxlength="16"
-          autocomplete="username"
-          required
-        />
-        <input
-          id="password-input"
-          type="password"
-          placeholder="Password"
-          minlength="8"
-          maxlength="128"
-          autocomplete="current-password"
-          required
-        />
-        <div class="login-buttons">
-          <button type="submit">Log In</button>
-          <button type="button" id="register-button">Register</button>
-        </div>
-        <div id="login-error"></div>
-      </form>
-    </div>
-
-    <div id="hud">
-      <div id="position-readout">Position: (0, 0)</div>
-
-      <div id="bottom-bar">
-        <div id="status-row">
-          <div id="action-log"></div>
-          <div id="minimap"></div>
-        </div>
-        <input
-          id="command-input"
-          type="text"
-          maxlength="32"
-          autocomplete="off"
-          placeholder="Type a command (w, a, s, d, up, down) and press Enter..."
-        />
-      </div>
-    </div>
-
-    <script type="module" src="./main.ts"></script>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
   </body>
 </html>
