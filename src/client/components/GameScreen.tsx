@@ -61,13 +61,30 @@ export function GameScreen({ player, minimap, room, actionMessage, onCommand }: 
 
   return (
     <div id="hud">
-      <div id="top-right-stack">
-        <div id="position-readout">
-          {player ? `${player.map}: (${player.row}, ${player.col})` : 'Position: (0, 0)'}
+      <div id="top-bar">
+        <div id="top-left-stack">
+          <div className="side-box" id="score-box">
+            <div className="side-box-label">Score</div>
+            <div className="side-box-content">{player?.username}</div>
+            {player && (
+              <div id="player-stats">
+                <span>
+                  <span className="stat-label">HP</span> {player.hp}
+                </span>
+                <span>
+                  <span className="stat-label">MP</span> {player.mana}
+                </span>
+                <span>
+                  <span className="stat-label">MV</span> {player.movement}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
-        <div className="side-box" id="score-box">
-          <div className="side-box-label">Score</div>
-          <div className="side-box-content">{player?.username}</div>
+        <div id="top-right-stack">
+          <div id="position-readout">
+            {player ? `${player.map}: (${player.row}, ${player.col})` : 'Position: (0, 0)'}
+          </div>
         </div>
       </div>
 

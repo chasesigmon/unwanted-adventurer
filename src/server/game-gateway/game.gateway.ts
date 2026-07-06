@@ -24,6 +24,7 @@ import { DIRECTION_ALIASES } from '../../shared/directions.js';
 import { commandSchema } from './command.schema.js';
 import type { AppConfig } from '../config/configuration.js';
 import type { Location } from '../game/types.js';
+import type { PlayerSnapshot } from '../../shared/types.js';
 import type { GameServer, GameSocket, CommandAck } from './types.js';
 
 // cors/heartbeat are configured centrally in ws-adapter.ts, not here — this
@@ -107,14 +108,30 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const mapName = doc?.map ?? STARTING_MAP;
     const row = doc?.row ?? Math.floor(startingMap.rows / 2);
     const col = doc?.col ?? Math.floor(startingMap.cols / 2);
+    // Cached on the socket for the rest of the session — see SocketData.
+    client.data.hp = doc?.hp ?? 100;
+    client.data.mana = doc?.mana ?? 100;
+    client.data.movement = doc?.movement ?? 100;
 
     await this.worldManager.addPlayer(username, mapName, row, col);
 
     client.emit('sync', {
-      player: { username, map: mapName, row, col },
+      player: this.snapshotFor(client, { mapName, row, col }),
       minimap: this.worldManager.getMinimap(username) ?? [],
       room: resolveRoom({ mapName, row, col }),
     });
+  }
+
+  private snapshotFor(client: GameSocket, loc: Location): PlayerSnapshot {
+    return {
+      username: client.data.username,
+      map: loc.mapName,
+      row: loc.row,
+      col: loc.col,
+      hp: client.data.hp,
+      mana: client.data.mana,
+      movement: client.data.movement,
+    };
   }
 
   // Awaited on disconnect (nothing else to do but wait); fire-and-forget
@@ -183,7 +200,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         minimap: this.worldManager.getMinimap(username),
       };
       if (loc) {
-        ackPayload.player = { username, map: loc.mapName, row: loc.row, col: loc.col };
+        ackPayload.player = this.snapshotFor(client, loc);
         ackPayload.room = resolveRoom(loc);
       }
       return ackPayload;
@@ -221,7 +238,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return {
       ok: result.ok,
       message,
-      player: { username, map: loc.mapName, row: loc.row, col: loc.col },
+      player: this.snapshotFor(client, loc),
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(loc),
     };

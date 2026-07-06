@@ -21,6 +21,17 @@ export class Player {
   @Prop({ required: true })
   col!: number;
 
+  // Starting stats for newly created characters — plain numbers for now,
+  // nothing yet consumes/regenerates them.
+  @Prop({ default: 100 })
+  hp!: number;
+
+  @Prop({ default: 100 })
+  mana!: number;
+
+  @Prop({ default: 100 })
+  movement!: number;
+
   @Prop({ default: Date.now })
   lastLogin!: Date;
 }

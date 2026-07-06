@@ -79,13 +79,28 @@ body {
   font-family: 'Courier New', monospace;
 }
 
+/* Top row: Score (left) and position readout (right), opposite corners of
+   the same row. */
+#top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin: 1rem;
+}
+
+#top-left-stack,
 #top-right-stack {
-  align-self: flex-end;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
   gap: 0.75rem;
-  margin: 1rem;
+}
+
+#top-left-stack {
+  align-items: flex-start;
+}
+
+#top-right-stack {
+  align-items: flex-end;
 }
 
 #position-readout {
@@ -96,10 +111,11 @@ body {
   font-size: 0.95rem;
 }
 
-/* Shared by any panel that must stay pinned to the right edge at a
-   consistent width — currently the Score and Minimap boxes. 20vw (not %)
-   so the width is unambiguously "20% of the screen" regardless of how
-   an ancestor flex container happens to be sized. */
+/* Shared by any panel that must stay a consistent width regardless of
+   which side of the screen it's pinned to — currently the Score and
+   Minimap boxes. 20vw (not %) so the width is unambiguously "20% of the
+   screen" regardless of how an ancestor flex container happens to be
+   sized. */
 .side-box {
   width: 20vw;
   min-width: 140px;
@@ -119,6 +135,19 @@ body {
 
 .side-box-content {
   font-size: 0.95rem;
+}
+
+#player-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.stat-label {
+  color: #8b949e;
+  margin-right: 0.15rem;
 }
 
 #minimap-box {

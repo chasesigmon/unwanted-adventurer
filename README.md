@@ -124,6 +124,18 @@ description as two lines beneath the "entered"/"moved" message. This is
 unrelated to the world-instance sharding described below — the shared word
 is coincidental.
 
+### Character stats
+
+New characters start with `hp: 100`, `mana: 100`, `movement: 100`
+(`players/player.schema.ts`, schema defaults — `PlayersService.create()`
+doesn't need to set them explicitly). Nothing consumes or regenerates
+these yet; they exist to be displayed (the client's Score box, top-left)
+and as the seam for future mechanics. They're loaded once into
+`socket.data` at connection time (`GameGateway.handleConnection`) rather
+than re-read from Mongo on every command, since nothing changes them
+mid-session yet — the same reasoning as the `hp`/`mana`/`movement` cache in
+`SocketData`.
+
 ## Auth: bcrypt + JWT + Redis session tracking
 
 Registration/login are plain HTTP endpoints (`POST /auth/register`,

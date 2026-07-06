@@ -33,6 +33,12 @@ export type InterServerEvents = Record<string, never>;
 
 export interface SocketData {
   username: string;
+  // Cached from Mongo at connection time. Nothing changes these mid-session
+  // yet, so re-reading from the DB on every command would be wasted work —
+  // this is the seam where per-session stat mutation would plug in later.
+  hp: number;
+  mana: number;
+  movement: number;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

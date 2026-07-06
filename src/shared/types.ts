@@ -7,6 +7,9 @@ export interface PlayerSnapshot {
   map: MapName;
   row: number;
   col: number;
+  hp: number;
+  mana: number;
+  movement: number;
 }
 
 export interface MinimapCell {
