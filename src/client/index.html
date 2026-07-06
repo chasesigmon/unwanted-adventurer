@@ -10,7 +10,7 @@
     <div id="login-overlay">
       <form id="login-form">
         <h1>Text Arena</h1>
-        <p>Move with WASD / Arrow keys. Collect orbs. Press Enter to chat.</p>
+        <p>Type a command and press Enter: w/up, a, s/down, d.</p>
         <input
           id="username-input"
           type="text"
@@ -25,17 +25,22 @@
     </div>
 
     <div id="hud">
-      <div id="leaderboard">
-        <h3>Leaderboard</h3>
-        <ol id="leaderboard-list"></ol>
-      </div>
-      <div id="chat">
-        <div id="chat-log"></div>
-        <input id="chat-input" type="text" maxlength="140" placeholder="Press Enter to chat..." />
+      <div id="position-readout">Position: (0, 0)</div>
+
+      <div id="bottom-bar">
+        <div id="status-row">
+          <div id="action-log"></div>
+          <div id="minimap"></div>
+        </div>
+        <input
+          id="command-input"
+          type="text"
+          maxlength="32"
+          autocomplete="off"
+          placeholder="Type a command (w, a, s, d, up, down) and press Enter..."
+        />
       </div>
     </div>
-
-    <div id="game-container"></div>
 
     <script type="module" src="./main.js"></script>
   </body>

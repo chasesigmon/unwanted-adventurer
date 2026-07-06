@@ -1,9 +1,9 @@
 import { PlayerState } from '../game/PlayerState.js';
 import { PlayerModel } from '../models/Player.js';
 import { config } from '../config.js';
+import { DIRECTION_ALIASES } from '../../shared/directions.js';
 
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{2,16}$/;
-const randomColor = () => Math.floor(Math.random() * 0xffffff);
 
 export function registerSocketHandlers(io, world) {
   io.on('connection', (socket) => {
@@ -22,11 +22,17 @@ export function registerSocketHandlers(io, world) {
           return;
         }
 
+        const spawnRow = Math.floor(config.gridRows / 2);
+        const spawnCol = Math.floor(config.gridCols / 2);
+
         let doc = null;
         try {
           doc = await PlayerModel.findOneAndUpdate(
             { username },
-            { $set: { lastLogin: new Date() }, $setOnInsert: { color: randomColor() } },
+            {
+              $set: { lastLogin: new Date() },
+              $setOnInsert: { row: spawnRow, col: spawnCol },
+            },
             { upsert: true, new: true }
           );
         } catch (err) {
@@ -36,10 +42,8 @@ export function registerSocketHandlers(io, world) {
         const player = new PlayerState({
           id: socket.id,
           username,
-          color: doc?.color ?? randomColor(),
-          x: doc?.x ?? config.worldWidth / 2,
-          y: doc?.y ?? config.worldHeight / 2,
-          score: doc?.score ?? 0,
+          row: doc?.row ?? spawnRow,
+          col: doc?.col ?? spawnCol,
         });
 
         world.addPlayer(player);
@@ -48,7 +52,8 @@ export function registerSocketHandlers(io, world) {
         ack?.({
           ok: true,
           self: player.toSnapshot(),
-          world: { width: config.worldWidth, height: config.worldHeight },
+          grid: { rows: config.gridRows, cols: config.gridCols },
+          minimap: world.getMinimap(socket.id),
         });
       } catch (err) {
         console.error('[socket] join error:', err);
@@ -56,22 +61,37 @@ export function registerSocketHandlers(io, world) {
       }
     });
 
-    socket.on('input', (input) => {
-      if (!input || typeof input.seq !== 'number') return;
-      world.applyInput(socket.id, {
-        up: !!input.up,
-        down: !!input.down,
-        left: !!input.left,
-        right: !!input.right,
-        seq: input.seq,
-      });
-    });
+    socket.on('command', (rawText, ack) => {
+      const player = world.getPlayer(socket.id);
+      if (!player) {
+        ack?.({ ok: false, message: 'You must join before issuing commands.' });
+        return;
+      }
 
-    socket.on('chat', (text) => {
-      if (typeof text !== 'string' || !text.trim() || !socket.data.username) return;
-      const clean = text.trim().slice(0, 140);
-      world.say(socket.id, clean);
-      io.emit('chat', { id: socket.id, username: socket.data.username, text: clean });
+      const text = String(rawText || '').trim().toLowerCase();
+      const direction = DIRECTION_ALIASES[text];
+
+      if (!direction) {
+        ack?.({
+          ok: false,
+          message: `Unknown command: "${rawText}".`,
+          player: player.toSnapshot(),
+          minimap: world.getMinimap(socket.id),
+        });
+        return;
+      }
+
+      const result = world.movePlayer(socket.id, direction);
+      const message = result.ok
+        ? `${player.username} moved ${direction}.`
+        : `${player.username} can't move ${direction} — that's the edge of the world.`;
+
+      ack?.({
+        ok: result.ok,
+        message,
+        player: result.player.toSnapshot(),
+        minimap: world.getMinimap(socket.id),
+      });
     });
 
     socket.on('disconnect', async () => {
@@ -81,7 +101,7 @@ export function registerSocketHandlers(io, world) {
         try {
           await PlayerModel.updateOne(
             { username: player.username },
-            { $set: { x: player.x, y: player.y, score: player.score } }
+            { $set: { row: player.row, col: player.col } }
           );
         } catch (err) {
           console.warn('[db] could not persist player on disconnect:', err.message);

@@ -1,32 +1,15 @@
+import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { config } from '../config.js';
 
-function randRange(min, max) {
-  return min + Math.random() * (max - min);
-}
-
-// Owns all authoritative game state for a single arena: players and orbs.
-// Nothing outside World is allowed to mutate player position/score directly.
+// Owns the authoritative grid and every connected player's position on it.
+// Movement is turn-based: a command comes in, is validated against the
+// grid bounds, and the result is handed straight back — there is no
+// continuous simulation loop to drive here.
 export class World {
   constructor() {
+    this.rows = config.gridRows;
+    this.cols = config.gridCols;
     this.players = new Map(); // socket id -> PlayerState
-    this.orbs = new Map(); // orb id -> { id, x, y }
-    this.nextOrbId = 1;
-    this.spawnOrbs(config.orbCount);
-  }
-
-  spawnOrb() {
-    const id = this.nextOrbId++;
-    const orb = {
-      id,
-      x: randRange(config.orbRadius, config.worldWidth - config.orbRadius),
-      y: randRange(config.orbRadius, config.worldHeight - config.orbRadius),
-    };
-    this.orbs.set(id, orb);
-    return orb;
-  }
-
-  spawnOrbs(count) {
-    for (let i = 0; i < count; i++) this.spawnOrb();
   }
 
   addPlayer(playerState) {
@@ -37,49 +20,44 @@ export class World {
     this.players.delete(id);
   }
 
-  applyInput(id, input) {
-    const player = this.players.get(id);
-    if (player) player.setInput(input);
+  getPlayer(id) {
+    return this.players.get(id);
   }
 
-  say(id, text) {
-    const player = this.players.get(id);
-    if (player) player.say(text);
+  isInBounds(row, col) {
+    return row >= 0 && row < this.rows && col >= 0 && col < this.cols;
   }
 
-  step(dt) {
-    for (const player of this.players.values()) {
-      player.step(dt);
-      this.checkOrbCollisions(player);
+  movePlayer(id, direction) {
+    const player = this.players.get(id);
+    if (!player) return null;
+
+    const delta = DIRECTION_DELTAS[direction];
+    const nextRow = player.row + delta.dr;
+    const nextCol = player.col + delta.dc;
+
+    if (!this.isInBounds(nextRow, nextCol)) {
+      return { ok: false, player };
     }
+
+    player.row = nextRow;
+    player.col = nextCol;
+    return { ok: true, player };
   }
 
-  checkOrbCollisions(player) {
-    const captureDist = config.playerRadius + config.orbRadius;
-    const orbsSnapshot = Array.from(this.orbs.values());
-    for (const orb of orbsSnapshot) {
-      if (!this.orbs.has(orb.id)) continue; // already captured this tick
-      const dist = Math.hypot(player.x - orb.x, player.y - orb.y);
-      if (dist <= captureDist) {
-        this.orbs.delete(orb.id);
-        player.score += config.orbValue;
-        this.spawnOrb();
+  // 3x3 view centered on the player, for the minimap.
+  getMinimap(id) {
+    const player = this.players.get(id);
+    if (!player) return null;
+
+    const cells = [];
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const row = player.row + dr;
+        const col = player.col + dc;
+        cells.push({ self: dr === 0 && dc === 0, inBounds: this.isInBounds(row, col) });
       }
     }
-  }
-
-  getSnapshot() {
-    return {
-      t: Date.now(),
-      players: Array.from(this.players.values()).map((p) => p.toSnapshot()),
-      orbs: Array.from(this.orbs.values()),
-    };
-  }
-
-  getLeaderboard(limit = 10) {
-    return Array.from(this.players.values())
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit)
-      .map((p) => ({ username: p.username, score: p.score }));
+    return cells;
   }
 }

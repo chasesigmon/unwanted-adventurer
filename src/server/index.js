@@ -8,7 +8,6 @@ import { Server } from 'socket.io';
 import { config } from './config.js';
 import { connectDB } from './db/connection.js';
 import { World } from './game/World.js';
-import { GameLoop } from './game/GameLoop.js';
 import { registerSocketHandlers } from './sockets/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,7 +23,7 @@ async function main() {
   app.use(express.static(clientDist));
 
   app.get('/health', (_req, res) => {
-    res.json({ ok: true, players: world.players.size, orbs: world.orbs.size });
+    res.json({ ok: true, players: world.players.size, grid: { rows: world.rows, cols: world.cols } });
   });
 
   // SPA fallback for the built client (dev mode serves the client separately via Vite).
@@ -44,20 +43,6 @@ async function main() {
   });
 
   registerSocketHandlers(io, world);
-
-  const loop = new GameLoop({
-    tickRate: config.tickRate,
-    onTick: (dt) => world.step(dt),
-  });
-  loop.start();
-
-  setInterval(() => {
-    io.emit('snapshot', world.getSnapshot());
-  }, 1000 / config.snapshotRate);
-
-  setInterval(() => {
-    io.emit('leaderboard', world.getLeaderboard());
-  }, 2000);
 
   server.listen(config.port, () => {
     console.log(`[server] listening on http://localhost:${config.port}`);

@@ -1,42 +1,34 @@
-# Text Arena — Real-Time Multiplayer (Phaser 3 + Socket.io + MongoDB)
+# Text Arena — Real-Time Multiplayer Grid Game (Socket.io + MongoDB)
 
-A small authoritative-server multiplayer arena: players move around a shared
-2D world, collect orbs for score, and chat. It exists as a reference
-architecture for real-time multiplayer with Phaser — the interesting part is
-the client/server split, not the game design.
+A small authoritative-server multiplayer text game: players navigate a
+shared 15x15 grid by typing commands into a text box. There is no graphical
+rendering — the whole client is DOM/text: a position readout, a one-line
+action log, a 3x3 minimap, and a full-width command input.
 
 ## Architecture
 
 ```
 /src
-  /shared    Physics/constants shared verbatim by client and server
-  /server    Authoritative simulation (Node + Socket.io + MongoDB)
-  /client    Phaser 3 rendering, input capture, prediction/interpolation
+  /shared    Grid size + direction-alias constants shared by client and server
+  /server    Authoritative grid + command handling (Node + Socket.io + MongoDB)
+  /client    Plain DOM/CSS UI, input capture only
 ```
 
-**The server is the only source of truth.** It runs a fixed-timestep game
-loop (`GameLoop`, default 20Hz) that steps every connected player's position,
-resolves orb collisions, and updates scores. Clients never set their own
-position or score — they only ever send `{up, down, left, right, seq}` input
-and receive read-only world snapshots.
+**The server is the only source of truth.** `World` owns the 15x15 grid
+and every connected player's `{row, col}`. Movement is turn-based and
+request/response rather than continuously simulated: a client sends a
+command string, the server (`sockets/index.js`) resolves it to a direction
+via `DIRECTION_ALIASES` (`w`/`up` → north, `s`/`down` → south, `a` → west,
+`d` → east), validates it against the grid bounds in `World.movePlayer()`,
+and acks back the resulting position, a message ("Alice moved north." /
+"Alice can't move north — that's the edge of the world."), and a 3x3
+minimap view. The client never decides its own position — it only renders
+whatever the ack contains.
 
-**The client never trusts itself.** `GameScene` predicts the local player's
-movement immediately on input (via `Predictor`, using the exact same
-`stepPosition()` function from `/src/shared/movement.js` that the server
-uses) so movement feels instant despite network latency. When a snapshot
-arrives, `Predictor.reconcile()` snaps to the server's authoritative
-position, discards acknowledged inputs, and replays anything still in
-flight. Remote players are never predicted — they're interpolated between
-the last two snapshots at a fixed render delay (`InterpolationBuffer`,
-~100ms) since we don't have their future input.
-
-Data flow per frame:
-1. Client reads keyboard → predicts locally → emits `input` (with `seq`).
-2. Server's tick loop applies the latest known input for each player,
-   independent of how often input messages arrive.
-3. Server broadcasts a `snapshot` (positions, scores, orbs) ~15x/sec.
-4. Client reconciles its own player against the snapshot, interpolates
-   everyone else, and renders.
+Because movement is discrete and each command is confirmed synchronously,
+there's no client-side prediction or interpolation to reconcile — the UI
+simply waits for the server's ack before updating the position readout,
+minimap, and action log.
 
 ## Getting started
 
@@ -82,12 +74,12 @@ This repo is a single-process reference implementation. To take it further:
   balancer with sticky sessions, and add the
   [`@socket.io/redis-adapter`](https://socket.io/docs/v4/redis-adapter/) so
   broadcasts fan out across instances.
-- **Sharding**: split `World` into multiple rooms/instances (e.g. per
-  region or per N players) instead of one global arena, so no single tick
-  loop has to simulate everyone.
-- **Bandwidth**: inputs are currently sent every render frame and snapshots
-  contain full world state. At larger player counts, switch to delta-compressed
-  snapshots (only changed entities) and/or a binary wire format instead of JSON.
+- **Sharding**: split `World` into multiple grid instances/rooms (e.g. per
+  region or per N players) instead of one shared 15x15 grid, so a single
+  process isn't holding every connected player.
+- **Visibility of other players**: the current command ack only tells a
+  player about themselves. A shared world at scale would want a room-scoped
+  broadcast (e.g. "Bob moved into view") rather than every client polling.
 - **Persistence**: player state is upserted on join/disconnect only. For
   crash resilience, add periodic autosave and a write-behind queue instead of
   writing to MongoDB directly from the socket handler.

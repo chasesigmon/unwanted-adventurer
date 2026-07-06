@@ -8,7 +8,7 @@ export function initLoginUI(network, onJoined) {
     errorEl.textContent = '';
     try {
       const res = await network.join(input.value.trim());
-      onJoined(res.self, res.world);
+      onJoined(res.self, res.minimap);
     } catch (err) {
       errorEl.textContent = err.message;
     }

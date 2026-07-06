@@ -10,10 +10,8 @@ const playerSchema = new mongoose.Schema(
       minlength: 2,
       maxlength: 16,
     },
-    color: { type: Number, default: 0x00ff88 },
-    score: { type: Number, default: 0 },
-    x: { type: Number, default: 1000 },
-    y: { type: Number, default: 1000 },
+    row: { type: Number, required: true },
+    col: { type: Number, required: true },
     lastLogin: { type: Date, default: Date.now },
   },
   { timestamps: true }

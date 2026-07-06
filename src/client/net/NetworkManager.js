@@ -1,21 +1,11 @@
 import { io } from 'socket.io-client';
 
-// Thin transport layer only: owns the socket connection and re-broadcasts
-// server events as DOM CustomEvents. No game logic lives here.
-export class NetworkManager extends EventTarget {
+// Thin transport layer only: owns the socket connection. No game logic
+// lives here — every command is a request/ack round trip to the
+// authoritative server, which decides the resulting position.
+export class NetworkManager {
   constructor(url) {
-    super();
     this.socket = io(url, { transports: ['websocket'] });
-
-    this.socket.on('snapshot', (snapshot) => {
-      this.dispatchEvent(new CustomEvent('snapshot', { detail: snapshot }));
-    });
-    this.socket.on('leaderboard', (board) => {
-      this.dispatchEvent(new CustomEvent('leaderboard', { detail: board }));
-    });
-    this.socket.on('chat', (msg) => {
-      this.dispatchEvent(new CustomEvent('chat', { detail: msg }));
-    });
   }
 
   join(username) {
@@ -27,12 +17,13 @@ export class NetworkManager extends EventTarget {
     });
   }
 
-  sendInput(input) {
-    this.socket.emit('input', input);
-  }
-
-  sendChat(text) {
-    this.socket.emit('chat', text);
+  sendCommand(text) {
+    return new Promise((resolve, reject) => {
+      this.socket.emit('command', text, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
   }
 
   get id() {
