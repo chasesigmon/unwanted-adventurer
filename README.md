@@ -1,4 +1,4 @@
-# Text Arena — Real-Time Multiplayer Grid Game (Socket.io + MongoDB + Redis)
+# Text Arena — Real-Time Multiplayer Grid Game (TypeScript + Socket.io + MongoDB + Redis)
 
 A small authoritative-server multiplayer text game: players register/log in
 with a username and password, then navigate named map instances (currently
@@ -7,19 +7,44 @@ commands into a text box. There is no graphical rendering — the whole client
 is DOM/text: a position readout, a one-line action log, a 3x3 minimap, and a
 full-width command input.
 
+The whole codebase — client, server, and shared modules — is TypeScript.
+
 ## Architecture
 
 ```
 /src
-  /shared    Map sizes + direction-alias constants shared by client and server
+  /shared    Map sizes + direction-alias constants + wire-contract types, shared by client and server
   /server    Auth, sessions, rate limiting, rooms/workers, maps (Node + Socket.io + MongoDB + Redis)
   /client    Plain DOM/CSS UI, input capture only
 ```
 
-**The server is the only source of truth.** `GameMap` (`game/GameMap.js`)
+### TypeScript setup
+
+Two `tsconfig`s, since the client (DOM) and server (Node) need different
+`lib`/`types`:
+
+- `tsconfig.json` — client + shared, `lib: ["ES2022", "DOM", "DOM.Iterable"]`.
+- `tsconfig.server.json` — server + shared, `types: ["node"]`, no DOM.
+
+The server runs directly via [`tsx`](https://github.com/privatenumber/tsx)
+(`npm run dev:server` / `npm start`) rather than a separate `tsc` build step
+— this also transparently gives TypeScript support inside the room
+worker_threads (see "Rooms and worker threads"), which would otherwise need
+extra plumbing to run a `.ts` worker file. The client is bundled by Vite,
+which strips types via esbuild the same way. Neither build step
+type-checks — run `npm run typecheck` for that (useful in CI or before
+committing).
+
+The Socket.io event contract (`ServerToClientEvents`, `ClientToServerEvents`,
+`SocketData`, etc., in `src/server/sockets/types.ts`) is imported by the
+client as `import type` — fully erased at build time, so there's no runtime
+coupling, but the client and server can never silently drift apart on what a
+`sync` payload or a command ack actually looks like.
+
+**The server is the only source of truth.** `GameMap` (`game/GameMap.ts`)
 is a single grid instance with its own bounds and list of exits; the
-registry of actual instances lives in `game/maps.js`. Movement/minimap
-resolution is a pure function (`game/resolveMove.js`) shared by the main
+registry of actual instances lives in `game/maps.ts`. Movement/minimap
+resolution is a pure function (`game/resolveMove.ts`) shared by the main
 thread and room workers (see "Rooms and worker threads" below) — the same
 logic runs identically wherever a given player's room happens to be
 processed.
@@ -37,7 +62,7 @@ never decides its own position — it only renders whatever the ack (or a
 
 ### Maps and exits
 
-Currently defined in `src/server/game/maps.js`:
+Currently defined in `src/server/game/maps.ts`:
 
 | Map       | Size  | Exits                                |
 |-----------|-------|----------------------------------------|
@@ -48,7 +73,7 @@ New players spawn in the center of `STARTING_MAP` (`Labyrinth`, `(7, 7)`);
 returning players resume wherever they last were. The minimap renders `@`
 for the player's own cell, `*` for an exit tile within view, `.` for a
 normal in-bounds cell, and `#` for out of bounds. Adding another map/exit is
-just another `GameMap` entry in `maps.js`.
+just another `GameMap` entry in `maps.ts`.
 
 ## Auth: bcrypt + JWT + Redis session tracking
 
@@ -56,23 +81,23 @@ Registration/login are plain HTTP endpoints (`POST /auth/register`,
 `POST /auth/login`), not Socket.io events, since a JWT has to exist before
 the authenticated socket connection is even opened.
 
-- **Passwords** are hashed with `bcryptjs` (`auth/password.js`) — a
+- **Passwords** are hashed with `bcryptjs` (`auth/password.ts`) — a
   pure-JS implementation of the same bcrypt algorithm as the native
   `bcrypt` package, chosen so installing this repo never depends on a
   native build step. Salt rounds are configurable (`BCRYPT_SALT_ROUNDS`,
   default 12).
-- **Login issues a stateless JWT** (`auth/jwt.js`) containing
+- **Login issues a stateless JWT** (`auth/jwt.ts`) containing
   `{ username, sessionId }`, where `sessionId` is a fresh UUID minted on
   every successful login.
 - **Redis tracks the one active `sessionId` per username**
-  (`auth/sessionStore.js`, key `session:{username}`, TTL matching the JWT's
+  (`auth/sessionStore.ts`, key `session:{username}`, TTL matching the JWT's
   expiry). A Socket.io connection is only accepted if the JWT's
   `sessionId` still matches what's in Redis — so logging in again
   immediately invalidates any previously issued token for that user, even
   before it expires.
 - **Duplicate logins actively kick the old session**: `POST /auth/login`
   looks up whether the user already has a live socket
-  (`state/activeConnections.js`, an in-memory `username → socket.id` map),
+  (`state/activeConnections.ts`, an in-memory `username → socket.id` map),
   and if so emits `session:kicked` to it and force-disconnects it before
   installing the new session. The client treats being kicked the same as
   an explicit logout — back to the login screen, no auto-reconnect (see
@@ -86,17 +111,17 @@ the authenticated socket connection is even opened.
 ## Rate limiting and payload validation
 
 - **HTTP**: `express-rate-limit` throttles `/auth/register` and
-  `/auth/login` per IP (`middleware/httpAuthRateLimiter.js`).
+  `/auth/login` per IP (`middleware/httpAuthRateLimiter.ts`).
 - **Socket.io connections**: a per-IP fixed-window counter
-  (`middleware/socketConnectionLimiter.js`) runs inside the `io.use()`
+  (`middleware/socketConnectionLimiter.ts`) runs inside the `io.use()`
   handshake middleware, before JWT verification, so a connection flood is
   rejected cheaply.
 - **Commands**: a per-socket token bucket
-  (`middleware/CommandRateLimiter.js`) caps how many `command` events one
+  (`middleware/CommandRateLimiter.ts`) caps how many `command` events one
   connected client can issue per second, independent of the connection
   limiter above (an already-connected client can't just flood events
   instead).
-- **Payload validation**: `zod` schemas (`validation/schemas.js`) validate
+- **Payload validation**: `zod` schemas (`validation/schemas.ts`) validate
   register/login bodies and the command string's shape before any of it
   reaches a DB query or the game logic.
 
@@ -105,12 +130,12 @@ All of the above are tunable via env vars — see `.env.example`.
 ## Heartbeat and reconnection
 
 - **Heartbeat**: Socket.io's built-in engine.io ping/pong is configured
-  explicitly (`pingInterval` / `pingTimeout` in `server/index.js`) rather
+  explicitly (`pingInterval` / `pingTimeout` in `server/index.ts`) rather
   than reimplemented — it already does exactly this at the transport
   layer, so a dead connection (no pong within the timeout) is dropped
   automatically.
 - **Reconnection**: the client enables Socket.io's automatic
-  reconnection (`net/NetworkManager.js`) with a bounded retry count and
+  reconnection (`net/NetworkManager.ts`) with a bounded retry count and
   backoff. On every successful (re)connection the server immediately
   emits `sync` with the player's current authoritative `{map, row, col}`
   and minimap, so the UI is always correct after a drop — there's nothing
@@ -122,10 +147,10 @@ All of the above are tunable via env vars — see `.env.example`.
 ## Rooms and worker threads
 
 Players are grouped into rooms per map, capped at `ROOM_CAPACITY` (default
-50, `rooms/RoomManager.js`). The **first** room created for a given map is
+50, `rooms/RoomManager.ts`). The **first** room created for a given map is
 processed inline on the main thread — spinning up a worker for a handful
 of players isn't worth it. **Every room after that** is backed by its own
-real `worker_thread` (`rooms/roomWorker.js`), which owns that room's player
+real `worker_thread` (`rooms/roomWorker.ts`), which owns that room's player
 positions and runs `resolveMove`/exit resolution entirely off the main
 thread; the main thread only relays `command` messages to it and awaits
 the reply via `postMessage`. When a player transitions maps (via an exit),

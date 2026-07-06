@@ -1,11 +1,16 @@
 import { config } from '../config.js';
 
+interface RateLimitEntry {
+  count: number;
+  windowStart: number;
+}
+
 // Simple fixed-window counter per IP, checked before JWT verification on
 // every Socket.io handshake, so a flood of connection attempts gets
 // rejected cheaply instead of reaching auth/DB logic.
-const attemptsByIp = new Map(); // ip -> { count, windowStart }
+const attemptsByIp = new Map<string, RateLimitEntry>();
 
-export function isConnectionRateLimited(ip) {
+export function isConnectionRateLimited(ip: string): boolean {
   const now = Date.now();
   const entry = attemptsByIp.get(ip);
 

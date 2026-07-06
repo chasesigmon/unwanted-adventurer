@@ -1,13 +1,15 @@
-import { DIRECTION_DELTAS } from '../../shared/directions.js';
-import { MAPS } from './maps.js';
+import { DIRECTION_DELTAS, type Direction } from '../../shared/directions.js';
+import { getMap } from './maps.js';
+import type { Location, MoveResult } from './types.js';
+import type { MinimapCell } from '../../shared/types.js';
 
 // Pure movement/minimap resolution against the map registry. Kept
 // dependency-free (no class, no shared mutable state) so it can run
 // identically on the main thread or inside a room's worker_thread — the
 // only difference between the two is *where* this function is called and
 // which in-memory location record it's called against, not the game logic.
-export function resolveMove(location, direction) {
-  const map = MAPS.get(location.mapName);
+export function resolveMove(location: Location, direction: Direction): MoveResult {
+  const map = getMap(location.mapName);
   const delta = DIRECTION_DELTAS[direction];
   const nextRow = location.row + delta.dr;
   const nextCol = location.col + delta.dc;
@@ -32,9 +34,9 @@ export function resolveMove(location, direction) {
 }
 
 // 3x3 view centered on the location, for the minimap.
-export function resolveMinimap(location) {
-  const map = MAPS.get(location.mapName);
-  const cells = [];
+export function resolveMinimap(location: Location): MinimapCell[] {
+  const map = getMap(location.mapName);
+  const cells: MinimapCell[] = [];
   for (let dr = -1; dr <= 1; dr++) {
     for (let dc = -1; dc <= 1; dc++) {
       const row = location.row + dr;

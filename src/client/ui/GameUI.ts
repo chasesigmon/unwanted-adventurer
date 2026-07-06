@@ -1,19 +1,29 @@
+import type { NetworkManager, DisconnectedDetail } from '../net/NetworkManager.js';
+import type { SyncPayload, KickedPayload } from '../../server/sockets/types.js';
+import type { PlayerSnapshot, MinimapCell } from '../../shared/types.js';
+import { getElement } from '../dom.js';
+
+export interface GameUICallbacks {
+  onReady: () => void;
+  onLoggedOut: (message?: string) => void;
+}
+
 // Pure rendering + input capture. Position/minimap only ever change in
 // response to a 'sync' event (on connect and reconnect) or a command ack —
 // both always come from the server, never decided locally.
-export function initGameUI(network, { onReady, onLoggedOut }) {
-  const positionEl = document.getElementById('position-readout');
-  const actionLogEl = document.getElementById('action-log');
-  const minimapEl = document.getElementById('minimap');
-  const commandInput = document.getElementById('command-input');
+export function initGameUI(network: NetworkManager, { onReady, onLoggedOut }: GameUICallbacks): void {
+  const positionEl = getElement('position-readout');
+  const actionLogEl = getElement('action-log');
+  const minimapEl = getElement('minimap');
+  const commandInput = getElement<HTMLInputElement>('command-input');
 
   let hasSyncedOnce = false;
 
-  function renderPosition(player) {
+  function renderPosition(player: PlayerSnapshot): void {
     positionEl.textContent = `${player.map}: (${player.row}, ${player.col})`;
   }
 
-  function renderMinimap(cells) {
+  function renderMinimap(cells: MinimapCell[]): void {
     minimapEl.innerHTML = '';
     for (const cell of cells) {
       const span = document.createElement('span');
@@ -25,12 +35,12 @@ export function initGameUI(network, { onReady, onLoggedOut }) {
     }
   }
 
-  function renderAction(message) {
+  function renderAction(message: string): void {
     actionLogEl.textContent = message;
   }
 
   network.addEventListener('sync', (e) => {
-    const { player, minimap } = e.detail;
+    const { player, minimap } = (e as CustomEvent<SyncPayload>).detail;
     renderPosition(player);
     renderMinimap(minimap);
     if (!hasSyncedOnce) {
@@ -43,13 +53,14 @@ export function initGameUI(network, { onReady, onLoggedOut }) {
   });
 
   network.addEventListener('kicked', (e) => {
+    const { message } = (e as CustomEvent<KickedPayload>).detail;
     network.disconnectAndReset();
     hasSyncedOnce = false;
-    onLoggedOut(e.detail.message);
+    onLoggedOut(message);
   });
 
   network.addEventListener('disconnected', (e) => {
-    const { reason } = e.detail;
+    const { reason } = (e as CustomEvent<DisconnectedDetail>).detail;
     // A server- or client-initiated disconnect (logout, or kicked by a
     // newer login) won't auto-reconnect and the token is no longer good —
     // go back to login. Anything else is a transient network drop that
@@ -87,7 +98,7 @@ export function initGameUI(network, { onReady, onLoggedOut }) {
       if (res.minimap) renderMinimap(res.minimap);
       renderAction(res.message);
     } catch (err) {
-      renderAction(err.message);
+      renderAction(err instanceof Error ? err.message : String(err));
     }
   });
 }

@@ -15,5 +15,7 @@ export const credentialsSchema = z.object({
     .max(128, 'Password is too long.'),
 });
 
+export type Credentials = z.infer<typeof credentialsSchema>;
+
 // The command box only ever needs to carry a short token like "w" or "down".
 export const commandSchema = z.string().trim().min(1).max(32);

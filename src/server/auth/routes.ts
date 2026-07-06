@@ -1,34 +1,37 @@
 import { randomUUID } from 'crypto';
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 
 import { PlayerModel } from '../models/Player.js';
-import { MAPS } from '../game/maps.js';
+import { getMap } from '../game/maps.js';
 import { STARTING_MAP } from '../../shared/constants.js';
 import { credentialsSchema } from '../validation/schemas.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { signSessionToken, verifySessionToken } from './jwt.js';
 import { setActiveSession, clearActiveSession } from './sessionStore.js';
 import { getActiveSocketId, clearActiveSocketIfCurrent } from '../state/activeConnections.js';
+import type { GameServer } from '../sockets/types.js';
 
 // `io` is needed so a successful login can actively kick whatever socket
 // currently holds the previous session for this user (see sockets/index.js
 // for the corresponding JWT/session validation on the Socket.io side).
-export function createAuthRouter(io) {
+export function createAuthRouter(io: GameServer): Router {
   const router = Router();
 
-  router.post('/register', async (req, res) => {
+  router.post('/register', async (req: Request, res: Response) => {
     const parsed = credentialsSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ ok: false, error: parsed.error.issues[0].message });
+      res.status(400).json({ ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' });
+      return;
     }
     const { username, password } = parsed.data;
 
     const existing = await PlayerModel.findOne({ username: new RegExp(`^${username}$`, 'i') });
     if (existing) {
-      return res.status(409).json({ ok: false, error: 'That username is already taken.' });
+      res.status(409).json({ ok: false, error: 'That username is already taken.' });
+      return;
     }
 
-    const startingMap = MAPS.get(STARTING_MAP);
+    const startingMap = getMap(STARTING_MAP);
     const passwordHash = await hashPassword(password);
 
     await PlayerModel.create({
@@ -47,17 +50,19 @@ export function createAuthRouter(io) {
     res.json({ ok: true, token });
   });
 
-  router.post('/login', async (req, res) => {
+  router.post('/login', async (req: Request, res: Response) => {
     const parsed = credentialsSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ ok: false, error: parsed.error.issues[0].message });
+      res.status(400).json({ ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' });
+      return;
     }
     const { username, password } = parsed.data;
 
     const doc = await PlayerModel.findOne({ username: new RegExp(`^${username}$`, 'i') });
     const passwordOk = doc ? await verifyPassword(password, doc.passwordHash) : false;
     if (!doc || !passwordOk) {
-      return res.status(401).json({ ok: false, error: 'Invalid username or password.' });
+      res.status(401).json({ ok: false, error: 'Invalid username or password.' });
+      return;
     }
 
     // Kick whatever session (if any) is currently connected for this user
@@ -81,18 +86,20 @@ export function createAuthRouter(io) {
     res.json({ ok: true, token });
   });
 
-  router.post('/logout', async (req, res) => {
+  router.post('/logout', async (req: Request, res: Response) => {
     const header = req.get('authorization') || '';
     const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
     if (!token) {
-      return res.status(400).json({ ok: false, error: 'Missing session token.' });
+      res.status(400).json({ ok: false, error: 'Missing session token.' });
+      return;
     }
 
     let payload;
     try {
       payload = verifySessionToken(token);
     } catch {
-      return res.status(401).json({ ok: false, error: 'Invalid or expired session.' });
+      res.status(401).json({ ok: false, error: 'Invalid or expired session.' });
+      return;
     }
 
     await clearActiveSession(payload.username);

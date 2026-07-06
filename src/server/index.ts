@@ -12,11 +12,17 @@ import { MAPS } from './game/maps.js';
 import { registerSocketHandlers } from './sockets/index.js';
 import { createAuthRouter } from './auth/routes.js';
 import { httpAuthRateLimiter } from './middleware/httpAuthRateLimiter.js';
+import type {
+  ClientToServerEvents,
+  ServerToClientEvents,
+  InterServerEvents,
+  SocketData,
+} from './sockets/types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../dist/client');
 
-async function main() {
+async function main(): Promise<void> {
   await connectDB();
 
   const roomManager = new RoomManager();
@@ -27,7 +33,7 @@ async function main() {
   app.use(express.static(clientDist));
 
   const server = http.createServer(app);
-  const io = new Server(server, {
+  const io = new Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>(server, {
     cors: { origin: config.clientOrigin, methods: ['GET', 'POST'] },
     // Ping/pong heartbeat: how often the server probes each client, and how
     // long it waits for a pong before treating the connection as dead.
@@ -66,7 +72,7 @@ async function main() {
   });
 }
 
-main().catch((err) => {
+main().catch((err: unknown) => {
   console.error('[server] fatal error:', err);
   process.exit(1);
 });

@@ -1,14 +1,21 @@
 import { parentPort } from 'worker_threads';
 import { resolveMove } from '../game/resolveMove.js';
+import type { Location } from '../game/types.js';
+import type { WorkerRequest, WorkerResponse } from './protocol.js';
+
+if (!parentPort) {
+  throw new Error('roomWorker.ts must be run as a worker_thread, not imported directly.');
+}
+const port = parentPort;
 
 // Entry point for a room's dedicated worker_thread. Owns the live
 // {mapName, row, col} for every player currently assigned to this room and
 // processes their movement here, off the main thread. Communication with
 // the main thread (RoomManager) is message-passing only — no shared
 // memory, by design.
-const players = new Map(); // username -> { mapName, row, col }
+const players = new Map<string, Location>();
 
-parentPort.on('message', (msg) => {
+port.on('message', (msg: WorkerRequest) => {
   switch (msg.type) {
     case 'add': {
       players.set(msg.username, { mapName: msg.mapName, row: msg.row, col: msg.col });
@@ -21,10 +28,11 @@ parentPort.on('message', (msg) => {
     case 'move': {
       const location = players.get(msg.username);
       if (!location) {
-        parentPort.postMessage({
+        const response: WorkerResponse = {
           reqId: msg.reqId,
-          result: { ok: false, transitioned: false, mapName: null, row: null, col: null },
-        });
+          result: { ok: false, transitioned: false, error: 'not-found' },
+        };
+        port.postMessage(response);
         break;
       }
 
@@ -34,7 +42,8 @@ parentPort.on('message', (msg) => {
         location.row = result.row;
         location.col = result.col;
       }
-      parentPort.postMessage({ reqId: msg.reqId, result });
+      const response: WorkerResponse = { reqId: msg.reqId, result };
+      port.postMessage(response);
       break;
     }
     default:

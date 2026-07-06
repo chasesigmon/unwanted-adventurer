@@ -4,12 +4,15 @@ import { config } from '../config.js';
 // 'command' event can't monopolize the server even though each command is
 // individually cheap to process.
 export class CommandRateLimiter {
+  private tokens: number;
+  private lastRefill: number;
+
   constructor() {
     this.tokens = config.commandRateLimitMax;
     this.lastRefill = Date.now();
   }
 
-  tryConsume() {
+  tryConsume(): boolean {
     const now = Date.now();
     const elapsedSeconds = (now - this.lastRefill) / 1000;
     this.tokens = Math.min(

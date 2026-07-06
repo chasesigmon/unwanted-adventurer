@@ -6,6 +6,6 @@ export const redis = new Redis(config.redisUrl, {
   maxRetriesPerRequest: 3,
 });
 
-redis.on('error', (err) => {
+redis.on('error', (err: Error) => {
   console.warn('[redis] connection error:', err.message);
 });

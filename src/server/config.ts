@@ -6,7 +6,29 @@ if (!process.env.JWT_SECRET) {
   console.warn('[config] JWT_SECRET not set — using an insecure dev-only default. Set it in production.');
 }
 
-export const config = {
+export interface Config {
+  port: number;
+  mongoUri: string;
+  clientOrigin: string;
+  redisUrl: string;
+
+  jwtSecret: string;
+  jwtExpiresIn: string;
+  bcryptSaltRounds: number;
+
+  heartbeatPingIntervalMs: number;
+  heartbeatPingTimeoutMs: number;
+
+  socketConnRateLimitMax: number;
+  socketConnRateLimitWindowMs: number;
+
+  commandRateLimitMax: number;
+  commandRateLimitRefillPerSec: number;
+
+  roomCapacity: number;
+}
+
+export const config: Config = {
   port: Number(process.env.PORT) || 3000,
   mongoUri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/text-arena',
   clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',

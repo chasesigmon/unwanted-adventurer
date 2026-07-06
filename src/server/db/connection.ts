@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { config } from '../config.js';
 
-export async function connectDB() {
+export async function connectDB(): Promise<void> {
   mongoose.set('strictQuery', true);
   try {
     // Fail fast into no-persistence mode instead of blocking startup for
@@ -9,6 +9,7 @@ export async function connectDB() {
     await mongoose.connect(config.mongoUri, { serverSelectionTimeoutMS: 2500 });
     console.log('[db] connected to MongoDB');
   } catch (err) {
-    console.warn('[db] could not connect to MongoDB, continuing without persistence:', err.message);
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn('[db] could not connect to MongoDB, continuing without persistence:', message);
   }
 }
