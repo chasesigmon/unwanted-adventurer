@@ -10,16 +10,28 @@
     <div id="login-overlay">
       <form id="login-form">
         <h1>Text Arena</h1>
-        <p>Type a command and press Enter: w/up, a, s/down, d.</p>
+        <p>Type a command and press Enter: w/up, a, s/down, d. Type "logout" to end your session.</p>
         <input
           id="username-input"
           type="text"
-          placeholder="Choose a username"
+          placeholder="Username"
           maxlength="16"
-          autocomplete="off"
+          autocomplete="username"
           required
         />
-        <button type="submit">Join Arena</button>
+        <input
+          id="password-input"
+          type="password"
+          placeholder="Password"
+          minlength="8"
+          maxlength="128"
+          autocomplete="current-password"
+          required
+        />
+        <div class="login-buttons">
+          <button type="submit">Log In</button>
+          <button type="button" id="register-button">Register</button>
+        </div>
         <div id="login-error"></div>
       </form>
     </div>

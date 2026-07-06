@@ -41,7 +41,12 @@ body {
   color: #e6edf3;
   font-size: 1rem;
 }
+.login-buttons {
+  display: flex;
+  gap: 0.75rem;
+}
 #login-form button {
+  flex: 1;
   padding: 0.6rem 1.5rem;
   border-radius: 6px;
   border: none;
@@ -52,6 +57,12 @@ body {
 }
 #login-form button:hover {
   background: #2ea043;
+}
+#register-button {
+  background: #30363d !important;
+}
+#register-button:hover {
+  background: #444c56 !important;
 }
 #login-error {
   color: #f85149;

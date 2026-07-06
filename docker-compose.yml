@@ -1,6 +1,8 @@
 services:
   mongo:
-    build: ./docker/mongo
+    build:
+      context: ./docker/mongo
+      dockerfile: Dockerfile.mongo
     container_name: text-arena-mongo
     restart: unless-stopped
     ports:
@@ -15,5 +17,22 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    build:
+      context: ./docker/redis
+      dockerfile: Dockerfile.redis
+    container_name: text-arena-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   mongo-data:
+  redis-data:

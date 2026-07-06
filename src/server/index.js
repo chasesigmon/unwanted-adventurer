@@ -7,9 +7,11 @@ import { Server } from 'socket.io';
 
 import { config } from './config.js';
 import { connectDB } from './db/connection.js';
-import { GameWorld } from './game/GameWorld.js';
+import { RoomManager } from './rooms/RoomManager.js';
 import { MAPS } from './game/maps.js';
 import { registerSocketHandlers } from './sockets/index.js';
+import { createAuthRouter } from './auth/routes.js';
+import { httpAuthRateLimiter } from './middleware/httpAuthRateLimiter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../dist/client');
@@ -17,21 +19,36 @@ const clientDist = path.resolve(__dirname, '../../dist/client');
 async function main() {
   await connectDB();
 
-  const world = new GameWorld();
+  const roomManager = new RoomManager();
 
   const app = express();
   app.use(cors({ origin: config.clientOrigin }));
+  app.use(express.json());
   app.use(express.static(clientDist));
 
+  const server = http.createServer(app);
+  const io = new Server(server, {
+    cors: { origin: config.clientOrigin, methods: ['GET', 'POST'] },
+    // Ping/pong heartbeat: how often the server probes each client, and how
+    // long it waits for a pong before treating the connection as dead.
+    pingInterval: config.heartbeatPingIntervalMs,
+    pingTimeout: config.heartbeatPingTimeoutMs,
+  });
+
+  app.use('/auth', httpAuthRateLimiter, createAuthRouter(io));
+
   app.get('/health', (_req, res) => {
+    const stats = roomManager.getStats();
     res.json({
       ok: true,
-      players: world.players.size,
+      players: stats.totalPlayers,
+      rooms: stats.rooms,
       maps: Array.from(MAPS.values()).map((m) => ({ name: m.name, rows: m.rows, cols: m.cols })),
     });
   });
 
   // SPA fallback for the built client (dev mode serves the client separately via Vite).
+  // Must stay last — it's a catch-all.
   app.use((_req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'), (err) => {
       if (err) {
@@ -42,12 +59,7 @@ async function main() {
     });
   });
 
-  const server = http.createServer(app);
-  const io = new Server(server, {
-    cors: { origin: config.clientOrigin, methods: ['GET', 'POST'] },
-  });
-
-  registerSocketHandlers(io, world);
+  registerSocketHandlers(io, roomManager);
 
   server.listen(config.port, () => {
     console.log(`[server] listening on http://localhost:${config.port}`);
