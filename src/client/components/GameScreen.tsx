@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { PlayerSnapshot, MinimapCell } from '../../shared/types.js';
 import { Minimap } from './Minimap.js';
 
@@ -9,29 +9,77 @@ export interface GameScreenProps {
   onCommand: (text: string) => void;
 }
 
+// Arrow keys map to the same tokens the server already understands
+// (there's no separate "left"/"right" direction — west/east cover both).
+const MOVE_KEYS: Record<string, string> = {
+  w: 'w',
+  W: 'w',
+  a: 'a',
+  A: 'a',
+  s: 's',
+  S: 's',
+  d: 'd',
+  D: 'd',
+  ArrowUp: 'up',
+  ArrowDown: 'down',
+  ArrowLeft: 'a',
+  ArrowRight: 'd',
+};
+
 export function GameScreen({ player, minimap, actionMessage, onCommand }: GameScreenProps): JSX.Element {
   const [command, setCommand] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
 
   function handleKeyDown(e: KeyboardEvent<HTMLInputElement>): void {
     if (e.key !== 'Enter') return;
     const text = command.trim();
     if (!text) return;
-    setCommand('');
+    setCommand(text);
     onCommand(text);
+    // Re-select once the input re-renders with the trimmed value, so the
+    // whole command is highlighted and typing immediately replaces it.
+    setTimeout(() => inputRef.current?.select(), 0);
   }
+
+  // WASD / arrow keys move the player directly whenever the command box
+  // isn't focused — typing in the box is left completely alone.
+  useEffect(() => {
+    function handleGlobalKeyDown(e: globalThis.KeyboardEvent): void {
+      if (document.activeElement === inputRef.current) return;
+
+      const move = MOVE_KEYS[e.key];
+      if (!move) return;
+
+      e.preventDefault();
+      onCommand(move);
+    }
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [onCommand]);
 
   return (
     <div id="hud">
-      <div id="position-readout">
-        {player ? `${player.map}: (${player.row}, ${player.col})` : 'Position: (0, 0)'}
+      <div id="top-right-stack">
+        <div id="position-readout">
+          {player ? `${player.map}: (${player.row}, ${player.col})` : 'Position: (0, 0)'}
+        </div>
+        <div className="side-box" id="score-box">
+          <div className="side-box-label">Score</div>
+          <div className="side-box-content">{player?.username}</div>
+        </div>
       </div>
 
       <div id="bottom-bar">
         <div id="status-row">
           <div id="action-log">{actionMessage}</div>
-          <Minimap cells={minimap} />
+          <div className="side-box" id="minimap-box">
+            <div className="side-box-label">Minimap</div>
+            <Minimap cells={minimap} />
+          </div>
         </div>
         <input
+          ref={inputRef}
           id="command-input"
           type="text"
           maxLength={32}
