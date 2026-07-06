@@ -13,6 +13,7 @@ interface GameState {
   player: PlayerSnapshot | null;
   minimap: MinimapCell[];
   room: RoomInfo | null;
+  monsterMessage: string | null;
   actionMessage: string;
 }
 
@@ -22,13 +23,28 @@ const initialState: GameState = {
   player: null,
   minimap: [],
   room: null,
+  monsterMessage: null,
   actionMessage: '',
 };
 
 type Action =
   | { type: 'authError'; message: string }
-  | { type: 'sync'; player: PlayerSnapshot; minimap: MinimapCell[]; room: RoomInfo; isReconnect: boolean }
-  | { type: 'commandResult'; message: string; player?: PlayerSnapshot; minimap?: MinimapCell[]; room?: RoomInfo }
+  | {
+      type: 'sync';
+      player: PlayerSnapshot;
+      minimap: MinimapCell[];
+      room: RoomInfo;
+      monsterMessage?: string;
+      isReconnect: boolean;
+    }
+  | {
+      type: 'commandResult';
+      message: string;
+      player?: PlayerSnapshot;
+      minimap?: MinimapCell[];
+      room?: RoomInfo;
+      monsterMessage?: string;
+    }
   | { type: 'connectionMessage'; message: string }
   | { type: 'loggedOut'; message?: string };
 
@@ -43,6 +59,7 @@ function reducer(state: GameState, action: Action): GameState {
         player: action.player,
         minimap: action.minimap,
         room: action.room,
+        monsterMessage: action.monsterMessage ?? null,
         actionMessage: action.isReconnect
           ? 'Reconnected — position resynced with the server.'
           : `${action.player.username} entered ${action.player.map}.`,
@@ -53,6 +70,13 @@ function reducer(state: GameState, action: Action): GameState {
         player: action.player ?? state.player,
         minimap: action.minimap ?? state.minimap,
         room: action.room ?? state.room,
+        // The server only ever sends monsterMessage alongside room, and
+        // always sends a definitive answer (string or omitted-meaning-none)
+        // whenever it sends room — so "room present" is what distinguishes
+        // "no monster here" from "this ack didn't recompute location info
+        // at all" (e.g. rate-limited/invalid-command acks), which must
+        // leave the last-known monster state alone instead of clearing it.
+        monsterMessage: action.room ? (action.monsterMessage ?? null) : state.monsterMessage,
         actionMessage: action.message,
       };
     case 'connectionMessage':
@@ -88,10 +112,10 @@ export function useGameConnection(): UseGameConnection {
 
   useEffect(() => {
     function onSync(e: Event): void {
-      const { player, minimap, room } = (e as CustomEvent<SyncPayload>).detail;
+      const { player, minimap, room, monsterMessage } = (e as CustomEvent<SyncPayload>).detail;
       const isReconnect = hasSyncedOnceRef.current;
       hasSyncedOnceRef.current = true;
-      dispatch({ type: 'sync', player, minimap, room, isReconnect });
+      dispatch({ type: 'sync', player, minimap, room, monsterMessage, isReconnect });
     }
 
     function onKicked(e: Event): void {
@@ -173,6 +197,7 @@ export function useGameConnection(): UseGameConnection {
         player: res.player,
         minimap: res.minimap ?? undefined,
         room: res.room,
+        monsterMessage: res.monsterMessage,
       });
     } catch (err) {
       dispatch({

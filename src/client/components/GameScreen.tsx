@@ -6,6 +6,7 @@ export interface GameScreenProps {
   player: PlayerSnapshot | null;
   minimap: MinimapCell[];
   room: RoomInfo | null;
+  monsterMessage: string | null;
   actionMessage: string;
   onCommand: (text: string) => void;
 }
@@ -27,7 +28,7 @@ const MOVE_KEYS: Record<string, string> = {
   ArrowRight: 'd',
 };
 
-export function GameScreen({ player, minimap, room, actionMessage, onCommand }: GameScreenProps): JSX.Element {
+export function GameScreen({ player, minimap, room, monsterMessage, actionMessage, onCommand }: GameScreenProps): JSX.Element {
   const [command, setCommand] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -92,6 +93,7 @@ export function GameScreen({ player, minimap, room, actionMessage, onCommand }: 
         <div id="status-row">
           <div id="action-log">
             <div id="action-message">{actionMessage}</div>
+            {monsterMessage && <div id="monster-message">{monsterMessage}</div>}
             {room && (
               <>
                 <div id="room-name">{room.name}</div>

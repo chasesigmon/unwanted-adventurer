@@ -18,6 +18,9 @@ export interface AppConfig {
   commandRateLimitRefillPerSec: number;
 
   worldCapacity: number;
+
+  skeletonWanderIntervalMs: number;
+  skeletonRespawnIntervalMs: number;
 }
 
 // Factory consumed by ConfigModule.forRoot({ load: [configuration] }) — the
@@ -48,5 +51,8 @@ export default (): AppConfig => {
     commandRateLimitRefillPerSec: Number(process.env.COMMAND_RATE_LIMIT_REFILL_PER_SEC) || 10,
 
     worldCapacity: Number(process.env.WORLD_CAPACITY) || 50,
+
+    skeletonWanderIntervalMs: Number(process.env.SKELETON_WANDER_INTERVAL_MS) || 3000,
+    skeletonRespawnIntervalMs: Number(process.env.SKELETON_RESPAWN_INTERVAL_MS) || 60000,
   };
 };

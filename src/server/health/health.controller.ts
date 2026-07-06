@@ -1,10 +1,14 @@
 import { Controller, Get } from '@nestjs/common';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
+import { MonsterManagerService } from '../monsters/monster-manager.service.js';
 import { MAPS } from '../game/maps.js';
 
 @Controller('health')
 export class HealthController {
-  constructor(private readonly worldManager: WorldManagerService) {}
+  constructor(
+    private readonly worldManager: WorldManagerService,
+    private readonly monsterManager: MonsterManagerService
+  ) {}
 
   @Get()
   getHealth() {
@@ -14,6 +18,7 @@ export class HealthController {
       players: stats.totalPlayers,
       worlds: stats.worlds,
       maps: Array.from(MAPS.values()).map((m) => ({ name: m.name, rows: m.rows, cols: m.cols })),
+      monsters: this.monsterManager.getAll().map((m) => ({ id: m.id, kind: m.kind, mapName: m.mapName, row: m.row, col: m.col })),
     };
   }
 }

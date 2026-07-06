@@ -136,6 +136,38 @@ than re-read from Mongo on every command, since nothing changes them
 mid-session yet — the same reasoning as the `hp`/`mana`/`movement` cache in
 `SocketData`.
 
+### Monsters
+
+`src/server/monsters/` holds the game's first autonomous NPCs: skeletons.
+`MonsterManagerService` is a plain in-memory singleton (no Mongo
+persistence — the population resets on restart) that, on boot
+(`onModuleInit`):
+
+- Spawns 10 skeletons at random cells in the Labyrinth (never on the exit
+  tile), each with `hp: 20`, `mana: Infinity`, `movement: Infinity`.
+- Starts a timer (`SKELETON_WANDER_INTERVAL_MS`, default 3s) that moves
+  every skeleton one random cardinal step per tick. A step that would
+  leave the Labyrinth's bounds or land on its exit tile is refused — the
+  skeleton just stays put that tick instead. This is how they're "locked"
+  to the map: there's no transition logic for monsters at all, only a
+  bounds/exit check on candidate moves.
+- Starts a second, slower timer (`SKELETON_RESPAWN_INTERVAL_MS`, default
+  60s = 1 minute) that spawns exactly one more skeleton if the population
+  is below the max of 10. Nothing currently reduces the population below
+  10 (no combat system exists yet), so this path isn't exercised in
+  practice — it's forward-looking infrastructure for whenever a "kill"
+  mechanic is added, alongside the also-unused `removeMonster()` method.
+
+When a player's current cell has a monster in it, the gateway computes a
+`monsterMessage` (e.g. `"A skeleton is here!"`) and includes it alongside
+`room` in the `sync` event and in command acks — always sent together, so
+the client can tell "no monster here" (room present, message omitted)
+apart from "this ack didn't touch location info at all" (room absent,
+e.g. a rate-limited command), and only overwrites its last-known monster
+state in the former case. The client renders it as a highlighted line in
+the action log, above the room name/description. `/health` also reports
+each live monster's id/kind/position for diagnostics.
+
 ## Auth: bcrypt + JWT + Redis session tracking
 
 Registration/login are plain HTTP endpoints (`POST /auth/register`,

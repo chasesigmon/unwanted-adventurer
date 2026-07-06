@@ -12,6 +12,7 @@ import { ConfigService } from '@nestjs/config';
 
 import { PlayersService } from '../players/players.service.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
+import { MonsterManagerService } from '../monsters/monster-manager.service.js';
 import { AuthService } from '../auth/auth.service.js';
 import { SessionStoreService } from '../auth/session-store.service.js';
 import { ActiveConnectionsService } from '../auth/active-connections.service.js';
@@ -40,6 +41,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   constructor(
     private readonly playersService: PlayersService,
     private readonly worldManager: WorldManagerService,
+    private readonly monsterManager: MonsterManagerService,
     private readonly authService: AuthService,
     private readonly sessionStore: SessionStoreService,
     private readonly activeConnections: ActiveConnectionsService,
@@ -119,6 +121,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: this.snapshotFor(client, { mapName, row, col }),
       minimap: this.worldManager.getMinimap(username) ?? [],
       room: resolveRoom({ mapName, row, col }),
+      monsterMessage: this.monsterMessageFor({ mapName, row, col }),
     });
   }
 
@@ -132,6 +135,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       mana: client.data.mana,
       movement: client.data.movement,
     };
+  }
+
+  private monsterMessageFor(loc: Location): string | undefined {
+    const monster = this.monsterManager.getMonsterAt(loc.mapName, loc.row, loc.col);
+    return monster ? `A ${monster.kind} is here!` : undefined;
   }
 
   // Awaited on disconnect (nothing else to do but wait); fire-and-forget
@@ -202,6 +210,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (loc) {
         ackPayload.player = this.snapshotFor(client, loc);
         ackPayload.room = resolveRoom(loc);
+        ackPayload.monsterMessage = this.monsterMessageFor(loc);
       }
       return ackPayload;
     }
@@ -241,6 +250,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: this.snapshotFor(client, loc),
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(loc),
     };
   }
 }

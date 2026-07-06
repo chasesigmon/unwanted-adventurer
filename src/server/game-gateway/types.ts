@@ -5,6 +5,9 @@ export interface SyncPayload {
   player: PlayerSnapshot;
   minimap: MinimapCell[];
   room: RoomInfo;
+  // Present whenever the player's current cell has a monster in it, e.g.
+  // "A skeleton is here!" — omitted otherwise.
+  monsterMessage?: string;
 }
 
 export interface KickedPayload {
@@ -17,6 +20,9 @@ export interface CommandAck {
   player?: PlayerSnapshot;
   minimap?: MinimapCell[] | null;
   room?: RoomInfo;
+  // Always sent alongside `room` (never independently) — its absence when
+  // `room` is present means "no monster here", not "unknown".
+  monsterMessage?: string;
   loggedOut?: boolean;
 }
 
