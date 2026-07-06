@@ -2,8 +2,9 @@ import type { MapName } from '../../shared/constants.js';
 import type { Direction } from '../../shared/directions.js';
 import type { MoveResult } from '../game/types.js';
 
-// Message protocol between RoomManager (main thread) and a room's
-// worker_thread. Message-passing only, deliberately — no shared memory.
+// Message protocol between WorldManagerService (main thread) and a world
+// instance's worker_thread. Message-passing only, deliberately — no shared
+// memory.
 export interface AddMessage {
   type: 'add';
   username: string;
@@ -23,18 +24,19 @@ export interface MoveRequest {
   direction: Direction;
 }
 
-// What RoomManager constructs when it wants to ask a worker to resolve a
-// move — reqId isn't part of this because the caller doesn't pick it;
-// `RoomManager.askWorker` assigns it before the message actually goes over
-// the wire (see MoveMessage below).
+// What WorldManagerService constructs when it wants to ask a worker to
+// resolve a move — reqId isn't part of this because the caller doesn't
+// pick it; `WorldManagerService.askWorker` assigns it before the message
+// actually goes over the wire (see MoveMessage below).
 export type MoveMessage = MoveRequest & { reqId: number };
 
 export type WorkerRequest = AddMessage | RemoveMessage | MoveMessage;
 
-// A worker can additionally report "not-found" (the room's local player
-// record is missing) — this should never happen in practice since
-// RoomManager always sends 'add' before any 'move' for a given player, but
-// the protocol still has to account for it rather than fake up coordinates.
+// A worker can additionally report "not-found" (the world instance's local
+// player record is missing) — this should never happen in practice since
+// WorldManagerService always sends 'add' before any 'move' for a given
+// player, but the protocol still has to account for it rather than fake up
+// coordinates.
 export type WorkerMoveResult = MoveResult | { ok: false; transitioned: false; error: 'not-found' };
 
 export interface WorkerResponse {

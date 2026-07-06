@@ -27,7 +27,7 @@ The server is a standard NestJS module tree, one directory per module:
 | `database/` | `@nestjs/mongoose` connection |
 | `players/` | `Player` schema + `PlayersService` (Mongo queries) |
 | `auth/` | register/login/logout controller + service, JWT, Redis session tracking |
-| `rooms/` | `RoomManagerService` — room/worker_thread sharding (see below) |
+| `worlds/` | `WorldManagerService` — per-map world-instance/worker_thread sharding (see below) |
 | `rate-limit/` | Socket.io connection + per-socket command rate limiting |
 | `game-gateway/` | `@WebSocketGateway` — the Socket.io protocol handler |
 | `health/` | `GET /health` |
@@ -47,7 +47,7 @@ avoided rather than solved: a `worker_thread` spawned via `new Worker(...)`
 gets a fresh module-loading context that doesn't inherit whatever hook made
 the main thread understand `.ts` files, so a `tsx`-run app has to do extra
 work to make worker files transpile too. With a real compiled build, the
-worker (`rooms/room-worker.ts` → `dist/server/rooms/room-worker.js`) is
+worker (`worlds/world-worker.ts` → `dist/server/worlds/world-worker.js`) is
 just plain JavaScript by the time it's spawned — no TypeScript in the
 runtime path at all, so the problem doesn't exist.
 
@@ -61,7 +61,7 @@ checks both the client and server configs without emitting anything.
 
 - **`game/*` (`GameMap`, `maps.ts`, `resolveMove.ts`, `types.ts`)** are
   plain, dependency-free modules — not `@Injectable()` services. They have
-  to be importable from `rooms/room-worker.ts`, which runs in a
+  to be importable from `worlds/world-worker.ts`, which runs in a
   `worker_thread` with no access to Nest's DI container at all (it's a
   separate script, not part of the Nest application). Wrapping them in a
   Nest service would make them unusable from the one place that most needs
@@ -75,9 +75,14 @@ checks both the client and server configs without emitting anything.
 is a single grid instance with its own bounds and list of exits; the
 registry of actual instances lives in `game/maps.ts`. Movement/minimap
 resolution is a pure function (`game/resolveMove.ts`) shared by the main
-thread and room workers (see "Rooms and worker threads" below) — the same
-logic runs identically wherever a given player's room happens to be
-processed.
+thread and world workers (see "World instances and worker threads" below)
+— the same logic runs identically wherever a given player's world instance
+happens to be processed.
+
+Note: "room" (`game/room.ts`, `RoomInfo`, see "Rooms" under "Maps and
+exits") means a single grid space — a different concept from the
+world-instance sharding described here. The two are unrelated; the shared
+word is coincidental.
 
 Movement is turn-based and request/response rather than continuously
 simulated: a client sends a command string, the server resolves it to a
@@ -104,6 +109,17 @@ returning players resume wherever they last were. The minimap renders `@`
 for the player's own cell, `*` for an exit tile within view, `.` for a
 normal in-bounds cell, and `#` for out of bounds. Adding another map/exit is
 just another `GameMap` entry in `maps.ts`.
+
+### Rooms
+
+Every grid space is also a "room" (`game/room.ts`) with its own `id`
+(`"Labyrinth:7:7"`) and `description` — for now just the map name and
+position (`"Labyrinth (7, 7)"`), which is the seam where real authored
+per-room content would plug in later. The server includes the current
+room in the `sync` event and in command acks; the client shows the
+description as a line beneath the "entered"/"moved" message. This is
+unrelated to the world-instance sharding described below — the shared word
+is coincidental.
 
 ## Auth: bcrypt + JWT + Redis session tracking
 
@@ -190,29 +206,30 @@ All of the above are tunable via env vars — see `.env.example`.
   does not attempt to reconnect; anything else (`"transport close"`,
   `"ping timeout"`, etc.) does.
 
-## Rooms and worker threads
+## World instances and worker threads
 
-Players are grouped into rooms per map, capped at `ROOM_CAPACITY` (default
-50, `rooms/room-manager.service.ts`). The **first** room created for a
-given map is processed inline on the main thread — spinning up a worker
-for a handful of players isn't worth it. **Every room after that** is
-backed by its own real `worker_thread` (`rooms/room-worker.ts`), which owns
-that room's player positions and runs `resolveMove`/exit resolution
-entirely off the main thread; the main thread only relays `command`
-messages to it and awaits the reply via `postMessage`. When a player
-transitions maps (via an exit), `RoomManagerService` detaches them from
-their current room and reassigns them to a room for the destination map —
-which may move them onto a different worker, or back onto the main thread.
+Players are grouped into world instances per map, capped at
+`WORLD_CAPACITY` (default 50, `worlds/world-manager.service.ts`). The
+**first** instance created for a given map is processed inline on the main
+thread — spinning up a worker for a handful of players isn't worth it.
+**Every instance after that** is backed by its own real `worker_thread`
+(`worlds/world-worker.ts`), which owns that instance's player positions and
+runs `resolveMove`/exit resolution entirely off the main thread; the main
+thread only relays `command` messages to it and awaits the reply via
+`postMessage`. When a player transitions maps (via an exit),
+`WorldManagerService` detaches them from their current instance and
+reassigns them to an instance for the destination map — which may move
+them onto a different worker, or back onto the main thread.
 
 This is real, working `worker_threads` usage, not just a documented
-design — you can lower `ROOM_CAPACITY` in `.env` to see it spawn a worker
+design — you can lower `WORLD_CAPACITY` in `.env` to see it spawn a worker
 with a handful of test connections rather than needing 51 real players.
 
 Splitting further into separate deployable microservices (rather than
 worker_threads within one process) is not implemented — that would need
-service discovery and cross-process routing of a given room's socket
+service discovery and cross-process routing of a given instance's socket
 connections, which is out of scope for a docker-compose demo. The
-`RoomManagerService`/worker boundary is deliberately the seam where that
+`WorldManagerService`/worker boundary is deliberately the seam where that
 split would happen: swap `new Worker(...)` for a connection to a separate
 process/service speaking the same `{type, ...}` message protocol.
 
@@ -270,7 +287,7 @@ npm start                   # builds the server (nest build -> /dist/server) and
 (`nest start --watch`) both compile via `tsconfig.build.json`, whose
 `rootDir`/`outDir` mirror the `src/` tree exactly (`dist/server/...`,
 `dist/shared/...`) so relative imports resolve identically to source, and
-so the compiled `room-worker.js` sits right next to `room-manager.service.js`
+so the compiled `world-worker.js` sits right next to `world-manager.service.js`
 the same way it does in `src/`.
 
 ## Scaling notes
@@ -282,13 +299,13 @@ This repo is a single-process reference implementation. To take it further:
   [`@socket.io/redis-adapter`](https://socket.io/docs/v4/redis-adapter/) so
   broadcasts fan out across instances. Redis is already in the stack for
   session tracking, so this is a natural next step, not a new dependency.
-- **Rooms past worker_threads**: see "Rooms and worker threads" above —
-  the `RoomManagerService` → worker boundary is where a real microservice
-  split would happen.
+- **World instances past worker_threads**: see "World instances and worker
+  threads" above — the `WorldManagerService` → worker boundary is where a
+  real microservice split would happen.
 - **Visibility of other players**: the current command ack only tells a
-  player about themselves. A shared world at scale would want a
-  room-scoped broadcast (e.g. "Bob moved into view") rather than every
-  client polling.
+  player about themselves. A shared world at scale would want a broadcast
+  scoped to the player's world instance (e.g. "Bob moved into view") rather
+  than every client polling.
 - **Persistence**: player state is upserted on connect/disconnect only.
   For crash resilience, add periodic autosave and a write-behind queue
   instead of writing to MongoDB directly from the socket handler.

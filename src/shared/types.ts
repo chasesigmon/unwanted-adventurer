@@ -14,3 +14,12 @@ export interface MinimapCell {
   inBounds: boolean;
   exit: boolean;
 }
+
+// Each grid space is a "room" with its own id and description. For now the
+// description is just derived from the map name and position — this is the
+// seam where authored per-room content (real names/descriptions) would
+// plug in later without changing the wire shape.
+export interface RoomInfo {
+  id: string;
+  description: string;
+}

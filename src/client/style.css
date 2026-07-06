@@ -145,8 +145,17 @@ body {
 #action-log {
   flex: 1;
   min-height: 1.4em;
+}
+
+#action-message {
   font-size: 0.95rem;
   color: #ffd166;
+}
+
+#room-description {
+  font-size: 0.8rem;
+  color: #8b949e;
+  margin-top: 0.15rem;
 }
 
 #minimap {

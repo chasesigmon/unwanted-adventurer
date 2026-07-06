@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { NetworkManager, type DisconnectedDetail } from '../net/NetworkManager.js';
 import type { SyncPayload, KickedPayload } from '../../server/game-gateway/types.js';
-import type { PlayerSnapshot, MinimapCell } from '../../shared/types.js';
+import type { PlayerSnapshot, MinimapCell, RoomInfo } from '../../shared/types.js';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
 
@@ -12,6 +12,7 @@ interface GameState {
   authError: string;
   player: PlayerSnapshot | null;
   minimap: MinimapCell[];
+  room: RoomInfo | null;
   actionMessage: string;
 }
 
@@ -20,13 +21,14 @@ const initialState: GameState = {
   authError: '',
   player: null,
   minimap: [],
+  room: null,
   actionMessage: '',
 };
 
 type Action =
   | { type: 'authError'; message: string }
-  | { type: 'sync'; player: PlayerSnapshot; minimap: MinimapCell[]; isReconnect: boolean }
-  | { type: 'commandResult'; message: string; player?: PlayerSnapshot; minimap?: MinimapCell[] }
+  | { type: 'sync'; player: PlayerSnapshot; minimap: MinimapCell[]; room: RoomInfo; isReconnect: boolean }
+  | { type: 'commandResult'; message: string; player?: PlayerSnapshot; minimap?: MinimapCell[]; room?: RoomInfo }
   | { type: 'connectionMessage'; message: string }
   | { type: 'loggedOut'; message?: string };
 
@@ -40,6 +42,7 @@ function reducer(state: GameState, action: Action): GameState {
         authError: '',
         player: action.player,
         minimap: action.minimap,
+        room: action.room,
         actionMessage: action.isReconnect
           ? 'Reconnected — position resynced with the server.'
           : `${action.player.username} entered ${action.player.map}.`,
@@ -49,6 +52,7 @@ function reducer(state: GameState, action: Action): GameState {
         ...state,
         player: action.player ?? state.player,
         minimap: action.minimap ?? state.minimap,
+        room: action.room ?? state.room,
         actionMessage: action.message,
       };
     case 'connectionMessage':
@@ -84,10 +88,10 @@ export function useGameConnection(): UseGameConnection {
 
   useEffect(() => {
     function onSync(e: Event): void {
-      const { player, minimap } = (e as CustomEvent<SyncPayload>).detail;
+      const { player, minimap, room } = (e as CustomEvent<SyncPayload>).detail;
       const isReconnect = hasSyncedOnceRef.current;
       hasSyncedOnceRef.current = true;
-      dispatch({ type: 'sync', player, minimap, isReconnect });
+      dispatch({ type: 'sync', player, minimap, room, isReconnect });
     }
 
     function onKicked(e: Event): void {
@@ -100,6 +104,10 @@ export function useGameConnection(): UseGameConnection {
 
     function onDisconnected(e: Event): void {
       const { reason } = (e as CustomEvent<DisconnectedDetail>).detail;
+      // A server- or client-initiated disconnect (logout, or kicked by a
+      // newer login) won't auto-reconnect and the token is no longer good —
+      // go back to login. Anything else is a transient network drop that
+      // Socket.io will retry on its own.
       if (reason === 'io server disconnect' || reason === 'io client disconnect') {
         network.disconnectAndReset();
         hasSyncedOnceRef.current = false;
@@ -164,6 +172,7 @@ export function useGameConnection(): UseGameConnection {
         message: res.message,
         player: res.player,
         minimap: res.minimap ?? undefined,
+        room: res.room,
       });
     } catch (err) {
       dispatch({

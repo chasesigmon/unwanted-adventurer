@@ -1,9 +1,10 @@
 import type { Server, Socket } from 'socket.io';
-import type { PlayerSnapshot, MinimapCell } from '../../shared/types.js';
+import type { PlayerSnapshot, MinimapCell, RoomInfo } from '../../shared/types.js';
 
 export interface SyncPayload {
   player: PlayerSnapshot;
   minimap: MinimapCell[];
+  room: RoomInfo;
 }
 
 export interface KickedPayload {
@@ -15,6 +16,7 @@ export interface CommandAck {
   message: string;
   player?: PlayerSnapshot;
   minimap?: MinimapCell[] | null;
+  room?: RoomInfo;
   loggedOut?: boolean;
 }
 

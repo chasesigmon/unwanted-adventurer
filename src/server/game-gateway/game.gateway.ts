@@ -11,13 +11,14 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import { PlayersService } from '../players/players.service.js';
-import { RoomManagerService } from '../rooms/room-manager.service.js';
+import { WorldManagerService } from '../worlds/world-manager.service.js';
 import { AuthService } from '../auth/auth.service.js';
 import { SessionStoreService } from '../auth/session-store.service.js';
 import { ActiveConnectionsService } from '../auth/active-connections.service.js';
 import { SocketConnectionLimiterService } from '../rate-limit/socket-connection-limiter.service.js';
 import { CommandRateLimiter, type CommandRateLimiterOptions } from '../rate-limit/command-rate-limiter.js';
 import { getMap } from '../game/maps.js';
+import { resolveRoom } from '../game/room.js';
 import { STARTING_MAP } from '../../shared/constants.js';
 import { DIRECTION_ALIASES } from '../../shared/directions.js';
 import { commandSchema } from './command.schema.js';
@@ -36,7 +37,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
   constructor(
     private readonly playersService: PlayersService,
-    private readonly roomManager: RoomManagerService,
+    private readonly worldManager: WorldManagerService,
     private readonly authService: AuthService,
     private readonly sessionStore: SessionStoreService,
     private readonly activeConnections: ActiveConnectionsService,
@@ -106,11 +107,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const row = doc?.row ?? Math.floor(startingMap.rows / 2);
     const col = doc?.col ?? Math.floor(startingMap.cols / 2);
 
-    await this.roomManager.addPlayer(username, mapName, row, col);
+    await this.worldManager.addPlayer(username, mapName, row, col);
 
     client.emit('sync', {
       player: { username, map: mapName, row, col },
-      minimap: this.roomManager.getMinimap(username) ?? [],
+      minimap: this.worldManager.getMinimap(username) ?? [],
+      room: resolveRoom({ mapName, row, col }),
     });
   }
 
@@ -119,8 +121,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.commandLimiters.delete(client.id);
     this.activeConnections.clearActiveSocketIfCurrent(username, client.id);
 
-    const loc = this.roomManager.getLocation(username);
-    this.roomManager.removePlayer(username);
+    const loc = this.worldManager.getLocation(username);
+    this.worldManager.removePlayer(username);
     if (loc) {
       try {
         await this.playersService.updatePosition(username, { map: loc.mapName, row: loc.row, col: loc.col });
@@ -165,20 +167,21 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     const direction = DIRECTION_ALIASES[text];
     if (!direction) {
-      const loc = this.roomManager.getLocation(username);
+      const loc = this.worldManager.getLocation(username);
       const ackPayload: CommandAck = {
         ok: false,
         message: `Unknown command: "${rawText}".`,
-        minimap: this.roomManager.getMinimap(username),
+        minimap: this.worldManager.getMinimap(username),
       };
       if (loc) {
         ackPayload.player = { username, map: loc.mapName, row: loc.row, col: loc.col };
+        ackPayload.room = resolveRoom(loc);
       }
       return ackPayload;
     }
 
-    const fromMap = this.roomManager.getLocation(username)?.mapName ?? 'the world';
-    const result = await this.roomManager.processCommand(username, direction);
+    const fromMap = this.worldManager.getLocation(username)?.mapName ?? 'the world';
+    const result = await this.worldManager.processCommand(username, direction);
 
     if (!result) {
       return { ok: false, message: 'Your session was lost. Please reconnect.' };
@@ -193,7 +196,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message = `${username} moved ${direction}.`;
     }
 
-    const loc = this.roomManager.getLocation(username);
+    const loc = this.worldManager.getLocation(username);
     if (!loc) {
       return { ok: false, message: 'Your session was lost. Please reconnect.' };
     }
@@ -202,7 +205,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       ok: result.ok,
       message,
       player: { username, map: loc.mapName, row: loc.row, col: loc.col },
-      minimap: this.roomManager.getMinimap(username),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
     };
   }
 }

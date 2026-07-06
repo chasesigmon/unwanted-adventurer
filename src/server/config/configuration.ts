@@ -17,7 +17,7 @@ export interface AppConfig {
   commandRateLimitMax: number;
   commandRateLimitRefillPerSec: number;
 
-  roomCapacity: number;
+  worldCapacity: number;
 }
 
 // Factory consumed by ConfigModule.forRoot({ load: [configuration] }) — the
@@ -47,6 +47,6 @@ export default (): AppConfig => {
     commandRateLimitMax: Number(process.env.COMMAND_RATE_LIMIT_MAX) || 10,
     commandRateLimitRefillPerSec: Number(process.env.COMMAND_RATE_LIMIT_REFILL_PER_SEC) || 10,
 
-    roomCapacity: Number(process.env.ROOM_CAPACITY) || 50,
+    worldCapacity: Number(process.env.WORLD_CAPACITY) || 50,
   };
 };

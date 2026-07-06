@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import type { PlayerSnapshot, MinimapCell } from '../../shared/types.js';
+import type { PlayerSnapshot, MinimapCell, RoomInfo } from '../../shared/types.js';
 import { Minimap } from './Minimap.js';
 
 export interface GameScreenProps {
   player: PlayerSnapshot | null;
   minimap: MinimapCell[];
+  room: RoomInfo | null;
   actionMessage: string;
   onCommand: (text: string) => void;
 }
@@ -26,7 +27,7 @@ const MOVE_KEYS: Record<string, string> = {
   ArrowRight: 'd',
 };
 
-export function GameScreen({ player, minimap, actionMessage, onCommand }: GameScreenProps): JSX.Element {
+export function GameScreen({ player, minimap, room, actionMessage, onCommand }: GameScreenProps): JSX.Element {
   const [command, setCommand] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -72,7 +73,10 @@ export function GameScreen({ player, minimap, actionMessage, onCommand }: GameSc
 
       <div id="bottom-bar">
         <div id="status-row">
-          <div id="action-log">{actionMessage}</div>
+          <div id="action-log">
+            <div id="action-message">{actionMessage}</div>
+            {room && <div id="room-description">{room.description}</div>}
+          </div>
           <div className="side-box" id="minimap-box">
             <div className="side-box-label">Minimap</div>
             <Minimap cells={minimap} />

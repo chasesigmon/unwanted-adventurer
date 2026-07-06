@@ -13,6 +13,7 @@ export function App(): JSX.Element {
     <GameScreen
       player={state.player}
       minimap={state.minimap}
+      room={state.room}
       actionMessage={state.actionMessage}
       onCommand={sendCommand}
     />

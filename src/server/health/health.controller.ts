@@ -1,18 +1,18 @@
 import { Controller, Get } from '@nestjs/common';
-import { RoomManagerService } from '../rooms/room-manager.service.js';
+import { WorldManagerService } from '../worlds/world-manager.service.js';
 import { MAPS } from '../game/maps.js';
 
 @Controller('health')
 export class HealthController {
-  constructor(private readonly roomManager: RoomManagerService) {}
+  constructor(private readonly worldManager: WorldManagerService) {}
 
   @Get()
   getHealth() {
-    const stats = this.roomManager.getStats();
+    const stats = this.worldManager.getStats();
     return {
       ok: true,
       players: stats.totalPlayers,
-      rooms: stats.rooms,
+      worlds: stats.worlds,
       maps: Array.from(MAPS.values()).map((m) => ({ name: m.name, rows: m.rows, cols: m.cols })),
     };
   }

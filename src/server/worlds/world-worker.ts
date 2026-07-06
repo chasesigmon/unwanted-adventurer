@@ -4,15 +4,15 @@ import type { Location } from '../game/types.js';
 import type { WorkerRequest, WorkerResponse } from './protocol.js';
 
 if (!parentPort) {
-  throw new Error('room-worker.ts must be run as a worker_thread, not imported directly.');
+  throw new Error('world-worker.ts must be run as a worker_thread, not imported directly.');
 }
 const port = parentPort;
 
-// Entry point for a room's dedicated worker_thread. Owns the live
-// {mapName, row, col} for every player currently assigned to this room and
-// processes their movement here, off the main thread. Communication with
-// the main thread (RoomManager) is message-passing only — no shared
-// memory, by design.
+// Entry point for a world instance's dedicated worker_thread. Owns the
+// live {mapName, row, col} for every player currently assigned to this
+// instance and processes their movement here, off the main thread.
+// Communication with the main thread (WorldManagerService) is
+// message-passing only — no shared memory, by design.
 const players = new Map<string, Location>();
 
 port.on('message', (msg: WorkerRequest) => {
