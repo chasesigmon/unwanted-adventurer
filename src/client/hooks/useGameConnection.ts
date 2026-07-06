@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { NetworkManager, type DisconnectedDetail } from '../net/NetworkManager.js';
-import type { SyncPayload, KickedPayload } from '../../server/sockets/types.js';
+import type { SyncPayload, KickedPayload } from '../../server/game-gateway/types.js';
 import type { PlayerSnapshot, MinimapCell } from '../../shared/types.js';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';

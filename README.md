@@ -1,11 +1,11 @@
-# Text Arena — Real-Time Multiplayer Grid Game (TypeScript + Socket.io + MongoDB + Redis)
+# Text Arena — Real-Time Multiplayer Grid Game (NestJS + Fastify + React + Socket.io + MongoDB + Redis)
 
 A small authoritative-server multiplayer text game: players register/log in
 with a username and password, then navigate named map instances (currently
 "Labyrinth", a 15x15 starting area, and "World", a 60x60 open map) by typing
 commands into a text box. There is no graphical rendering — the whole client
-is DOM/text: a position readout, a one-line action log, a 3x3 minimap, and a
-full-width command input.
+is DOM/text (React): a position readout, a one-line action log, a 3x3
+minimap, and a full-width command input.
 
 The whole codebase — client, server, and shared modules — is TypeScript.
 
@@ -14,32 +14,62 @@ The whole codebase — client, server, and shared modules — is TypeScript.
 ```
 /src
   /shared    Map sizes + direction-alias constants + wire-contract types, shared by client and server
-  /server    Auth, sessions, rate limiting, rooms/workers, maps (Node + Socket.io + MongoDB + Redis)
-  /client    Plain DOM/CSS UI, input capture only
+  /server    NestJS app (Fastify HTTP adapter, Socket.io gateway, MongoDB, Redis) — see module list below
+  /client    React UI, input capture only
 ```
 
-### TypeScript setup
+The server is a standard NestJS module tree, one directory per module:
 
-Two `tsconfig`s, since the client (DOM) and server (Node) need different
-`lib`/`types`:
+| Module | Responsibility |
+|---|---|
+| `config/` | `@nestjs/config` factory — the one place env vars are parsed |
+| `redis/` | `ioredis` client, provided under the `REDIS_CLIENT` token |
+| `database/` | `@nestjs/mongoose` connection |
+| `players/` | `Player` schema + `PlayersService` (Mongo queries) |
+| `auth/` | register/login/logout controller + service, JWT, Redis session tracking |
+| `rooms/` | `RoomManagerService` — room/worker_thread sharding (see below) |
+| `rate-limit/` | Socket.io connection + per-socket command rate limiting |
+| `game-gateway/` | `@WebSocketGateway` — the Socket.io protocol handler |
+| `health/` | `GET /health` |
+| `game/` | `GameMap`, the map registry, and pure move/minimap resolution — **not** Nest-managed (see below) |
 
-- `tsconfig.json` — client + shared, `lib: ["ES2022", "DOM", "DOM.Iterable"]`.
-- `tsconfig.server.json` — server + shared, `types: ["node"]`, no DOM.
+### Why NestJS forced a real `tsc` build (not `tsx`)
 
-The server runs directly via [`tsx`](https://github.com/privatenumber/tsx)
-(`npm run dev:server` / `npm start`) rather than a separate `tsc` build step
-— this also transparently gives TypeScript support inside the room
-worker_threads (see "Rooms and worker threads"), which would otherwise need
-extra plumbing to run a `.ts` worker file. The client is bundled by Vite,
-which strips types via esbuild the same way. Neither build step
-type-checks — run `npm run typecheck` for that (useful in CI or before
-committing).
+Nest's dependency injection resolves constructor parameter types via
+TypeScript's `emitDecoratorMetadata` — real compiler-emitted metadata that
+`tsx`/esbuild cannot produce (esbuild strips types without full type
+resolution, so it has nothing to compute that metadata from). So the server
+now runs through the Nest CLI (`nest build` / `nest start --watch`), which
+wraps a real `tsc` compile, instead of `tsx`.
 
-The Socket.io event contract (`ServerToClientEvents`, `ClientToServerEvents`,
-`SocketData`, etc., in `src/server/sockets/types.ts`) is imported by the
-client as `import type` — fully erased at build time, so there's no runtime
-coupling, but the client and server can never silently drift apart on what a
-`sync` payload or a command ack actually looks like.
+This conveniently also resolves a problem the previous `tsx`-based setup
+avoided rather than solved: a `worker_thread` spawned via `new Worker(...)`
+gets a fresh module-loading context that doesn't inherit whatever hook made
+the main thread understand `.ts` files, so a `tsx`-run app has to do extra
+work to make worker files transpile too. With a real compiled build, the
+worker (`rooms/room-worker.ts` → `dist/server/rooms/room-worker.js`) is
+just plain JavaScript by the time it's spawned — no TypeScript in the
+runtime path at all, so the problem doesn't exist.
+
+`tsconfig.server.json` (`noEmit: true`) is used for editor/typecheck; a
+separate `tsconfig.build.json` (`rootDir: "src"`, `outDir: "dist"`, mirrors
+the source tree so `dist/server/...` and `dist/shared/...` sit as siblings)
+is what `nest build` actually compiles with. `npm run typecheck` still
+checks both the client and server configs without emitting anything.
+
+### Two things kept deliberately outside Nest's DI
+
+- **`game/*` (`GameMap`, `maps.ts`, `resolveMove.ts`, `types.ts`)** are
+  plain, dependency-free modules — not `@Injectable()` services. They have
+  to be importable from `rooms/room-worker.ts`, which runs in a
+  `worker_thread` with no access to Nest's DI container at all (it's a
+  separate script, not part of the Nest application). Wrapping them in a
+  Nest service would make them unusable from the one place that most needs
+  them.
+- **`rate-limit/command-rate-limiter.ts`** is a plain class, not a
+  singleton provider — the gateway creates one instance per connection
+  (`new CommandRateLimiter(...)`, seeded with config values it already
+  has), since there's no natural per-connection DI scope to reach for here.
 
 **The server is the only source of truth.** `GameMap` (`game/GameMap.ts`)
 is a single grid instance with its own bounds and list of exits; the
@@ -78,59 +108,75 @@ just another `GameMap` entry in `maps.ts`.
 ## Auth: bcrypt + JWT + Redis session tracking
 
 Registration/login are plain HTTP endpoints (`POST /auth/register`,
-`POST /auth/login`), not Socket.io events, since a JWT has to exist before
-the authenticated socket connection is even opened.
+`POST /auth/login`, handled by `auth/auth.controller.ts`), not Socket.io
+events, since a JWT has to exist before the authenticated socket connection
+is even opened. Nest's exceptions (`BadRequestException`,
+`UnauthorizedException`, `ConflictException`) are thrown from
+`auth/auth.service.ts` and normalized by a global filter
+(`common/http-exception.filter.ts`) into this project's
+`{ ok: false, error }` response shape, rather than Nest/Fastify's default
+`{ statusCode, message, error }` — the client only ever has to understand
+one shape.
 
-- **Passwords** are hashed with `bcryptjs` (`auth/password.ts`) — a
+- **Passwords** are hashed with `bcryptjs` directly in `AuthService` — a
   pure-JS implementation of the same bcrypt algorithm as the native
   `bcrypt` package, chosen so installing this repo never depends on a
   native build step. Salt rounds are configurable (`BCRYPT_SALT_ROUNDS`,
   default 12).
-- **Login issues a stateless JWT** (`auth/jwt.ts`) containing
+- **Login issues a stateless JWT** via `@nestjs/jwt`'s `JwtService`
+  (configured in `auth/auth.module.ts`) containing
   `{ username, sessionId }`, where `sessionId` is a fresh UUID minted on
   every successful login.
 - **Redis tracks the one active `sessionId` per username**
-  (`auth/sessionStore.ts`, key `session:{username}`, TTL matching the JWT's
-  expiry). A Socket.io connection is only accepted if the JWT's
+  (`auth/session-store.service.ts`, key `session:{username}`, TTL matching
+  the JWT's expiry). A Socket.io connection is only accepted if the JWT's
   `sessionId` still matches what's in Redis — so logging in again
   immediately invalidates any previously issued token for that user, even
   before it expires.
-- **Duplicate logins actively kick the old session**: `POST /auth/login`
+- **Duplicate logins actively kick the old session**: `AuthService.login()`
   looks up whether the user already has a live socket
-  (`state/activeConnections.ts`, an in-memory `username → socket.id` map),
-  and if so emits `session:kicked` to it and force-disconnects it before
-  installing the new session. The client treats being kicked the same as
-  an explicit logout — back to the login screen, no auto-reconnect (see
-  below).
-- **Logout** — type `logout` in the command box. The server clears the
-  Redis session and disconnects the socket from its end; a
-  `POST /auth/logout` HTTP route also exists for completeness (e.g. an
-  admin "sign out everywhere" action), though the in-game command is the
-  primary path.
+  (`auth/active-connections.service.ts`, an in-memory `username → socket.id`
+  map) and, if so, emits `session:kicked` to it and force-disconnects it
+  before installing the new session. `ActiveConnectionsService` gets a
+  reference to the live Socket.io `Server` once, from
+  `GameGateway.afterInit()` — this is also what lets `AuthService` (an HTTP
+  controller's dependency) and `GameGateway` (the WS layer) share socket
+  state without depending on each other directly. The client treats being
+  kicked the same as an explicit logout — back to the login screen, no
+  auto-reconnect (see below).
+- **Logout** — type `logout` in the command box; handled directly in
+  `GameGateway`, not through `AuthService`. A `POST /auth/logout` route
+  also exists for completeness (e.g. an admin "sign out everywhere"
+  action), though the in-game command is the primary path.
+- **Validation**: register/login bodies are validated with the same `zod`
+  schemas as before (`auth/dto/credentials.dto.ts`), run through Nest's
+  pipe system via a small `ZodValidationPipe` (`common/zod-validation.pipe.ts`)
+  rather than switching to class-validator/DTO decorators — same
+  validation library, now wired through Nest's request pipeline.
 
-## Rate limiting and payload validation
+## Rate limiting
 
-- **HTTP**: `express-rate-limit` throttles `/auth/register` and
-  `/auth/login` per IP (`middleware/httpAuthRateLimiter.ts`).
+- **HTTP**: `@nestjs/throttler`'s `ThrottlerGuard` is applied to the whole
+  `AuthController`, reusing the same window/max as the socket connection
+  limiter below (`express-rate-limit` doesn't work under Fastify, since
+  it's built directly on Express's req/res API).
 - **Socket.io connections**: a per-IP fixed-window counter
-  (`middleware/socketConnectionLimiter.ts`) runs inside the `io.use()`
-  handshake middleware, before JWT verification, so a connection flood is
-  rejected cheaply.
+  (`rate-limit/socket-connection-limiter.service.ts`) runs inside the
+  `server.use()` handshake middleware registered in `GameGateway.afterInit()`,
+  before JWT verification, so a connection flood is rejected cheaply.
 - **Commands**: a per-socket token bucket
-  (`middleware/CommandRateLimiter.ts`) caps how many `command` events one
+  (`rate-limit/command-rate-limiter.ts`) caps how many `command` events one
   connected client can issue per second, independent of the connection
   limiter above (an already-connected client can't just flood events
   instead).
-- **Payload validation**: `zod` schemas (`validation/schemas.ts`) validate
-  register/login bodies and the command string's shape before any of it
-  reaches a DB query or the game logic.
 
 All of the above are tunable via env vars — see `.env.example`.
 
 ## Heartbeat and reconnection
 
 - **Heartbeat**: Socket.io's built-in engine.io ping/pong is configured
-  explicitly (`pingInterval` / `pingTimeout` in `server/index.ts`) rather
+  explicitly (`pingInterval` / `pingTimeout`, merged into the underlying
+  `Server`'s options by the custom `WsAdapter` in `ws-adapter.ts`) rather
   than reimplemented — it already does exactly this at the transport
   layer, so a dead connection (no pong within the timeout) is dropped
   automatically.
@@ -147,16 +193,16 @@ All of the above are tunable via env vars — see `.env.example`.
 ## Rooms and worker threads
 
 Players are grouped into rooms per map, capped at `ROOM_CAPACITY` (default
-50, `rooms/RoomManager.ts`). The **first** room created for a given map is
-processed inline on the main thread — spinning up a worker for a handful
-of players isn't worth it. **Every room after that** is backed by its own
-real `worker_thread` (`rooms/roomWorker.ts`), which owns that room's player
-positions and runs `resolveMove`/exit resolution entirely off the main
-thread; the main thread only relays `command` messages to it and awaits
-the reply via `postMessage`. When a player transitions maps (via an exit),
-`RoomManager` detaches them from their current room and reassigns them to
-a room for the destination map — which may move them onto a different
-worker, or back onto the main thread.
+50, `rooms/room-manager.service.ts`). The **first** room created for a
+given map is processed inline on the main thread — spinning up a worker
+for a handful of players isn't worth it. **Every room after that** is
+backed by its own real `worker_thread` (`rooms/room-worker.ts`), which owns
+that room's player positions and runs `resolveMove`/exit resolution
+entirely off the main thread; the main thread only relays `command`
+messages to it and awaits the reply via `postMessage`. When a player
+transitions maps (via an exit), `RoomManagerService` detaches them from
+their current room and reassigns them to a room for the destination map —
+which may move them onto a different worker, or back onto the main thread.
 
 This is real, working `worker_threads` usage, not just a documented
 design — you can lower `ROOM_CAPACITY` in `.env` to see it spawn a worker
@@ -166,8 +212,8 @@ Splitting further into separate deployable microservices (rather than
 worker_threads within one process) is not implemented — that would need
 service discovery and cross-process routing of a given room's socket
 connections, which is out of scope for a docker-compose demo. The
-`RoomManager`/worker boundary is deliberately the seam where that split
-would happen: swap `new Worker(...)` for a connection to a separate
+`RoomManagerService`/worker boundary is deliberately the seam where that
+split would happen: swap `new Worker(...)` for a connection to a separate
 process/service speaking the same `{type, ...}` message protocol.
 
 ## Getting started
@@ -175,14 +221,21 @@ process/service speaking the same `{type, ...}` message protocol.
 ```bash
 npm install
 cp .env.example .env             # set a real JWT_SECRET etc. before deploying anywhere real
-docker compose up -d mongo redis # starts MongoDB + Redis (see below)
-npm run dev                      # runs server (nodemon, :3000) + client (Vite, :5173)
+docker compose up -d mongo redis # starts MongoDB + Redis — required before starting the server, see below
+npm run dev                      # runs server (nest start --watch, :3000) + client (Vite, :5173)
 ```
 
 Open http://localhost:5173, register a username/password, and play.
-MongoDB and Redis are both required for this version (accounts and
-sessions live there) — if either is unreachable the server logs a warning,
-but registration/login will fail without them.
+
+**MongoDB must be running before the server starts.** This is a behavior
+change from the pre-NestJS version, which caught a failed Mongo connection
+and degraded to in-memory/no-persistence mode. `@nestjs/mongoose`'s
+connection lifecycle doesn't support that gracefully — a failed connection
+now prevents the whole Nest app from bootstrapping (`retryAttempts: 0` and
+a short `serverSelectionTimeoutMS` so it at least fails in ~2.5s rather
+than hanging). Redis is unaffected — `ioredis` is fire-and-forget on
+connection failure by design (auto-reconnects, emits `error` without
+throwing), so it still degrades gracefully if unreachable.
 
 ### MongoDB + Redis via Docker
 
@@ -210,8 +263,15 @@ at these containers.
 
 ```bash
 npm run build:client        # bundles the client into /dist/client
-npm start                   # serves /dist/client and hosts the API/sockets from one process
+npm start                   # builds the server (nest build -> /dist/server) and runs it, serving /dist/client too
 ```
+
+`npm run build:server` (`nest build`) and `npm run dev:server`
+(`nest start --watch`) both compile via `tsconfig.build.json`, whose
+`rootDir`/`outDir` mirror the `src/` tree exactly (`dist/server/...`,
+`dist/shared/...`) so relative imports resolve identically to source, and
+so the compiled `room-worker.js` sits right next to `room-manager.service.js`
+the same way it does in `src/`.
 
 ## Scaling notes
 
@@ -223,8 +283,8 @@ This repo is a single-process reference implementation. To take it further:
   broadcasts fan out across instances. Redis is already in the stack for
   session tracking, so this is a natural next step, not a new dependency.
 - **Rooms past worker_threads**: see "Rooms and worker threads" above —
-  the `RoomManager` → worker boundary is where a real microservice split
-  would happen.
+  the `RoomManagerService` → worker boundary is where a real microservice
+  split would happen.
 - **Visibility of other players**: the current command ack only tells a
   player about themselves. A shared world at scale would want a
   room-scoped broadcast (e.g. "Bob moved into view") rather than every

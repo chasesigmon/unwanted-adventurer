@@ -5,7 +5,7 @@ import type {
   CommandAck,
   SyncPayload,
   KickedPayload,
-} from '../../server/sockets/types.js';
+} from '../../server/game-gateway/types.js';
 
 // Note the reversed type-parameter order versus the server's Socket<>: from
 // the client's perspective, "listen" events are what the server emits

@@ -1,14 +1,16 @@
 import { Worker } from 'worker_threads';
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import { resolveMove, resolveMinimap } from '../game/resolveMove.js';
-import { config } from '../config.js';
+import type { AppConfig } from '../config/configuration.js';
 import type { MapName } from '../../shared/constants.js';
 import type { Direction } from '../../shared/directions.js';
 import type { Location } from '../game/types.js';
 import type { MinimapCell } from '../../shared/types.js';
 import type { WorkerRequest, WorkerResponse, WorkerMoveResult, MoveRequest, MoveMessage } from './protocol.js';
 
-const WORKER_URL = new URL('./roomWorker.ts', import.meta.url);
+const WORKER_URL = new URL('./room-worker.js', import.meta.url);
 
 interface RoomEntry {
   id: string;
@@ -33,24 +35,30 @@ export interface RoomManagerStats {
   rooms: RoomStat[];
 }
 
-// Groups connected players into rooms of at most `config.roomCapacity`,
-// per map. The first room created for a given map is processed inline on
-// the main thread (cheap — no point spinning up a worker for a handful of
-// players); every room after that is backed by its own worker_thread,
-// which owns that room's player positions and movement resolution
-// entirely off the main thread. Players are reassigned rooms (and
-// therefore possibly threads) automatically when they transition maps.
-export class RoomManager {
+// Groups connected players into rooms of at most `roomCapacity`, per map.
+// The first room created for a given map is processed inline on the main
+// thread (cheap — no point spinning up a worker for a handful of players);
+// every room after that is backed by its own worker_thread, which owns
+// that room's player positions and movement resolution entirely off the
+// main thread. Players are reassigned rooms (and therefore possibly
+// threads) automatically when they transition maps.
+@Injectable()
+export class RoomManagerService {
   private rooms = new Map<string, RoomEntry>();
   private roomsByMap = new Map<MapName, string[]>(); // creation order
   private playerLocation = new Map<string, PlayerLocation>();
   private reqCounter = 0;
+  private readonly roomCapacity: number;
+
+  constructor(configService: ConfigService<AppConfig, true>) {
+    this.roomCapacity = configService.get('roomCapacity', { infer: true });
+  }
 
   private ensureRoomForMap(mapName: MapName): string {
     const roomIds = this.roomsByMap.get(mapName) ?? [];
     for (const roomId of roomIds) {
       const room = this.rooms.get(roomId);
-      if (room && room.size < config.roomCapacity) return roomId;
+      if (room && room.size < this.roomCapacity) return roomId;
     }
 
     const roomId = `${mapName}#${roomIds.length + 1}`;
@@ -60,7 +68,7 @@ export class RoomManager {
     if (worker) {
       worker.on('error', (err) => console.error(`[rooms] worker error in ${roomId}:`, err));
       console.log(
-        `[rooms] player count exceeded ${config.roomCapacity} for "${mapName}" — spawned worker_thread for room ${roomId}`
+        `[rooms] player count exceeded ${this.roomCapacity} for "${mapName}" — spawned worker_thread for room ${roomId}`
       );
     } else {
       console.log(`[rooms] created room ${roomId} (main thread)`);

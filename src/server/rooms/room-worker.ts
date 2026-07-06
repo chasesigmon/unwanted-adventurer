@@ -4,7 +4,7 @@ import type { Location } from '../game/types.js';
 import type { WorkerRequest, WorkerResponse } from './protocol.js';
 
 if (!parentPort) {
-  throw new Error('roomWorker.ts must be run as a worker_thread, not imported directly.');
+  throw new Error('room-worker.ts must be run as a worker_thread, not imported directly.');
 }
 const port = parentPort;
 

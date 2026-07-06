@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.server.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "exclude": ["node_modules", "dist", "src/client", "vite.config.ts", "**/*.spec.ts"]
+}
