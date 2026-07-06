@@ -10,6 +10,7 @@ const playerSchema = new mongoose.Schema(
       minlength: 2,
       maxlength: 16,
     },
+    map: { type: String, required: true },
     row: { type: Number, required: true },
     col: { type: Number, required: true },
     lastLogin: { type: Date, default: Date.now },

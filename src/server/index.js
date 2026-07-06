@@ -7,7 +7,8 @@ import { Server } from 'socket.io';
 
 import { config } from './config.js';
 import { connectDB } from './db/connection.js';
-import { World } from './game/World.js';
+import { GameWorld } from './game/GameWorld.js';
+import { MAPS } from './game/maps.js';
 import { registerSocketHandlers } from './sockets/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -16,14 +17,18 @@ const clientDist = path.resolve(__dirname, '../../dist/client');
 async function main() {
   await connectDB();
 
-  const world = new World();
+  const world = new GameWorld();
 
   const app = express();
   app.use(cors({ origin: config.clientOrigin }));
   app.use(express.static(clientDist));
 
   app.get('/health', (_req, res) => {
-    res.json({ ok: true, players: world.players.size, grid: { rows: world.rows, cols: world.cols } });
+    res.json({
+      ok: true,
+      players: world.players.size,
+      maps: Array.from(MAPS.values()).map((m) => ({ name: m.name, rows: m.rows, cols: m.cols })),
+    });
   });
 
   // SPA fallback for the built client (dev mode serves the client separately via Vite).

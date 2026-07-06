@@ -1,6 +1,7 @@
 import { PlayerState } from '../game/PlayerState.js';
 import { PlayerModel } from '../models/Player.js';
-import { config } from '../config.js';
+import { MAPS } from '../game/maps.js';
+import { STARTING_MAP } from '../../shared/constants.js';
 import { DIRECTION_ALIASES } from '../../shared/directions.js';
 
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{2,16}$/;
@@ -22,8 +23,9 @@ export function registerSocketHandlers(io, world) {
           return;
         }
 
-        const spawnRow = Math.floor(config.gridRows / 2);
-        const spawnCol = Math.floor(config.gridCols / 2);
+        const startingMap = MAPS.get(STARTING_MAP);
+        const spawnRow = Math.floor(startingMap.rows / 2);
+        const spawnCol = Math.floor(startingMap.cols / 2);
 
         let doc = null;
         try {
@@ -31,7 +33,7 @@ export function registerSocketHandlers(io, world) {
             { username },
             {
               $set: { lastLogin: new Date() },
-              $setOnInsert: { row: spawnRow, col: spawnCol },
+              $setOnInsert: { map: STARTING_MAP, row: spawnRow, col: spawnCol },
             },
             { upsert: true, new: true }
           );
@@ -42,6 +44,7 @@ export function registerSocketHandlers(io, world) {
         const player = new PlayerState({
           id: socket.id,
           username,
+          mapName: doc?.map ?? STARTING_MAP,
           row: doc?.row ?? spawnRow,
           col: doc?.col ?? spawnCol,
         });
@@ -52,7 +55,6 @@ export function registerSocketHandlers(io, world) {
         ack?.({
           ok: true,
           self: player.toSnapshot(),
-          grid: { rows: config.gridRows, cols: config.gridCols },
           minimap: world.getMinimap(socket.id),
         });
       } catch (err) {
@@ -81,10 +83,17 @@ export function registerSocketHandlers(io, world) {
         return;
       }
 
+      const fromMap = player.mapName;
       const result = world.movePlayer(socket.id, direction);
-      const message = result.ok
-        ? `${player.username} moved ${direction}.`
-        : `${player.username} can't move ${direction} — that's the edge of the world.`;
+
+      let message;
+      if (!result.ok) {
+        message = `${player.username} can't move ${direction} — that's the edge of ${fromMap}.`;
+      } else if (result.transitioned) {
+        message = `${player.username} moved ${direction} and left ${result.fromMap} for ${result.toMap}.`;
+      } else {
+        message = `${player.username} moved ${direction}.`;
+      }
 
       ack?.({
         ok: result.ok,
@@ -101,7 +110,7 @@ export function registerSocketHandlers(io, world) {
         try {
           await PlayerModel.updateOne(
             { username: player.username },
-            { $set: { row: player.row, col: player.col } }
+            { $set: { map: player.mapName, row: player.row, col: player.col } }
           );
         } catch (err) {
           console.warn('[db] could not persist player on disconnect:', err.message);

@@ -8,7 +8,7 @@ export function initGameUI(network, initialPlayer, initialMinimap) {
   const commandInput = document.getElementById('command-input');
 
   function renderPosition(player) {
-    positionEl.textContent = `Position: (${player.row}, ${player.col})`;
+    positionEl.textContent = `${player.map}: (${player.row}, ${player.col})`;
   }
 
   function renderMinimap(cells) {
@@ -16,7 +16,9 @@ export function initGameUI(network, initialPlayer, initialMinimap) {
     for (const cell of cells) {
       const span = document.createElement('span');
       span.className = 'minimap-cell';
-      span.textContent = cell.self ? '@' : cell.inBounds ? '.' : '#';
+      if (cell.self) span.classList.add('is-self');
+      else if (cell.exit) span.classList.add('is-exit');
+      span.textContent = cell.self ? '@' : cell.exit ? '*' : cell.inBounds ? '.' : '#';
       minimapEl.appendChild(span);
     }
   }
@@ -27,7 +29,7 @@ export function initGameUI(network, initialPlayer, initialMinimap) {
 
   renderPosition(initialPlayer);
   renderMinimap(initialMinimap);
-  renderAction(`${initialPlayer.username} entered the world.`);
+  renderAction(`${initialPlayer.username} entered ${initialPlayer.map}.`);
 
   commandInput.addEventListener('keydown', async (e) => {
     if (e.key !== 'Enter') return;
