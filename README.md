@@ -39,10 +39,10 @@ never decides its own position — it only renders whatever the ack (or a
 
 Currently defined in `src/server/game/maps.js`:
 
-| Map       | Size  | Exits                        |
-|-----------|-------|-------------------------------|
-| Labyrinth | 15x15 | `(14, 7)` → World `(0, 10)`  |
-| World     | 60x60 | none                          |
+| Map       | Size  | Exits                                |
+|-----------|-------|----------------------------------------|
+| Labyrinth | 15x15 | `(14, 7)` → World `(0, 10)`            |
+| World     | 60x60 | `(0, 10)` → Labyrinth `(14, 7)`         |
 
 New players spawn in the center of `STARTING_MAP` (`Labyrinth`, `(7, 7)`);
 returning players resume wherever they last were. The minimap renders `@`

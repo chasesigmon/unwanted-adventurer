@@ -10,6 +10,7 @@ const labyrinth = new GameMap({
 const world = new GameMap({
   name: 'World',
   ...MAP_SIZES.World,
+  exits: [{ row: 0, col: 10, toMap: 'Labyrinth', toRow: 14, toCol: 7 }],
 });
 
 export const MAPS = new Map([
