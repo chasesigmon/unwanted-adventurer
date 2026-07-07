@@ -39,6 +39,7 @@ export interface PlayerStats {
   equipment: Record<string, string>;
   gold: number;
   autoSacrifice: boolean;
+  autoConsume: boolean;
 }
 
 @Injectable()

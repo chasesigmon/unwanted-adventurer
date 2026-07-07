@@ -205,13 +205,15 @@ export function GameScreen({
               {player && player.inventory.length > 0 ? player.inventory.join(', ') : '(empty)'}
             </div>
           </div>
-          {/* Each togglable automation ("auto sac"/"auto sacrifice" so far)
-              renders as one shaded (on) or unshaded (off) tile — see
-              "auto-toggle" below and its --active variant. */}
+          {/* Each togglable automation ("auto sac"/"auto sacrifice",
+              "auto con"/"auto consume") renders as one shaded (on) or
+              unshaded (off) tile — see "auto-toggle" below and its
+              --active variant. */}
           <div className="side-box" id="auto-box">
             <div className="side-box-label">Auto</div>
             <div className="side-box-content">
               <span className={`auto-toggle${player?.autoSacrifice ? ' auto-toggle--active' : ''}`}>Sacrifice</span>
+              <span className={`auto-toggle${player?.autoConsume ? ' auto-toggle--active' : ''}`}>Consume</span>
             </div>
           </div>
         </div>

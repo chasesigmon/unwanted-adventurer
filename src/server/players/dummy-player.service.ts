@@ -1,19 +1,17 @@
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 import { getMap } from '../game/maps.js';
-import { GOBLIN_STARTING_SKILLS, STARTING_SKILL_PERCENT } from './skills.js';
+import { startingSkillsForRace, STARTING_SKILL_PERCENT } from './skills.js';
 import type { MapName, Race } from '../../shared/constants.js';
 
 const DUMMY_LEVEL = 1;
 const DUMMY_BASE_ATTRIBUTE = 1;
 const DUMMY_MAX_HP = 100;
 
-// Same "goblin gets a starting kit" rule as a real player (see
-// GameGateway.handleConnection) — TrainingGoblin is goblin-race too, so
-// it gets the same dodge/parry/dagger/kick baseline for consistent combat
-// math against it.
+// Same per-race starting kit rule as a real player (see
+// GameGateway.handleConnection) — every dummy gets its race's baseline
+// skills for consistent combat math against it.
 function startingSkillLevelsFor(race: Race): Record<string, number> {
-  if (race !== 'goblin') return {};
-  return Object.fromEntries(GOBLIN_STARTING_SKILLS.map((skill) => [skill, STARTING_SKILL_PERCENT]));
+  return Object.fromEntries(startingSkillsForRace(race).map((skill) => [skill, STARTING_SKILL_PERCENT]));
 }
 
 // Fixed "test/dummy players" — practice targets for "murder <player>",

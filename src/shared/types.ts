@@ -25,9 +25,10 @@ export interface PlayerSnapshot {
   // server-side, not stored; the client uses it purely to size the XP bar.
   maxTnl: number;
   // Permanent abilities, keyed by name with a 1-100 percentage value —
-  // gained either from a goblin's level-1 starter kit (dodge/parry/
-  // dagger/kick) or from consuming a body part ("lesser undead monster
-  // resistance", "lesser <race> resistance"). See players/skills.ts.
+  // gained either from a race's level-1 starter kit (dodge/parry, plus
+  // dagger/kick or, for slime, slap) or from consuming a body part
+  // ("lesser undead monster resistance", "lesser <race> resistance"). See
+  // players/skills.ts.
   skillLevels: Record<string, number>;
   // Items picked up via "grab"/"get <item>" — see the "inventory" command.
   inventory: string[];
@@ -39,6 +40,9 @@ export interface PlayerSnapshot {
   // Toggled via "auto sac"/"auto sacrifice" — drives the shaded/unshaded
   // tile in the client's Auto box.
   autoSacrifice: boolean;
+  // Toggled via "auto con"/"auto consume" — same Auto box treatment as
+  // autoSacrifice, just a second tile.
+  autoConsume: boolean;
 }
 
 // A named area of the game world and what it connects to — coarse, no

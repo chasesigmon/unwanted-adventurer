@@ -94,6 +94,12 @@ export class Player {
   @Prop({ default: false })
   autoSacrifice!: boolean;
 
+  // Toggled via "auto con"/"auto consume" — automatically consumes the
+  // body part dropped by a kill (monster or player) instead of leaving it
+  // on the ground. Same standing-preference persistence as autoSacrifice.
+  @Prop({ default: false })
+  autoConsume!: boolean;
+
   @Prop({ default: Date.now })
   lastLogin!: Date;
 }

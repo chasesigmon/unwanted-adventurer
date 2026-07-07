@@ -40,17 +40,20 @@ import { CommandRateLimiter, type CommandRateLimiterOptions } from '../rate-limi
 import { getMap, getWorldOverview } from '../game/maps.js';
 import { resolveRoom, getRoomName } from '../game/room.js';
 import { resolveMove, resolveFullMapGrid } from '../game/resolveMove.js';
-import { applyExpGain, maxTnlForLevel } from '../players/leveling.js';
+import { applyExpGain, maxTnlForLevel, monsterExpGain, playerKillExpGain } from '../players/leveling.js';
 import {
   LESSER_UNDEAD_MONSTER_RESISTANCE,
   DODGE,
   PARRY,
   DAGGER,
   KICK,
+  SLAP,
   lesserRaceResistanceName,
   BODY_PART_SKILL_STARTING_PERCENT,
   BODY_PART_SKILL_GROWTH_CHANCE,
-  GOBLIN_STARTING_SKILLS,
+  startingSkillsForRace,
+  activeSkillFor,
+  ACTIVE_SKILL_VERB,
   STARTING_SKILL_PERCENT,
   SKILL_GROWTH_CHANCE,
   MAX_SKILL_PERCENT,
@@ -96,8 +99,9 @@ const MONSTER_ATTACK_DAMAGE = 2;
 // player's attack — unlike a player-like target's dodge, this is never a
 // learned/growing skill, just a constant baseline. See resolveAttackExchange.
 const MONSTER_DODGE_CHANCE = 0.05;
-// "kick" — a flat damage instance layered on top of the normal weapon
-// swing once queued (see queuedKicks/processQueuedKick).
+// "kick"/"slap" — a flat damage instance layered on top of the normal
+// weapon swing once queued (see SocketData.queuedActiveSkillUses/
+// processQueuedActiveSkill).
 const KICK_DAMAGE = 2;
 const ATTACK_INTERVAL_MS = 4000;
 const ALL_DIRECTIONS: Direction[] = ['north', 'south', 'east', 'west'];
@@ -162,9 +166,8 @@ const SCORE_MIN_LENGTH = 2;
 // reserved for west movement.
 const WHERE_MIN_LENGTH = 3;
 
-// "sle"/"slee"/"sleep" — nothing else starts with "sl", so 3 is just the
-// example floor from the request, not a disambiguation requirement.
-const SLEEP_MIN_LENGTH = 3;
+// "sl"/"sle"/"slee"/"sleep" — nothing else starts with "sl".
+const SLEEP_MIN_LENGTH = 2;
 
 // "re"/"res"/"rest" — nothing else starts with "re", so 2 is just the
 // example floor from the request, not a disambiguation requirement. "sit"
@@ -206,12 +209,16 @@ const SACRIFICE_MIN_LENGTH = 3;
 // worth, never a truncated worldmap.
 const WORTH_MIN_LENGTH = 2;
 
+// "kic" through "kick" — nothing else starts with "kic". "slap" (slime's
+// equivalent) has no partials requested, so it stays a literal match.
+const KICK_MIN_LENGTH = 3;
+
 // The stat tick's interval is itself randomized (not a fixed
 // setInterval) — each firing schedules the next one at a fresh random
 // delay in this range. It always runs for every connection, regardless of
 // restState; only the heal percentage range (below) depends on state.
-const STAT_TICK_MIN_MS = 20_000;
-const STAT_TICK_MAX_MS = 30_000;
+const STAT_TICK_MIN_MS = 30_000;
+const STAT_TICK_MAX_MS = 40_000;
 
 // Heal percentage range per restState, applied identically to
 // hp/mana/movement each tick (one random roll shared across all three).
@@ -499,15 +506,14 @@ export class GameGateway
     client.data.exp = doc?.exp ?? 0;
     client.data.level = doc?.level ?? 1;
     client.data.skillLevels = doc?.skillLevels ?? {};
-    // Goblins get the dodge/parry/dagger/kick starting kit at level 1 (see
-    // players/skills.ts) — applied here (not just at registration) so it
-    // also fills in for any goblin account created before this existed.
-    // Only fills in missing entries, never overwrites progress already made.
-    if (client.data.race === 'goblin') {
-      for (const skill of GOBLIN_STARTING_SKILLS) {
-        if (client.data.skillLevels[skill] === undefined) {
-          client.data.skillLevels[skill] = STARTING_SKILL_PERCENT;
-        }
+    // Every race gets its own starting kit at level 1 (see
+    // players/skills.ts's startingSkillsForRace) — applied here (not just
+    // at registration) so it also fills in for any account created before
+    // this existed. Only fills in missing entries, never overwrites
+    // progress already made.
+    for (const skill of startingSkillsForRace(client.data.race)) {
+      if (client.data.skillLevels[skill] === undefined) {
+        client.data.skillLevels[skill] = STARTING_SKILL_PERCENT;
       }
     }
     client.data.inventory = doc?.inventory ?? [];
@@ -515,11 +521,12 @@ export class GameGateway
     client.data.equipment = doc?.equipment ?? {};
     client.data.gold = doc?.gold ?? 0;
     client.data.autoSacrifice = doc?.autoSacrifice ?? false;
+    client.data.autoConsume = doc?.autoConsume ?? false;
     // Never persisted — a fresh connection always starts awake and alive,
-    // with no kicks queued.
+    // with no active-skill uses queued.
     client.data.restState = 'awake';
     client.data.respawnState = 'alive';
-    client.data.queuedKicks = 0;
+    client.data.queuedActiveSkillUses = 0;
 
     await this.worldManager.addPlayer(username, mapName, row, col);
 
@@ -555,6 +562,7 @@ export class GameGateway
       consumeExp: client.data.consumeExp,
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
+      autoConsume: client.data.autoConsume,
     };
   }
 
@@ -714,9 +722,10 @@ export class GameGateway
   }
 
   // Dodge/parry only exist for a defender that actually has the skill (in
-  // practice, only a goblin — see GOBLIN_STARTING_SKILLS); anyone else has
-  // no entry in skillLevels and gets a flat 0% here, never falling back to
-  // the bare formula. Parry additionally requires a wielded weapon. Takes
+  // practice, every real/dummy player — see startingSkillsForRace); anyone
+  // else has no entry in skillLevels and gets a flat 0% here, never
+  // falling back to the bare formula. Parry additionally requires a
+  // wielded weapon. Takes
   // plain data shapes (not GameSocket) so the same check covers a real
   // player, a dummy, or a Monster (whose missing skillLevels/equipment
   // fields make it naturally always 0 here — see MONSTER_DODGE_CHANCE for
@@ -744,47 +753,76 @@ export class GameGateway
   // learned it", not "0%") and hasn't already capped at MAX_SKILL_PERCENT.
   // Mutates the record in place, since both SocketData.skillLevels and
   // DummyPlayer.skillLevels are plain objects held directly on their owner.
-  private maybeGrowSkillLevels(skillLevels: Record<string, number>, skill: string, chance: number): void {
+  // Returns whether it actually grew (and the new percentage), so callers
+  // can surface a "**your X skill increased!**" message rather than
+  // growing silently.
+  private maybeGrowSkillLevels(
+    skillLevels: Record<string, number>,
+    skill: string,
+    chance: number
+  ): { grew: boolean; percent: number } {
     const current = skillLevels[skill];
-    if (current === undefined || current >= MAX_SKILL_PERCENT) return;
-    if (Math.random() >= chance) return;
-    skillLevels[skill] = Math.min(MAX_SKILL_PERCENT, current + 1);
+    if (current === undefined || current >= MAX_SKILL_PERCENT) return { grew: false, percent: current ?? 0 };
+    if (Math.random() >= chance) return { grew: false, percent: current };
+    const percent = Math.min(MAX_SKILL_PERCENT, current + 1);
+    skillLevels[skill] = percent;
+    return { grew: true, percent };
   }
 
-  private maybeGrowSkill(client: GameSocket, skill: string, chance: number): void {
-    this.maybeGrowSkillLevels(client.data.skillLevels, skill, chance);
+  // Wraps maybeGrowSkillLevels with the white-highlighted notice message
+  // (see GameScreen's HIGHLIGHT_PATTERN) — undefined if it didn't grow this
+  // time, so callers can just spread the result into their messages array.
+  private maybeGrowSkill(client: GameSocket, skill: string, chance: number): string | undefined {
+    const { grew, percent } = this.maybeGrowSkillLevels(client.data.skillLevels, skill, chance);
+    return grew ? `**Your ${skill} skill has increased to ${percent}%!**` : undefined;
   }
 
-  private growSkillFor(target: PlayerLikeTarget, skill: string, chance: number): void {
+  // Same as maybeGrowSkill, but for the *other* side of a murder exchange
+  // (the defender's own dodge/parry/dagger/resistance growing) — the
+  // resulting message only ever reaches a real player, folded into the
+  // "is attacking you" notice already sent to them (see
+  // resolveMurderExchange); a dummy target has no one to show it to.
+  private growSkillFor(target: PlayerLikeTarget, skill: string, chance: number): string | undefined {
     const skillLevels = target.kind === 'real' ? target.socket.data.skillLevels : target.dummy.skillLevels;
-    this.maybeGrowSkillLevels(skillLevels, skill, chance);
+    const { grew, percent } = this.maybeGrowSkillLevels(skillLevels, skill, chance);
+    return grew ? `**Your ${skill} skill has increased to ${percent}%!**` : undefined;
   }
 
-  // Consumes one queued kick (see SocketData.queuedKicks/"kick" command)
-  // if any are waiting and the target is still alive — an extra
-  // KICK_DAMAGE damage instance layered onto the same exchange as the
-  // normal weapon swing, growing the kick skill on each use. Returns the
-  // message line and updated death status, or undefined if nothing was
-  // queued (in which case the caller's own `died` should be left as-is).
-  private processQueuedKick(
+  // Consumes one queued active-skill use (see SocketData
+  // .queuedActiveSkillUses/"kick"-or-"slap" command) if any are waiting and
+  // the target is still alive — an extra KICK_DAMAGE damage instance
+  // layered onto the same exchange as the normal weapon swing, growing the
+  // skill on each use. Whichever of kick/slap the player actually has (see
+  // activeSkillFor) determines the verb. Returns the message lines and
+  // updated death status, or undefined if nothing was queued (in which
+  // case the caller's own `died` should be left as-is).
+  private processQueuedActiveSkill(
     client: GameSocket,
     applyDamage: (amount: number) => { died: boolean },
     targetLabel: string
-  ): { message: string; died: boolean } | undefined {
-    if (client.data.queuedKicks <= 0) return undefined;
-    client.data.queuedKicks -= 1;
-    this.maybeGrowSkill(client, KICK, SKILL_GROWTH_CHANCE);
+  ): { messages: string[]; died: boolean } | undefined {
+    if (client.data.queuedActiveSkillUses <= 0) return undefined;
+    const skill = activeSkillFor(client.data.skillLevels);
+    if (!skill) return undefined;
+    const verb = ACTIVE_SKILL_VERB[skill];
+    client.data.queuedActiveSkillUses -= 1;
+    const growthMessage = this.maybeGrowSkill(client, skill, SKILL_GROWTH_CHANCE);
     const { died } = applyDamage(KICK_DAMAGE);
-    return { message: `You kick ${targetLabel} for ${KICK_DAMAGE} damage!`, died };
+    const messages = [`You ${verb} ${targetLabel} for ${KICK_DAMAGE} damage!`];
+    if (growthMessage) messages.push(growthMessage);
+    return { messages, died };
   }
 
-  // Any kicks still queued once the target is dead never fire — flushed
-  // instead as one "no enemy here to kick" line per leftover queued kick.
-  private flushQueuedKicks(client: GameSocket): string[] {
+  // Any active-skill uses still queued once the target is dead never fire
+  // — flushed instead as one "no enemy here to kick/slap" line per
+  // leftover queued use.
+  private flushQueuedActiveSkill(client: GameSocket): string[] {
+    const skill = activeSkillFor(client.data.skillLevels);
+    const verb = skill ? ACTIVE_SKILL_VERB[skill] : 'kick';
     const messages: string[] = [];
-    while (client.data.queuedKicks > 0) {
-      client.data.queuedKicks -= 1;
-      messages.push('There is no enemy here to kick.');
+    while (client.data.queuedActiveSkillUses > 0) {
+      client.data.queuedActiveSkillUses -= 1;
+      messages.push(`There is no enemy here to ${verb}.`);
     }
     return messages;
   }
@@ -794,20 +832,22 @@ export class GameGateway
   // a flat MONSTER_DODGE_CHANCE to avoid the swing entirely; otherwise the
   // player hits for PLAYER_ATTACK_DAMAGE plus their weapon's bonus (dagger
   // skill included, see weaponAttack) plus an attribute-based bonus (see
-  // attributeAttackBonus), growing the dagger skill on a landed hit. Any
-  // queued kick (see processQueuedKick) fires next as a second damage
-  // instance if the monster is still alive. If the monster survives both,
-  // it swings back — the player may dodge or parry it entirely (goblins
-  // only, see computeDodgeChance/computeParryChance), otherwise it lands
-  // (reduced if the monster is undead and the player has learned
-  // resistance to that, which also has a chance to grow from the hit).
-  // Returns one line per event so the client can log each separately —
-  // nothing here is a persistent status display, it's all just message
-  // lines.
+  // attributeAttackBonus), growing the dagger skill only while actually
+  // wielding one. Any queued kick/slap (see processQueuedActiveSkill) fires
+  // next as a second damage instance if the monster is still alive. If the
+  // monster survives both, it swings back — the player may dodge or parry
+  // it entirely (see computeDodgeChance/computeParryChance), otherwise it
+  // lands (reduced if the monster is undead and the player has learned
+  // resistance to that, which also has a chance to grow from the hit). The
+  // final "has X% HP remaining" line always comes last, after every hit and
+  // the counter-attack. Returns one line per event so the client can log
+  // each separately — nothing here is a persistent status display, it's
+  // all just message lines.
   private resolveAttackExchange(client: GameSocket, target: Monster): { messages: string[]; died: boolean } {
     const { kind, expReward } = target;
     const messages: string[] = [];
     let died = false;
+    const isWieldingDagger = (client.data.equipment.weapon?.toLowerCase().includes('dagger') ?? false);
 
     const monsterDodged = Math.random() < MONSTER_DODGE_CHANCE;
     if (monsterDodged) {
@@ -817,55 +857,46 @@ export class GameGateway
       const attackDamage = weaponDamage + this.attributeAttackBonus(client, target);
       ({ died } = this.monsterManager.applyDamage(target.id, attackDamage));
       messages.push(`You ${verb} the ${kind} for ${attackDamage} damage!`);
-      this.maybeGrowSkill(client, DAGGER, SKILL_GROWTH_CHANCE);
+      // Dagger only grows through hits actually landed while wielding one
+      // — not every hit regardless of weapon.
+      if (isWieldingDagger) {
+        const daggerGrowth = this.maybeGrowSkill(client, DAGGER, SKILL_GROWTH_CHANCE);
+        if (daggerGrowth) messages.push(daggerGrowth);
+      }
     }
 
     if (!died) {
-      const kickResult = this.processQueuedKick(client, (amount) => this.monsterManager.applyDamage(target.id, amount), `the ${kind}`);
-      if (kickResult) {
-        messages.push(kickResult.message);
-        died = kickResult.died;
+      const activeSkillResult = this.processQueuedActiveSkill(
+        client,
+        (amount) => this.monsterManager.applyDamage(target.id, amount),
+        `the ${kind}`
+      );
+      if (activeSkillResult) {
+        messages.push(...activeSkillResult.messages);
+        died = activeSkillResult.died;
       }
     }
 
     if (died) {
       messages.push(`You killed the ${kind}!`);
-
-      const before = client.data.level;
-      const { level, exp } = applyExpGain({ level: client.data.level, exp: client.data.exp }, expReward);
-      client.data.level = level;
-      client.data.exp = exp;
-      if (level > before) {
-        // A level-up fully restores hp/mana/movement, same as a fresh
-        // character — there's no separate "max stat" concept to scale yet,
-        // so this is just the same 100/100/100 every character starts at.
-        // Base attributes each go up by 1 per level gained (in practice
-        // always exactly 1 level per kill, given current exp numbers).
-        const levelsGained = level - before;
-        client.data.strength += levelsGained;
-        client.data.intelligence += levelsGained;
-        client.data.wisdom += levelsGained;
-        client.data.dexterity += levelsGained;
-        client.data.constitution += levelsGained;
-        client.data.hp = 100;
-        client.data.mana = 100;
-        client.data.movement = 100;
-        messages.push(
-          `You leveled up! You are now level ${level}! Your health, mana, and movement have been fully restored, and your attributes have increased.`
-        );
-      }
+      messages.push(...this.grantExp(client, monsterExpGain(expReward, client.data.level, target.level)));
 
       // Body parts always land loose on the ground, same as before ("The
-      // wild skeleton crumbles, leaving behind a leg."); anything else
-      // (e.g. a bone dagger) goes into a new corpse instead — the corpse
-      // always appears regardless of contents, since it's also the
-      // "sacrifice" target.
+      // wild skeleton crumbles, leaving behind a leg.") — unless autoConsume
+      // is on, in which case they're consumed on the spot instead (see
+      // consumeBodyPart). Anything else (e.g. a bone dagger) goes into a
+      // new corpse instead — the corpse always appears regardless of
+      // contents, since it's also the "sacrifice" target.
       const bodyPartPhrases: string[] = [];
       const corpseItems: string[] = [];
       this.monsterManager.getDeathDrops(target.kind).forEach((drop) => {
         if (isBodyPart(drop.name)) {
-          this.itemManager.dropItem(drop.name, target.mapName, target.row, target.col, drop.skill);
-          bodyPartPhrases.push(`${articleFor(drop.name)} ${drop.name}`);
+          if (client.data.autoConsume) {
+            messages.push(...this.consumeBodyPart(client, drop.name, drop.skill, true));
+          } else {
+            this.itemManager.dropItem(drop.name, target.mapName, target.row, target.col, drop.skill);
+            bodyPartPhrases.push(`${articleFor(drop.name)} ${drop.name}`);
+          }
         } else {
           corpseItems.push(drop.name);
         }
@@ -889,25 +920,30 @@ export class GameGateway
         );
       }
 
-      messages.push(...this.flushQueuedKicks(client));
+      messages.push(...this.flushQueuedActiveSkill(client));
     } else {
-      messages.push(`The ${kind} has ${this.hpPercent(target)}% HP remaining.`);
-
+      const counterMessages: string[] = [];
       const dodged = Math.random() < this.computeDodgeChance(client.data, target);
       const parried = !dodged && Math.random() < this.computeParryChance(client.data, target);
 
       if (dodged || parried) {
-        messages.push(`You ${dodged ? 'dodge' : 'parry'} the ${kind}'s attack!`);
-        this.maybeGrowSkill(client, dodged ? DODGE : PARRY, SKILL_GROWTH_CHANCE);
+        counterMessages.push(`You ${dodged ? 'dodge' : 'parry'} the ${kind}'s attack!`);
+        const growth = this.maybeGrowSkill(client, dodged ? DODGE : PARRY, SKILL_GROWTH_CHANCE);
+        if (growth) counterMessages.push(growth);
       } else {
         const reduction = target.undead ? undeadMonsterDamageReduction(client.data.skillLevels) : 0;
         const damage = Math.max(0, MONSTER_ATTACK_DAMAGE - reduction);
         client.data.hp = Math.max(0, client.data.hp - damage);
-        messages.push(`The ${kind} hits you for ${damage} damage.`);
+        counterMessages.push(`The ${kind} hits you for ${damage} damage.`);
         if (target.undead) {
-          this.maybeGrowSkill(client, LESSER_UNDEAD_MONSTER_RESISTANCE, BODY_PART_SKILL_GROWTH_CHANCE);
+          const growth = this.maybeGrowSkill(client, LESSER_UNDEAD_MONSTER_RESISTANCE, BODY_PART_SKILL_GROWTH_CHANCE);
+          if (growth) counterMessages.push(growth);
         }
       }
+
+      // The HP-remaining line goes at the very bottom, after every hit and
+      // the monster's own counter-attack have already been resolved.
+      messages.push(...counterMessages, `The ${kind} has ${this.hpPercent(target)}% HP remaining.`);
     }
 
     return { messages, died };
@@ -956,6 +992,7 @@ export class GameGateway
       equipment: client.data.equipment,
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
+      autoConsume: client.data.autoConsume,
     });
 
     client.emit('combat:update', {
@@ -991,14 +1028,21 @@ export class GameGateway
     };
 
     const messages: string[] = [];
+    // Any growth on the *defender's* own skills (dodge/parry, race
+    // resistance, dagger on their counter-attack) only ever reaches them —
+    // folded into the "is attacking you" notice below for a real target;
+    // discarded for a dummy (no one to show it to).
+    const defenderMessages: string[] = [];
     let died = false;
+    const attackerWieldingDagger = client.data.equipment.weapon?.toLowerCase().includes('dagger') ?? false;
 
     const dodged = Math.random() < this.computeDodgeChance(targetData, client.data);
     const parried = !dodged && Math.random() < this.computeParryChance(targetData, client.data);
 
     if (dodged || parried) {
       messages.push(`${targetData.username} ${dodged ? 'dodges' : 'parries'} your attack!`);
-      this.growSkillFor(target, dodged ? DODGE : PARRY, SKILL_GROWTH_CHANCE);
+      const growth = this.growSkillFor(target, dodged ? DODGE : PARRY, SKILL_GROWTH_CHANCE);
+      if (growth) defenderMessages.push(growth);
     } else {
       const { damage: weaponDamage, verb } = this.weaponAttack(client);
       const attributeBonus = this.attributeAttackBonus(client, targetData);
@@ -1006,53 +1050,64 @@ export class GameGateway
       const attackDamage = Math.max(0, weaponDamage + attributeBonus - raceReduction);
       ({ died } = applyDamageToTarget(attackDamage));
       messages.push(`You ${verb} ${targetData.username} for ${attackDamage} damage!`);
-      this.maybeGrowSkill(client, DAGGER, SKILL_GROWTH_CHANCE);
-      this.growSkillFor(target, lesserRaceResistanceName(client.data.race), BODY_PART_SKILL_GROWTH_CHANCE);
+      if (attackerWieldingDagger) {
+        const daggerGrowth = this.maybeGrowSkill(client, DAGGER, SKILL_GROWTH_CHANCE);
+        if (daggerGrowth) messages.push(daggerGrowth);
+      }
+      const resistGrowth = this.growSkillFor(target, lesserRaceResistanceName(client.data.race), BODY_PART_SKILL_GROWTH_CHANCE);
+      if (resistGrowth) defenderMessages.push(resistGrowth);
     }
 
     if (!died) {
-      const kickResult = this.processQueuedKick(client, applyDamageToTarget, targetData.username);
-      if (kickResult) {
-        messages.push(kickResult.message);
-        died = kickResult.died;
+      const activeSkillResult = this.processQueuedActiveSkill(client, applyDamageToTarget, targetData.username);
+      if (activeSkillResult) {
+        messages.push(...activeSkillResult.messages);
+        died = activeSkillResult.died;
       }
     }
 
     if (died) {
       messages.push(`You have murdered ${targetData.username}!`);
-      messages.push(...this.flushQueuedKicks(client));
-      const dropMessage = this.handlePlayerLikeDeath(target);
-      if (dropMessage) messages.push(dropMessage);
+      messages.push(...this.grantExp(client, playerKillExpGain(targetData.level)));
+      messages.push(...this.flushQueuedActiveSkill(client));
+      messages.push(...this.handlePlayerLikeDeath(target, client));
       return { messages, died };
     }
-
-    const hp = target.kind === 'real' ? target.socket.data.hp : target.dummy.hp;
-    const maxHp = target.kind === 'real' ? MAX_STAT : target.dummy.maxHp;
-    messages.push(`${targetData.username} has ${Math.max(0, Math.round((hp / maxHp) * 100))}% HP remaining.`);
 
     // Auto-retaliation — the defender hits back as part of this same
     // exchange (see the class doc comment above), subject to the original
     // attacker's own dodge/parry chance against it.
     const counterDodged = Math.random() < this.computeDodgeChance(client.data, targetData);
     const counterParried = !counterDodged && Math.random() < this.computeParryChance(client.data, targetData);
+    const defenderWieldingDagger = targetData.equipment.weapon?.toLowerCase().includes('dagger') ?? false;
 
     if (counterDodged || counterParried) {
       messages.push(`You ${counterDodged ? 'dodge' : 'parry'} ${targetData.username}'s counter-attack!`);
-      this.maybeGrowSkill(client, counterDodged ? DODGE : PARRY, SKILL_GROWTH_CHANCE);
+      const growth = this.maybeGrowSkill(client, counterDodged ? DODGE : PARRY, SKILL_GROWTH_CHANCE);
+      if (growth) messages.push(growth);
     } else {
       const { damage: counterWeaponDamage, verb: counterVerb } = this.weaponAttackFor(targetData.equipment, targetData.skillLevels);
       const counterAttributeBonus = this.attributeBonusBetween(targetData, client.data);
       const counterDamage = counterWeaponDamage + counterAttributeBonus;
       client.data.hp = Math.max(0, client.data.hp - counterDamage);
       messages.push(`${targetData.username} ${thirdPersonVerb(counterVerb)} you for ${counterDamage} damage.`);
-      this.growSkillFor(target, DAGGER, SKILL_GROWTH_CHANCE);
+      if (defenderWieldingDagger) {
+        const growth = this.growSkillFor(target, DAGGER, SKILL_GROWTH_CHANCE);
+        if (growth) defenderMessages.push(growth);
+      }
     }
+
+    // The HP-remaining line goes at the very bottom, after every hit and
+    // the counter-attack have already been resolved.
+    const hp = target.kind === 'real' ? target.socket.data.hp : target.dummy.hp;
+    const maxHp = target.kind === 'real' ? MAX_STAT : target.dummy.maxHp;
+    messages.push(`${targetData.username} has ${Math.max(0, Math.round((hp / maxHp) * 100))}% HP remaining.`);
 
     if (target.kind === 'real') {
       const victimLoc = this.worldManager.getLocation(target.socket.data.username);
       if (victimLoc) {
         target.socket.emit('notice', {
-          messages: this.withStatusPrompt(target.socket, [`${client.data.username} is attacking you!`]),
+          messages: this.withStatusPrompt(target.socket, [...defenderMessages, `${client.data.username} is attacking you!`]),
           player: this.snapshotFor(target.socket, victimLoc),
         });
       }
@@ -1062,15 +1117,17 @@ export class GameGateway
   }
 
   // Corpse (holding everything equipped/carried) plus a race-prefixed body
-  // part dropped loose on the ground (e.g. "goblin leg" — teaches "lesser
-  // goblin resistance" when consumed, see item-definitions.ts's
-  // raceBodyPartSkill), exp loss (real players only — dummies have no exp
-  // to lose), and a 15s respawn at FAR_EAST_LABYRINTH — applied uniformly
-  // regardless of where the death happened or which kind of "player" it
-  // was. Returns the body-part-drop line for the killer's own log (or
-  // undefined if there was nowhere to drop it, i.e. a real victim whose
-  // location couldn't be resolved).
-  private handlePlayerLikeDeath(target: PlayerLikeTarget): string | undefined {
+  // part — either dropped loose on the ground (e.g. "goblin leg" — teaches
+  // "lesser goblin resistance" when consumed, see item-definitions.ts's
+  // raceBodyPartSkill), or, if the killer has autoConsume on, consumed by
+  // them on the spot instead (see consumeBodyPart) — plus exp loss (real
+  // players only — dummies have no exp to lose), and a 15s respawn at
+  // FAR_EAST_LABYRINTH — applied uniformly regardless of where the death
+  // happened or which kind of "player" it was. Returns the body-part
+  // drop/consume line(s) for the killer's own log (empty if there was
+  // nowhere to drop it, i.e. a real victim whose location couldn't be
+  // resolved).
+  private handlePlayerLikeDeath(target: PlayerLikeTarget, killer: GameSocket): string[] {
     const race = target.kind === 'real' ? target.socket.data.race : target.dummy.race;
     const bodyPartName = `${race} ${randomBodyPartName()}`;
 
@@ -1078,24 +1135,31 @@ export class GameGateway
       const dummy = target.dummy;
       const items = [...Object.values(dummy.equipment), ...dummy.inventory];
       this.corpseManager.createPlayerCorpse(dummy.username, dummy.level, dummy.mapName, dummy.row, dummy.col, items);
-      this.itemManager.dropItem(bodyPartName, dummy.mapName, dummy.row, dummy.col, skillForItemName(bodyPartName));
       const timer = setTimeout(
         () =>
           this.dummyPlayerService.respawn(dummy.id, FAR_EAST_LABYRINTH.mapName, FAR_EAST_LABYRINTH.row, FAR_EAST_LABYRINTH.col),
         PLAYER_RESPAWN_DELAY_MS
       );
       timer.unref();
-      return `${dummy.username}'s corpse leaves behind ${articleFor(bodyPartName)} ${bodyPartName}.`;
+      if (killer.data.autoConsume) {
+        return this.consumeBodyPart(killer, bodyPartName, skillForItemName(bodyPartName), true);
+      }
+      this.itemManager.dropItem(bodyPartName, dummy.mapName, dummy.row, dummy.col, skillForItemName(bodyPartName));
+      return [`${dummy.username}'s corpse leaves behind ${articleFor(bodyPartName)} ${bodyPartName}.`];
     }
 
     const socket = target.socket;
     const victimLoc = this.worldManager.getLocation(socket.data.username);
-    let dropMessage: string | undefined;
+    let dropMessages: string[] = [];
     if (victimLoc) {
       const items = [...Object.values(socket.data.equipment), ...socket.data.inventory];
       this.corpseManager.createPlayerCorpse(socket.data.username, socket.data.level, victimLoc.mapName, victimLoc.row, victimLoc.col, items);
-      this.itemManager.dropItem(bodyPartName, victimLoc.mapName, victimLoc.row, victimLoc.col, skillForItemName(bodyPartName));
-      dropMessage = `${socket.data.username}'s corpse leaves behind ${articleFor(bodyPartName)} ${bodyPartName}.`;
+      if (killer.data.autoConsume) {
+        dropMessages = this.consumeBodyPart(killer, bodyPartName, skillForItemName(bodyPartName), true);
+      } else {
+        this.itemManager.dropItem(bodyPartName, victimLoc.mapName, victimLoc.row, victimLoc.col, skillForItemName(bodyPartName));
+        dropMessages = [`${socket.data.username}'s corpse leaves behind ${articleFor(bodyPartName)} ${bodyPartName}.`];
+      }
     }
 
     const expLost = socket.data.level * PLAYER_DEATH_EXP_LOSS_PER_LEVEL;
@@ -1125,6 +1189,7 @@ export class GameGateway
       equipment: socket.data.equipment,
       gold: socket.data.gold,
       autoSacrifice: socket.data.autoSacrifice,
+      autoConsume: socket.data.autoConsume,
     });
 
     socket.emit('notice', {
@@ -1137,7 +1202,7 @@ export class GameGateway
     const timer = setTimeout(() => void this.respawnRealPlayer(socket), PLAYER_RESPAWN_DELAY_MS);
     timer.unref();
 
-    return dropMessage;
+    return dropMessages;
   }
 
   // Re-enters the world at FAR_EAST_LABYRINTH and pushes a fresh 'sync' —
@@ -1203,6 +1268,7 @@ export class GameGateway
       equipment: client.data.equipment,
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
+      autoConsume: client.data.autoConsume,
     });
 
     client.emit('combat:update', {
@@ -1243,6 +1309,62 @@ export class GameGateway
     return goldReward;
   }
 
+  // The skill-roll/consumeExp side of eating a body part — shared by the
+  // explicit "consume <item>" command and auto-consume (see
+  // SocketData.autoConsume), which triggers it automatically right when a
+  // body part would otherwise land on the ground after a kill. `auto`
+  // only changes the wording, to make clear it wasn't a typed command.
+  private consumeBodyPart(client: GameSocket, name: string, skill: ReturnType<typeof skillForItemName>, auto: boolean): string[] {
+    client.data.consumeExp += 1;
+    const verb = auto ? `automatically consume the ${name}` : `consume the ${name}`;
+    if (!skill) {
+      return [`You ${verb}.`];
+    }
+    const { reward, chance } = skill;
+    if (client.data.skillLevels[reward] !== undefined) {
+      return [`You ${verb}, but you already know this secret.`];
+    }
+    if (Math.random() >= chance) {
+      return [`You ${verb}, but feel nothing happen.`];
+    }
+    client.data.skillLevels = { ...client.data.skillLevels, [reward]: BODY_PART_SKILL_STARTING_PERCENT };
+    return [`You ${verb}.`, `You have gained ${reward} (${BODY_PART_SKILL_STARTING_PERCENT}%)!`];
+  }
+
+  // Applies an exp gain (from a monster kill or a murder) and any level-ups
+  // it triggers — shared by resolveAttackExchange and resolveMurderExchange
+  // so the two don't drift on level-up messaging/effects. Always returns at
+  // least the white "**You gain N experience!**" line (see GameScreen's
+  // HIGHLIGHT_PATTERN), plus a level-up line and full stat restore for each
+  // level actually gained.
+  private grantExp(client: GameSocket, expGained: number): string[] {
+    const messages = [`**You gain ${expGained} experience!**`];
+    const before = client.data.level;
+    const { level, exp } = applyExpGain({ level: client.data.level, exp: client.data.exp }, expGained);
+    client.data.level = level;
+    client.data.exp = exp;
+    if (level > before) {
+      // A level-up fully restores hp/mana/movement, same as a fresh
+      // character — there's no separate "max stat" concept to scale yet,
+      // so this is just the same 100/100/100 every character starts at.
+      // Base attributes each go up by 1 per level gained (in practice
+      // almost always exactly 1 level per kill, given typical exp gains).
+      const levelsGained = level - before;
+      client.data.strength += levelsGained;
+      client.data.intelligence += levelsGained;
+      client.data.wisdom += levelsGained;
+      client.data.dexterity += levelsGained;
+      client.data.constitution += levelsGained;
+      client.data.hp = 100;
+      client.data.mana = 100;
+      client.data.movement = 100;
+      messages.push(
+        `You leveled up! You are now level ${level}! Your health, mana, and movement have been fully restored, and your attributes have increased.`
+      );
+    }
+    return messages;
+  }
+
   // Awaited on disconnect (nothing else to do but wait); fire-and-forget
   // after a move (see handleCommand) so a background DB write never adds
   // latency to the command ack. Called in both places so a hard crash
@@ -1279,6 +1401,7 @@ export class GameGateway
       equipment: Record<string, string>;
       gold: number;
       autoSacrifice: boolean;
+      autoConsume: boolean;
     }
   ): Promise<void> {
     try {
@@ -1318,6 +1441,7 @@ export class GameGateway
       equipment: client.data.equipment,
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
+      autoConsume: client.data.autoConsume,
     });
   }
 
@@ -1423,10 +1547,16 @@ export class GameGateway
       return this.handleFlee(client);
     }
 
-    // "kick" — queues onto the active fight (see SocketData.queuedKicks);
-    // no partials requested.
-    if (text === 'kick') {
-      return this.handleKick(client);
+    // "kic"/"kick" — queues onto the active fight (see SocketData
+    // .queuedActiveSkillUses); only actually queues if the player's race
+    // has the kick skill (see handleActiveSkillCommand).
+    if (matchesPartial(text, 'kick', KICK_MIN_LENGTH)) {
+      return this.handleActiveSkillCommand(client, KICK, 'kick');
+    }
+
+    // "slap" — slime's equivalent of kick; no partials requested.
+    if (text === 'slap') {
+      return this.handleActiveSkillCommand(client, SLAP, 'slap');
     }
 
     if (matchesPartial(verb, 'consume', CONSUME_MIN_LENGTH)) {
@@ -1447,6 +1577,16 @@ export class GameGateway
 
     if (verb === 'drop') {
       return this.handleDrop(client, rest);
+    }
+
+    // "put <item> in <corpse>" — no partials requested; the "in" clause is
+    // required (see handlePutInCorpse), unlike "drop" which auto-detects.
+    if (verb === 'put') {
+      const inMatch = rest.match(/^(.+?)\s+in\s+(.+)$/i);
+      if (inMatch) {
+        return this.handlePutInCorpse(client, (inMatch[1] ?? '').trim(), (inMatch[2] ?? '').trim());
+      }
+      return this.handlePutInCorpse(client, rest, '');
     }
 
     // "unequip" and "remove"/"rem"/"remo"/"remov" are two spellings of
@@ -1653,6 +1793,7 @@ export class GameGateway
         equipment: client.data.equipment,
         gold: client.data.gold,
         autoSacrifice: client.data.autoSacrifice,
+        autoConsume: client.data.autoConsume,
       });
     }
 
@@ -1737,6 +1878,7 @@ export class GameGateway
       equipment: client.data.equipment,
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
+      autoConsume: client.data.autoConsume,
     });
 
     if (died) {
@@ -1823,6 +1965,7 @@ export class GameGateway
       equipment: client.data.equipment,
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
+      autoConsume: client.data.autoConsume,
     });
 
     if (died) {
@@ -1907,6 +2050,7 @@ export class GameGateway
         equipment: client.data.equipment,
         gold: client.data.gold,
         autoSacrifice: client.data.autoSacrifice,
+        autoConsume: client.data.autoConsume,
       });
     }
 
@@ -1927,12 +2071,16 @@ export class GameGateway
     };
   }
 
-  // "kick" — only queues onto an already-active fight (see
-  // SocketData.queuedKicks); typing it repeatedly queues that many kicks,
-  // each consumed on a subsequent hit in the same fight (see
-  // processQueuedKick). Any left queued once the target dies flush as
-  // "There is no enemy here to kick." lines (see flushQueuedKicks).
-  private handleKick(client: GameSocket): CommandAck {
+  // "kick"/"slap" — only queues onto an already-active fight (see
+  // SocketData.queuedActiveSkillUses); typing it repeatedly queues that
+  // many uses, each consumed on a subsequent hit in the same fight (see
+  // processQueuedActiveSkill). Any left queued once the target dies flush
+  // as "There is no enemy here to kick/slap." lines (see
+  // flushQueuedActiveSkill). Only usable if the player's race actually has
+  // `skillName` (see players/skills.ts's startingSkillsForRace) — a
+  // dagger-and-kick race typing "slap", or vice versa, gets a plain
+  // rejection rather than queuing anything.
+  private handleActiveSkillCommand(client: GameSocket, skillName: string, verb: string): CommandAck {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
     if (!loc) {
@@ -1949,12 +2097,16 @@ export class GameGateway
       itemMessage: this.itemMessageFor(client, loc),
     });
 
-    if (!this.activeCombats.has(client.id) && !this.activeMurders.has(client.id)) {
-      return buildAck(['There is no enemy here to kick.'], false);
+    if (client.data.skillLevels[skillName] === undefined) {
+      return buildAck([`You don't know how to ${verb}.`], false);
     }
 
-    client.data.queuedKicks += 1;
-    return buildAck([`You ready a kick. (${client.data.queuedKicks} queued)`], true);
+    if (!this.activeCombats.has(client.id) && !this.activeMurders.has(client.id)) {
+      return buildAck([`There is no enemy here to ${verb}.`], false);
+    }
+
+    client.data.queuedActiveSkillUses += 1;
+    return buildAck([`You ready a ${verb}.`], true);
   }
 
   // "consume <item>" — partial, case-insensitive match, checked first
@@ -2028,24 +2180,12 @@ export class GameGateway
         equipment: client.data.equipment,
         gold: client.data.gold,
         autoSacrifice: client.data.autoSacrifice,
+        autoConsume: client.data.autoConsume,
       });
       return buildAck([`You consume the ${name}.`], true);
     }
 
-    // Consuming a body part always counts toward consumeExp, regardless of
-    // whether the skill roll below actually succeeds.
-    client.data.consumeExp += 1;
-
-    const { reward, chance } = skill;
-    let messages: string[];
-    if (client.data.skillLevels[reward] !== undefined) {
-      messages = [`You consume the ${name}, but you already know this secret.`];
-    } else if (Math.random() >= chance) {
-      messages = [`You consume the ${name}, but feel nothing happen.`];
-    } else {
-      client.data.skillLevels = { ...client.data.skillLevels, [reward]: BODY_PART_SKILL_STARTING_PERCENT };
-      messages = [`You consume the ${name}.`, `You have gained ${reward} (${BODY_PART_SKILL_STARTING_PERCENT}%)!`];
-    }
+    const messages = this.consumeBodyPart(client, name, skill, false);
 
     void this.persistStats(username, {
       hp: client.data.hp,
@@ -2064,6 +2204,7 @@ export class GameGateway
       equipment: client.data.equipment,
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
+      autoConsume: client.data.autoConsume,
     });
 
     return buildAck(messages, true);
@@ -2087,6 +2228,7 @@ export class GameGateway
       equipment: client.data.equipment,
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
+      autoConsume: client.data.autoConsume,
     });
   }
 
@@ -2229,9 +2371,58 @@ export class GameGateway
       equipment: client.data.equipment,
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
+      autoConsume: client.data.autoConsume,
     });
 
     return buildAck([corpse ? `You put the ${itemName} into the corpse.` : `You drop the ${itemName}.`], true);
+  }
+
+  // "put <item> in <corpse>" — an explicit alternative to "drop <item>"
+  // (which auto-detects the *first* corpse in the room, if any). Since it
+  // names the corpse directly, it also supports "N.corpse" — putting an
+  // item into a *specific* corpse when the room holds more than one (see
+  // CorpseManagerService.resolveCorpseAt), which bare "drop" cannot do.
+  private async handlePutInCorpse(client: GameSocket, itemQuery: string, containerQuery: string): Promise<CommandAck> {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
+    });
+
+    if (!itemQuery) {
+      return buildAck(['Put what?'], false);
+    }
+    if (!containerQuery) {
+      return buildAck(['Put it in what?'], false);
+    }
+
+    const needle = itemQuery.toLowerCase();
+    const itemName = client.data.inventory.find((name) => name.toLowerCase().includes(needle));
+    if (!itemName) {
+      return buildAck([`You aren't carrying a "${itemQuery}".`], false);
+    }
+
+    const corpse = this.corpseManager.resolveCorpseAt(loc.mapName, loc.row, loc.col, containerQuery);
+    if (!corpse) {
+      return buildAck([`There is no "${containerQuery}" here to put anything in.`], false);
+    }
+
+    const index = client.data.inventory.indexOf(itemName);
+    client.data.inventory = [...client.data.inventory.slice(0, index), ...client.data.inventory.slice(index + 1)];
+    this.corpseManager.addItemToCorpse(corpse.id, itemName);
+    this.persistAfterInventoryChange(client);
+
+    return buildAck([`You put the ${itemName} into the corpse.`], true);
   }
 
   // "equip <item>" — partial, case-insensitive match against inventory
@@ -2300,6 +2491,7 @@ export class GameGateway
       equipment: client.data.equipment,
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
+      autoConsume: client.data.autoConsume,
     });
 
     const messages = previousItem
@@ -2361,6 +2553,7 @@ export class GameGateway
       equipment: client.data.equipment,
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
+      autoConsume: client.data.autoConsume,
     });
 
     return buildAck([`You unequip the ${itemName}.`], true);
@@ -2888,6 +3081,7 @@ export class GameGateway
       equipment: client.data.equipment,
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
+      autoConsume: client.data.autoConsume,
     });
 
     return buildAck(
@@ -2897,11 +3091,14 @@ export class GameGateway
   }
 
   // "auto" (bare) shows every togglable automation and its current
-  // on/off state — right now just "sacrifice" (see SocketData
-  // .autoSacrifice). "auto sac"/"auto sacrifice" (partial-matched
-  // against the toggle's own name, not the "auto" verb) flips it. The
-  // client mirrors this as a shaded ("on") or unshaded ("off") tile in
-  // its own Auto box, driven by PlayerSnapshot.autoSacrifice.
+  // on/off state (see SocketData.autoSacrifice/autoConsume). "auto sac"/
+  // "auto sacrifice" and "auto con"/"auto consume" (each partial-matched
+  // against their own toggle name, not the "auto" verb) flip the
+  // respective toggle. The client mirrors both as a shaded ("on") or
+  // unshaded ("off") tile in its own Auto box, driven by
+  // PlayerSnapshot.autoSacrifice/autoConsume. autoConsume applies the
+  // instant a monster or player dies — see resolveAttackExchange/
+  // handlePlayerLikeDeath's autoConsume branches.
   private handleAuto(client: GameSocket, argument: string): CommandAck {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
@@ -2917,11 +3114,15 @@ export class GameGateway
     });
 
     if (!argument) {
-      return buildAck([`Auto-toggles: sacrifice [${client.data.autoSacrifice ? 'ON' : 'OFF'}]`], true);
+      return buildAck(
+        [
+          `Auto-toggles: sacrifice [${client.data.autoSacrifice ? 'ON' : 'OFF'}], consume [${client.data.autoConsume ? 'ON' : 'OFF'}]`,
+        ],
+        true
+      );
     }
 
-    if (matchesPartial(argument.toLowerCase(), 'sacrifice', AUTO_TOGGLE_MIN_LENGTH)) {
-      client.data.autoSacrifice = !client.data.autoSacrifice;
+    const persistAutoToggle = (): void => {
       void this.persistStats(username, {
         hp: client.data.hp,
         mana: client.data.mana,
@@ -2939,8 +3140,20 @@ export class GameGateway
         equipment: client.data.equipment,
         gold: client.data.gold,
         autoSacrifice: client.data.autoSacrifice,
+        autoConsume: client.data.autoConsume,
       });
+    };
+
+    if (matchesPartial(argument.toLowerCase(), 'sacrifice', AUTO_TOGGLE_MIN_LENGTH)) {
+      client.data.autoSacrifice = !client.data.autoSacrifice;
+      persistAutoToggle();
       return buildAck([`Auto-sacrifice is now ${client.data.autoSacrifice ? 'ON' : 'OFF'}.`], true);
+    }
+
+    if (matchesPartial(argument.toLowerCase(), 'consume', AUTO_TOGGLE_MIN_LENGTH)) {
+      client.data.autoConsume = !client.data.autoConsume;
+      persistAutoToggle();
+      return buildAck([`Auto-consume is now ${client.data.autoConsume ? 'ON' : 'OFF'}.`], true);
     }
 
     return buildAck([`Unknown auto-toggle: "${argument}".`], false);
@@ -3167,6 +3380,7 @@ export class GameGateway
         equipment: client.data.equipment,
         gold: client.data.gold,
         autoSacrifice: client.data.autoSacrifice,
+        autoConsume: client.data.autoConsume,
       });
 
       const lead =
@@ -3247,11 +3461,13 @@ export class GameGateway
       'attack/kill (or k) <mob> - attack a monster in your room',
       'murder <player> - attack another player (real or a test dummy) in your room',
       'flee - break off a fight and flee in a random direction',
-      'kick - queue a kick (2 damage) into your current fight; goblins grow the skill by using it',
+      'kick/kic - queue a kick (2 damage) into your current fight (dagger/kick races only)',
+      'slap - slime\'s equivalent of kick',
       'consume <item> - eat an item (on the ground, or in your inventory) for a chance at a skill',
       'grab/get <item> - pick up a dropped item into your inventory',
       'grab/get <item> from <corpse> - take an item out of a corpse (e.g. "get leg from corpse", "get leg from 2.cor")',
-      'drop <item> - drop an item from your inventory onto the ground',
+      'drop <item> - drop an item from your inventory onto the ground (into a corpse here, if any)',
+      'put <item> in <corpse> - put an item from your inventory into a specific corpse (e.g. "put leg in 2.cor")',
       'equip/wear <item> - equip an item from your inventory into its equipment slot',
       'equip/equipment (no item) - show your equipment slots, head to toe',
       'unequip/remove <item> - unequip an item, returning it to your inventory',
@@ -3261,7 +3477,7 @@ export class GameGateway
       'help <topic> - look up a description of a skill or other topic',
       'sacrifice/sac [corpse] - offer a monster corpse in the room to the gods for gold',
       'worth/wo - show how much gold you are carrying',
-      'auto - show your togglable automations, or "auto sac" to toggle auto-sacrifice',
+      'auto - show your togglable automations ("auto sac" to toggle auto-sacrifice, "auto con" to toggle auto-consume)',
       'inventory - show what you are carrying',
       'skills - show your learned skills and their percentages',
       'look/l - look around the room again',

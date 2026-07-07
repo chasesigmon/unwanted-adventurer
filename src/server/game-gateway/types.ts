@@ -114,15 +114,20 @@ export interface SocketData {
   skillLevels: Record<string, number>;
   inventory: string[];
   consumeExp: number;
-  // "kick" queues rather than firing immediately (see GameGateway
-  // .processQueuedKick) — never persisted, reset to 0 on a fresh
-  // connection; combat-transient state, same as restState/respawnState.
-  queuedKicks: number;
+  // "kick"/"slap" (whichever active skill the player's race has — see
+  // players/skills.ts) queues rather than firing immediately (see
+  // GameGateway.processQueuedActiveSkill) — never persisted, reset to 0 on
+  // a fresh connection; combat-transient state, same as restState/
+  // respawnState.
+  queuedActiveSkillUses: number;
   // Earned via "sacrifice" (manual or automatic).
   gold: number;
   // Toggled via "auto sac"/"auto sacrifice" — a standing preference
   // (persisted), unlike restState.
   autoSacrifice: boolean;
+  // Toggled via "auto con"/"auto consume" — a standing preference
+  // (persisted), same as autoSacrifice.
+  autoConsume: boolean;
   // 'dead' only between being murdered and the 15s respawn timer firing
   // (see GameGateway.respawnPlayer) — while dead, commands are rejected
   // rather than let the player act (move, fight, etc.) from a corpse.

@@ -11,10 +11,10 @@ import type { Race } from '../../shared/constants.js';
 //    applies against undead monsters (never against an undead-flavored
 //    player race like skeleton/zombie — that's what the race-scoped
 //    version is for).
-// 2. The goblin-only starting kit (dodge/parry/dagger/kick) — see
-//    GOBLIN_STARTING_SKILLS, each starting at STARTING_SKILL_PERCENT and
-//    growing through their own use, not by taking a hit from anything in
-//    particular.
+// 2. The starting kit every race gets at level 1 (dodge, parry, and either
+//    dagger+kick or, for slime, slap — see startingSkillsForRace), each
+//    starting at STARTING_SKILL_PERCENT and growing through their own use,
+//    not by taking a hit from anything in particular.
 //
 // Both families share the same 1-100 percentage scale and the same
 // "1 point of reduction/bonus per 20%" shape (see resistanceReduction)
@@ -24,6 +24,10 @@ export const DODGE = 'dodge';
 export const PARRY = 'parry';
 export const DAGGER = 'dagger';
 export const KICK = 'kick';
+// Slime's equivalent of "kick" — same active-skill mechanics (queued,
+// flat 2 damage, 2% growth chance per use), just a different name/verb for
+// a race with no legs to kick with. See GameGateway.activeSkillFor.
+export const SLAP = 'slap';
 
 export function lesserRaceResistanceName(race: Race): string {
   return `lesser ${race} resistance`;
@@ -32,7 +36,28 @@ export function lesserRaceResistanceName(race: Race): string {
 export const BODY_PART_SKILL_STARTING_PERCENT = 10;
 export const BODY_PART_SKILL_GROWTH_CHANCE = 0.02;
 
-export const GOBLIN_STARTING_SKILLS = [DODGE, PARRY, DAGGER, KICK];
+// Every race starts with dodge/parry at level 1; every race but slime also
+// gets dagger/kick, while slime gets "slap" (see SLAP) instead of kick —
+// mechanically identical, just reflavored for a race with no legs.
+export function startingSkillsForRace(race: Race): string[] {
+  if (race === 'slime') return [DODGE, PARRY, SLAP];
+  return [DODGE, PARRY, DAGGER, KICK];
+}
+
+// The verb ("kick"/"slap") for whichever active skill a given
+// skillLevels record actually has — always exactly one, since every race
+// gets one or the other (see startingSkillsForRace), never both.
+export const ACTIVE_SKILL_VERB: Record<string, string> = {
+  [KICK]: 'kick',
+  [SLAP]: 'slap',
+};
+
+export function activeSkillFor(skillLevels: Record<string, number>): string | undefined {
+  if (skillLevels[KICK] !== undefined) return KICK;
+  if (skillLevels[SLAP] !== undefined) return SLAP;
+  return undefined;
+}
+
 export const STARTING_SKILL_PERCENT = 1;
 export const SKILL_GROWTH_CHANCE = 0.02;
 export const MAX_SKILL_PERCENT = 100;
