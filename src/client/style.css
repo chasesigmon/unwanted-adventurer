@@ -196,6 +196,9 @@ body {
   flex-direction: column;
   align-items: center;
   flex-shrink: 0;
+  /* Pins it to the bottom of #left-column (a flex column) regardless of
+     how tall the score box above it is. */
+  margin-top: auto;
 }
 
 /* The 60%-width, full-height box in the middle of the screen. Its own
@@ -249,6 +252,14 @@ body {
 .message-line {
   font-size: 0.95rem;
   color: #ffd166;
+}
+
+/* A spotted monster/player's name within a message (currently just
+   "scan") — see GameScreen's renderMessageText/HIGHLIGHT_PATTERN. Inherits
+   whatever variant color the line itself has otherwise. */
+.name-highlight {
+  color: #ffffff;
+  font-weight: bold;
 }
 
 /* A monster/item just noticed in the room — stands out in red with extra

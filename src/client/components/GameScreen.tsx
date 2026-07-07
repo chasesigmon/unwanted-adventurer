@@ -1,8 +1,39 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { PlayerSnapshot, MinimapCell, RoomInfo, WorldMapArea } from '../../shared/types.js';
 import type { LogEntry } from '../hooks/useGameConnection.js';
 import { Minimap } from './Minimap.js';
 import { WorldMapModal } from './WorldMapModal.js';
+
+// Lightweight, server-owned convention (not real Markdown): "**name**"
+// renders as a highlighted white span, everything else is plain text. Used
+// today by "scan" to call out a spotted monster/player's name — any future
+// message can reuse the same `**...**` wrapping without a wire-protocol
+// change, since messages are still just plain strings end to end.
+const HIGHLIGHT_PATTERN = /\*\*(.+?)\*\*/g;
+
+function renderMessageText(text: string): ReactNode {
+  if (!text.includes('**')) return text;
+
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+  let key = 0;
+  HIGHLIGHT_PATTERN.lastIndex = 0;
+  for (let match = HIGHLIGHT_PATTERN.exec(text); match; match = HIGHLIGHT_PATTERN.exec(text)) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+    nodes.push(
+      <span className="name-highlight" key={key++}>
+        {match[1]}
+      </span>
+    );
+    lastIndex = HIGHLIGHT_PATTERN.lastIndex;
+  }
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+  return nodes;
+}
 
 export interface GameScreenProps {
   player: PlayerSnapshot | null;
@@ -117,6 +148,12 @@ export function GameScreen({
               </div>
             )}
           </div>
+          {/* Pushed to the bottom of the column via margin-top: auto (see
+              #minimap-box) — the score box stays pinned at the top. */}
+          <div className="side-box" id="minimap-box">
+            <div className="side-box-label">Minimap</div>
+            <Minimap cells={minimap} />
+          </div>
         </div>
 
         <div id="center-column">
@@ -133,7 +170,7 @@ export function GameScreen({
                   className={`message-line${entry.variant ? ` message-line--${entry.variant}` : ''}${entry.leadsAction ? ' message-line--leads-action' : ''}`}
                   key={i}
                 >
-                  {entry.text}
+                  {renderMessageText(entry.text)}
                 </div>
               ))}
             </div>
@@ -143,10 +180,6 @@ export function GameScreen({
         <div id="right-column">
           <div id="position-readout">
             {player ? `${player.map}: (${player.row}, ${player.col})` : 'Position: (0, 0)'}
-          </div>
-          <div className="side-box" id="minimap-box">
-            <div className="side-box-label">Minimap</div>
-            <Minimap cells={minimap} />
           </div>
           <div className="side-box" id="inventory-box">
             <div className="side-box-label">Inventory</div>

@@ -75,3 +75,61 @@ const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
 export function equipmentForItemName(name: string): EquipmentDefinition | undefined {
   return EQUIPMENT_DEFINITIONS[name.toLowerCase()];
 }
+
+// A separate, broader classification axis from EquipmentDefinition
+// .category above (which only describes equipment-slot sub-types, and
+// only applies to the handful of items that are actually equippable):
+// this just tags "this is a plain item object", as opposed to some other
+// future kind of game object (currency, quest flags, etc). Not mutually
+// exclusive with being a 'weapon' — "bone dagger" is both.
+export type ItemKind = 'item';
+
+const ITEM_KINDS: Record<string, ItemKind> = {
+  leg: 'item',
+  arm: 'item',
+  hand: 'item',
+  skull: 'item',
+  rib: 'item',
+  'bone dagger': 'item',
+};
+
+export function itemKindFor(name: string): ItemKind | undefined {
+  return ITEM_KINDS[name.toLowerCase()];
+}
+
+// Iteration order for "equip"/"equipment" typed bare — head to toe,
+// matching the order the request enumerated (and EquipmentSlot is
+// declared in).
+export const EQUIPMENT_SLOT_ORDER: EquipmentSlot[] = [
+  'head',
+  'leftEar',
+  'rightEar',
+  'torso',
+  'leftForearm',
+  'rightForearm',
+  'shield',
+  'weapon',
+  'leftRing',
+  'rightRing',
+  'necklace',
+  'leftShin',
+  'rightShin',
+  'boots',
+];
+
+export const EQUIPMENT_SLOT_LABELS: Record<EquipmentSlot, string> = {
+  head: 'Head',
+  leftEar: 'Left Ear',
+  rightEar: 'Right Ear',
+  torso: 'Torso',
+  leftForearm: 'Left Forearm',
+  rightForearm: 'Right Forearm',
+  shield: 'Shield',
+  weapon: 'Weapon',
+  leftRing: 'Left Ring',
+  rightRing: 'Right Ring',
+  necklace: 'Necklace',
+  leftShin: 'Left Shin',
+  rightShin: 'Right Shin',
+  boots: 'Boots',
+};

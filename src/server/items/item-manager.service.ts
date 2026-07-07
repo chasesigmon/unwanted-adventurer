@@ -20,16 +20,17 @@ export class ItemManagerService {
     return this.items.delete(id);
   }
 
-  // Just the first item at a cell — rooms aren't expected to accumulate
-  // more than one dropped item at a time in practice, and there's no
-  // stacking/ordering concept to get right if they did.
-  getItemAt(mapName: MapName, row: number, col: number): DroppedItem | undefined {
+  // Every item at a cell — a single kill can drop more than one (e.g. a
+  // body part plus a bone dagger), and both need to actually be visible
+  // (itemMessageFor/"look"), not just whichever happened to be first.
+  getItemsAt(mapName: MapName, row: number, col: number): DroppedItem[] {
+    const results: DroppedItem[] = [];
     for (const item of this.items.values()) {
       if (item.mapName === mapName && item.row === row && item.col === col) {
-        return item;
+        results.push(item);
       }
     }
-    return undefined;
+    return results;
   }
 
   // Partial, case-insensitive match against the item's name — "consume

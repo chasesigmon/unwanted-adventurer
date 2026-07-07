@@ -16,8 +16,14 @@ import { WorldManagerService } from '../worlds/world-manager.service.js';
 import { MonsterManagerService } from '../monsters/monster-manager.service.js';
 import type { MonsterMoveEvent } from '../monsters/monster-manager.service.js';
 import { ItemManagerService } from '../items/item-manager.service.js';
-import { skillForItemName, equipmentForItemName } from '../items/item-definitions.js';
+import {
+  skillForItemName,
+  equipmentForItemName,
+  EQUIPMENT_SLOT_ORDER,
+  EQUIPMENT_SLOT_LABELS,
+} from '../items/item-definitions.js';
 import type { EquipmentSlot } from '../items/item-definitions.js';
+import type { DroppedItem } from '../items/dropped-item.js';
 import { AuthService } from '../auth/auth.service.js';
 import { SessionStoreService } from '../auth/session-store.service.js';
 import { ActiveConnectionsService } from '../auth/active-connections.service.js';
@@ -94,6 +100,18 @@ const SLEEP_MIN_LENGTH = 3;
 // alias alongside "rest" rather than through matchesPartial.
 const REST_MIN_LENGTH = 2;
 
+// "sk"/"ski"/"skil"/"skill" — nothing else starts with "sk".
+const SKILLS_MIN_LENGTH = 2;
+
+// "eq"/"equ"/"equi"/"equip"/... — checked against the single word
+// "equipment" rather than "equip" separately, since every prefix of
+// "equip" ("eq", "equ", "equi", "equip") is *also* a prefix of
+// "equipment" ("equipment".startsWith("equip") is true) — one check
+// covers both "equip <item>" and bare "equipment"/its own partials. Which
+// behavior you get depends on whether there's a trailing item argument,
+// not on which exact prefix was typed — see the dispatch site.
+const EQUIP_MIN_LENGTH = 2;
+
 // The stat tick's interval is itself randomized (not a fixed
 // setInterval) — each firing schedules the next one at a fresh random
 // delay in this range. It always runs for every connection, regardless of
@@ -128,6 +146,27 @@ interface ActiveCombat {
 function articleFor(word: string, capitalized = false): string {
   const article = /^[aeiou]/i.test(word) ? 'an' : 'a';
   return capitalized ? article.charAt(0).toUpperCase() + article.slice(1) : article;
+}
+
+// A cell can hold more than one dropped item at once (e.g. a skeleton's
+// guaranteed body part plus its separately-rolled bone dagger) — this
+// builds one natural-language sentence covering all of them ("A hand and
+// a bone dagger lie here.") instead of only ever describing the first,
+// which was the root cause of a dropped-alongside item going invisible to
+// itemMessageFor/"look" even though it was still on the ground and
+// grabbable by name.
+function describeItemsOnGround(items: DroppedItem[]): string | undefined {
+  if (items.length === 0) return undefined;
+
+  const phrases = items.map((item, i) => `${articleFor(item.name, i === 0)} ${item.name}`);
+  const joined =
+    phrases.length === 1
+      ? phrases[0]
+      : phrases.length === 2
+        ? `${phrases[0]} and ${phrases[1]}`
+        : `${phrases.slice(0, -1).join(', ')}, and ${phrases[phrases.length - 1]}`;
+
+  return `${joined} ${items.length === 1 ? 'lies' : 'lie'} here.`;
 }
 
 function isAttackVerb(word: string): boolean {
@@ -298,8 +337,7 @@ export class GameGateway
 
   private itemMessageFor(client: GameSocket, loc: Location): string | undefined {
     if (client.data.restState === 'sleeping') return undefined;
-    const item = this.itemManager.getItemAt(loc.mapName, loc.row, loc.col);
-    return item ? `${articleFor(item.name, true)} ${item.name} lies here.` : undefined;
+    return describeItemsOnGround(this.itemManager.getItemsAt(loc.mapName, loc.row, loc.col));
   }
 
   // Notifies any connected player standing in the monster's old or new
@@ -598,8 +636,15 @@ export class GameGateway
       return this.handleDrop(client, rest);
     }
 
-    if (verb === 'equip') {
-      return this.handleEquip(client, rest);
+    if (verb === 'unequip') {
+      return this.handleUnequip(client, rest);
+    }
+
+    // Covers "eq"/"equ"/"equi"/"equip"/... and "equipment"/its own
+    // partials in one check (see EQUIP_MIN_LENGTH) — an item argument
+    // means "equip <item>", no argument means "show my equipment slots".
+    if (matchesPartial(verb, 'equipment', EQUIP_MIN_LENGTH)) {
+      return rest ? this.handleEquip(client, rest) : this.handleEquipmentView(client);
     }
 
     if (matchesPartial(verb, 'where', WHERE_MIN_LENGTH)) {
@@ -611,7 +656,7 @@ export class GameGateway
       return this.handleInventory(client);
     }
 
-    if (text === 'skills') {
+    if (matchesPartial(text, 'skills', SKILLS_MIN_LENGTH)) {
       return this.handleSkills(client);
     }
 
@@ -1145,8 +1190,82 @@ export class GameGateway
     return buildAck(messages, true);
   }
 
+  // "unequip <item>" — the inverse of equip: partial, case-insensitive
+  // match against what's currently *equipped* (not inventory), empties
+  // that slot, and returns the item to inventory.
+  private async handleUnequip(client: GameSocket, itemQuery: string): Promise<CommandAck> {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
+    });
+
+    if (!itemQuery) {
+      return buildAck(['Unequip what?'], false);
+    }
+
+    const needle = itemQuery.toLowerCase();
+    const match = Object.entries(client.data.equipment).find(([, itemName]) => itemName.toLowerCase().includes(needle));
+    if (!match) {
+      return buildAck([`You don't have a "${itemQuery}" equipped.`], false);
+    }
+
+    const [slot, itemName] = match;
+    const { [slot]: _removed, ...remainingEquipment } = client.data.equipment;
+    client.data.equipment = remainingEquipment;
+    client.data.inventory = [...client.data.inventory, itemName];
+
+    void this.persistStats(username, {
+      hp: client.data.hp,
+      mana: client.data.mana,
+      movement: client.data.movement,
+      exp: client.data.exp,
+      level: client.data.level,
+      skills: client.data.skills,
+      inventory: client.data.inventory,
+      consumeExp: client.data.consumeExp,
+      equipment: client.data.equipment,
+    });
+
+    return buildAck([`You unequip the ${itemName}.`], true);
+  }
+
+  // "equip"/"equipment" (or any of their shared partials, see
+  // EQUIP_MIN_LENGTH) typed with no item argument — every slot, head to
+  // toe, with whatever's equipped there or "(empty)".
+  private handleEquipmentView(client: GameSocket): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+
+    const messages = [
+      'Your equipment:',
+      ...EQUIPMENT_SLOT_ORDER.map(
+        (slot) => `${EQUIPMENT_SLOT_LABELS[slot]}: ${client.data.equipment[slot] ?? '(empty)'}`
+      ),
+    ];
+
+    return {
+      ok: true,
+      messages,
+      player: loc ? this.snapshotFor(client, loc) : undefined,
+      minimap: this.worldManager.getMinimap(username),
+      room: loc ? resolveRoom(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
+    };
+  }
+
   // Purely informational — no state change, so unlike every other handler
-  // here neither of these needs to be async.
   private handleInventory(client: GameSocket): CommandAck {
     const { username, inventory } = client.data;
     const loc = this.worldManager.getLocation(username);
@@ -1203,13 +1322,14 @@ export class GameGateway
     };
   }
 
-  // "look"/"l" — re-announces the current room's monster/item exactly as
-  // if the player had just stepped into it, bypassing the "only when it's
-  // genuinely new" dedup the client applies to monsterMessage/itemMessage
-  // (see useGameConnection's withSightings): these lines are sent as
-  // ordinary messages, not just the monsterMessage/itemMessage fields, so
-  // they always print in the log regardless of whether anything changed
-  // since the last look.
+  // "look"/"l" — re-announces the current room's monster(s), item(s), and
+  // any other players exactly as if the player had just stepped into it,
+  // bypassing the "only when it's genuinely new" dedup the client applies
+  // to monsterMessage/itemMessage (see useGameConnection's withSightings):
+  // these lines are sent as ordinary messages, not just the monsterMessage
+  // /itemMessage fields, so they always print in the log regardless of
+  // whether anything changed since the last look. Suppressed entirely
+  // while sleeping, same as monsterMessageFor/itemMessageFor.
   private handleLook(client: GameSocket): CommandAck {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
@@ -1220,6 +1340,16 @@ export class GameGateway
     const monsterMessage = this.monsterMessageFor(client, loc);
     const itemMessage = this.itemMessageFor(client, loc);
     const messages = [monsterMessage, itemMessage].filter((m): m is string => !!m);
+
+    if (client.data.restState !== 'sleeping') {
+      const others = this.otherPlayersAt(client, loc.worldId, loc.mapName, loc.row, loc.col);
+      if (others.length === 1) {
+        messages.push(`${others[0]} is here!`);
+      } else if (others.length > 1) {
+        messages.push(`${others.join(', ')} are here!`);
+      }
+    }
+
     if (messages.length === 0) {
       messages.push('There is nothing else of note here.');
     }
@@ -1236,10 +1366,13 @@ export class GameGateway
   }
 
   // "scan" — checks the 4 adjacent cells (1 step north/south/east/west,
-  // never leaving the current map) and reports which ones have a monster
-  // in them, same "A skeleton is here!" phrasing as monsterMessage. A
-  // direction that would fall off the map's edge is skipped entirely
-  // rather than reported on — there's no room there to scan.
+  // never leaving the current map) and reports which have a monster
+  // and/or other players in them. Spotted names are wrapped in `**...**`,
+  // which the client renders as a highlighted white span (see
+  // GameScreen's renderMessageText) — the same lightweight convention any
+  // future message could reuse. A direction that would fall off the map's
+  // edge is skipped entirely rather than reported on — there's no room
+  // there to scan.
   private handleScan(client: GameSocket): CommandAck {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
@@ -1258,7 +1391,19 @@ export class GameGateway
 
       const label = direction.charAt(0).toUpperCase() + direction.slice(1);
       const monster = this.monsterManager.getMonsterAt(loc.mapName, row, col);
-      messages.push(monster ? `${label}: A ${monster.kind} is here!` : `${label}: Nothing of note.`);
+      const others = this.otherPlayersAt(client, loc.worldId, loc.mapName, row, col);
+
+      const parts: string[] = [];
+      if (monster) {
+        parts.push(`A **${monster.kind}** is here!`);
+      }
+      if (others.length === 1) {
+        parts.push(`**${others[0]}** is here!`);
+      } else if (others.length > 1) {
+        parts.push(`${others.map((o) => `**${o}**`).join(', ')} are here!`);
+      }
+
+      messages.push(parts.length > 0 ? `${label}: ${parts.join(' ')}` : `${label}: Nothing of note.`);
     }
 
     return {
@@ -1300,6 +1445,23 @@ export class GameGateway
       monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
       itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
     };
+  }
+
+  // Every other connected player standing in this exact cell — used by
+  // "look" (same room) and "scan" (adjacent rooms). Requires the same
+  // worldId, not just the same map/row/col: two players on the same map
+  // but in different overflow shards are simulated independently and
+  // shouldn't see each other, even if their coordinates coincide.
+  private otherPlayersAt(client: GameSocket, worldId: string, mapName: MapName, row: number, col: number): string[] {
+    const results: string[] = [];
+    for (const other of this.server.sockets.sockets.values()) {
+      if (other.id === client.id) continue;
+      const otherLoc = this.worldManager.getLocation(other.data.username);
+      if (otherLoc && otherLoc.worldId === worldId && otherLoc.mapName === mapName && otherLoc.row === row && otherLoc.col === col) {
+        results.push(other.data.username);
+      }
+    }
+    return results;
   }
 
   // Every other connected player sharing this player's actual World
@@ -1598,6 +1760,8 @@ export class GameGateway
       'grab/get <item> - pick up a dropped item into your inventory',
       'drop <item> - drop an item from your inventory onto the ground',
       'equip <item> - equip an item from your inventory into its equipment slot',
+      'equip/equipment (no item) - show your equipment slots, head to toe',
+      'unequip <item> - unequip an item, returning it to your inventory',
       'where [mob or player] - list nearby players, or locate a monster/player by name',
       'inventory - show what you are carrying',
       'skills - show your learned skills',
