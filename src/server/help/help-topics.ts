@@ -13,12 +13,18 @@ const HELP_TOPICS: Record<string, string> = {
     'A passive skill every race starts with at level 1 (1%). Gives a chance to avoid an attack entirely, based on your level, dexterity, and dodge percentage compared to your opponent\'s. Grows 2% of the time whenever it triggers.',
   parry:
     'A passive skill every race starts with at level 1 (1%). Normally only works while wielding a weapon (slime is the exception — it has no hands to hold one, so it parries bare-bodied) — gives a chance to avoid an attack entirely, based on your level, strength, and parry percentage compared to your opponent\'s. Grows 2% of the time whenever it triggers.',
+  'shield block':
+    'A passive skill every race starts with at level 1 (1%), but only usable while wearing a shield. Gives a chance (20% base, climbing toward an 80% ceiling as the skill grows — +1 percentage point per 3% learned) to block an incoming attack outright, taking no damage. Grows 2% of the time whenever you attempt one, whether it succeeds or fails.',
   dagger:
     'A passive skill every race but slime starts with at level 1 (1%). Slightly increases your damage while wielding a dagger, scaling with the percentage learned. Grows 2% of the time on every hit you land while wielding a dagger.',
   kick: 'An active skill goblins, skeletons, zombies, and dragonborn start with at level 1 (1%). Type "kick" (or "kic") to queue a kick (2 damage) into your current fight — type it more than once to queue several. Grows 2% of the time on every use.',
   slap: 'Slime\'s equivalent of kick — an active skill starting at level 1 (1%). Type "slap" to queue a slap (2 damage) into your current fight — type it more than once to queue several. Grows 2% of the time on every use.',
+  'second attack':
+    'A Hobgoblin-only passive skill starting at level 1 (1%). Each combat tick has a chance (20% base, climbing toward an 80% ceiling as the skill grows — +1 percentage point per 3% learned) to swing a second time at the same target. Grows 2% of the time every tick, whether it procs or not.',
+  'enhanced damage':
+    'A Hobgoblin-only passive skill starting at level 1 (1%). Adds a flat bonus to your base hit damage, equal to 1 point per 3% learned. Grows 2% of the time on every hit or miss you make.',
   hobgoblin:
-    'A goblin that reaches 100 consumed experience (CXP) automatically evolves into a Hobgoblin — a one-way transformation. Level and experience reset to a fresh level 1; strength, intelligence, wisdom, dexterity, and constitution all reset to 10 and hp/mana/movement all reset to 100, each then raised by a permanent evolution bonus (+10 attributes, +100 hp/mana/movement). Consumed experience resets to 0.',
+    'A goblin that reaches 100 consumed experience (CXP) automatically evolves into a Hobgoblin — a one-way transformation. Level and experience reset to a fresh level 1 and consumed experience resets to 0, but strength, intelligence, wisdom, dexterity, constitution, and your hp/mana/movement caps are NOT reset — whatever they already were carries over, each simply raised by a permanent evolution bonus (+10 attributes, +100 hp/mana/movement caps). Every skill you already had is kept, and you additionally learn second attack and enhanced damage.',
 };
 
 export function findHelpTopic(query: string): { topic: string; description: string } | undefined {

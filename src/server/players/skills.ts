@@ -33,6 +33,14 @@ export const KICK = 'kick';
 // flat 2 damage, 2% growth chance per use), just a different name/verb for
 // a race with no legs to kick with. See GameGateway.activeSkillFor.
 export const SLAP = 'slap';
+// Every race's base defensive kit alongside dodge/parry — see
+// scaledSkillChance for the shared chance formula.
+export const SHIELD_BLOCK = 'shield block';
+// Hobgoblin-only (see startingSkillsForRace) — a second swing per combat
+// tick (see scaledSkillChance) and a flat damage bonus (see
+// enhancedDamageBonus), respectively.
+export const SECOND_ATTACK = 'second attack';
+export const ENHANCED_DAMAGE = 'enhanced damage';
 
 export function lesserRaceResistanceName(race: Race): string {
   return `lesser ${race} resistance`;
@@ -41,12 +49,17 @@ export function lesserRaceResistanceName(race: Race): string {
 export const BODY_PART_SKILL_STARTING_PERCENT = 10;
 export const BODY_PART_SKILL_GROWTH_CHANCE = 0.02;
 
-// Every race starts with dodge/parry at level 1; every race but slime also
-// gets dagger/kick, while slime gets "slap" (see SLAP) instead of kick —
-// mechanically identical, just reflavored for a race with no legs.
+// Every race starts with dodge/parry/shield block at level 1; every race
+// but slime also gets dagger/kick, while slime gets "slap" (see SLAP)
+// instead of kick. Hobgoblin additionally gets second attack and enhanced
+// damage on top of the same dagger/kick baseline every other non-slime
+// race has (see GameGateway.maybeEvolveToHobgoblin, which grants these to
+// an evolving goblin the moment it happens, not just on next reconnect).
 export function startingSkillsForRace(race: Race): string[] {
-  if (race === 'slime') return [DODGE, PARRY, SLAP];
-  return [DODGE, PARRY, DAGGER, KICK];
+  const universal = [DODGE, PARRY, SHIELD_BLOCK];
+  if (race === 'slime') return [...universal, SLAP];
+  if (race === 'hobgoblin') return [...universal, DAGGER, KICK, SECOND_ATTACK, ENHANCED_DAMAGE];
+  return [...universal, DAGGER, KICK];
 }
 
 // The verb ("kick"/"slap") for whichever active skill a given
@@ -85,4 +98,27 @@ export function normalMonsterDamageReduction(skillLevels: Record<string, number>
 
 export function raceDamageReduction(skillLevels: Record<string, number>, race: Race): number {
   return percentBonus(skillLevels[lesserRaceResistanceName(race)] ?? 0);
+}
+
+// Shared by "second attack" (a chance to swing twice in one combat tick)
+// and "shield block" (a chance to block an attack outright while wearing
+// a shield) — both start at a 20% base chance per trigger and climb
+// toward an 80% ceiling as the skill's learned percentage grows, gaining
+// floor(learnedPercent / 3) percentage points along the way (same
+// "divide the learned percentage down" shape as percentBonus above, just
+// a different divisor). See GameGateway.rollSecondAttack/
+// computeShieldBlockChance.
+const SCALED_SKILL_BASE_CHANCE = 0.2;
+const SCALED_SKILL_MAX_CHANCE = 0.8;
+const SCALED_SKILL_DIVISOR = 3;
+
+export function scaledSkillChance(learnedPercent: number): number {
+  const bonus = Math.floor(learnedPercent / SCALED_SKILL_DIVISOR) / 100;
+  return Math.min(SCALED_SKILL_MAX_CHANCE, SCALED_SKILL_BASE_CHANCE + bonus);
+}
+
+// "enhanced damage" — a flat bonus added to base hit damage (not a
+// chance), same divide-by-3 shape as scaledSkillChance above.
+export function enhancedDamageBonus(skillLevels: Record<string, number>): number {
+  return Math.floor((skillLevels[ENHANCED_DAMAGE] ?? 0) / SCALED_SKILL_DIVISOR);
 }

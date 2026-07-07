@@ -132,8 +132,17 @@ const BONE_DAGGER_EQUIPMENT: EquipmentDefinition = {
   attackVerb: 'stab',
 };
 
+// No attackBonus/attackVerb — a shield's only effect is enabling "shield
+// block" (see players/skills.ts's SHIELD_BLOCK/GameGateway
+// .computeShieldBlockChance), not a weapon-style damage/verb swap.
+const BONE_SHIELD_EQUIPMENT: EquipmentDefinition = {
+  slot: 'shield',
+  category: 'armor',
+};
+
 const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
   'bone dagger': BONE_DAGGER_EQUIPMENT,
+  'bone shield': BONE_SHIELD_EQUIPMENT,
 };
 
 export function equipmentForItemName(name: string): EquipmentDefinition | undefined {
@@ -155,6 +164,7 @@ const ITEM_KINDS: Record<string, ItemKind> = {
   skull: 'item',
   rib: 'item',
   'bone dagger': 'item',
+  'bone shield': 'item',
 };
 
 export function itemKindFor(name: string): ItemKind | undefined {
@@ -173,6 +183,8 @@ const ITEM_DESCRIPTIONS: Record<string, string> = {
   rib: 'A single curved rib bone, thin and surprisingly light.',
   'bone dagger':
     'A crude dagger carved from bone and sharpened along one edge. Wielding it lets you stab rather than merely hit.',
+  'bone shield':
+    'A wide shield lashed together from bone plates. Wearing it gives you a chance to block an incoming attack outright.',
 };
 
 export function itemDescriptionFor(name: string): string | undefined {
@@ -233,11 +245,12 @@ export const EQUIPMENT_SLOT_LABELS: Record<EquipmentSlot, string> = {
 };
 
 // Slimes have no limbs, ears, fingers, or shape to speak of — a helmet
-// and a torso wrap are the only things that make sense on one, so every
-// other slot (including "weapon" — a slime can't wield anything) is off
-// limits. Every other race can use the full slot list. See
+// and a torso wrap are the only things that make sense on one, plus a
+// shield and a weapon (the theory being it wraps a tentacle around each
+// one to wear/wield it). Every other slot is still off limits. Every
+// other race can use the full slot list. See
 // GameGateway.handleEquip/handleEquipmentView/handleExamine.
 export function allowedSlotsForRace(race: Race): EquipmentSlot[] {
-  if (race === 'slime') return ['head', 'torso'];
+  if (race === 'slime') return ['head', 'torso', 'shield', 'weapon'];
   return EQUIPMENT_SLOT_ORDER;
 }

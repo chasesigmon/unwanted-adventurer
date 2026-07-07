@@ -50,6 +50,9 @@ import {
   DAGGER,
   KICK,
   SLAP,
+  SHIELD_BLOCK,
+  SECOND_ATTACK,
+  ENHANCED_DAMAGE,
   lesserRaceResistanceName,
   BODY_PART_SKILL_STARTING_PERCENT,
   BODY_PART_SKILL_GROWTH_CHANCE,
@@ -63,6 +66,8 @@ import {
   undeadMonsterDamageReduction,
   normalMonsterDamageReduction,
   raceDamageReduction,
+  scaledSkillChance,
+  enhancedDamageBonus,
 } from '../players/skills.js';
 import { findHelpTopic } from '../help/help-topics.js';
 import { STARTING_MAP } from '../../shared/constants.js';
@@ -77,26 +82,33 @@ import type { Direction } from '../../shared/directions.js';
 import type { PlayerSnapshot } from '../../shared/types.js';
 import type { GameServer, GameSocket, CommandAck } from './types.js';
 
-// Base damage before any equipped weapon bonus — see EquipmentDefinition
-// .attackBonus and resolveAttackExchange's weaponForAttack.
+// Three formulas live in this file, all centered on the same idea (an edge
+// in some stat should matter, but shouldn't ever swing so far it feels
+// arbitrary):
 //
-// Two formulas live in this file, both centered on the same idea (an
-// edge in some stat should matter, but shouldn't ever swing so far it
-// feels arbitrary):
+// 1. Base hit damage (baseHitDamage, below): the same formula for every
+//    race — a fixed floor plus half of the attacker's own strength and
+//    level (rounded down), so a level-1/strength-1 character still hits
+//    for exactly the same 6 damage the old flat constant gave, and it only
+//    grows from there as strength/level do.
 //
-// 1. Attack damage bonus (attributeAttackBonus): every 2 points of
+// 2. Attack damage bonus (attributeAttackBonus): every 2 points of
 //    strength advantage over the opponent, plus every 2 levels of level
 //    advantage, each contribute +1 damage — the two add together, then
 //    clamp at 0 (a weaker/lower-level attacker gets no bonus, never a
 //    penalty). floor((str_self - str_opp) / 2) + floor(level_self -
 //    level_opp) / 2), minimum 0.
 //
-// 2. Power-comparison message (powerComparisonMessage, for "examine"):
+// 3. Power-comparison message (powerComparisonMessage, for "examine"):
 //    level difference alone (not strength) sorted into 7 graded bands —
 //    "no match at all" / "significantly weaker" / "slightly weaker" /
 //    "evenly matched" / "slightly stronger" / "significantly stronger" /
 //    "could destroy you" — at gaps of roughly 2 and 5 levels either way.
-const PLAYER_ATTACK_DAMAGE = 6;
+const PLAYER_BASE_ATTACK_DAMAGE_FLOOR = 6;
+
+function baseHitDamage(strength: number, level: number): number {
+  return PLAYER_BASE_ATTACK_DAMAGE_FLOOR + Math.floor(strength / 2) + Math.floor(level / 2);
+}
 // Flat counter-attack damage for any monster kind (not species-specific).
 const MONSTER_ATTACK_DAMAGE = 2;
 // Every monster (any kind) gets this same flat dodge chance against a
@@ -117,12 +129,16 @@ const MONSTER_CLASS_RESISTANCE_SKILL: Record<MonsterClass, string> = {
 };
 const ATTACK_INTERVAL_MS = 4000;
 const ALL_DIRECTIONS: Direction[] = ['north', 'south', 'east', 'west'];
-// hp/mana/movement all cap at this same value.
+// hp/mana/movement all start at this same value (see SocketData.maxHp/
+// maxMana/maxMovement for the per-player cap that grows from here).
 const MAX_STAT = 100;
+
+// Every level gained raises the hp/mana/movement caps by this much, for
+// every race — see grantExp.
+const LEVEL_UP_STAT_BONUS = 10;
 
 // "goblin evolves into Hobgoblin" — see maybeEvolveToHobgoblin.
 const HOBGOBLIN_EVOLUTION_CXP = 100;
-const HOBGOBLIN_BASE_ATTRIBUTE = 10;
 const HOBGOBLIN_ATTRIBUTE_BONUS = 10;
 const HOBGOBLIN_STAT_BONUS = 100;
 
@@ -701,32 +717,38 @@ export class GameGateway
     return ALL_DIRECTIONS.filter((direction) => resolveMove(loc, direction).ok);
   }
 
-  // The equipped weapon's contribution to an attack — a damage bonus
-  // added to PLAYER_ATTACK_DAMAGE, and a verb that replaces "hit" in the
-  // attack line (e.g. a bone dagger "stabs" rather than "hits"). No
-  // weapon equipped (or an equipped item with no EquipmentDefinition, in
-  // practice never possible for something already in the 'weapon' slot)
-  // falls back to bare-handed values.
-  // Generic form of weaponAttack below — takes plain equipment/skillLevels
-  // records rather than a GameSocket, so the same formula covers a real
-  // player, a dummy, or (for the auto-retaliation counter-hit) whichever
-  // player-like target just got attacked. The "dagger" skill (see
-  // players/skills.ts) adds a small bonus on top of the weapon's own
-  // attackBonus, scaled by percentBonus, but only while an item whose name
-  // contains "dagger" is actually equipped.
-  private weaponAttackFor(equipment: Record<string, string>, skillLevels: Record<string, number>): { damage: number; verb: string } {
+  // The equipped weapon's contribution to an attack, on top of
+  // baseHitDamage(strength, level) — a damage bonus, and a verb that
+  // replaces "hit" in the attack line (e.g. a bone dagger "stabs" rather
+  // than "hits"). No weapon equipped (or an equipped item with no
+  // EquipmentDefinition, in practice never possible for something already
+  // in the 'weapon' slot) falls back to bare-handed values.
+  // Generic form of weaponAttack below — takes plain data fields rather
+  // than a GameSocket, so the same formula covers a real player, a dummy,
+  // or (for the auto-retaliation counter-hit) whichever player-like target
+  // just got attacked. The "dagger" skill (see players/skills.ts) adds a
+  // small bonus on top of the weapon's own attackBonus, scaled by
+  // percentBonus, but only while an item whose name contains "dagger" is
+  // actually equipped; "enhanced damage" (hobgoblin-only) adds its own
+  // bonus (see enhancedDamageBonus) regardless of weapon.
+  private weaponAttackFor(
+    equipment: Record<string, string>,
+    skillLevels: Record<string, number>,
+    strength: number,
+    level: number
+  ): { damage: number; verb: string } {
     const weaponName = equipment.weapon;
     const definition = weaponName ? equipmentForItemName(weaponName) : undefined;
     const isDagger = weaponName?.toLowerCase().includes('dagger') ?? false;
     const daggerBonus = isDagger ? percentBonus(skillLevels[DAGGER] ?? 0) : 0;
     return {
-      damage: PLAYER_ATTACK_DAMAGE + (definition?.attackBonus ?? 0) + daggerBonus,
+      damage: baseHitDamage(strength, level) + (definition?.attackBonus ?? 0) + daggerBonus + enhancedDamageBonus(skillLevels),
       verb: definition?.attackVerb ?? 'hit',
     };
   }
 
   private weaponAttack(client: GameSocket): { damage: number; verb: string } {
-    return this.weaponAttackFor(client.data.equipment, client.data.skillLevels);
+    return this.weaponAttackFor(client.data.equipment, client.data.skillLevels, client.data.strength, client.data.level);
   }
 
   // Strength (and level) versus the opponent's own — every 2 points of
@@ -782,6 +804,35 @@ export class GameGateway
     if (skill === undefined) return 0;
     if (defender.race !== 'slime' && !defender.equipment?.weapon) return 0;
     return avoidChance(defender.level, defender.strength, skill, attacker.level, attacker.strength);
+  }
+
+  // "shield block" — every race's base kit (see startingSkillsForRace),
+  // but only usable while actually wearing a shield. Unlike dodge/parry
+  // (which use the level/dexterity-or-strength avoidChance formula),
+  // shield block uses the flatter scaledSkillChance shape shared with
+  // "second attack" (20% base, climbing toward 80%) — a shield either
+  // stops the hit or it doesn't, there's no opposing attribute to weigh it
+  // against. 0 whenever there's no shield equipped, which also means "no
+  // attempt happened" for growth purposes — see the two call sites, which
+  // only roll growth when this returns > 0.
+  private computeShieldBlockChance(defender: { skillLevels?: Record<string, number>; equipment?: Record<string, string> }): number {
+    const skill = defender.skillLevels?.[SHIELD_BLOCK];
+    if (skill === undefined || !defender.equipment?.shield) return 0;
+    return scaledSkillChance(skill);
+  }
+
+  // "second attack" (hobgoblin-only) — a chance, per combat tick, to swing
+  // a second time at the same target (see resolveAttackExchange/
+  // resolveMurderExchange's swing loops). Uses the same scaledSkillChance
+  // shape as shield block. Grows 2% of the time regardless of whether it
+  // actually procced this tick — every tick with the skill is a growth
+  // opportunity, not just a successful proc.
+  private rollSecondAttack(client: GameSocket): { procced: boolean; growthMessage?: string } {
+    const skill = client.data.skillLevels[SECOND_ATTACK];
+    if (skill === undefined) return { procced: false };
+    const procced = Math.random() < scaledSkillChance(skill);
+    const growthMessage = this.maybeGrowSkill(client, SECOND_ATTACK, SKILL_GROWTH_CHANCE);
+    return { procced, growthMessage };
   }
 
   // Grows a skill by 1 percentage point with the given chance — only if
@@ -876,43 +927,84 @@ export class GameGateway
     return messages;
   }
 
-  // The core "basic hit" exchange, shared by the first (synchronous) hit in
-  // handleAttack and every subsequent tick in tickCombat: the monster gets
-  // a flat MONSTER_DODGE_CHANCE to avoid the swing entirely; otherwise the
-  // player hits for PLAYER_ATTACK_DAMAGE plus their weapon's bonus (dagger
-  // skill included, see weaponAttack) plus an attribute-based bonus (see
-  // attributeAttackBonus), growing the dagger skill only while actually
-  // wielding one. Any queued kick/slap (see processQueuedActiveSkill) fires
-  // next as a second damage instance if the monster is still alive. If the
-  // monster survives both, it swings back — the player may dodge or parry
-  // it entirely (see computeDodgeChance/computeParryChance), otherwise it
-  // lands (reduced if the monster is undead and the player has learned
-  // resistance to that, which also has a chance to grow from the hit). The
-  // final "has X% HP remaining" line always comes last, after every hit and
-  // the counter-attack. Returns one line per event so the client can log
-  // each separately — nothing here is a persistent status display, it's
-  // all just message lines.
-  private resolveAttackExchange(client: GameSocket, target: Monster): { messages: string[]; died: boolean } {
-    const { kind, expReward } = target;
+  // One player-initiated weapon swing — shared by resolveAttackExchange (a
+  // monster target) and resolveMurderExchange (a player-like target),
+  // including when "second attack" (hobgoblin-only) procs a second one in
+  // the same tick. `missCheck` supplies whichever avoidance mechanic the
+  // target actually uses (a monster's flat MONSTER_DODGE_CHANCE, or a
+  // player-like target's computeDodgeChance/computeParryChance chain) and
+  // returns the miss message if it evaded, or undefined if the swing
+  // should land. Dagger (only while wielding one) and enhanced damage
+  // (hobgoblin-only, regardless of weapon) both grow from every swing,
+  // hit or missed alike — callers don't need to handle either themselves.
+  private performSwing(
+    client: GameSocket,
+    attributeBonus: number,
+    applyDamage: (amount: number) => { died: boolean },
+    missCheck: () => string | undefined,
+    targetLabel: string
+  ): { messages: string[]; died: boolean } {
     const messages: string[] = [];
     let died = false;
-    const isWieldingDagger = (client.data.equipment.weapon?.toLowerCase().includes('dagger') ?? false);
-
-    const monsterDodged = Math.random() < MONSTER_DODGE_CHANCE;
-    if (monsterDodged) {
-      messages.push(`The ${kind} dodges your attack!`);
+    const missMessage = missCheck();
+    if (missMessage) {
+      messages.push(missMessage);
     } else {
       const { damage: weaponDamage, verb } = this.weaponAttack(client);
-      const attackDamage = weaponDamage + this.attributeAttackBonus(client, target);
-      ({ died } = this.monsterManager.applyDamage(target.id, attackDamage));
-      messages.push(`You ${verb} the ${kind} for ${attackDamage} damage!`);
+      const attackDamage = weaponDamage + attributeBonus;
+      ({ died } = applyDamage(attackDamage));
+      messages.push(`You ${verb} ${targetLabel} for ${attackDamage} damage!`);
     }
-    // Dagger grows from every swing while wielding one — hit or missed
-    // (dodged) alike, not just a landed hit.
+
+    const isWieldingDagger = client.data.equipment.weapon?.toLowerCase().includes('dagger') ?? false;
     if (isWieldingDagger) {
       const daggerGrowth = this.maybeGrowSkill(client, DAGGER, SKILL_GROWTH_CHANCE);
       if (daggerGrowth) messages.push(daggerGrowth);
     }
+    const enhancedGrowth = this.maybeGrowSkill(client, ENHANCED_DAMAGE, SKILL_GROWTH_CHANCE);
+    if (enhancedGrowth) messages.push(enhancedGrowth);
+
+    return { messages, died };
+  }
+
+  // The core "basic hit" exchange, shared by the first (synchronous) hit in
+  // handleAttack and every subsequent tick in tickCombat: "second attack"
+  // (hobgoblin-only, see rollSecondAttack) may turn this into two swings
+  // instead of one, each independently subject to the monster's flat
+  // MONSTER_DODGE_CHANCE (see performSwing). Any queued kick/slap (see
+  // processQueuedActiveSkill) fires next as a further damage instance if
+  // the monster is still alive. If the monster survives all of that, it
+  // swings back — the player may dodge or parry it entirely (see
+  // computeDodgeChance/computeParryChance), or block it with a shield (see
+  // computeShieldBlockChance) if both fail; otherwise it lands (reduced if
+  // the monster is undead/normal and the player has learned resistance to
+  // that, which also has a chance to grow from the hit). The final "has
+  // X% HP remaining" line always comes last, after every hit and the
+  // counter-attack. Returns one line per event so the client can log each
+  // separately — nothing here is a persistent status display, it's all
+  // just message lines.
+  private resolveAttackExchange(client: GameSocket, target: Monster): { messages: string[]; died: boolean } {
+    const { kind, expReward } = target;
+    const messages: string[] = [];
+    let died = false;
+
+    const attributeBonus = this.attributeAttackBonus(client, target);
+    const { procced: secondAttackProcced, growthMessage: secondAttackGrowth } = this.rollSecondAttack(client);
+    const swingCount = secondAttackProcced ? 2 : 1;
+
+    for (let swing = 0; swing < swingCount && !died; swing++) {
+      if (swing === 1) messages.push('Your second attack triggers!');
+      const result = this.performSwing(
+        client,
+        attributeBonus,
+        (amount) => this.monsterManager.applyDamage(target.id, amount),
+        () => (Math.random() < MONSTER_DODGE_CHANCE ? `The ${kind} dodges your attack!` : undefined),
+        `the ${kind}`
+      );
+      messages.push(...result.messages);
+      died = result.died;
+    }
+    if (secondAttackGrowth) messages.push(secondAttackGrowth);
 
     if (!died) {
       const activeSkillResult = this.processQueuedActiveSkill(
@@ -981,16 +1073,34 @@ export class GameGateway
         const growth = this.maybeGrowSkill(client, dodged ? DODGE : PARRY, SKILL_GROWTH_CHANCE);
         if (growth) counterMessages.push(growth);
       } else {
-        const resistanceSkill = MONSTER_CLASS_RESISTANCE_SKILL[target.monsterClass];
-        const reduction =
-          target.monsterClass === 'undead'
-            ? undeadMonsterDamageReduction(client.data.skillLevels)
-            : normalMonsterDamageReduction(client.data.skillLevels);
-        const damage = Math.max(0, MONSTER_ATTACK_DAMAGE - reduction);
-        client.data.hp = Math.max(0, client.data.hp - damage);
-        counterMessages.push(`The ${kind} hits you for ${damage} damage.`);
-        const growth = this.maybeGrowSkill(client, resistanceSkill, BODY_PART_SKILL_GROWTH_CHANCE);
-        if (growth) counterMessages.push(growth);
+        // Shield block is only even attempted once dodge/parry have both
+        // failed — a shield stops a hit that's already going to land, it
+        // doesn't avoid the swing itself the way dodge/parry do.
+        const shieldBlockChance = this.computeShieldBlockChance(client.data);
+        const attemptingShieldBlock = shieldBlockChance > 0;
+        const blocked = attemptingShieldBlock && Math.random() < shieldBlockChance;
+
+        if (blocked) {
+          counterMessages.push(`You block the ${kind}'s attack with your shield!`);
+        } else {
+          const resistanceSkill = MONSTER_CLASS_RESISTANCE_SKILL[target.monsterClass];
+          const reduction =
+            target.monsterClass === 'undead'
+              ? undeadMonsterDamageReduction(client.data.skillLevels)
+              : normalMonsterDamageReduction(client.data.skillLevels);
+          const damage = Math.max(0, MONSTER_ATTACK_DAMAGE - reduction);
+          client.data.hp = Math.max(0, client.data.hp - damage);
+          counterMessages.push(`The ${kind} hits you for ${damage} damage.`);
+          const growth = this.maybeGrowSkill(client, resistanceSkill, BODY_PART_SKILL_GROWTH_CHANCE);
+          if (growth) counterMessages.push(growth);
+        }
+
+        // Grows whether the block succeeded or failed — but only counts as
+        // an "attempt" at all while actually wearing a shield.
+        if (attemptingShieldBlock) {
+          const growth = this.maybeGrowSkill(client, SHIELD_BLOCK, SKILL_GROWTH_CHANCE);
+          if (growth) counterMessages.push(growth);
+        }
       }
 
       // The HP-remaining line goes at the very bottom, after every hit and
@@ -1085,36 +1195,63 @@ export class GameGateway
 
     const messages: string[] = [];
     // Any growth on the *defender's* own skills (dodge/parry, race
-    // resistance, dagger on their counter-attack) only ever reaches them —
-    // folded into the "is attacking you" notice below for a real target;
-    // discarded for a dummy (no one to show it to).
+    // resistance, shield block, dagger/enhanced damage on their
+    // counter-attack) only ever reaches them — folded into the "is
+    // attacking you" notice below for a real target; discarded for a
+    // dummy (no one to show it to).
     const defenderMessages: string[] = [];
     let died = false;
-    const attackerWieldingDagger = client.data.equipment.weapon?.toLowerCase().includes('dagger') ?? false;
 
-    const dodged = Math.random() < this.computeDodgeChance(targetData, client.data);
-    const parried = !dodged && Math.random() < this.computeParryChance(targetData, client.data);
+    const attackerAttributeBonus = this.attributeAttackBonus(client, targetData);
+    const { procced: secondAttackProcced, growthMessage: secondAttackGrowth } = this.rollSecondAttack(client);
+    const swingCount = secondAttackProcced ? 2 : 1;
 
-    if (dodged || parried) {
-      messages.push(`${targetData.username} ${dodged ? 'dodges' : 'parries'} your attack!`);
-      const growth = this.growSkillFor(target, dodged ? DODGE : PARRY, SKILL_GROWTH_CHANCE);
-      if (growth) defenderMessages.push(growth);
-    } else {
-      const { damage: weaponDamage, verb } = this.weaponAttack(client);
-      const attributeBonus = this.attributeAttackBonus(client, targetData);
-      const raceReduction = raceDamageReduction(targetData.skillLevels, client.data.race);
-      const attackDamage = Math.max(0, weaponDamage + attributeBonus - raceReduction);
-      ({ died } = applyDamageToTarget(attackDamage));
-      messages.push(`You ${verb} ${targetData.username} for ${attackDamage} damage!`);
-      const resistGrowth = this.growSkillFor(target, lesserRaceResistanceName(client.data.race), BODY_PART_SKILL_GROWTH_CHANCE);
-      if (resistGrowth) defenderMessages.push(resistGrowth);
+    for (let swing = 0; swing < swingCount && !died; swing++) {
+      if (swing === 1) messages.push('Your second attack triggers!');
+
+      const dodged = Math.random() < this.computeDodgeChance(targetData, client.data);
+      const parried = !dodged && Math.random() < this.computeParryChance(targetData, client.data);
+
+      if (dodged || parried) {
+        messages.push(`${targetData.username} ${dodged ? 'dodges' : 'parries'} your attack!`);
+        const growth = this.growSkillFor(target, dodged ? DODGE : PARRY, SKILL_GROWTH_CHANCE);
+        if (growth) defenderMessages.push(growth);
+      } else {
+        // Shield block is only even attempted once dodge/parry have both
+        // failed — same ordering as resolveAttackExchange.
+        const targetShieldBlockChance = this.computeShieldBlockChance(targetData);
+        const targetAttemptingShieldBlock = targetShieldBlockChance > 0;
+        const targetBlocked = targetAttemptingShieldBlock && Math.random() < targetShieldBlockChance;
+
+        if (targetBlocked) {
+          messages.push(`${targetData.username} blocks your attack with a shield!`);
+        } else {
+          const { damage: weaponDamage, verb } = this.weaponAttack(client);
+          const raceReduction = raceDamageReduction(targetData.skillLevels, client.data.race);
+          const attackDamage = Math.max(0, weaponDamage + attackerAttributeBonus - raceReduction);
+          ({ died } = applyDamageToTarget(attackDamage));
+          messages.push(`You ${verb} ${targetData.username} for ${attackDamage} damage!`);
+          const resistGrowth = this.growSkillFor(target, lesserRaceResistanceName(client.data.race), BODY_PART_SKILL_GROWTH_CHANCE);
+          if (resistGrowth) defenderMessages.push(resistGrowth);
+        }
+
+        if (targetAttemptingShieldBlock) {
+          const growth = this.growSkillFor(target, SHIELD_BLOCK, SKILL_GROWTH_CHANCE);
+          if (growth) defenderMessages.push(growth);
+        }
+      }
+
+      // Dagger/enhanced damage grow from every swing — hit or missed
+      // (dodged/parried/blocked) alike, not just a landed hit.
+      const attackerWieldingDagger = client.data.equipment.weapon?.toLowerCase().includes('dagger') ?? false;
+      if (attackerWieldingDagger) {
+        const daggerGrowth = this.maybeGrowSkill(client, DAGGER, SKILL_GROWTH_CHANCE);
+        if (daggerGrowth) messages.push(daggerGrowth);
+      }
+      const enhancedGrowth = this.maybeGrowSkill(client, ENHANCED_DAMAGE, SKILL_GROWTH_CHANCE);
+      if (enhancedGrowth) messages.push(enhancedGrowth);
     }
-    // Dagger grows from every swing while wielding one — hit or missed
-    // (dodged/parried) alike, not just a landed hit.
-    if (attackerWieldingDagger) {
-      const daggerGrowth = this.maybeGrowSkill(client, DAGGER, SKILL_GROWTH_CHANCE);
-      if (daggerGrowth) messages.push(daggerGrowth);
-    }
+    if (secondAttackGrowth) messages.push(secondAttackGrowth);
 
     if (!died) {
       const activeSkillResult = this.processQueuedActiveSkill(client, applyDamageToTarget, targetData.username, (verb) => {
@@ -1140,29 +1277,49 @@ export class GameGateway
 
     // Auto-retaliation — the defender hits back as part of this same
     // exchange (see the class doc comment above), subject to the original
-    // attacker's own dodge/parry chance against it.
+    // attacker's own dodge/parry/shield-block chance against it.
     const counterDodged = Math.random() < this.computeDodgeChance(client.data, targetData);
     const counterParried = !counterDodged && Math.random() < this.computeParryChance(client.data, targetData);
-    const defenderWieldingDagger = targetData.equipment.weapon?.toLowerCase().includes('dagger') ?? false;
 
     if (counterDodged || counterParried) {
       messages.push(`You ${counterDodged ? 'dodge' : 'parry'} ${targetData.username}'s counter-attack!`);
       const growth = this.maybeGrowSkill(client, counterDodged ? DODGE : PARRY, SKILL_GROWTH_CHANCE);
       if (growth) messages.push(growth);
     } else {
-      const { damage: counterWeaponDamage, verb: counterVerb } = this.weaponAttackFor(targetData.equipment, targetData.skillLevels);
-      const counterAttributeBonus = this.attributeBonusBetween(targetData, client.data);
-      const counterDamage = counterWeaponDamage + counterAttributeBonus;
-      client.data.hp = Math.max(0, client.data.hp - counterDamage);
-      messages.push(`${targetData.username} ${thirdPersonVerb(counterVerb)} you for ${counterDamage} damage.`);
+      const clientShieldBlockChance = this.computeShieldBlockChance(client.data);
+      const clientAttemptingShieldBlock = clientShieldBlockChance > 0;
+      const clientBlocked = clientAttemptingShieldBlock && Math.random() < clientShieldBlockChance;
+
+      if (clientBlocked) {
+        messages.push(`You block ${targetData.username}'s counter-attack with your shield!`);
+      } else {
+        const { damage: counterWeaponDamage, verb: counterVerb } = this.weaponAttackFor(
+          targetData.equipment,
+          targetData.skillLevels,
+          targetData.strength,
+          targetData.level
+        );
+        const counterAttributeBonus = this.attributeBonusBetween(targetData, client.data);
+        const counterDamage = counterWeaponDamage + counterAttributeBonus;
+        client.data.hp = Math.max(0, client.data.hp - counterDamage);
+        messages.push(`${targetData.username} ${thirdPersonVerb(counterVerb)} you for ${counterDamage} damage.`);
+      }
+
+      if (clientAttemptingShieldBlock) {
+        const growth = this.maybeGrowSkill(client, SHIELD_BLOCK, SKILL_GROWTH_CHANCE);
+        if (growth) messages.push(growth);
+      }
     }
-    // Same "every swing counts" rule as the attacker's own dagger, above —
-    // the defender's counter-attack grows their dagger whether it landed
-    // or was dodged/parried.
+    // Same "every swing counts" rule as the attacker's own dagger/enhanced
+    // damage, above — the defender's counter-attack grows both whether it
+    // landed or was dodged/parried/blocked.
+    const defenderWieldingDagger = targetData.equipment.weapon?.toLowerCase().includes('dagger') ?? false;
     if (defenderWieldingDagger) {
       const growth = this.growSkillFor(target, DAGGER, SKILL_GROWTH_CHANCE);
       if (growth) defenderMessages.push(growth);
     }
+    const defenderEnhancedGrowth = this.growSkillFor(target, ENHANCED_DAMAGE, SKILL_GROWTH_CHANCE);
+    if (defenderEnhancedGrowth) defenderMessages.push(defenderEnhancedGrowth);
 
     // The HP-remaining line goes at the very bottom, after every hit and
     // the counter-attack have already been resolved.
@@ -1413,13 +1570,16 @@ export class GameGateway
   // A goblin that has consumed HOBGOBLIN_EVOLUTION_CXP body parts evolves
   // into a Hobgoblin — a one-way, one-time transformation (not selectable
   // at registration, see shared/constants.ts's EVOLVED_RACES). Per the
-  // request: level and exp reset to a fresh level 1; every base attribute
-  // resets to 10 and every stat cap resets to 100, each *then* raised by
-  // the evolution bonus (+10 attributes, +100 hp/mana/movement) — a full
-  // reset to a new, higher baseline, not just an increment on top of
-  // whatever the player had already built up. consumeExp resets to 0 so
-  // the threshold can't immediately refire (there's nothing left to evolve
-  // into again, but this keeps the counter meaningful either way).
+  // request: level and exp reset to a fresh level 1 and consumeExp resets
+  // to 0, but attributes and hp/mana/movement caps are *not* reset —
+  // whatever they were as a goblin (including any level-up growth already
+  // earned) carries over, with the evolution bonus (+10 attributes, +100
+  // hp/mana/movement caps) simply added on top. Every skill the goblin
+  // already had (dodge/parry/shield block/dagger/kick, plus any learned
+  // resistances) is untouched too — skillLevels is never reset here — and
+  // startingSkillsForRace('hobgoblin')'s two new entries (second attack,
+  // enhanced damage) are granted immediately rather than waiting for the
+  // next reconnect to backfill them (see handleConnection).
   private maybeEvolveToHobgoblin(client: GameSocket): string[] {
     if (client.data.race !== 'goblin' || client.data.consumeExp < HOBGOBLIN_EVOLUTION_CXP) return [];
 
@@ -1428,27 +1588,38 @@ export class GameGateway
     client.data.exp = 0;
     client.data.consumeExp = 0;
 
-    const newAttribute = HOBGOBLIN_BASE_ATTRIBUTE + HOBGOBLIN_ATTRIBUTE_BONUS;
-    client.data.strength = newAttribute;
-    client.data.intelligence = newAttribute;
-    client.data.wisdom = newAttribute;
-    client.data.dexterity = newAttribute;
-    client.data.constitution = newAttribute;
+    client.data.strength += HOBGOBLIN_ATTRIBUTE_BONUS;
+    client.data.intelligence += HOBGOBLIN_ATTRIBUTE_BONUS;
+    client.data.wisdom += HOBGOBLIN_ATTRIBUTE_BONUS;
+    client.data.dexterity += HOBGOBLIN_ATTRIBUTE_BONUS;
+    client.data.constitution += HOBGOBLIN_ATTRIBUTE_BONUS;
 
-    client.data.maxHp = MAX_STAT + HOBGOBLIN_STAT_BONUS;
-    client.data.maxMana = MAX_STAT + HOBGOBLIN_STAT_BONUS;
-    client.data.maxMovement = MAX_STAT + HOBGOBLIN_STAT_BONUS;
+    client.data.maxHp += HOBGOBLIN_STAT_BONUS;
+    client.data.maxMana += HOBGOBLIN_STAT_BONUS;
+    client.data.maxMovement += HOBGOBLIN_STAT_BONUS;
     client.data.hp = client.data.maxHp;
     client.data.mana = client.data.maxMana;
     client.data.movement = client.data.maxMovement;
 
-    return [
+    const newSkills: string[] = [];
+    for (const skill of startingSkillsForRace('hobgoblin')) {
+      if (client.data.skillLevels[skill] === undefined) {
+        client.data.skillLevels = { ...client.data.skillLevels, [skill]: STARTING_SKILL_PERCENT };
+        newSkills.push(skill);
+      }
+    }
+
+    const messages = [
       '**Your body twists and swells with dark power — you have evolved into a Hobgoblin!**',
       'Your level has reset to 1 and your experience has been cleared.',
-      `Your strength, intelligence, wisdom, dexterity, and constitution have all reset to ${HOBGOBLIN_BASE_ATTRIBUTE}, plus a +${HOBGOBLIN_ATTRIBUTE_BONUS} evolution bonus (${newAttribute} each).`,
-      `Your hp, mana, and movement have all reset to ${MAX_STAT}, plus a +${HOBGOBLIN_STAT_BONUS} evolution bonus (${MAX_STAT + HOBGOBLIN_STAT_BONUS} each).`,
+      `Your strength, intelligence, wisdom, dexterity, and constitution have each permanently increased by ${HOBGOBLIN_ATTRIBUTE_BONUS} (now ${client.data.strength} each).`,
+      `Your hp, mana, and movement caps have each permanently increased by ${HOBGOBLIN_STAT_BONUS} (now ${client.data.maxHp} each), and you've been fully healed.`,
       'Your consumed experience has been reset to 0.',
     ];
+    if (newSkills.length > 0) {
+      messages.push(`You have also learned: ${newSkills.join(', ')} (starting at ${STARTING_SKILL_PERCENT}%).`);
+    }
+    return messages;
   }
 
   // Applies an exp gain (from a monster kill or a murder) and any level-ups
@@ -1464,22 +1635,27 @@ export class GameGateway
     client.data.level = level;
     client.data.exp = exp;
     if (level > before) {
-      // A level-up fully restores hp/mana/movement to their current max —
-      // ordinarily 100/100/100, but a Hobgoblin's permanently raised max
-      // (see maybeEvolveToHobgoblin) carries through here too. Base
-      // attributes each go up by 1 per level gained (in practice almost
-      // always exactly 1 level per kill, given typical exp gains).
+      // Every race gets the same level-up bonuses: base attributes each go
+      // up by 1 per level gained (in practice almost always exactly 1
+      // level per kill, given typical exp gains), and hp/mana/movement
+      // caps each permanently increase by LEVEL_UP_STAT_BONUS — on top of
+      // (not instead of) a Hobgoblin's own evolution bonus (see
+      // maybeEvolveToHobgoblin). A level-up then fully heals to the new,
+      // now-higher max.
       const levelsGained = level - before;
       client.data.strength += levelsGained;
       client.data.intelligence += levelsGained;
       client.data.wisdom += levelsGained;
       client.data.dexterity += levelsGained;
       client.data.constitution += levelsGained;
+      client.data.maxHp += LEVEL_UP_STAT_BONUS * levelsGained;
+      client.data.maxMana += LEVEL_UP_STAT_BONUS * levelsGained;
+      client.data.maxMovement += LEVEL_UP_STAT_BONUS * levelsGained;
       client.data.hp = client.data.maxHp;
       client.data.mana = client.data.maxMana;
       client.data.movement = client.data.maxMovement;
       messages.push(
-        `You leveled up! You are now level ${level}! Your health, mana, and movement have been fully restored, and your attributes have increased.`
+        `You leveled up! You are now level ${level}! Your health, mana, and movement caps have each increased by ${LEVEL_UP_STAT_BONUS}, you've been fully restored, and your attributes have increased.`
       );
     }
     return messages;

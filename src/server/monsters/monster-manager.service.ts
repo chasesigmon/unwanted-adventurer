@@ -16,6 +16,7 @@ import type { Monster, MonsterClass, MonsterKind } from './monster.js';
 // see items/item-definitions.ts's wildGoblinBodyPartSkill.
 const BODY_PARTS = ['leg', 'arm', 'hand', 'skull', 'rib'];
 const BONE_DAGGER_DROP_CHANCE = 0.2;
+const BONE_SHIELD_DROP_CHANCE = 0.2;
 
 // Both monster kinds are entry-level, so level 1 keeps a fresh level-1
 // player's attack-bonus formula neutral against them (see GameGateway
@@ -272,17 +273,17 @@ export class MonsterManagerService extends EventEmitter implements OnModuleInit,
   // What a monster kind leaves behind on death — kept keyed by kind rather
   // than monsterClass since future kinds sharing a class could still have
   // a different pool, or none. Every current kind always drops a body
-  // part; only wild skeleton has the extra BONE_DAGGER_DROP_CHANCE roll for
-  // a bone dagger (unchanged from before), so a skeleton kill can yield one
-  // or two items while a goblin kill always yields exactly one. A wild
-  // skeleton's part is named plainly ("leg") — always undead resistance,
-  // see item-definitions.ts's ITEM_DEFINITIONS; a wild goblin's is named
-  // "wild goblin <part>" so it teaches normal-monster resistance instead
-  // (see wildGoblinBodyPartSkill) rather than colliding with the plain
-  // name. Each item's skill reward/chance comes from
-  // items/item-definitions.ts — the same lookup GameGateway.handleDrop
-  // uses, so an item's properties don't depend on which of those two paths
-  // put it on the ground.
+  // part; only wild skeleton has the extra BONE_DAGGER_DROP_CHANCE/
+  // BONE_SHIELD_DROP_CHANCE rolls for a bone dagger/shield (unchanged from
+  // before), so a skeleton kill can yield one to three items while a
+  // goblin kill always yields exactly one. A wild skeleton's part is named
+  // plainly ("leg") — always undead resistance, see item-definitions.ts's
+  // ITEM_DEFINITIONS; a wild goblin's is named "wild goblin <part>" so it
+  // teaches normal-monster resistance instead (see wildGoblinBodyPartSkill)
+  // rather than colliding with the plain name. Each item's skill
+  // reward/chance comes from items/item-definitions.ts — the same lookup
+  // GameGateway.handleDrop uses, so an item's properties don't depend on
+  // which of those two paths put it on the ground.
   getDeathDrops(kind: MonsterKind): DeathDrop[] {
     const partName = BODY_PARTS[Math.floor(Math.random() * BODY_PARTS.length)];
     const drops: DeathDrop[] = [];
@@ -292,6 +293,9 @@ export class MonsterManagerService extends EventEmitter implements OnModuleInit,
     }
     if (kind === 'wild skeleton' && Math.random() < BONE_DAGGER_DROP_CHANCE) {
       drops.push({ name: 'bone dagger', skill: skillForItemName('bone dagger') });
+    }
+    if (kind === 'wild skeleton' && Math.random() < BONE_SHIELD_DROP_CHANCE) {
+      drops.push({ name: 'bone shield', skill: skillForItemName('bone shield') });
     }
     return drops;
   }
