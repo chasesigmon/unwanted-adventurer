@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { NetworkManager, type DisconnectedDetail } from '../net/NetworkManager.js';
 import type { SyncPayload, KickedPayload, CombatUpdatePayload } from '../../server/game-gateway/types.js';
-import type { PlayerSnapshot, MinimapCell, RoomInfo } from '../../shared/types.js';
+import type { PlayerSnapshot, MinimapCell, RoomInfo, WorldMapArea } from '../../shared/types.js';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
 
@@ -10,6 +10,15 @@ const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
 const MAX_MESSAGES = 200;
 
 type Screen = 'auth' | 'game';
+
+// A line in the persistent message log, tagged with an optional visual
+// treatment: 'sighting' (a monster/item just noticed — red, extra space
+// above and below) or 'milestone' (a kill or level-up — extra space
+// below, to set it apart from the ordinary flow).
+export interface LogEntry {
+  text: string;
+  variant?: 'sighting' | 'milestone';
+}
 
 interface GameState {
   screen: Screen;
@@ -22,7 +31,10 @@ interface GameState {
   // genuinely new sighting from the same one recomputed again.
   monsterMessage: string | null;
   itemMessage: string | null;
-  messages: string[];
+  messages: LogEntry[];
+  // Set only by the "worldmap" command's ack; cleared by the modal's own
+  // close action. Nothing else in GameState reacts to it.
+  worldMapAreas: WorldMapArea[] | null;
 }
 
 const initialState: GameState = {
@@ -34,34 +46,51 @@ const initialState: GameState = {
   monsterMessage: null,
   itemMessage: null,
   messages: [],
+  worldMapAreas: null,
 };
 
-function appendMessages(existing: string[], incoming: string[]): string[] {
+function appendEntries(existing: LogEntry[], incoming: LogEntry[]): LogEntry[] {
   if (incoming.length === 0) return existing;
   const combined = [...existing, ...incoming];
   return combined.length > MAX_MESSAGES ? combined.slice(combined.length - MAX_MESSAGES) : combined;
+}
+
+// The server sends plain strings; a couple of exact, server-owned phrasings
+// get tagged for the "milestone" spacing the moment they arrive, so
+// GameScreen never has to guess from the raw text at render time.
+function classifyServerLine(text: string): LogEntry['variant'] {
+  if (text.startsWith('You killed ') || text.startsWith('You leveled up!')) {
+    return 'milestone';
+  }
+  return undefined;
+}
+
+function toEntries(lines: string[]): LogEntry[] {
+  return lines.map((text) => ({ text, variant: classifyServerLine(text) }));
 }
 
 // Folds "a skeleton is here"/"a leg lies here" into the same natural,
 // one-at-a-time message log as everything else, instead of a separate
 // fixed banner — but only when the value is genuinely new (different from
 // what was last seen), so standing in the same room across several
-// actions doesn't reprint the same sighting on every single one.
+// actions doesn't reprint the same sighting on every single one. Only the
+// monster sighting gets the 'sighting' variant — the user only asked for
+// "<mob> is here" to stand out, not the item message.
 function withSightings(
   state: GameState,
   newMonsterMessage: string | null,
   newItemMessage: string | null,
   ownMessages: string[]
 ): Pick<GameState, 'messages' | 'monsterMessage' | 'itemMessage'> {
-  const sightings: string[] = [];
+  const sightings: LogEntry[] = [];
   if (newMonsterMessage && newMonsterMessage !== state.monsterMessage) {
-    sightings.push(newMonsterMessage);
+    sightings.push({ text: newMonsterMessage, variant: 'sighting' });
   }
   if (newItemMessage && newItemMessage !== state.itemMessage) {
-    sightings.push(newItemMessage);
+    sightings.push({ text: newItemMessage });
   }
   return {
-    messages: appendMessages(state.messages, [...ownMessages, ...sightings]),
+    messages: appendEntries(state.messages, [...toEntries(ownMessages), ...sightings]),
     monsterMessage: newMonsterMessage,
     itemMessage: newItemMessage,
   };
@@ -76,7 +105,6 @@ type Action =
       room: RoomInfo;
       monsterMessage?: string;
       itemMessage?: string;
-      isReconnect: boolean;
     }
   | {
       type: 'commandResult';
@@ -86,6 +114,7 @@ type Action =
       room?: RoomInfo;
       monsterMessage?: string;
       itemMessage?: string;
+      worldMap?: WorldMapArea[];
     }
   | {
       type: 'combatUpdate';
@@ -96,6 +125,7 @@ type Action =
     }
   | { type: 'connectionMessage'; message: string }
   | { type: 'clearMessages' }
+  | { type: 'closeWorldMap' }
   | { type: 'loggedOut'; message?: string };
 
 function reducer(state: GameState, action: Action): GameState {
@@ -103,9 +133,10 @@ function reducer(state: GameState, action: Action): GameState {
     case 'authError':
       return { ...state, authError: action.message };
     case 'sync': {
-      const line = action.isReconnect
-        ? 'Reconnected — position resynced with the server.'
-        : `${action.player.username} entered ${action.player.map}.`;
+      // Same greeting whether this is a fresh login or a reconnect after a
+      // dropped connection — both are "the player showing up," as far as
+      // the message log is concerned.
+      const line = `Welcome back, ${action.player.username}!`;
       const sighted = withSightings(state, action.monsterMessage ?? null, action.itemMessage ?? null, [line]);
       return {
         screen: 'game',
@@ -113,6 +144,7 @@ function reducer(state: GameState, action: Action): GameState {
         player: action.player,
         minimap: action.minimap,
         room: action.room,
+        worldMapAreas: null,
         ...sighted,
       };
     }
@@ -132,6 +164,9 @@ function reducer(state: GameState, action: Action): GameState {
         player: action.player ?? state.player,
         minimap: action.minimap ?? state.minimap,
         room: action.room ?? state.room,
+        // Only the "worldmap" ack ever sets this; every other command
+        // leaves whatever's already there (open or closed) alone.
+        worldMapAreas: action.worldMap ?? state.worldMapAreas,
         ...sighted,
       };
     }
@@ -144,11 +179,13 @@ function reducer(state: GameState, action: Action): GameState {
       };
     }
     case 'connectionMessage':
-      return { ...state, messages: appendMessages(state.messages, [action.message]) };
+      return { ...state, messages: appendEntries(state.messages, [{ text: action.message }]) };
     case 'clearMessages':
       // Deliberately only touches messages — room and everything else in
       // GameState are untouched by "clear".
       return { ...state, messages: [] };
+    case 'closeWorldMap':
+      return { ...state, worldMapAreas: null };
     case 'loggedOut':
       return { ...initialState, authError: action.message ?? '' };
     default:
@@ -159,8 +196,9 @@ function reducer(state: GameState, action: Action): GameState {
 export interface UseGameConnection {
   state: GameState;
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, password: string) => Promise<void>;
+  register: (username: string, password: string, race: string) => Promise<void>;
   sendCommand: (text: string) => Promise<void>;
+  closeWorldMap: () => void;
 }
 
 export function useGameConnection(): UseGameConnection {
@@ -171,7 +209,6 @@ export function useGameConnection(): UseGameConnection {
   const network = networkRef.current;
 
   const [state, dispatch] = useReducer(reducer, initialState);
-  const hasSyncedOnceRef = useRef(false);
   // Suppresses the 'disconnected' handler's generic loggedOut dispatch when
   // we've already shown a more specific message (kicked, or an explicit
   // "logout" command) — both are immediately followed by the socket's own
@@ -181,9 +218,7 @@ export function useGameConnection(): UseGameConnection {
   useEffect(() => {
     function onSync(e: Event): void {
       const { player, minimap, room, monsterMessage, itemMessage } = (e as CustomEvent<SyncPayload>).detail;
-      const isReconnect = hasSyncedOnceRef.current;
-      hasSyncedOnceRef.current = true;
-      dispatch({ type: 'sync', player, minimap, room, monsterMessage, itemMessage, isReconnect });
+      dispatch({ type: 'sync', player, minimap, room, monsterMessage, itemMessage });
     }
 
     function onCombatUpdate(e: Event): void {
@@ -194,7 +229,6 @@ export function useGameConnection(): UseGameConnection {
     function onKicked(e: Event): void {
       const { message } = (e as CustomEvent<KickedPayload>).detail;
       network.disconnectAndReset();
-      hasSyncedOnceRef.current = false;
       explicitLogoutRef.current = true;
       dispatch({ type: 'loggedOut', message });
     }
@@ -207,7 +241,6 @@ export function useGameConnection(): UseGameConnection {
       // Socket.io will retry on its own.
       if (reason === 'io server disconnect' || reason === 'io client disconnect') {
         network.disconnectAndReset();
-        hasSyncedOnceRef.current = false;
         if (!explicitLogoutRef.current) {
           dispatch({ type: 'loggedOut' });
         }
@@ -219,7 +252,6 @@ export function useGameConnection(): UseGameConnection {
 
     function onReconnectFailed(): void {
       network.disconnectAndReset();
-      hasSyncedOnceRef.current = false;
       dispatch({ type: 'loggedOut', message: 'Could not reconnect. Please log in again.' });
     }
 
@@ -247,9 +279,9 @@ export function useGameConnection(): UseGameConnection {
     }
   }
 
-  async function register(username: string, password: string): Promise<void> {
+  async function register(username: string, password: string, race: string): Promise<void> {
     try {
-      await network.register(username, password);
+      await network.register(username, password, race);
       network.connectSocket();
     } catch (err) {
       dispatch({ type: 'authError', message: err instanceof Error ? err.message : String(err) });
@@ -269,7 +301,6 @@ export function useGameConnection(): UseGameConnection {
       if (res.loggedOut) {
         explicitLogoutRef.current = true;
         network.disconnectAndReset();
-        hasSyncedOnceRef.current = false;
         dispatch({ type: 'loggedOut', message: res.messages[0] });
         return;
       }
@@ -281,6 +312,7 @@ export function useGameConnection(): UseGameConnection {
         room: res.room,
         monsterMessage: res.monsterMessage,
         itemMessage: res.itemMessage,
+        worldMap: res.worldMap,
       });
     } catch (err) {
       dispatch({
@@ -290,5 +322,9 @@ export function useGameConnection(): UseGameConnection {
     }
   }
 
-  return { state, login, register, sendCommand };
+  function closeWorldMap(): void {
+    dispatch({ type: 'closeWorldMap' });
+  }
+
+  return { state, login, register, sendCommand, closeWorldMap };
 }

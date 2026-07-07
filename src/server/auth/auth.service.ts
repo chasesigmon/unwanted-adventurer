@@ -10,7 +10,7 @@ import { ActiveConnectionsService } from './active-connections.service.js';
 import { getMap } from '../game/maps.js';
 import { STARTING_MAP } from '../../shared/constants.js';
 import type { AppConfig } from '../config/configuration.js';
-import type { CredentialsDto } from './dto/credentials.dto.js';
+import type { CredentialsDto, RegisterCredentialsDto } from './dto/credentials.dto.js';
 
 export interface SessionTokenPayload {
   username: string;
@@ -49,7 +49,7 @@ export class AuthService {
     return this.jwtService.verifyAsync<SessionTokenPayload>(token);
   }
 
-  async register({ username, password }: CredentialsDto): Promise<{ token: string }> {
+  async register({ username, password, race }: RegisterCredentialsDto): Promise<{ token: string }> {
     const existing = await this.playersService.findByUsernameCaseInsensitive(username);
     if (existing) {
       throw new ConflictException('That username is already taken.');
@@ -61,6 +61,7 @@ export class AuthService {
     await this.playersService.create({
       username,
       passwordHash,
+      race,
       map: STARTING_MAP,
       row: Math.floor(startingMap.rows / 2),
       col: Math.floor(startingMap.cols / 2),

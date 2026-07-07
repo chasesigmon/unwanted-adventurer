@@ -2,11 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { Model } from 'mongoose';
 import { Player, type PlayerDocument } from './player.schema.js';
-import type { MapName } from '../../shared/constants.js';
+import type { MapName, Race } from '../../shared/constants.js';
 
 export interface NewPlayerInput {
   username: string;
   passwordHash: string;
+  race: Race;
   map: MapName;
   row: number;
   col: number;
@@ -24,6 +25,7 @@ export interface PlayerStats {
   level: number;
   skills: string[];
   inventory: string[];
+  consumeExp: number;
 }
 
 @Injectable()

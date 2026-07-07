@@ -58,8 +58,8 @@ export class NetworkManager extends EventTarget {
     return { token: data.token };
   }
 
-  async register(username: string, password: string): Promise<void> {
-    const { token } = await this.authFetch('/auth/register', { username, password });
+  async register(username: string, password: string, race: string): Promise<void> {
+    const { token } = await this.authFetch('/auth/register', { username, password, race });
     this.token = token;
   }
 

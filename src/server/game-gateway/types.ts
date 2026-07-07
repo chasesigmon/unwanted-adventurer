@@ -1,5 +1,6 @@
 import type { Server, Socket } from 'socket.io';
-import type { PlayerSnapshot, MinimapCell, RoomInfo } from '../../shared/types.js';
+import type { PlayerSnapshot, MinimapCell, RoomInfo, WorldMapArea } from '../../shared/types.js';
+import type { Race } from '../../shared/constants.js';
 
 export interface SyncPayload {
   player: PlayerSnapshot;
@@ -38,13 +39,17 @@ export interface CommandAck {
   monsterMessage?: string;
   // Same "always alongside room" rule as monsterMessage, for a dropped item.
   itemMessage?: string;
+  // Present only on the "worldmap" command's ack — the client opens a
+  // modal when it sees this rather than logging it as a message line.
+  worldMap?: WorldMapArea[];
   loggedOut?: boolean;
 }
 
 // Pushed roughly every 4 seconds while an "attack <mob>" loop is running
 // for this connection, without the client sending anything — see
 // GameGateway's activeCombats/tickCombat. `ended` is true on the final
-// push for a given fight (kill or target out of reach).
+// push for a given fight (a kill, in practice always — the target can't
+// wander off mid-fight, see MonsterManagerService.setEngaged).
 export interface CombatUpdatePayload {
   messages: string[];
   player: PlayerSnapshot;
@@ -67,6 +72,9 @@ export type InterServerEvents = Record<string, never>;
 
 export interface SocketData {
   username: string;
+  // Set once at connection time and never changed thereafter (race isn't
+  // something a player can alter after registration).
+  race: Race;
   // Cached from Mongo at connection time. Nothing changes these mid-session
   // yet, so re-reading from the DB on every command would be wasted work —
   // this is the seam where per-session stat mutation would plug in later.
@@ -77,6 +85,7 @@ export interface SocketData {
   level: number;
   skills: string[];
   inventory: string[];
+  consumeExp: number;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

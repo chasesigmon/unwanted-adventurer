@@ -41,12 +41,47 @@ body {
   color: #e6edf3;
   font-size: 1rem;
 }
-.login-buttons {
+/* Login/Register tabs — one form, the active tab decides which fields
+   show (race select, register-only) and what the submit button does. */
+#auth-tabs {
   display: flex;
-  gap: 0.75rem;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
 }
-#login-form button {
+.auth-tab {
   flex: 1;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #8b949e;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.auth-tab:hover:not(.auth-tab--active) {
+  background: #1c2128;
+}
+.auth-tab--active {
+  background: #238636;
+  color: white;
+  border-color: #238636;
+}
+
+#race-select {
+  display: block;
+  width: 100%;
+  margin: 1rem 0;
+  padding: 0.6rem;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #e6edf3;
+  font-size: 1rem;
+}
+
+#login-form button[type='submit'] {
+  display: block;
+  width: 100%;
   padding: 0.6rem 1.5rem;
   border-radius: 6px;
   border: none;
@@ -55,15 +90,10 @@ body {
   font-size: 1rem;
   cursor: pointer;
 }
-#login-form button:hover {
+#login-form button[type='submit']:hover {
   background: #2ea043;
 }
-#register-button {
-  background: #30363d !important;
-}
-#register-button:hover {
-  background: #444c56 !important;
-}
+
 #login-error {
   color: #f85149;
   min-height: 1.2em;
@@ -182,11 +212,31 @@ body {
   padding: 0.75rem 1rem;
 }
 
-/* Persistent, append-only log — takes up whatever space monster/item
-   message, combat status, and room name/description (below it) don't
-   need, and scrolls internally within that space; auto-scrolled to the
-   newest line by GameScreen whenever `messages` changes. Cleared only by
-   the "clear" command, which never touches room-name/description below. */
+/* Room name/description always sit at the top of the message box,
+   right-aligned — "where you are" is fixed reference info, distinct from
+   the scrolling history below it. */
+#room-info {
+  align-self: flex-end;
+  text-align: right;
+  margin-bottom: 0.5rem;
+}
+
+#room-name {
+  font-size: 0.85rem;
+  font-weight: bold;
+  color: #e6edf3;
+}
+
+#room-description {
+  font-size: 0.8rem;
+  color: #8b949e;
+  margin-top: 0.1rem;
+}
+
+/* Persistent, append-only log — fills whatever space room-info above it
+   doesn't need, and scrolls internally within that space; auto-scrolled
+   to the newest line by GameScreen whenever `messages` changes. Cleared
+   only by the "clear" command, which never touches room-info above. */
 #message-list {
   flex: 1;
   min-height: 0;
@@ -201,17 +251,18 @@ body {
   color: #ffd166;
 }
 
-#room-name {
-  font-size: 0.85rem;
-  font-weight: bold;
-  color: #e6edf3;
-  margin-top: 0.3rem;
+/* A monster/item just noticed in the room — stands out in red with extra
+   breathing room on both sides, unlike ordinary log lines. */
+.message-line--sighting {
+  color: #f85149;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
 }
 
-#room-description {
-  font-size: 0.8rem;
-  color: #8b949e;
-  margin-top: 0.1rem;
+/* A kill or level-up — set apart from the ordinary flow with extra space
+   below, but no color change (it's good news, not a warning). */
+.message-line--milestone {
+  margin-bottom: 0.5rem;
 }
 
 #minimap {
@@ -272,4 +323,67 @@ body {
   height: 100%;
   background: linear-gradient(90deg, #a855f7, #ec4899);
   transition: width 0.3s ease;
+}
+
+/* "worldmap" command modal — a coarse overview of every area and what it
+   connects to. Clicking the backdrop closes it; clicking inside doesn't
+   (WorldMapModal stops that click from bubbling to the backdrop). */
+#worldmap-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+
+#worldmap-modal {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  padding: 1.5rem 2rem;
+  min-width: 320px;
+  max-width: 80vw;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+#worldmap-title {
+  font-size: 1.1rem;
+  font-weight: bold;
+  margin-bottom: 1rem;
+}
+
+.worldmap-area {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #21262d;
+}
+
+.worldmap-area-name {
+  font-weight: bold;
+}
+
+.worldmap-area-size {
+  color: #8b949e;
+  margin-left: 0.4rem;
+}
+
+.worldmap-area-connects {
+  color: #58a6ff;
+  margin-left: 0.4rem;
+}
+
+#worldmap-close {
+  margin-top: 1rem;
+  padding: 0.5rem 1.2rem;
+  border-radius: 6px;
+  border: none;
+  background: #30363d;
+  color: #e6edf3;
+  cursor: pointer;
+  font-family: inherit;
+}
+#worldmap-close:hover {
+  background: #444c56;
 }

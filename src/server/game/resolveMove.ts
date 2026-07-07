@@ -2,6 +2,7 @@ import { DIRECTION_DELTAS, type Direction } from '../../shared/directions.js';
 import { getMap } from './maps.js';
 import type { Location, MoveResult } from './types.js';
 import type { MinimapCell } from '../../shared/types.js';
+import type { MapName } from '../../shared/constants.js';
 
 // Pure movement/minimap resolution against the map registry. Kept
 // dependency-free (no class, no shared mutable state) so it can run
@@ -52,4 +53,21 @@ export function resolveMinimap(location: Location): MinimapCell[] {
     }
   }
   return cells;
+}
+
+// The whole current map, one row per string — deliberately never marks
+// the player's own position (unlike the minimap), just the map's own
+// layout: '.' for a normal cell, '*' for an exit. Used by the "map"
+// command.
+export function resolveFullMapGrid(mapName: MapName): string[] {
+  const map = getMap(mapName);
+  const lines: string[] = [];
+  for (let row = 0; row < map.rows; row++) {
+    let line = '';
+    for (let col = 0; col < map.cols; col++) {
+      line += map.getExitAt(row, col) ? '*' : '.';
+    }
+    lines.push(line);
+  }
+  return lines;
 }

@@ -13,3 +13,10 @@ export const MAP_SIZES = {
 export type MapName = keyof typeof MAP_SIZES;
 
 export const STARTING_MAP: MapName = 'Labyrinth';
+
+// Chosen at registration (see AuthScreen's race select). Only one option
+// exists so far, but this is a real union type (not a bare `string`) so
+// adding another race later is a compile-time-checked change everywhere
+// it's used, the same reasoning as MapName above.
+export const RACES = ['goblin'] as const;
+export type Race = (typeof RACES)[number];

@@ -28,6 +28,10 @@ export interface DeathDrop {
 @Injectable()
 export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
   private readonly monsters = new Map<string, Monster>();
+  // Monster ids currently locked in a fight — excluded from wanderAll so a
+  // monster being fought can never wander out of reach mid-combat. See
+  // GameGateway.setEngaged/clearCombat, the only places that toggle this.
+  private readonly engaged = new Set<string>();
   private nextId = 1;
   private wanderTimer?: NodeJS.Timeout;
   private respawnTimer?: NodeJS.Timeout;
@@ -91,6 +95,8 @@ export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
     const deltas = Object.values(DIRECTION_DELTAS);
 
     for (const monster of this.monsters.values()) {
+      if (this.engaged.has(monster.id)) continue;
+
       const delta = deltas[Math.floor(Math.random() * deltas.length)];
       if (!delta) continue;
 
@@ -113,7 +119,19 @@ export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
   }
 
   removeMonster(id: string): boolean {
+    this.engaged.delete(id);
     return this.monsters.delete(id);
+  }
+
+  // Toggled by GameGateway when a fight starts/ends (kill, flee,
+  // redirecting to a different target, or the connection dropping) — see
+  // clearCombat, the single place every combat-ending path routes through.
+  setEngaged(id: string, engaged: boolean): void {
+    if (engaged) {
+      this.engaged.add(id);
+    } else {
+      this.engaged.delete(id);
+    }
   }
 
   // Used by the auto-attack loop to re-check a specific target on every

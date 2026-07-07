@@ -3,7 +3,7 @@ import { GameScreen } from './components/GameScreen.js';
 import { useGameConnection } from './hooks/useGameConnection.js';
 
 export function App(): JSX.Element {
-  const { state, login, register, sendCommand } = useGameConnection();
+  const { state, login, register, sendCommand, closeWorldMap } = useGameConnection();
 
   if (state.screen === 'auth') {
     return <AuthScreen errorMessage={state.authError} onLogin={login} onRegister={register} />;
@@ -15,7 +15,9 @@ export function App(): JSX.Element {
       minimap={state.minimap}
       room={state.room}
       messages={state.messages}
+      worldMapAreas={state.worldMapAreas}
       onCommand={sendCommand}
+      onCloseWorldMap={closeWorldMap}
     />
   );
 }

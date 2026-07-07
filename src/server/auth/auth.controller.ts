@@ -3,7 +3,12 @@ import { ThrottlerGuard } from '@nestjs/throttler';
 
 import { AuthService } from './auth.service.js';
 import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import { credentialsSchema, type CredentialsDto } from './dto/credentials.dto.js';
+import {
+  credentialsSchema,
+  registerCredentialsSchema,
+  type CredentialsDto,
+  type RegisterCredentialsDto,
+} from './dto/credentials.dto.js';
 
 // Rate-limited as a whole (register/login/logout) to blunt credential-
 // stuffing and registration-spam attempts against the HTTP surface —
@@ -14,8 +19,8 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
-  @UsePipes(new ZodValidationPipe(credentialsSchema))
-  async register(@Body() body: CredentialsDto): Promise<{ ok: true; token: string }> {
+  @UsePipes(new ZodValidationPipe(registerCredentialsSchema))
+  async register(@Body() body: RegisterCredentialsDto): Promise<{ ok: true; token: string }> {
     const { token } = await this.authService.register(body);
     return { ok: true, token };
   }

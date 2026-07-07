@@ -1,9 +1,10 @@
-import type { MapName } from './constants.js';
+import type { MapName, Race } from './constants.js';
 
 // Shapes actually sent over the wire (Socket.io 'sync' event and command
 // acks) — kept here since both client and server need to agree on them.
 export interface PlayerSnapshot {
   username: string;
+  race: Race;
   map: MapName;
   row: number;
   col: number;
@@ -21,6 +22,19 @@ export interface PlayerSnapshot {
   skills: string[];
   // Items picked up via "grab"/"get <item>" — see the "inventory" command.
   inventory: string[];
+  // Separate from `exp`/leveling — +1 per body part consumed via
+  // "consume <item>", regardless of whether the skill roll succeeded.
+  consumeExp: number;
+}
+
+// A named area of the game world and what it connects to — coarse, no
+// per-room detail (that's what the "map" command is for). Returned by the
+// "worldmap" command for the client to render in a modal.
+export interface WorldMapArea {
+  name: MapName;
+  rows: number;
+  cols: number;
+  connectsTo: MapName[];
 }
 
 export interface MinimapCell {

@@ -1,33 +1,47 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import type { PlayerSnapshot, MinimapCell, RoomInfo } from '../../shared/types.js';
+import type { PlayerSnapshot, MinimapCell, RoomInfo, WorldMapArea } from '../../shared/types.js';
+import type { LogEntry } from '../hooks/useGameConnection.js';
 import { Minimap } from './Minimap.js';
+import { WorldMapModal } from './WorldMapModal.js';
 
 export interface GameScreenProps {
   player: PlayerSnapshot | null;
   minimap: MinimapCell[];
   room: RoomInfo | null;
-  messages: string[];
+  messages: LogEntry[];
+  worldMapAreas: WorldMapArea[] | null;
   onCommand: (text: string) => void;
+  onCloseWorldMap: () => void;
 }
 
-// Arrow keys map to the same tokens the server already understands
-// (there's no separate "left"/"right" direction — west/east cover both).
+// Physical WASD/arrow keys keep their usual screen-relative meaning (W/up
+// = away from the bottom of the screen, etc.) but now send the compass
+// letters the server understands (n/s/e/w) instead of the keys' own
+// letters — e.g. physical "D"/ArrowRight both send 'e' (east), not 'd'.
 const MOVE_KEYS: Record<string, string> = {
-  w: 'w',
-  W: 'w',
-  a: 'a',
-  A: 'a',
+  w: 'n',
+  W: 'n',
+  a: 'w',
+  A: 'w',
   s: 's',
   S: 's',
-  d: 'd',
-  D: 'd',
-  ArrowUp: 'up',
-  ArrowDown: 'down',
-  ArrowLeft: 'a',
-  ArrowRight: 'd',
+  d: 'e',
+  D: 'e',
+  ArrowUp: 'n',
+  ArrowDown: 's',
+  ArrowLeft: 'w',
+  ArrowRight: 'e',
 };
 
-export function GameScreen({ player, minimap, room, messages, onCommand }: GameScreenProps): JSX.Element {
+export function GameScreen({
+  player,
+  minimap,
+  room,
+  messages,
+  worldMapAreas,
+  onCommand,
+  onCloseWorldMap,
+}: GameScreenProps): JSX.Element {
   const [command, setCommand] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -80,6 +94,9 @@ export function GameScreen({ player, minimap, room, messages, onCommand }: GameS
             {player && (
               <div id="player-stats">
                 <span>
+                  <span className="stat-label">RACE</span> {player.race}
+                </span>
+                <span>
                   <span className="stat-label">LVL</span> {player.level}
                 </span>
                 <span>
@@ -94,6 +111,9 @@ export function GameScreen({ player, minimap, room, messages, onCommand }: GameS
                 <span>
                   <span className="stat-label">XP</span> {player.exp}
                 </span>
+                <span>
+                  <span className="stat-label">CXP</span> {player.consumeExp}
+                </span>
               </div>
             )}
           </div>
@@ -101,19 +121,19 @@ export function GameScreen({ player, minimap, room, messages, onCommand }: GameS
 
         <div id="center-column">
           <div id="message-box">
+            {room && (
+              <div id="room-info">
+                <div id="room-name">{room.name}</div>
+                <div id="room-description">{room.description}</div>
+              </div>
+            )}
             <div id="message-list" ref={messageListRef}>
-              {messages.map((line, i) => (
-                <div className="message-line" key={i}>
-                  {line}
+              {messages.map((entry, i) => (
+                <div className={`message-line${entry.variant ? ` message-line--${entry.variant}` : ''}`} key={i}>
+                  {entry.text}
                 </div>
               ))}
             </div>
-            {room && (
-              <>
-                <div id="room-name">{room.name}</div>
-                <div id="room-description">{room.description}</div>
-              </>
-            )}
           </div>
         </div>
 
@@ -125,6 +145,12 @@ export function GameScreen({ player, minimap, room, messages, onCommand }: GameS
             <div className="side-box-label">Minimap</div>
             <Minimap cells={minimap} />
           </div>
+          <div className="side-box" id="inventory-box">
+            <div className="side-box-label">Inventory</div>
+            <div className="side-box-content">
+              {player && player.inventory.length > 0 ? player.inventory.join(', ') : '(empty)'}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -134,7 +160,7 @@ export function GameScreen({ player, minimap, room, messages, onCommand }: GameS
         type="text"
         maxLength={32}
         autoComplete="off"
-        placeholder="Type a command (w/a/s/d, attack or kill <mob>, flee, consume/grab/get <item>, inventory, skills, clear) and press Enter..."
+        placeholder="Type a command (n/s/e/w, attack/kill <mob>, flee, consume/grab/get <item>, commands) and press Enter..."
         value={command}
         onChange={(e) => setCommand(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -143,6 +169,8 @@ export function GameScreen({ player, minimap, room, messages, onCommand }: GameS
       <div id="xp-bar-track">
         <div id="xp-bar-fill" style={{ width: `${xpPercent}%` }} />
       </div>
+
+      {worldMapAreas && <WorldMapModal areas={worldMapAreas} onClose={onCloseWorldMap} />}
     </div>
   );
 }

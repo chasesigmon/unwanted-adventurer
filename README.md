@@ -127,16 +127,33 @@ is coincidental.
 ### Character stats
 
 New characters start with `hp: 100`, `mana: 100`, `movement: 100`,
-`exp: 0`, `level: 1` (`players/player.schema.ts`, schema defaults —
-`PlayersService.create()` doesn't need to set them explicitly). Only
-`hp`/`exp`/`level` currently change (via combat, see below);
-`mana`/`movement` still aren't consumed by anything. All five are
-displayed in the client's Score box (top-left). They're loaded once into
-`socket.data` at connection time (`GameGateway.handleConnection`) rather
-than re-read from Mongo on every command; combat writes them back to both
+`exp: 0`, `level: 1`, `consumeExp: 0` (`players/player.schema.ts`, schema
+defaults — `PlayersService.create()` doesn't need to set them
+explicitly). Only `hp`/`exp`/`level`/`consumeExp` currently change (via
+combat/consuming, see below); `mana`/`movement` still aren't consumed by
+anything. All six are displayed in the client's Score box (top-left, one
+per line) — `consumeExp` as `CXP`. They're loaded once into `socket.data`
+at connection time (`GameGateway.handleConnection`) rather than re-read
+from Mongo on every command; combat writes them back to both
 `socket.data` and Mongo (`PlayersService.updateStats`) as it happens,
 fire-and-forget like position saves, plus a final awaited write on
 disconnect.
+
+### Race
+
+Chosen once, at registration (`RACES`/`Race` in `shared/constants.ts` —
+just `['goblin']` so far, but a real union type, not a bare `string`, so
+adding a second race is a compile-time-checked change everywhere `Race`
+is used). `Player.race` is `required` with `default: 'goblin'`; existing
+documents from before this field existed were backfilled directly
+(`db.players.updateMany({ race: { $exists: false } }, { $set: { race:
+"goblin" } })`) rather than relying on the schema default, since Mongoose
+only applies defaults to newly-created documents, not retroactively to
+already-stored ones missing the field. `registerCredentialsSchema`
+validates it with `z.enum(RACES)` — same list the client's race `<select>`
+renders from — so an invalid race is rejected before it ever reaches
+`PlayersService.create()`. Never changes after registration; there's no
+"choose again" flow.
 
 #### Leveling
 
@@ -178,7 +195,12 @@ persistence — the population resets on restart) that, on boot
   that would leave the Labyrinth's bounds or land on its exit tile is
   refused — the skeleton just stays put that tick instead. This is how
   they're "locked" to the map: there's no transition logic for monsters
-  at all, only a bounds/exit check on candidate moves.
+  at all, only a bounds/exit check on candidate moves. A monster currently
+  being fought is also skipped entirely (`MonsterManagerService.engaged`,
+  toggled by `GameGateway.setEngaged`/`clearCombat`) — otherwise it could
+  wander out of the player's cell mid-fight, which used to end combat
+  early with `"The skeleton slips out of reach."` A monster in combat now
+  only ever leaves it by dying or the player fleeing.
 - Starts a second timer (`SKELETON_RESPAWN_INTERVAL_MS`, default 60s)
   that spawns exactly one more skeleton if the population is below the
   max of 10 — which combat (below) can now actually cause.
@@ -229,9 +251,9 @@ ack. If the target survives, `GameGateway` starts a per-connection
 automatically — `tickCombat` — pushing a `combat:update` Socket.io event
 after every hit (there's no ack to piggyback on, since the player isn't
 sending anything) with the updated message lines and player snapshot,
-until the monster dies (`ended: true`) or it wanders out of the player's
-cell before the next tick (skeletons keep wandering during a fight —
-nothing pauses them).
+until the monster dies (`ended: true`). The target is locked in place for
+the duration (see "Monsters" above) and the player can't walk away
+either (below), so once a fight starts, only a kill or a `flee` ends it.
 
 Re-attacking the same target while already fighting it is a no-op (just
 reports current status and hp again, doesn't land a bonus hit or reset
@@ -306,7 +328,7 @@ being capped to a short strip.
 ### Message log and XP bar
 
 The action area is a persistent, append-only log (`useGameConnection`'s
-`messages: string[]`), not a single line that gets overwritten — every
+`messages: LogEntry[]`), not a single line that gets overwritten — every
 sync/command/combat-tick event appends its line(s) rather than replacing
 what's there, and the client auto-scrolls to the newest line
 (`GameScreen`'s `messageListRef` effect). It's capped at `MAX_MESSAGES`
@@ -315,19 +337,30 @@ it renders) without bound.
 
 There's no separate persistent banner for "a skeleton is here", a
 monster's hp, or a dropped item — everything transient flows through
-this one log, one line at a time, in the order it actually happened.
-Sightings (`monsterMessage`/`itemMessage`) are the one exception that
-needs special handling: the server recomputes and sends them on *every*
-event regardless of whether anything changed (so it can't just always
-log them, or standing in the same room across several actions would
-reprint "a skeleton is here" every time). `useGameConnection`'s
-`withSightings` compares the freshly-computed value against what the
-client last saw and only appends a line when it's genuinely new —
-`state.monsterMessage`/`state.itemMessage` exist purely so this
-comparison has something to check against; nothing renders them
-directly. The action's own message(s) always come first, sightings
-after, so `"A skeleton is here!"` reads immediately following whatever
-move revealed it rather than the other way around.
+this one log, one line at a time, in the order it actually happened. A
+`LogEntry` is `{ text, variant? }`, where `variant` is purely a visual
+hint the client attaches, never something the server tracks:
+
+- `'sighting'` — a monster just noticed in the room (e.g. `"A skeleton
+  is here!"`). Rendered in red with extra space above *and* below
+  (`.message-line--sighting`). Sightings (`monsterMessage`/`itemMessage`)
+  need special handling regardless of styling: the server recomputes and
+  sends them on *every* event whether or not anything changed (so the
+  client can't just always log them, or standing in the same room across
+  several actions would reprint "a skeleton is here" every time).
+  `useGameConnection`'s `withSightings` compares the freshly-computed
+  value against what the client last saw and only appends a line when
+  it's genuinely new — `state.monsterMessage`/`state.itemMessage` exist
+  purely so this comparison has something to check against; nothing
+  renders them directly. Only the monster sighting gets this treatment;
+  the item sighting is a plain line.
+- `'milestone'` — a kill or level-up (`classifyServerLine` matches on the
+  server's own `"You killed "` / `"You leveled up!"` prefixes as the
+  plain strings arrive). Extra space below only, no color change.
+
+The action's own message(s) always come first, sightings after, so
+`"A skeleton is here!"` reads immediately following whatever move
+revealed it rather than the other way around.
 
 Typing `clear` empties the log. This never reaches the server —
 `useGameConnection.sendCommand` intercepts it before calling
@@ -339,18 +372,20 @@ Below the command input, a small full-width bar (`#xp-bar-track` /
 `#xp-bar-fill`) shows `player.exp / player.maxTnl` as a percentage, filled
 with a purple-to-pink gradient.
 
-Inside the message box, the scrolling log comes first (`flex: 1`, so it
-fills whatever space room name/description below it doesn't need). The
-Score box's stats (`LVL`/`HP`/`MP`/`MV`/`XP`) are stacked one per line
-rather than in a row.
+Room name/description sit at the *top* of the message box, right-aligned
+(`#room-info { align-self: flex-end }`) — fixed reference info about
+where you are, distinct from the log's scrolling history below it, which
+fills whatever space is left (`#message-list { flex: 1 }`). The Score
+box's stats (`LVL`/`HP`/`MP`/`MV`/`XP`) are stacked one per line rather
+than in a row.
 
 ### Skills
 
 `skills` (`GameGateway.handleSkills`) lists everything in `Player.skills`
 — `"Your skills: lesser undead resistance."`, or `"You haven't learned
 any skills yet."` if empty. Purely informational, no state change, so
-it's one of two command handlers that isn't `async` (the other is
-`handleInventory`, below).
+it's one of a few command handlers that isn't `async` (along with
+`handleInventory` and `handleMap`, below).
 
 ### Inventory
 
@@ -361,6 +396,33 @@ list-or-"empty" shape as `skills`: `"Your inventory: bone dagger."` or
 one is a bare command (no argument), so the *whole* typed command has to
 be a prefix of "inventory" — `"inv 2"` wouldn't match, it'd fall through
 to "Unknown command".
+
+`Player.consumeExp` is a separate counter from `exp`/leveling: consuming
+a body part (any dropped item with a `skillReward`) via `consume` always
+adds 1 to it, whether the skill roll succeeds, fails, or the player
+already knows it — it tracks the act of consuming, not the outcome. Not
+currently surfaced anywhere client-side, same as `skills`/`inventory`
+were before this feature existed.
+
+### Maps
+
+Two commands, both read-only/synchronous like `skills`/`inventory`:
+
+- `map` (`GameGateway.handleMap`) prints the player's current map as a
+  grid, one row per log line — `'.'` for a normal cell, `'*'` for an exit
+  (`resolveFullMapGrid`, alongside `resolveMinimap` in
+  `game/resolveMove.ts`). Deliberately never marks the player's own
+  position — that's what the minimap is for; `map` is purely "what does
+  this whole area look like."
+- `worldmap` (`GameGateway.handleWorldMap`) shows the coarse
+  "map of maps" instead — every registered area's name/size and which
+  other areas its exits lead to (`game/maps.ts`'s `getWorldOverview`,
+  reading straight off `GameMap.exits`), with no per-room detail. Instead
+  of a log line, its ack carries `CommandAck.worldMap: WorldMapArea[]`,
+  and `WorldMapModal` renders it in a dismissible overlay
+  (`useGameConnection`'s `worldMapAreas` state, set by that one field and
+  cleared only by the modal's own close action — every other command's
+  ack omits `worldMap` entirely, leaving whatever's there alone).
 
 ## Auth: bcrypt + JWT + Redis session tracking
 
@@ -375,6 +437,29 @@ is even opened. Nest's exceptions (`BadRequestException`,
 `{ statusCode, message, error }` — the client only ever has to understand
 one shape.
 
+`AuthScreen` is one form behind a Login/Register tab switch
+(`#auth-tabs`), not two separate screens — both tabs share the
+username/password fields, but the Register tab also shows a race
+`<select>` (see "Race" above) and the submit button's label/handler swap
+based on which tab is active. `onRegister` takes a third `race` argument
+that `onLogin` doesn't need.
+
+- **Usernames are letters-only on registration, but not on login.**
+  `auth/dto/credentials.dto.ts` has two schemas now: `credentialsSchema`
+  (`/^[a-zA-Z0-9_]+$/`, used only by `/auth/login`, kept permissive so it
+  never rejects an account that predates this rule) and
+  `registerCredentialsSchema` (`/^[a-zA-Z]+$/`, used only by
+  `/auth/register`). Neither schema — nor anything in `AuthService` or
+  `PlayersService` — lowercases or otherwise transforms the username;
+  whatever capitalization a player types at registration is exactly what
+  gets stored and displayed everywhere thereafter.
+  `findByUsernameCaseInsensitive` is still used for the uniqueness check
+  and for login lookups, so "Bob" and "bob" are correctly treated as the
+  same account without needing the *stored* value to be normalized — and
+  `AuthService.login` always re-derives the session from `doc.username`
+  (the originally-registered casing), not whatever casing was typed to
+  log in, so display casing stays consistent no matter which casing a
+  returning player happens to type.
 - **Passwords** are hashed with `bcryptjs` directly in `AuthService` — a
   pure-JS implementation of the same bcrypt algorithm as the native
   `bcrypt` package, chosen so installing this repo never depends on a

@@ -19,9 +19,9 @@ import { SessionStoreService } from '../auth/session-store.service.js';
 import { ActiveConnectionsService } from '../auth/active-connections.service.js';
 import { SocketConnectionLimiterService } from '../rate-limit/socket-connection-limiter.service.js';
 import { CommandRateLimiter, type CommandRateLimiterOptions } from '../rate-limit/command-rate-limiter.js';
-import { getMap } from '../game/maps.js';
+import { getMap, getWorldOverview } from '../game/maps.js';
 import { resolveRoom } from '../game/room.js';
-import { resolveMove } from '../game/resolveMove.js';
+import { resolveMove, resolveFullMapGrid } from '../game/resolveMove.js';
 import { applyExpGain, maxTnlForLevel } from '../players/leveling.js';
 import { undeadDamageReduction } from '../players/skills.js';
 import { STARTING_MAP } from '../../shared/constants.js';
@@ -153,6 +153,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const row = doc?.row ?? Math.floor(startingMap.rows / 2);
     const col = doc?.col ?? Math.floor(startingMap.cols / 2);
     // Cached on the socket for the rest of the session — see SocketData.
+    client.data.race = doc?.race ?? 'goblin';
     client.data.hp = doc?.hp ?? 100;
     client.data.mana = doc?.mana ?? 100;
     client.data.movement = doc?.movement ?? 100;
@@ -160,6 +161,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.level = doc?.level ?? 1;
     client.data.skills = doc?.skills ?? [];
     client.data.inventory = doc?.inventory ?? [];
+    client.data.consumeExp = doc?.consumeExp ?? 0;
 
     await this.worldManager.addPlayer(username, mapName, row, col);
 
@@ -175,6 +177,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   private snapshotFor(client: GameSocket, loc: Location): PlayerSnapshot {
     return {
       username: client.data.username,
+      race: client.data.race,
       map: loc.mapName,
       row: loc.row,
       col: loc.col,
@@ -186,6 +189,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxTnl: maxTnlForLevel(client.data.level),
       skills: client.data.skills,
       inventory: client.data.inventory,
+      consumeExp: client.data.consumeExp,
     };
   }
 
@@ -203,11 +207,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return Math.max(0, Math.round((monster.hp / monster.maxHp) * 100));
   }
 
+  // The single place every combat-ending path routes through (kill, flee,
+  // redirecting to a new target, disconnect) — so it's also the single
+  // place that un-engages the monster, freeing it to wander again.
   private clearCombat(clientId: string): void {
     const existing = this.activeCombats.get(clientId);
     if (existing) {
       clearInterval(existing.timer);
       this.activeCombats.delete(clientId);
+      this.monsterManager.setEngaged(existing.targetId, false);
     }
   }
 
@@ -290,18 +298,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return;
     }
 
-    if (target.mapName !== loc.mapName || target.row !== loc.row || target.col !== loc.col) {
-      this.clearCombat(client.id);
-      client.emit('combat:update', {
-        messages: [`The ${target.kind} slips out of reach.`],
-        player: this.snapshotFor(client, loc),
-        monsterMessage: this.monsterMessageFor(loc),
-        itemMessage: this.itemMessageFor(loc),
-        ended: true,
-      });
-      return;
-    }
-
     const { messages, died } = this.resolveAttackExchange(client, target);
     void this.persistStats(username, {
       hp: client.data.hp,
@@ -309,6 +305,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       level: client.data.level,
       skills: client.data.skills,
       inventory: client.data.inventory,
+      consumeExp: client.data.consumeExp,
     });
 
     client.emit('combat:update', {
@@ -342,7 +339,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // now mutate hp/exp/level/skills/inventory mid-session.
   private async persistStats(
     username: string,
-    stats: { hp: number; exp: number; level: number; skills: string[]; inventory: string[] }
+    stats: { hp: number; exp: number; level: number; skills: string[]; inventory: string[]; consumeExp: number }
   ): Promise<void> {
     try {
       await this.playersService.updateStats(username, stats);
@@ -369,6 +366,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       level: client.data.level,
       skills: client.data.skills,
       inventory: client.data.inventory,
+      consumeExp: client.data.consumeExp,
     });
   }
 
@@ -397,7 +395,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const verb = spaceIdx === -1 ? text : text.slice(0, spaceIdx);
     const rest = spaceIdx === -1 ? '' : text.slice(spaceIdx + 1).trim();
 
-    if (text === 'logout') {
+    if (text === 'logout' || text === 'quit') {
       await this.sessionStore.clearActiveSession(username);
       this.activeConnections.clearActiveSocketIfCurrent(username, client.id);
       // Deferred so the ack (this return value) reaches the client before
@@ -433,6 +431,24 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     if (text === 'skills') {
       return this.handleSkills(client);
+    }
+
+    if (text === 'worldmap') {
+      return this.handleWorldMap(client);
+    }
+
+    if (text === 'map') {
+      return this.handleMap(client);
+    }
+
+    if (text === 'commands') {
+      return this.handleCommands(client);
+    }
+
+    // Reserved for future vertical movement — no map has a floor/z axis
+    // yet, so these are always valid syntax but never actually move you.
+    if (text === 'u' || text === 'd') {
+      return this.handleVerticalPlaceholder(client, text === 'u' ? 'up' : 'down');
     }
 
     const direction = DIRECTION_ALIASES[text];
@@ -511,7 +527,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // an auto-attack loop: the player swings immediately (resolved
   // synchronously, in this ack), and if the target survives, a timer takes
   // over and repeats the same exchange every ATTACK_INTERVAL_MS via
-  // tickCombat until it dies, wanders out of reach, or the player flees.
+  // tickCombat until it dies or the player flees. The target is marked
+  // "engaged" (MonsterManagerService.setEngaged) so it can't wander away
+  // mid-fight — the only way out is a kill or fleeing.
   private async handleAttack(client: GameSocket, mobQuery: string): Promise<CommandAck> {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
@@ -558,6 +576,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       level: client.data.level,
       skills: client.data.skills,
       inventory: client.data.inventory,
+      consumeExp: client.data.consumeExp,
     });
 
     if (died) {
@@ -568,6 +587,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const timer = setInterval(() => this.tickCombat(client, targetId), ATTACK_INTERVAL_MS);
     timer.unref();
     this.activeCombats.set(client.id, { timer, targetId });
+    this.monsterManager.setEngaged(targetId, true);
 
     return buildAck(messages, true);
   }
@@ -679,24 +699,30 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return buildAck([`You consume the ${item.name}.`], true);
     }
 
+    // Consuming a body part always counts toward consumeExp, regardless of
+    // whether the skill roll below actually succeeds.
+    client.data.consumeExp += 1;
+
+    let messages: string[];
     if (client.data.skills.includes(item.skillReward)) {
-      return buildAck([`You consume the ${item.name}, but you already know this secret.`], true);
+      messages = [`You consume the ${item.name}, but you already know this secret.`];
+    } else if (Math.random() >= SKILL_GAIN_CHANCE) {
+      messages = [`You consume the ${item.name}, but feel nothing happen.`];
+    } else {
+      client.data.skills = [...client.data.skills, item.skillReward];
+      messages = [`You consume the ${item.name}.`, `You have gained ${item.skillReward}!`];
     }
 
-    if (Math.random() >= SKILL_GAIN_CHANCE) {
-      return buildAck([`You consume the ${item.name}, but feel nothing happen.`], true);
-    }
-
-    client.data.skills = [...client.data.skills, item.skillReward];
     void this.persistStats(username, {
       hp: client.data.hp,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
       inventory: client.data.inventory,
+      consumeExp: client.data.consumeExp,
     });
 
-    return buildAck([`You consume the ${item.name}.`, `You have gained ${item.skillReward}!`], true);
+    return buildAck(messages, true);
   }
 
   // "grab"/"get <item>" — same partial-name matching as consume, but adds
@@ -735,6 +761,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       level: client.data.level,
       skills: client.data.skills,
       inventory: client.data.inventory,
+      consumeExp: client.data.consumeExp,
     });
 
     return buildAck([`You pick up the ${item.name}.`], true);
@@ -764,6 +791,97 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const loc = this.worldManager.getLocation(username);
 
     const messages = skills.length > 0 ? [`Your skills: ${skills.join(', ')}.`] : ["You haven't learned any skills yet."];
+
+    return {
+      ok: true,
+      messages,
+      player: loc ? this.snapshotFor(client, loc) : undefined,
+      minimap: this.worldManager.getMinimap(username),
+      room: loc ? resolveRoom(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(loc) : undefined,
+    };
+  }
+
+  // "map" — the whole current map's static layout ('.'/'*' per
+  // resolveFullMapGrid), deliberately never marking the player's own
+  // position (that's what the minimap is for). Just an info command, no
+  // state change, so it's synchronous like skills/inventory.
+  private handleMap(client: GameSocket): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    return {
+      ok: true,
+      messages: [`Map of ${loc.mapName}:`, ...resolveFullMapGrid(loc.mapName)],
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(loc),
+      itemMessage: this.itemMessageFor(loc),
+    };
+  }
+
+  // "worldmap" — a coarse overview of every area and what it connects to
+  // (no per-room detail). The client opens a modal for this rather than
+  // logging it as a message line — see CommandAck.worldMap.
+  private handleWorldMap(client: GameSocket): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+
+    return {
+      ok: true,
+      messages: ['You examine a weathered map of the world.'],
+      player: loc ? this.snapshotFor(client, loc) : undefined,
+      minimap: this.worldManager.getMinimap(username),
+      room: loc ? resolveRoom(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(loc) : undefined,
+      worldMap: getWorldOverview(),
+    };
+  }
+
+  // No map has a floor/z axis yet, so "u"/"d" are always valid syntax but
+  // never actually move you — see the note on DIRECTION_ALIASES.
+  private handleVerticalPlaceholder(client: GameSocket, direction: 'up' | 'down'): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+
+    return {
+      ok: false,
+      messages: [`There is no way ${direction} from here yet.`],
+      player: loc ? this.snapshotFor(client, loc) : undefined,
+      minimap: this.worldManager.getMinimap(username),
+      room: loc ? resolveRoom(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(loc) : undefined,
+    };
+  }
+
+  // Purely informational — a static reference list, no state change.
+  private handleCommands(client: GameSocket): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+
+    const messages = [
+      'Available commands:',
+      'n, s, e, w - move north, south, east, or west',
+      'u, d - move up or down (not available yet)',
+      'attack/kill <mob> - attack a monster in your room',
+      'flee - break off a fight and flee in a random direction',
+      'consume <item> - eat a dropped item for a chance at a skill',
+      'grab/get <item> - pick up a dropped item into your inventory',
+      'inventory - show what you are carrying',
+      'skills - show your learned skills',
+      'map - show this area\'s full layout',
+      'worldmap - show an overview of the whole world',
+      'clear - clear the message log',
+      'logout/quit - log out',
+      'commands - show this list',
+    ];
 
     return {
       ok: true,

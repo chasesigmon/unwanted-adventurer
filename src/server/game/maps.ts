@@ -1,5 +1,6 @@
 import { GameMap } from './GameMap.js';
 import { MAP_SIZES, type MapName } from '../../shared/constants.js';
+import type { WorldMapArea } from '../../shared/types.js';
 
 const labyrinth = new GameMap({
   name: 'Labyrinth',
@@ -26,4 +27,16 @@ export function getMap(name: MapName): GameMap {
     throw new Error(`Unknown map: ${name}`);
   }
   return map;
+}
+
+// Coarse "map of maps" for the "worldmap" command — every registered area
+// and which other areas its exits lead to, with no per-room detail (that's
+// what the "map" command, and resolveFullMapGrid, are for).
+export function getWorldOverview(): WorldMapArea[] {
+  return Array.from(MAPS.values()).map((m) => ({
+    name: m.name,
+    rows: m.rows,
+    cols: m.cols,
+    connectsTo: Array.from(new Set(m.exits.map((exit) => exit.toMap))),
+  }));
 }
