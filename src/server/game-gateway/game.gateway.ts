@@ -473,6 +473,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return this.handleScore(client);
     }
 
+    // "look"/"l" — an explicit abbreviation, not a partial-match range like
+    // scan/score/inventory: "l" is a deliberately short alias with no
+    // letters in between meant to work ("lo", "loo" don't), and it doesn't
+    // collide with anything else since no other command starts with "l".
+    if (text === 'look' || text === 'l') {
+      return this.handleLook(client);
+    }
+
     if (text === 'commands') {
       return this.handleCommands(client);
     }
@@ -936,6 +944,38 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
+  // "look"/"l" — re-announces the current room's monster/item exactly as
+  // if the player had just stepped into it, bypassing the "only when it's
+  // genuinely new" dedup the client applies to monsterMessage/itemMessage
+  // (see useGameConnection's withSightings): these lines are sent as
+  // ordinary messages, not just the monsterMessage/itemMessage fields, so
+  // they always print in the log regardless of whether anything changed
+  // since the last look.
+  private handleLook(client: GameSocket): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const monsterMessage = this.monsterMessageFor(loc);
+    const itemMessage = this.itemMessageFor(loc);
+    const messages = [monsterMessage, itemMessage].filter((m): m is string => !!m);
+    if (messages.length === 0) {
+      messages.push('There is nothing else of note here.');
+    }
+
+    return {
+      ok: true,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage,
+      itemMessage,
+    };
+  }
+
   // "scan" — checks the 4 adjacent cells (1 step north/south/east/west,
   // never leaving the current map) and reports which ones have a monster
   // in them, same "A skeleton is here!" phrasing as monsterMessage. A
@@ -1050,6 +1090,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       'drop <item> - drop an item from your inventory onto the ground',
       'inventory - show what you are carrying',
       'skills - show your learned skills',
+      'look/l - look around the room again',
       'map - show this area\'s full layout',
       'scan - check the 4 adjacent rooms for monsters',
       'score - show your character\'s stats',
