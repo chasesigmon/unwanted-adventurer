@@ -3,14 +3,21 @@ import { ConfigService } from '@nestjs/config';
 
 import { getMap } from '../game/maps.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
+import { LESSER_UNDEAD_RESISTANCE } from '../players/skills.js';
 import type { AppConfig } from '../config/configuration.js';
 import type { MapName } from '../../shared/constants.js';
-import type { Monster } from './monster.js';
+import type { Monster, MonsterKind } from './monster.js';
 
 const SKELETON_MAX_COUNT = 10;
 const SKELETON_STARTING_HP = 20;
 const SKELETON_EXP_REWARD = 10;
 const SKELETON_HOME_MAP: MapName = 'Labyrinth';
+const SKELETON_BODY_PARTS = ['leg', 'arm', 'hand', 'skull', 'rib'];
+
+export interface DeathDrop {
+  name: string;
+  skillReward?: string;
+}
 
 // Autonomous NPCs, independent of any player connection: spawn
 // SKELETON_MAX_COUNT skeletons in the Labyrinth on boot, wander them
@@ -74,6 +81,7 @@ export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
       row,
       col,
       expReward: SKELETON_EXP_REWARD,
+      undead: true,
     });
   }
 
@@ -154,5 +162,16 @@ export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
 
   getAll(): Monster[] {
     return Array.from(this.monsters.values());
+  }
+
+  // What a monster kind leaves behind on death, or undefined if it doesn't
+  // drop anything — only skeletons have a loot table right now. Kept keyed
+  // by kind (not the `undead` flag) since future undead kinds could have a
+  // different body-part pool, or no drop at all.
+  getDeathDrop(kind: MonsterKind): DeathDrop | undefined {
+    if (kind !== 'skeleton') return undefined;
+    const name = SKELETON_BODY_PARTS[Math.floor(Math.random() * SKELETON_BODY_PARTS.length)];
+    if (!name) return undefined;
+    return { name, skillReward: LESSER_UNDEAD_RESISTANCE };
   }
 }

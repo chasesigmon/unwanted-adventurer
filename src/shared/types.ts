@@ -15,6 +15,10 @@ export interface PlayerSnapshot {
   // Experience needed to reach the next level (level x 100) — derived
   // server-side, not stored; the client uses it purely to size the XP bar.
   maxTnl: number;
+  // Permanent abilities gained via "consume <item>" (e.g. "lesser undead
+  // resistance"). Not currently displayed anywhere client-side, but part
+  // of the full player snapshot like every other stat.
+  skills: string[];
 }
 
 export interface MinimapCell {

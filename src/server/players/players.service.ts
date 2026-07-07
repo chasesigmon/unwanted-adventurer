@@ -22,6 +22,7 @@ export interface PlayerStats {
   hp: number;
   exp: number;
   level: number;
+  skills: string[];
 }
 
 @Injectable()

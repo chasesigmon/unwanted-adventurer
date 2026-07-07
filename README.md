@@ -169,8 +169,10 @@ persistence — the population resets on restart) that, on boot
 (`onModuleInit`):
 
 - Spawns 10 skeletons at random cells in the Labyrinth (never on the exit
-  tile), each with `hp: 20`, `mana: Infinity`, `movement: Infinity`, and
-  an `expReward: 10` awarded to whoever lands the killing blow.
+  tile), each with `hp: 20`, `mana: Infinity`, `movement: Infinity`, an
+  `expReward: 10` awarded to whoever lands the killing blow, and
+  `undead: true` — the classification anti-undead mechanics (currently
+  just "lesser undead resistance", see below) check against.
 - Starts a timer (`SKELETON_WANDER_INTERVAL_MS`, default 60s = 1 minute)
   that moves every skeleton one random cardinal step per tick. A step
   that would leave the Labyrinth's bounds or land on its exit tile is
@@ -205,12 +207,15 @@ hit: the player swings first for a flat 6 damage
 (`MonsterManagerService.applyDamage`), producing its own log line —
 `"You hit the skeleton for 6 damage!"` — separate from whatever happens
 next. If that hit kills it, the monster is removed immediately, the
-player's `exp`/`level` are updated via `leveling.ts`, and `"You killed
-the skeleton!"` (plus `"You leveled up! ..."` if it applies) is appended
-as its own line. If it survives, it swings back for a flat 2 damage,
-clamped so the player's `hp` never goes below 0, appending `"The
-skeleton hits you for 2 damage."` as its own line. `CommandAck.messages`
-and `CombatUpdatePayload.messages` are both `string[]` for exactly this
+player's `exp`/`level` are updated via `leveling.ts`, it drops loot (see
+"Dropped items and skills" below), and `"You killed the skeleton!"`
+(plus `"You leveled up! ..."` and a drop line, as they apply) is appended,
+each as its own line. If it survives, it swings back — 2 damage, or 1 if
+the monster is `undead` and the player knows "lesser undead resistance"
+(`players/skills.ts`'s `undeadDamageReduction`) — clamped so the player's
+`hp` never goes below 0, appending `"The skeleton hits you for 2
+damage."` (or `1`) as its own line. `CommandAck.messages` and
+`CombatUpdatePayload.messages` are both `string[]` for exactly this
 reason — the client appends each element as a separate line rather than
 rendering one concatenated sentence.
 
@@ -248,6 +253,47 @@ would. If somehow boxed in on all four sides, the fight still ends but
 the player just stays put. `flee` outside of combat is a no-op
 (`"You aren't in a fight to flee from."`).
 
+### Dropped items and skills
+
+Killing a monster leaves something behind, resolved by
+`MonsterManagerService.getDeathDrop(kind)` — keyed by kind rather than the
+`undead` flag, since future undead kinds could have a different loot
+table or none at all. Skeletons always drop one random body part (`leg`,
+`arm`, `hand`, `skull`, `rib`) via `ItemManagerService.dropItem`, another
+in-memory-only, per-cell registry exactly like `MonsterManagerService`
+(no Mongo persistence — dropped items reset on restart). While one sits
+in a room, `itemMessage` (e.g. `"A leg lies here."` / `"An arm lies
+here."`) is computed and threaded through every event alongside
+`monsterMessage`, the same "always sent together with `room`" convention
+(see `game-gateway/types.ts`).
+
+`consume <item>` (`GameGateway.handleConsume`) does a case-insensitive
+substring match against dropped items in the current room
+(`ItemManagerService.findItemByNameAt`) and always removes the item once
+found, regardless of outcome. A skeleton part's `skillReward` is
+`"lesser undead resistance"` (`players/skills.ts`): if the player already
+has it, consuming does nothing further (`"...but you already know this
+secret."`); otherwise there's a `SKILL_GAIN_CHANCE` (20%) chance of
+learning it (`"You have gained lesser undead resistance!"`), added to
+`Player.skills` (a permanent, never-removed string array) and persisted
+immediately. That skill is checked in `resolveAttackExchange` (above) via
+`undeadDamageReduction`, currently the only thing skills affect.
+
+### Layout: three columns
+
+`GameScreen` is a fixed-proportion three-column row (`#game-columns`)
+spanning the full height above the command input: `#left-column` (20%,
+the Score box), `#center-column` (60%, the message box), `#right-column`
+(20%, position readout + Minimap box). The three widths are `flex: 0 0
+20% / 60% / 20%` — fixed flex-basis percentages that sum to 100%, so the
+columns can never overlap regardless of content or viewport size (no
+absolute positioning to get wrong). The Score and Minimap boxes fill
+their column's width (`.side-box { width: 100% }`) rather than being
+sized independently, so they can't drift out of alignment with it. The
+message box itself (`#message-box`) fills `#center-column` top to
+bottom, giving the append-only log room to actually scroll instead of
+being capped to a short strip.
+
 ### Message log and XP bar
 
 The action area is a persistent, append-only log (`useGameConnection`'s
@@ -267,6 +313,22 @@ the minimap, and everything else in `GameState` are untouched.
 Below the command input, a small full-width bar (`#xp-bar-track` /
 `#xp-bar-fill`) shows `player.exp / player.maxTnl` as a percentage, filled
 with a purple-to-pink gradient.
+
+Inside the message box, the scrolling log comes first (`flex: 1`, so it
+fills whatever space the fixed-size elements below it don't need), then
+`monsterMessage`/`itemMessage`, then combat status, then room
+name/description — in that order so "a skeleton is here" reads
+immediately after whatever action (e.g. `"<player> moved north."`) just
+revealed it, rather than as a banner sitting above the newest log line.
+The Score box's stats (`LVL`/`HP`/`MP`/`MV`/`XP`) are stacked one per
+line rather than in a row.
+
+### Skills
+
+`skills` (`GameGateway.handleSkills`) lists everything in `Player.skills`
+— `"Your skills: lesser undead resistance."`, or `"You haven't learned
+any skills yet."` if empty. Purely informational, no state change, so
+it's the one command handler that isn't `async`.
 
 ## Auth: bcrypt + JWT + Redis session tracking
 

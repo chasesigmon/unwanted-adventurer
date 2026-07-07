@@ -8,6 +8,9 @@ export interface SyncPayload {
   // Present whenever the player's current cell has a monster in it, e.g.
   // "A skeleton is here!" — omitted otherwise.
   monsterMessage?: string;
+  // Same idea, for a dropped item (e.g. "A leg lies here.") — omitted
+  // otherwise. See ItemManagerService.
+  itemMessage?: string;
 }
 
 export interface KickedPayload {
@@ -36,6 +39,8 @@ export interface CommandAck {
   // Always sent alongside `room` (never independently) — its absence when
   // `room` is present means "no monster here", not "unknown".
   monsterMessage?: string;
+  // Same "always alongside room" rule as monsterMessage, for a dropped item.
+  itemMessage?: string;
   // Tri-state, only ever set by "attack"/"flee" acks: a CombatStatus object
   // means this command started/continued a fight; explicit `null` means it
   // just ended one (conveyed via `messages`, not this field); omitted
@@ -59,6 +64,7 @@ export interface CombatUpdatePayload {
   player: PlayerSnapshot;
   monster?: CombatStatus;
   monsterMessage?: string;
+  itemMessage?: string;
   ended: boolean;
 }
 
@@ -84,6 +90,7 @@ export interface SocketData {
   movement: number;
   exp: number;
   level: number;
+  skills: string[];
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

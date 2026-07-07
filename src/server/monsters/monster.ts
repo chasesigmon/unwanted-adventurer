@@ -14,4 +14,7 @@ export interface Monster {
   col: number;
   // Awarded to whichever player lands the killing blow.
   expReward: number;
+  // Whether anti-undead mechanics (currently just "lesser undead
+  // resistance", see players/skills.ts) apply to this monster's attacks.
+  undead: boolean;
 }

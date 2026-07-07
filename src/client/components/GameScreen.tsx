@@ -8,6 +8,7 @@ export interface GameScreenProps {
   minimap: MinimapCell[];
   room: RoomInfo | null;
   monsterMessage: string | null;
+  itemMessage: string | null;
   combat: CombatStatus | null;
   messages: string[];
   onCommand: (text: string) => void;
@@ -30,7 +31,7 @@ const MOVE_KEYS: Record<string, string> = {
   ArrowRight: 'd',
 };
 
-export function GameScreen({ player, minimap, room, monsterMessage, combat, messages, onCommand }: GameScreenProps): JSX.Element {
+export function GameScreen({ player, minimap, room, monsterMessage, itemMessage, combat, messages, onCommand }: GameScreenProps): JSX.Element {
   const [command, setCommand] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -75,8 +76,8 @@ export function GameScreen({ player, minimap, room, monsterMessage, combat, mess
 
   return (
     <div id="hud">
-      <div id="top-bar">
-        <div id="top-left-stack">
+      <div id="game-columns">
+        <div id="left-column">
           <div className="side-box" id="score-box">
             <div className="side-box-label">Score</div>
             <div className="side-box-content">{player?.username}</div>
@@ -101,16 +102,9 @@ export function GameScreen({ player, minimap, room, monsterMessage, combat, mess
             )}
           </div>
         </div>
-        <div id="top-right-stack">
-          <div id="position-readout">
-            {player ? `${player.map}: (${player.row}, ${player.col})` : 'Position: (0, 0)'}
-          </div>
-        </div>
-      </div>
 
-      <div id="bottom-bar">
-        <div id="status-row">
-          <div id="action-log">
+        <div id="center-column">
+          <div id="message-box">
             <div id="message-list" ref={messageListRef}>
               {messages.map((line, i) => (
                 <div className="message-line" key={i}>
@@ -119,6 +113,7 @@ export function GameScreen({ player, minimap, room, monsterMessage, combat, mess
               ))}
             </div>
             {monsterMessage && <div id="monster-message">{monsterMessage}</div>}
+            {itemMessage && <div id="item-message">{itemMessage}</div>}
             {combat && (
               <div id="combat-status">
                 {combat.monsterName}: {combat.hpPercent}% HP
@@ -131,26 +126,33 @@ export function GameScreen({ player, minimap, room, monsterMessage, combat, mess
               </>
             )}
           </div>
+        </div>
+
+        <div id="right-column">
+          <div id="position-readout">
+            {player ? `${player.map}: (${player.row}, ${player.col})` : 'Position: (0, 0)'}
+          </div>
           <div className="side-box" id="minimap-box">
             <div className="side-box-label">Minimap</div>
             <Minimap cells={minimap} />
           </div>
         </div>
-        <input
-          ref={inputRef}
-          id="command-input"
-          type="text"
-          maxLength={32}
-          autoComplete="off"
-          placeholder="Type a command (w, a, s, d, up, down, attack <mob>, flee, clear) and press Enter..."
-          value={command}
-          onChange={(e) => setCommand(e.target.value)}
-          onKeyDown={handleKeyDown}
-          autoFocus
-        />
-        <div id="xp-bar-track">
-          <div id="xp-bar-fill" style={{ width: `${xpPercent}%` }} />
-        </div>
+      </div>
+
+      <input
+        ref={inputRef}
+        id="command-input"
+        type="text"
+        maxLength={32}
+        autoComplete="off"
+        placeholder="Type a command (w, a, s, d, up, down, attack <mob>, flee, consume <item>, skills, clear) and press Enter..."
+        value={command}
+        onChange={(e) => setCommand(e.target.value)}
+        onKeyDown={handleKeyDown}
+        autoFocus
+      />
+      <div id="xp-bar-track">
+        <div id="xp-bar-fill" style={{ width: `${xpPercent}%` }} />
       </div>
     </div>
   );

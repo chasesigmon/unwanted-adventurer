@@ -13,6 +13,7 @@ import { ConfigService } from '@nestjs/config';
 import { PlayersService } from '../players/players.service.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
 import { MonsterManagerService } from '../monsters/monster-manager.service.js';
+import { ItemManagerService } from '../items/item-manager.service.js';
 import { AuthService } from '../auth/auth.service.js';
 import { SessionStoreService } from '../auth/session-store.service.js';
 import { ActiveConnectionsService } from '../auth/active-connections.service.js';
@@ -22,6 +23,7 @@ import { getMap } from '../game/maps.js';
 import { resolveRoom } from '../game/room.js';
 import { resolveMove } from '../game/resolveMove.js';
 import { applyExpGain, maxTnlForLevel } from '../players/leveling.js';
+import { undeadDamageReduction } from '../players/skills.js';
 import { STARTING_MAP } from '../../shared/constants.js';
 import { DIRECTION_ALIASES } from '../../shared/directions.js';
 import { commandSchema } from './command.schema.js';
@@ -33,14 +35,24 @@ import type { PlayerSnapshot } from '../../shared/types.js';
 import type { GameServer, GameSocket, CommandAck, CombatStatus } from './types.js';
 
 const ATTACK_PREFIX = 'attack ';
+const CONSUME_PREFIX = 'consume ';
 const PLAYER_ATTACK_DAMAGE = 6;
 const SKELETON_ATTACK_DAMAGE = 2;
 const ATTACK_INTERVAL_MS = 4000;
+const SKILL_GAIN_CHANCE = 0.2;
 const ALL_DIRECTIONS: Direction[] = ['north', 'south', 'east', 'west'];
 
 interface ActiveCombat {
   timer: NodeJS.Timeout;
   targetId: string;
+}
+
+// "a leg" vs "an arm" — used for both the dropped-item room message and
+// the kill message, since the same body-part pool includes vowel-leading
+// names.
+function articleFor(word: string, capitalized = false): string {
+  const article = /^[aeiou]/i.test(word) ? 'an' : 'a';
+  return capitalized ? article.charAt(0).toUpperCase() + article.slice(1) : article;
 }
 
 // cors/heartbeat are configured centrally in ws-adapter.ts, not here — this
@@ -58,6 +70,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     private readonly playersService: PlayersService,
     private readonly worldManager: WorldManagerService,
     private readonly monsterManager: MonsterManagerService,
+    private readonly itemManager: ItemManagerService,
     private readonly authService: AuthService,
     private readonly sessionStore: SessionStoreService,
     private readonly activeConnections: ActiveConnectionsService,
@@ -132,6 +145,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.movement = doc?.movement ?? 100;
     client.data.exp = doc?.exp ?? 0;
     client.data.level = doc?.level ?? 1;
+    client.data.skills = doc?.skills ?? [];
 
     await this.worldManager.addPlayer(username, mapName, row, col);
 
@@ -140,6 +154,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       minimap: this.worldManager.getMinimap(username) ?? [],
       room: resolveRoom({ mapName, row, col }),
       monsterMessage: this.monsterMessageFor({ mapName, row, col }),
+      itemMessage: this.itemMessageFor({ mapName, row, col }),
     });
   }
 
@@ -155,12 +170,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       exp: client.data.exp,
       level: client.data.level,
       maxTnl: maxTnlForLevel(client.data.level),
+      skills: client.data.skills,
     };
   }
 
   private monsterMessageFor(loc: Location): string | undefined {
     const monster = this.monsterManager.getMonsterAt(loc.mapName, loc.row, loc.col);
     return monster ? `A ${monster.kind} is here!` : undefined;
+  }
+
+  private itemMessageFor(loc: Location): string | undefined {
+    const item = this.itemManager.getItemAt(loc.mapName, loc.row, loc.col);
+    return item ? `${articleFor(item.name, true)} ${item.name} lies here.` : undefined;
   }
 
   private hpPercent(monster: Monster): number {
@@ -187,9 +208,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
   // The core "basic hit" exchange, shared by the first (synchronous) hit in
   // handleAttack and every subsequent tick in tickCombat: player swings for
-  // a flat 6 damage; if that doesn't kill it, it swings back for 2. Returns
-  // one line per event (hit, kill, level-up, counter-hit) so the client can
-  // log each separately rather than one concatenated sentence.
+  // a flat 6 damage; if that doesn't kill it, it swings back (reduced by 1
+  // if the target is undead and the player has learned resistance to
+  // that). Returns one line per event (hit, kill, level-up, drop,
+  // counter-hit) so the client can log each separately rather than one
+  // concatenated sentence.
   private resolveAttackExchange(client: GameSocket, target: Monster): { messages: string[]; died: boolean } {
     const { kind, expReward } = target;
     const { died } = this.monsterManager.applyDamage(target.id, PLAYER_ATTACK_DAMAGE);
@@ -206,9 +229,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (level > before) {
         messages.push(`You leveled up! You are now level ${level}!`);
       }
+
+      const drop = this.monsterManager.getDeathDrop(target.kind);
+      if (drop) {
+        this.itemManager.dropItem(drop.name, target.mapName, target.row, target.col, drop.skillReward);
+        messages.push(`The ${kind} crumbles, leaving behind ${articleFor(drop.name)} ${drop.name}.`);
+      }
     } else {
-      client.data.hp = Math.max(0, client.data.hp - SKELETON_ATTACK_DAMAGE);
-      messages.push(`The ${kind} hits you for ${SKELETON_ATTACK_DAMAGE} damage.`);
+      const reduction = target.undead ? undeadDamageReduction(client.data.skills) : 0;
+      const damage = Math.max(0, SKELETON_ATTACK_DAMAGE - reduction);
+      client.data.hp = Math.max(0, client.data.hp - damage);
+      messages.push(`The ${kind} hits you for ${damage} damage.`);
     }
 
     return { messages, died };
@@ -233,6 +264,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         messages: ['Your target is gone.'],
         player: this.snapshotFor(client, loc),
         monsterMessage: this.monsterMessageFor(loc),
+        itemMessage: this.itemMessageFor(loc),
         ended: true,
       });
       return;
@@ -244,13 +276,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         messages: [`The ${target.kind} slips out of reach.`],
         player: this.snapshotFor(client, loc),
         monsterMessage: this.monsterMessageFor(loc),
+        itemMessage: this.itemMessageFor(loc),
         ended: true,
       });
       return;
     }
 
     const { messages, died } = this.resolveAttackExchange(client, target);
-    void this.persistStats(username, { hp: client.data.hp, exp: client.data.exp, level: client.data.level });
+    void this.persistStats(username, {
+      hp: client.data.hp,
+      exp: client.data.exp,
+      level: client.data.level,
+      skills: client.data.skills,
+    });
 
     if (died) {
       this.clearCombat(client.id);
@@ -258,6 +296,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         messages,
         player: this.snapshotFor(client, loc),
         monsterMessage: this.monsterMessageFor(loc),
+        itemMessage: this.itemMessageFor(loc),
         ended: true,
       });
       return;
@@ -268,6 +307,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: this.snapshotFor(client, loc),
       monster: { monsterName: target.kind, hpPercent: this.hpPercent(target) },
       monsterMessage: this.monsterMessageFor(loc),
+      itemMessage: this.itemMessageFor(loc),
       ended: false,
     });
   }
@@ -286,9 +326,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   }
 
   // Same awaited-on-disconnect / fire-and-forget-after-action split as
-  // persistPosition, for the same reason — combat now mutates hp/exp/level
-  // mid-session (see handleAttack).
-  private async persistStats(username: string, stats: { hp: number; exp: number; level: number }): Promise<void> {
+  // persistPosition, for the same reason — combat and consuming now
+  // mutate hp/exp/level/skills mid-session (see handleAttack, handleConsume).
+  private async persistStats(
+    username: string,
+    stats: { hp: number; exp: number; level: number; skills: string[] }
+  ): Promise<void> {
     try {
       await this.playersService.updateStats(username, stats);
     } catch (err) {
@@ -308,7 +351,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (loc) {
       await this.persistPosition(username, loc);
     }
-    await this.persistStats(username, { hp: client.data.hp, exp: client.data.exp, level: client.data.level });
+    await this.persistStats(username, {
+      hp: client.data.hp,
+      exp: client.data.exp,
+      level: client.data.level,
+      skills: client.data.skills,
+    });
   }
 
   // Returning a value here becomes the ack the client's emit() callback
@@ -352,6 +400,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return this.handleFlee(client);
     }
 
+    if (text === 'consume' || text.startsWith(CONSUME_PREFIX)) {
+      const itemQuery = text === 'consume' ? '' : text.slice(CONSUME_PREFIX.length).trim();
+      return this.handleConsume(client, itemQuery);
+    }
+
+    if (text === 'skills') {
+      return this.handleSkills(client);
+    }
+
     const direction = DIRECTION_ALIASES[text];
     if (!direction) {
       const loc = this.worldManager.getLocation(username);
@@ -364,6 +421,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         ackPayload.player = this.snapshotFor(client, loc);
         ackPayload.room = resolveRoom(loc);
         ackPayload.monsterMessage = this.monsterMessageFor(loc);
+        ackPayload.itemMessage = this.itemMessageFor(loc);
       }
       return ackPayload;
     }
@@ -379,6 +437,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         minimap: this.worldManager.getMinimap(username),
         room: loc ? resolveRoom(loc) : undefined,
         monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
+        itemMessage: loc ? this.itemMessageFor(loc) : undefined,
       };
     }
 
@@ -418,6 +477,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(loc),
       monsterMessage: this.monsterMessageFor(loc),
+      itemMessage: this.itemMessageFor(loc),
     };
   }
 
@@ -440,6 +500,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(loc),
       monsterMessage: this.monsterMessageFor(loc),
+      itemMessage: this.itemMessageFor(loc),
       combat,
     });
 
@@ -466,7 +527,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.clearCombat(client.id);
 
     const { messages, died } = this.resolveAttackExchange(client, target);
-    void this.persistStats(username, { hp: client.data.hp, exp: client.data.exp, level: client.data.level });
+    void this.persistStats(username, {
+      hp: client.data.hp,
+      exp: client.data.exp,
+      level: client.data.level,
+      skills: client.data.skills,
+    });
 
     if (died) {
       return buildAck(messages, true, null);
@@ -499,6 +565,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         minimap: this.worldManager.getMinimap(username),
         room: resolveRoom(loc),
         monsterMessage: this.monsterMessageFor(loc),
+        itemMessage: this.itemMessageFor(loc),
       };
     }
 
@@ -516,6 +583,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         minimap: this.worldManager.getMinimap(username),
         room: resolveRoom(loc),
         monsterMessage: this.monsterMessageFor(loc),
+        itemMessage: this.itemMessageFor(loc),
         combat: null,
       };
     }
@@ -546,7 +614,82 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(newLoc),
       monsterMessage: this.monsterMessageFor(newLoc),
+      itemMessage: this.itemMessageFor(newLoc),
       combat: null,
+    };
+  }
+
+  // "consume <item>" — partial, case-insensitive match against a dropped
+  // item's name in the player's current room. Always removes the item once
+  // found, regardless of outcome. If the item teaches a skill the player
+  // doesn't already have, there's a SKILL_GAIN_CHANCE chance of learning it.
+  private async handleConsume(client: GameSocket, itemQuery: string): Promise<CommandAck> {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(loc),
+      itemMessage: this.itemMessageFor(loc),
+    });
+
+    if (!itemQuery) {
+      return buildAck(['Consume what?'], false);
+    }
+
+    const item = this.itemManager.findItemByNameAt(loc.mapName, loc.row, loc.col, itemQuery);
+    if (!item) {
+      return buildAck([`There is no "${itemQuery}" here to consume.`], false);
+    }
+
+    this.itemManager.removeItem(item.id);
+
+    if (!item.skillReward) {
+      return buildAck([`You consume the ${item.name}.`], true);
+    }
+
+    if (client.data.skills.includes(item.skillReward)) {
+      return buildAck([`You consume the ${item.name}, but you already know this secret.`], true);
+    }
+
+    if (Math.random() >= SKILL_GAIN_CHANCE) {
+      return buildAck([`You consume the ${item.name}, but feel nothing happen.`], true);
+    }
+
+    client.data.skills = [...client.data.skills, item.skillReward];
+    void this.persistStats(username, {
+      hp: client.data.hp,
+      exp: client.data.exp,
+      level: client.data.level,
+      skills: client.data.skills,
+    });
+
+    return buildAck([`You consume the ${item.name}.`, `You have gained ${item.skillReward}!`], true);
+  }
+
+  // Purely informational — no state change, so unlike every other handler
+  // here this doesn't need to be async.
+  private handleSkills(client: GameSocket): CommandAck {
+    const { username, skills } = client.data;
+    const loc = this.worldManager.getLocation(username);
+
+    const messages = skills.length > 0 ? [`Your skills: ${skills.join(', ')}.`] : ["You haven't learned any skills yet."];
+
+    return {
+      ok: true,
+      messages,
+      player: loc ? this.snapshotFor(client, loc) : undefined,
+      minimap: this.worldManager.getMinimap(username),
+      room: loc ? resolveRoom(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(loc) : undefined,
     };
   }
 }

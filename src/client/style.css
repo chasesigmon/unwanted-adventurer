@@ -79,28 +79,40 @@ body {
   font-family: 'Courier New', monospace;
 }
 
-/* Top row: Score (left) and position readout (right), opposite corners of
-   the same row. */
-#top-bar {
+/* Three fixed-proportion columns (20% / 60% / 20%) spanning the full
+   height above the command input — flex-basis percentages that sum to
+   100% guarantee the columns can never overlap regardless of content or
+   viewport size, unlike the old top-bar/bottom-bar layout where the
+   Score box, action log, and minimap only shared space along one edge. */
+#game-columns {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin: 1rem;
 }
 
-#top-left-stack,
-#top-right-stack {
+#left-column,
+#center-column,
+#right-column {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  min-width: 0;
+  padding: 1rem;
 }
 
-#top-left-stack {
+#left-column {
+  flex: 0 0 20%;
   align-items: flex-start;
 }
 
-#top-right-stack {
+#center-column {
+  flex: 0 0 60%;
+  min-height: 0;
+}
+
+#right-column {
+  flex: 0 0 20%;
   align-items: flex-end;
+  gap: 0.75rem;
 }
 
 #position-readout {
@@ -111,13 +123,12 @@ body {
   font-size: 0.95rem;
 }
 
-/* Shared by any panel that must stay a consistent width regardless of
-   which side of the screen it's pinned to — currently the Score and
-   Minimap boxes. 20vw (not %) so the width is unambiguously "20% of the
-   screen" regardless of how an ancestor flex container happens to be
-   sized. */
+/* Shared by any panel that should fill the width of its column —
+   currently the Score and Minimap boxes. Width is 100% of the column
+   (not a viewport unit) since #left-column/#right-column now own the
+   20%-of-screen sizing directly. */
 .side-box {
-  width: 20vw;
+  width: 100%;
   min-width: 140px;
   background: rgba(22, 27, 34, 0.85);
   border: 1px solid #30363d;
@@ -139,8 +150,8 @@ body {
 
 #player-stats {
   display: flex;
-  justify-content: space-between;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.2rem;
   margin-top: 0.4rem;
   font-size: 0.85rem;
 }
@@ -157,34 +168,28 @@ body {
   flex-shrink: 0;
 }
 
-#bottom-bar {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-}
-
-#status-row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0 1rem 0.5rem;
-}
-
-#action-log {
+/* The 60%-width, full-height box in the middle of the screen. Its own
+   width comes entirely from #center-column's flex-basis (see above) —
+   this just fills that column and supplies the visible "box" framing. */
+#message-box {
   flex: 1;
-  min-height: 1.4em;
-  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  background: rgba(22, 27, 34, 0.85);
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
 }
 
-/* Persistent, append-only log — scrolls internally so a long session
-   doesn't push the minimap/room text off screen; auto-scrolled to the
+/* Persistent, append-only log — takes up whatever space monster/item
+   message, combat status, and room name/description (below it) don't
+   need, and scrolls internally within that space; auto-scrolled to the
    newest line by GameScreen whenever `messages` changes. Cleared only by
    the "clear" command, which never touches room-name/description below. */
 #message-list {
-  max-height: 22vh;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -201,6 +206,13 @@ body {
   font-weight: bold;
   color: #f85149;
   margin-top: 0.3rem;
+}
+
+#item-message {
+  font-size: 0.85rem;
+  font-weight: bold;
+  color: #e3b341;
+  margin-top: 0.2rem;
 }
 
 #combat-status {

@@ -18,6 +18,7 @@ interface GameState {
   minimap: MinimapCell[];
   room: RoomInfo | null;
   monsterMessage: string | null;
+  itemMessage: string | null;
   combat: CombatStatus | null;
   messages: string[];
 }
@@ -29,6 +30,7 @@ const initialState: GameState = {
   minimap: [],
   room: null,
   monsterMessage: null,
+  itemMessage: null,
   combat: null,
   messages: [],
 };
@@ -47,6 +49,7 @@ type Action =
       minimap: MinimapCell[];
       room: RoomInfo;
       monsterMessage?: string;
+      itemMessage?: string;
       isReconnect: boolean;
     }
   | {
@@ -56,6 +59,7 @@ type Action =
       minimap?: MinimapCell[];
       room?: RoomInfo;
       monsterMessage?: string;
+      itemMessage?: string;
       combat?: CombatStatus | null;
     }
   | {
@@ -64,6 +68,7 @@ type Action =
       player: PlayerSnapshot;
       monster?: CombatStatus;
       monsterMessage?: string;
+      itemMessage?: string;
     }
   | { type: 'connectionMessage'; message: string }
   | { type: 'clearMessages' }
@@ -84,6 +89,7 @@ function reducer(state: GameState, action: Action): GameState {
         minimap: action.minimap,
         room: action.room,
         monsterMessage: action.monsterMessage ?? null,
+        itemMessage: action.itemMessage ?? null,
         // A fresh connection never has a fight already running (the server
         // clears any auto-attack loop on disconnect), so this always resets.
         combat: null,
@@ -106,6 +112,7 @@ function reducer(state: GameState, action: Action): GameState {
         // at all" (e.g. rate-limited/invalid-command acks), which must
         // leave the last-known monster state alone instead of clearing it.
         monsterMessage: action.room ? (action.monsterMessage ?? null) : state.monsterMessage,
+        itemMessage: action.room ? (action.itemMessage ?? null) : state.itemMessage,
         // combat is tri-state: undefined means this ack doesn't pertain to
         // combat at all (movement, unknown command) so any in-progress
         // auto-attack loop's status is left alone — it keeps running
@@ -119,6 +126,7 @@ function reducer(state: GameState, action: Action): GameState {
         ...state,
         player: action.player,
         monsterMessage: action.monsterMessage ?? null,
+        itemMessage: action.itemMessage ?? null,
         combat: action.monster ?? null,
         messages: appendMessages(state.messages, action.messages),
       };
@@ -159,15 +167,15 @@ export function useGameConnection(): UseGameConnection {
 
   useEffect(() => {
     function onSync(e: Event): void {
-      const { player, minimap, room, monsterMessage } = (e as CustomEvent<SyncPayload>).detail;
+      const { player, minimap, room, monsterMessage, itemMessage } = (e as CustomEvent<SyncPayload>).detail;
       const isReconnect = hasSyncedOnceRef.current;
       hasSyncedOnceRef.current = true;
-      dispatch({ type: 'sync', player, minimap, room, monsterMessage, isReconnect });
+      dispatch({ type: 'sync', player, minimap, room, monsterMessage, itemMessage, isReconnect });
     }
 
     function onCombatUpdate(e: Event): void {
-      const { messages, player, monster, monsterMessage } = (e as CustomEvent<CombatUpdatePayload>).detail;
-      dispatch({ type: 'combatUpdate', messages, player, monster, monsterMessage });
+      const { messages, player, monster, monsterMessage, itemMessage } = (e as CustomEvent<CombatUpdatePayload>).detail;
+      dispatch({ type: 'combatUpdate', messages, player, monster, monsterMessage, itemMessage });
     }
 
     function onKicked(e: Event): void {
@@ -259,6 +267,7 @@ export function useGameConnection(): UseGameConnection {
         minimap: res.minimap ?? undefined,
         room: res.room,
         monsterMessage: res.monsterMessage,
+        itemMessage: res.itemMessage,
         combat: res.combat,
       });
     } catch (err) {

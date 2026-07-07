@@ -38,6 +38,11 @@ export class Player {
   @Prop({ default: 1 })
   level!: number;
 
+  // Permanent abilities gained via "consume <item>" — see
+  // players/skills.ts. Never removed once gained.
+  @Prop({ type: [String], default: [] })
+  skills!: string[];
+
   @Prop({ default: Date.now })
   lastLogin!: Date;
 }
