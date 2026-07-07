@@ -112,6 +112,16 @@ export interface SocketData {
   skills: string[];
   inventory: string[];
   consumeExp: number;
+  // Earned via "sacrifice" (manual or automatic).
+  gold: number;
+  // Toggled via "auto sac"/"auto sacrifice" — a standing preference
+  // (persisted), unlike restState.
+  autoSacrifice: boolean;
+  // 'dead' only between being murdered and the 15s respawn timer firing
+  // (see GameGateway.respawnPlayer) — while dead, commands are rejected
+  // rather than let the player act (move, fight, etc.) from a corpse.
+  // Never persisted; always 'alive' on a fresh connection.
+  respawnState: 'alive' | 'dead';
   // Populated via "equip <item>" — see items/item-definitions.ts for the
   // full EquipmentSlot list and which items map to which slot/category.
   // Only occupied slots are present as keys. Keyed loosely as

@@ -25,6 +25,16 @@ export function skillForItemName(name: string): ItemSkillReward | undefined {
   return ITEM_DEFINITIONS[name.toLowerCase()];
 }
 
+// The canonical "these are body parts" list — used by GameGateway
+// .resolveAttackExchange to route a monster's death drops: body parts
+// always land loose on the ground (as before), while anything else (e.g.
+// "bone dagger") goes into the new monster corpse container instead.
+const BODY_PARTS = ['leg', 'arm', 'hand', 'skull', 'rib'];
+
+export function isBodyPart(name: string): boolean {
+  return BODY_PARTS.includes(name.toLowerCase());
+}
+
 // Every slot a player can equip something into. Body parts come in pairs
 // (ear/forearm/ring/shin) with distinct left/right slots; everything else
 // is a single slot. "for now" per the request — only 'weapon' actually has

@@ -160,6 +160,9 @@ export function GameScreen({
                 <span>
                   <span className="stat-label">CXP</span> {player.consumeExp}
                 </span>
+                <span>
+                  <span className="stat-label">GOLD</span> {player.gold}
+                </span>
               </div>
             )}
           </div>
@@ -200,6 +203,15 @@ export function GameScreen({
             <div className="side-box-label">Inventory</div>
             <div className="side-box-content">
               {player && player.inventory.length > 0 ? player.inventory.join(', ') : '(empty)'}
+            </div>
+          </div>
+          {/* Each togglable automation ("auto sac"/"auto sacrifice" so far)
+              renders as one shaded (on) or unshaded (off) tile — see
+              "auto-toggle" below and its --active variant. */}
+          <div className="side-box" id="auto-box">
+            <div className="side-box-label">Auto</div>
+            <div className="side-box-content">
+              <span className={`auto-toggle${player?.autoSacrifice ? ' auto-toggle--active' : ''}`}>Sacrifice</span>
             </div>
           </div>
         </div>

@@ -12,14 +12,19 @@ import { ConfigService } from '@nestjs/config';
 import type { OnModuleDestroy } from '@nestjs/common';
 
 import { PlayersService } from '../players/players.service.js';
+import { DummyPlayerService } from '../players/dummy-player.service.js';
+import type { DummyPlayer } from '../players/dummy-player.service.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
 import { MonsterManagerService } from '../monsters/monster-manager.service.js';
 import type { MonsterMoveEvent } from '../monsters/monster-manager.service.js';
 import { ItemManagerService } from '../items/item-manager.service.js';
+import { CorpseManagerService } from '../items/corpse-manager.service.js';
+import type { Corpse } from '../items/corpse-manager.service.js';
 import {
   skillForItemName,
   equipmentForItemName,
   itemDescriptionFor,
+  isBodyPart,
   EQUIPMENT_SLOT_ORDER,
   EQUIPMENT_SLOT_LABELS,
 } from '../items/item-definitions.js';
@@ -83,6 +88,20 @@ const MAX_STAT = 100;
 const INSIDE_MOVEMENT_COST = 2;
 const OUTSIDE_MOVEMENT_COST = 3;
 
+// "sacrifice" (manual or automatic) — gold reward scales with the
+// corpse's level, not a flat amount, so a future stronger monster kind
+// pays out more without this needing to change.
+const SACRIFICE_GOLD_PER_LEVEL = 3;
+
+// "murder <player>" death consequences — exp loss scales with the
+// victim's own level (same reasoning as the gold formula above); the
+// respawn point is a single fixed cell regardless of where or how they
+// died. Row 7 is Labyrinth's center row (rows 0-14); col 14 is its
+// easternmost column — "the far east of Labyrinth".
+const PLAYER_DEATH_EXP_LOSS_PER_LEVEL = 10;
+const PLAYER_RESPAWN_DELAY_MS = 15_000;
+const FAR_EAST_LABYRINTH: Location = { mapName: 'Labyrinth', row: 7, col: 14 };
+
 // "attack"/"kill" can both be partially typed ("att", "ki", ...). A
 // minimum length keeps a bare single letter from being swallowed here
 // instead of falling through to movement — "a" must stay west, not become
@@ -141,10 +160,18 @@ const SKILLS_MIN_LENGTH = 2;
 // not on which exact prefix was typed — see the dispatch site.
 const EQUIP_MIN_LENGTH = 2;
 
+// "rem"/"remo"/"remov"/"remove" — the example floor from the request;
+// nothing else starts with "rem".
+const REMOVE_MIN_LENGTH = 3;
+
 // "exa"/"exam"/"exami"/"examin"/"examine" — 3 is the example floor from
 // the request ("exa" all the way to "examine"); nothing else starts with
 // "exa" so there's no disambiguation requirement either.
 const EXAMINE_MIN_LENGTH = 3;
+
+// "auto sac"/"auto sacrifice" — the request's own two examples; "sac" is
+// the floor since only one auto-toggle exists to disambiguate against yet.
+const AUTO_TOGGLE_MIN_LENGTH = 3;
 
 // The stat tick's interval is itself randomized (not a fixed
 // setInterval) — each firing schedules the next one at a fresh random
@@ -174,12 +201,37 @@ interface ActiveCombat {
   targetId: string;
 }
 
+// Separate from ActiveCombat (monsters only) — "murder <player>" is its
+// own PvP-only combat loop, so a player can't accidentally end up
+// simultaneously "attacking" a monster and "murdering" a player through
+// the same bookkeeping. targetId is the other socket's client.id for a
+// real player, or the DummyPlayer's id for a dummy.
+interface ActiveMurder {
+  timer: NodeJS.Timeout;
+  targetKind: 'real' | 'dummy';
+  targetId: string;
+}
+
+// Either kind of "player" a room can hold — a real connected socket, or
+// one of the fixed dummy players (see DummyPlayerService). Returned by
+// findPlayerLikeAt/getPlayerLikeById and consumed by resolveMurderExchange
+// so murder combat doesn't need two entirely separate code paths.
+type PlayerLikeTarget = { kind: 'real'; socket: GameSocket } | { kind: 'dummy'; dummy: DummyPlayer };
+
 // "a leg" vs "an arm" — used for both the dropped-item room message and
 // the kill message, since the same body-part pool includes vowel-leading
 // names.
 function articleFor(word: string, capitalized = false): string {
   const article = /^[aeiou]/i.test(word) ? 'an' : 'a';
   return capitalized ? article.charAt(0).toUpperCase() + article.slice(1) : article;
+}
+
+// "a, b, and c" (or "a and b", or just "a") — shared by any message that
+// needs to list several item phrases in one natural sentence.
+function joinWithAnd(phrases: string[]): string {
+  if (phrases.length <= 1) return phrases[0] ?? '';
+  if (phrases.length === 2) return `${phrases[0]} and ${phrases[1]}`;
+  return `${phrases.slice(0, -1).join(', ')}, and ${phrases[phrases.length - 1]}`;
 }
 
 // A cell can hold more than one dropped item at once (e.g. a skeleton's
@@ -191,16 +243,8 @@ function articleFor(word: string, capitalized = false): string {
 // grabbable by name.
 function describeItemsOnGround(items: DroppedItem[]): string | undefined {
   if (items.length === 0) return undefined;
-
   const phrases = items.map((item, i) => `${articleFor(item.name, i === 0)} ${item.name}`);
-  const joined =
-    phrases.length === 1
-      ? phrases[0]
-      : phrases.length === 2
-        ? `${phrases[0]} and ${phrases[1]}`
-        : `${phrases.slice(0, -1).join(', ')}, and ${phrases[phrases.length - 1]}`;
-
-  return `${joined} ${items.length === 1 ? 'lies' : 'lie'} here.`;
+  return `${joinWithAnd(phrases)} ${items.length === 1 ? 'lies' : 'lie'} here.`;
 }
 
 // Pluralizes just the last word of a (possibly multi-word) item name —
@@ -277,6 +321,8 @@ export class GameGateway
   private readonly commandLimiters = new Map<string, CommandRateLimiter>();
   private readonly commandLimiterOptions: CommandRateLimiterOptions;
   private readonly activeCombats = new Map<string, ActiveCombat>();
+  // PvP-only, separate from activeCombats — see ActiveMurder/"murder".
+  private readonly activeMurders = new Map<string, ActiveMurder>();
   // One shared timer for every connection, not one per socket — see
   // scheduleGlobalStatTick — so every player is on the same tick, rather
   // than each running their own independent randomized cycle.
@@ -284,9 +330,11 @@ export class GameGateway
 
   constructor(
     private readonly playersService: PlayersService,
+    private readonly dummyPlayerService: DummyPlayerService,
     private readonly worldManager: WorldManagerService,
     private readonly monsterManager: MonsterManagerService,
     private readonly itemManager: ItemManagerService,
+    private readonly corpseManager: CorpseManagerService,
     private readonly authService: AuthService,
     private readonly sessionStore: SessionStoreService,
     private readonly activeConnections: ActiveConnectionsService,
@@ -383,8 +431,11 @@ export class GameGateway
     client.data.inventory = doc?.inventory ?? [];
     client.data.consumeExp = doc?.consumeExp ?? 0;
     client.data.equipment = doc?.equipment ?? {};
-    // Never persisted — a fresh connection always starts awake.
+    client.data.gold = doc?.gold ?? 0;
+    client.data.autoSacrifice = doc?.autoSacrifice ?? false;
+    // Never persisted — a fresh connection always starts awake and alive.
     client.data.restState = 'awake';
+    client.data.respawnState = 'alive';
 
     await this.worldManager.addPlayer(username, mapName, row, col);
 
@@ -418,6 +469,8 @@ export class GameGateway
       skills: client.data.skills,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
+      gold: client.data.gold,
+      autoSacrifice: client.data.autoSacrifice,
     };
   }
 
@@ -432,9 +485,21 @@ export class GameGateway
     return monster ? `A ${monster.kind} is here!` : undefined;
   }
 
+  // "The wild skeleton's corpse lies here." / "PlayerName's corpse lies
+  // here." — undefined if there's no corpse in this cell. Shared by
+  // itemMessageFor (folded into the same sighting field) and "look"
+  // (its own explicit line).
+  private corpseLineFor(loc: Location): string | undefined {
+    const corpse = this.corpseManager.getCorpseAt(loc.mapName, loc.row, loc.col);
+    if (!corpse) return undefined;
+    return corpse.ownerType === 'monster' ? `The ${corpse.label}'s corpse lies here.` : `${corpse.label}'s corpse lies here.`;
+  }
+
   private itemMessageFor(client: GameSocket, loc: Location): string | undefined {
     if (client.data.restState === 'sleeping') return undefined;
-    return describeItemsOnGround(this.itemManager.getItemsAt(loc.mapName, loc.row, loc.col));
+    const itemLine = describeItemsOnGround(this.itemManager.getItemsAt(loc.mapName, loc.row, loc.col));
+    const corpseLine = this.corpseLineFor(loc);
+    return [itemLine, corpseLine].filter((s): s is string => !!s).join(' ') || undefined;
   }
 
   // Notifies any connected player standing in the monster's old or new
@@ -481,6 +546,31 @@ export class GameGateway
     }
   }
 
+  // PvP equivalent of clearCombat — no "engaged" concept to release
+  // (unlike monsters, a player-like target isn't excluded from anything
+  // else while being murdered).
+  private clearMurder(clientId: string): void {
+    const existing = this.activeMurders.get(clientId);
+    if (existing) {
+      clearInterval(existing.timer);
+      this.activeMurders.delete(clientId);
+    }
+  }
+
+  // Fresh lookup by id — same reasoning as MonsterManagerService
+  // .getMonsterById for tickCombat: a tick loop only has the id it locked
+  // onto when the fight started, and the underlying entity (especially a
+  // real player) can move, disconnect, or already be gone by the time the
+  // next tick fires.
+  private getPlayerLikeById(targetKind: 'real' | 'dummy', targetId: string): PlayerLikeTarget | undefined {
+    if (targetKind === 'dummy') {
+      const dummy = this.dummyPlayerService.getById(targetId);
+      return dummy ? { kind: 'dummy', dummy } : undefined;
+    }
+    const socket = this.server.sockets.sockets.get(targetId);
+    return socket ? { kind: 'real', socket } : undefined;
+  }
+
   // Every cardinal direction that would actually lead somewhere from loc
   // (in-bounds, whether or not it crosses a map exit) — used by "flee" to
   // pick a random escape route. Pure and dependency-free like resolveMove
@@ -512,7 +602,10 @@ export class GameGateway
   // at 0: a weaker or lower-level attacker just gets no bonus, never a
   // penalty below the weapon-adjusted base ("add attack points", not
   // subtract them). See the class doc comment for the exact formula.
-  private attributeAttackBonus(client: GameSocket, target: Monster): number {
+  // Takes just the two fields it needs (not a full Monster) so the same
+  // formula applies unchanged to a player-like murder target too (real
+  // SocketData or DummyPlayer both have strength/level).
+  private attributeAttackBonus(client: GameSocket, target: { strength: number; level: number }): number {
     const strengthEdge = client.data.strength - target.strength;
     const levelEdge = client.data.level - target.level;
     const bonus = Math.floor(strengthEdge / 2) + Math.floor(levelEdge / 2);
@@ -563,14 +656,39 @@ export class GameGateway
         );
       }
 
-      this.monsterManager.getDeathDrops(target.kind).forEach((drop, i) => {
-        this.itemManager.dropItem(drop.name, target.mapName, target.row, target.col, drop.skill);
-        messages.push(
-          i === 0
-            ? `The ${kind} crumbles, leaving behind ${articleFor(drop.name)} ${drop.name}.`
-            : `It also drops ${articleFor(drop.name)} ${drop.name}.`
-        );
+      // Body parts always land loose on the ground, same as before ("The
+      // wild skeleton crumbles, leaving behind a leg."); anything else
+      // (e.g. a bone dagger) goes into a new corpse instead — the corpse
+      // always appears regardless of contents, since it's also the
+      // "sacrifice" target.
+      const bodyPartPhrases: string[] = [];
+      const corpseItems: string[] = [];
+      this.monsterManager.getDeathDrops(target.kind).forEach((drop) => {
+        if (isBodyPart(drop.name)) {
+          this.itemManager.dropItem(drop.name, target.mapName, target.row, target.col, drop.skill);
+          bodyPartPhrases.push(`${articleFor(drop.name)} ${drop.name}`);
+        } else {
+          corpseItems.push(drop.name);
+        }
       });
+      if (bodyPartPhrases.length > 0) {
+        messages.push(`The ${kind} crumbles, leaving behind ${joinWithAnd(bodyPartPhrases)}.`);
+      }
+
+      const corpse = this.corpseManager.createMonsterCorpse(kind, target.level, target.mapName, target.row, target.col, corpseItems);
+
+      if (client.data.autoSacrifice) {
+        const goldReward = this.sacrificeCorpse(client, corpse);
+        messages.push(
+          `You automatically sacrifice the ${kind}'s remains to the gods, receiving ${goldReward} gold coin${goldReward === 1 ? '' : 's'}.`
+        );
+      } else {
+        messages.push(
+          corpseItems.length > 0
+            ? `Its corpse holds ${joinWithAnd(corpseItems.map((name) => `${articleFor(name)} ${name}`))}.`
+            : 'Its corpse remains here.'
+        );
+      }
     } else {
       messages.push(`The ${kind} has ${this.hpPercent(target)}% HP remaining.`);
 
@@ -624,6 +742,8 @@ export class GameGateway
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
       equipment: client.data.equipment,
+      gold: client.data.gold,
+      autoSacrifice: client.data.autoSacrifice,
     });
 
     client.emit('combat:update', {
@@ -639,12 +759,220 @@ export class GameGateway
     }
   }
 
+  // "murder <player>" — the PvP-only counterpart of resolveAttackExchange,
+  // same weapon/attribute damage formulas, against a player-like target
+  // (real or dummy) instead of a Monster. Dummy targets counter-attack
+  // with the same flat MONSTER_ATTACK_DAMAGE a monster would (they're
+  // NPC-like, no human to drive a response); real player targets don't
+  // auto-counter — they'd need to "murder" back themselves to retaliate.
+  private resolveMurderExchange(client: GameSocket, target: PlayerLikeTarget): { messages: string[]; died: boolean } {
+    const targetData = target.kind === 'real' ? target.socket.data : target.dummy;
+    const { damage: weaponDamage, verb } = this.weaponAttack(client);
+    const attackDamage = weaponDamage + this.attributeAttackBonus(client, targetData);
+
+    let died: boolean;
+    if (target.kind === 'real') {
+      target.socket.data.hp = Math.max(0, target.socket.data.hp - attackDamage);
+      died = target.socket.data.hp <= 0;
+    } else {
+      ({ died } = this.dummyPlayerService.applyDamage(target.dummy.id, attackDamage));
+    }
+
+    const messages = [`You ${verb} ${targetData.username} for ${attackDamage} damage!`];
+
+    if (died) {
+      messages.push(`You have murdered ${targetData.username}!`);
+      this.handlePlayerLikeDeath(target);
+    } else {
+      const hp = target.kind === 'real' ? target.socket.data.hp : target.dummy.hp;
+      const maxHp = target.kind === 'real' ? MAX_STAT : target.dummy.maxHp;
+      messages.push(`${targetData.username} has ${Math.max(0, Math.round((hp / maxHp) * 100))}% HP remaining.`);
+
+      if (target.kind === 'dummy') {
+        client.data.hp = Math.max(0, client.data.hp - MONSTER_ATTACK_DAMAGE);
+        messages.push(`${targetData.username} hits you for ${MONSTER_ATTACK_DAMAGE} damage.`);
+      } else {
+        const victimLoc = this.worldManager.getLocation(target.socket.data.username);
+        if (victimLoc) {
+          target.socket.emit('notice', {
+            messages: this.withStatusPrompt(target.socket, [
+              `${client.data.username} is attacking you for ${attackDamage} damage!`,
+            ]),
+            player: this.snapshotFor(target.socket, victimLoc),
+          });
+        }
+      }
+    }
+
+    return { messages, died };
+  }
+
+  // Corpse (holding everything equipped/carried), exp loss (real players
+  // only — dummies have no exp to lose), and a 15s respawn at
+  // FAR_EAST_LABYRINTH — applied uniformly regardless of where the death
+  // happened or which kind of "player" it was.
+  private handlePlayerLikeDeath(target: PlayerLikeTarget): void {
+    if (target.kind === 'dummy') {
+      const dummy = target.dummy;
+      const items = [...Object.values(dummy.equipment), ...dummy.inventory];
+      this.corpseManager.createPlayerCorpse(dummy.username, dummy.level, dummy.mapName, dummy.row, dummy.col, items);
+      const timer = setTimeout(
+        () =>
+          this.dummyPlayerService.respawn(dummy.id, FAR_EAST_LABYRINTH.mapName, FAR_EAST_LABYRINTH.row, FAR_EAST_LABYRINTH.col),
+        PLAYER_RESPAWN_DELAY_MS
+      );
+      timer.unref();
+      return;
+    }
+
+    const socket = target.socket;
+    const victimLoc = this.worldManager.getLocation(socket.data.username);
+    if (victimLoc) {
+      const items = [...Object.values(socket.data.equipment), ...socket.data.inventory];
+      this.corpseManager.createPlayerCorpse(socket.data.username, socket.data.level, victimLoc.mapName, victimLoc.row, victimLoc.col, items);
+    }
+
+    const expLost = socket.data.level * PLAYER_DEATH_EXP_LOSS_PER_LEVEL;
+    socket.data.exp = Math.max(0, socket.data.exp - expLost);
+    socket.data.equipment = {};
+    socket.data.inventory = [];
+    socket.data.hp = MAX_STAT;
+    socket.data.respawnState = 'dead';
+
+    this.clearCombat(socket.id);
+    this.clearMurder(socket.id);
+
+    void this.persistStats(socket.data.username, {
+      hp: socket.data.hp,
+      mana: socket.data.mana,
+      movement: socket.data.movement,
+      strength: socket.data.strength,
+      intelligence: socket.data.intelligence,
+      wisdom: socket.data.wisdom,
+      dexterity: socket.data.dexterity,
+      constitution: socket.data.constitution,
+      exp: socket.data.exp,
+      level: socket.data.level,
+      skills: socket.data.skills,
+      inventory: socket.data.inventory,
+      consumeExp: socket.data.consumeExp,
+      equipment: socket.data.equipment,
+      gold: socket.data.gold,
+      autoSacrifice: socket.data.autoSacrifice,
+    });
+
+    socket.emit('notice', {
+      messages: [
+        `You have been murdered! You lose ${expLost} experience. You will respawn in the far east of the Labyrinth in 15 seconds.`,
+      ],
+      player: victimLoc ? this.snapshotFor(socket, victimLoc) : undefined,
+    });
+
+    const timer = setTimeout(() => void this.respawnRealPlayer(socket), PLAYER_RESPAWN_DELAY_MS);
+    timer.unref();
+  }
+
+  // Re-enters the world at FAR_EAST_LABYRINTH and pushes a fresh 'sync' —
+  // the same shape as a normal connection's initial sync, since
+  // respawning is functionally "re-entering the world at a new position."
+  private async respawnRealPlayer(socket: GameSocket): Promise<void> {
+    if (!socket.connected) return;
+
+    const username = socket.data.username;
+    this.worldManager.removePlayer(username);
+    await this.worldManager.addPlayer(username, FAR_EAST_LABYRINTH.mapName, FAR_EAST_LABYRINTH.row, FAR_EAST_LABYRINTH.col);
+    socket.data.respawnState = 'alive';
+
+    void this.persistPosition(username, FAR_EAST_LABYRINTH);
+
+    socket.emit('sync', {
+      player: this.snapshotFor(socket, FAR_EAST_LABYRINTH),
+      minimap: this.worldManager.getMinimap(username) ?? [],
+      room: resolveRoom(FAR_EAST_LABYRINTH),
+      monsterMessage: this.monsterMessageFor(socket, FAR_EAST_LABYRINTH),
+      itemMessage: this.itemMessageFor(socket, FAR_EAST_LABYRINTH),
+    });
+  }
+
+  // Fires every ATTACK_INTERVAL_MS while a murder is active for this
+  // connection — the PvP equivalent of tickCombat.
+  private tickMurder(client: GameSocket, targetKind: 'real' | 'dummy', targetId: string): void {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      this.clearMurder(client.id);
+      return;
+    }
+
+    const target = this.getPlayerLikeById(targetKind, targetId);
+    if (!target) {
+      this.clearMurder(client.id);
+      client.emit('combat:update', {
+        messages: this.withStatusPrompt(client, ['Your target is gone.']),
+        player: this.snapshotFor(client, loc),
+        monsterMessage: this.monsterMessageFor(client, loc),
+        itemMessage: this.itemMessageFor(client, loc),
+        ended: true,
+      });
+      return;
+    }
+
+    const { messages, died } = this.resolveMurderExchange(client, target);
+    void this.persistStats(username, {
+      hp: client.data.hp,
+      mana: client.data.mana,
+      movement: client.data.movement,
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
+      exp: client.data.exp,
+      level: client.data.level,
+      skills: client.data.skills,
+      inventory: client.data.inventory,
+      consumeExp: client.data.consumeExp,
+      equipment: client.data.equipment,
+      gold: client.data.gold,
+      autoSacrifice: client.data.autoSacrifice,
+    });
+
+    client.emit('combat:update', {
+      messages: this.withStatusPrompt(client, messages),
+      player: this.snapshotFor(client, loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
+      ended: died,
+    });
+
+    if (died) {
+      this.clearMurder(client.id);
+    }
+  }
+
   // Called for every move that actually changes position (ordinary steps
   // in resolveCommandAck, and fleeing) — never for a blocked/failed move.
   // Cost is based on the room being left, not the destination.
   private deductMovementCost(client: GameSocket, departureMapName: MapName): void {
     const cost = getMap(departureMapName).setting === 'inside' ? INSIDE_MOVEMENT_COST : OUTSIDE_MOVEMENT_COST;
     client.data.movement = Math.max(0, client.data.movement - cost);
+  }
+
+  // Shared by the manual "sacrifice" command and auto-sacrifice (see
+  // resolveAttackExchange): grants gold, drops the corpse's contents
+  // loose on the ground (never destroyed — only a corpse's *natural*
+  // expiry destroys its contents), and removes the corpse itself. Caller
+  // is responsible for checking ownerType !== 'player' first — this
+  // helper doesn't re-check, since auto-sacrifice only ever calls it with
+  // a monster corpse it just created itself.
+  private sacrificeCorpse(client: GameSocket, corpse: Corpse): number {
+    const goldReward = corpse.level * SACRIFICE_GOLD_PER_LEVEL;
+    client.data.gold += goldReward;
+    for (const itemName of corpse.items) {
+      this.itemManager.dropItem(itemName, corpse.mapName, corpse.row, corpse.col, skillForItemName(itemName));
+    }
+    this.corpseManager.removeCorpse(corpse.id);
+    return goldReward;
   }
 
   // Awaited on disconnect (nothing else to do but wait); fire-and-forget
@@ -681,6 +1009,8 @@ export class GameGateway
       inventory: string[];
       consumeExp: number;
       equipment: Record<string, string>;
+      gold: number;
+      autoSacrifice: boolean;
     }
   ): Promise<void> {
     try {
@@ -695,6 +1025,7 @@ export class GameGateway
     const { username } = client.data;
     this.commandLimiters.delete(client.id);
     this.clearCombat(client.id);
+    this.clearMurder(client.id);
     this.activeConnections.clearActiveSocketIfCurrent(username, client.id);
 
     const loc = this.worldManager.getLocation(username);
@@ -717,6 +1048,8 @@ export class GameGateway
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
       equipment: client.data.equipment,
+      gold: client.data.gold,
+      autoSacrifice: client.data.autoSacrifice,
     });
   }
 
@@ -729,8 +1062,20 @@ export class GameGateway
     return `<${client.data.hp}hp ${client.data.mana}m ${client.data.movement}mv>`;
   }
 
+  // The second line of the prompt — every direction currently choosable,
+  // reusing fleeableDirections' exact "in bounds, or a matching exit at
+  // this tile" rule, so a map-to-map exit direction (e.g. "south" out of
+  // the Labyrinth) is included exactly when it's actually crossable, same
+  // as ordinary movement would treat it.
+  private exitsLineFor(username: string): string {
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) return 'Exits: none.';
+    const labels = this.fleeableDirections(loc).map((d) => d.charAt(0).toUpperCase() + d.slice(1));
+    return labels.length > 0 ? `Exits: ${labels.join(', ')}.` : 'Exits: none.';
+  }
+
   private withStatusPrompt(client: GameSocket, messages: string[]): string[] {
-    return [...messages, this.statusPromptFor(client)];
+    return [...messages, this.statusPromptFor(client), this.exitsLineFor(client.data.username)];
   }
 
   // Returning a value here becomes the ack the client's emit() callback
@@ -778,10 +1123,22 @@ export class GameGateway
       return { ok: true, messages: ['You have logged out.'], loggedOut: true };
     }
 
+    // Dead players can't act at all until their 15s respawn timer fires
+    // (see handlePlayerLikeDeath/respawnRealPlayer) — logout above is the
+    // one exception, everything else is rejected here before dispatch.
+    if (client.data.respawnState === 'dead') {
+      return { ok: false, messages: ["You are dead. You'll respawn shortly."] };
+    }
+
     // "attack"/"kill" and any of their prefixes (min 2 chars) all work —
     // "att skeleton", "ki skel", "attack skeleton" are equivalent.
     if (isAttackVerb(verb)) {
       return this.handleAttack(client, rest);
+    }
+
+    // "murder <player>" — no partials requested.
+    if (verb === 'murder') {
+      return this.handleMurder(client, rest);
     }
 
     if (text === 'flee') {
@@ -801,14 +1158,19 @@ export class GameGateway
       return this.handleDrop(client, rest);
     }
 
-    if (verb === 'unequip') {
+    // "unequip" and "remove"/"rem"/"remo"/"remov" are two spellings of
+    // the same action.
+    if (verb === 'unequip' || matchesPartial(verb, 'remove', REMOVE_MIN_LENGTH)) {
       return this.handleUnequip(client, rest);
     }
 
     // Covers "eq"/"equ"/"equi"/"equip"/... and "equipment"/its own
     // partials in one check (see EQUIP_MIN_LENGTH) — an item argument
     // means "equip <item>", no argument means "show my equipment slots".
-    if (matchesPartial(verb, 'equipment', EQUIP_MIN_LENGTH)) {
+    // "wear" is a third spelling of the same action (equip only, no
+    // partials requested for it, and no separate bare-argument meaning —
+    // "wear" alone still just falls into the equipment-view fallback).
+    if (matchesPartial(verb, 'equipment', EQUIP_MIN_LENGTH) || verb === 'wear') {
       return rest ? this.handleEquip(client, rest) : this.handleEquipmentView(client);
     }
 
@@ -884,6 +1246,17 @@ export class GameGateway
       return this.handleHelp(client, rest);
     }
 
+    // "sacrifice" — no partials requested, literal only.
+    if (text === 'sacrifice') {
+      return this.handleSacrifice(client);
+    }
+
+    // "auto" (bare) shows the toggle list; "auto sac"/"auto sacrifice"
+    // toggles it — see handleAuto for the argument's own partial match.
+    if (verb === 'auto') {
+      return this.handleAuto(client, rest);
+    }
+
     if (text === 'commands') {
       return this.handleCommands(client);
     }
@@ -912,8 +1285,8 @@ export class GameGateway
     }
 
     // Can't just walk out of a fight — "flee" (above) is the only way out
-    // while activeCombats has an entry for this connection.
-    if (this.activeCombats.has(client.id)) {
+    // while activeCombats or activeMurders has an entry for this connection.
+    if (this.activeCombats.has(client.id) || this.activeMurders.has(client.id)) {
       const loc = this.worldManager.getLocation(username);
       return {
         ok: false,
@@ -972,6 +1345,8 @@ export class GameGateway
         inventory: client.data.inventory,
         consumeExp: client.data.consumeExp,
         equipment: client.data.equipment,
+        gold: client.data.gold,
+        autoSacrifice: client.data.autoSacrifice,
       });
     }
 
@@ -1016,6 +1391,12 @@ export class GameGateway
 
     const target = this.monsterManager.findMonsterByNameAt(loc.mapName, loc.row, loc.col, mobQuery);
     if (!target) {
+      // "kill"/"attack" should not work on players — if the name actually
+      // matches a player here, say so explicitly rather than the generic
+      // "not found" (which would otherwise look like a typo on their part).
+      if (this.findPlayerLikeAt(client, loc.worldId, loc.mapName, loc.row, loc.col, mobQuery)) {
+        return buildAck(['You cannot attack another player. Use "murder <player>" instead.'], false);
+      }
       return buildAck([`There is no "${mobQuery}" here to attack.`], false);
     }
 
@@ -1048,6 +1429,8 @@ export class GameGateway
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
       equipment: client.data.equipment,
+      gold: client.data.gold,
+      autoSacrifice: client.data.autoSacrifice,
     });
 
     if (died) {
@@ -1063,6 +1446,90 @@ export class GameGateway
     return buildAck(messages, true);
   }
 
+  // "murder <player>" — the only way to attack another player (real or
+  // dummy); "attack"/"kill" refuse player targets entirely (see
+  // handleAttack's own guard). No partial matching requested. Otherwise
+  // mirrors handleAttack's shape exactly: swing immediately, then an
+  // auto-attack loop (tickMurder) every ATTACK_INTERVAL_MS until the
+  // target dies or the attacker flees.
+  private async handleMurder(client: GameSocket, targetQuery: string): Promise<CommandAck> {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
+    });
+
+    if (!targetQuery) {
+      return buildAck(['Murder whom?'], false);
+    }
+
+    const target = this.findPlayerLikeAt(client, loc.worldId, loc.mapName, loc.row, loc.col, targetQuery);
+    if (!target) {
+      return buildAck([`There is no "${targetQuery}" here to murder.`], false);
+    }
+
+    const targetId = target.kind === 'real' ? target.socket.id : target.dummy.id;
+    const targetName = target.kind === 'real' ? target.socket.data.username : target.dummy.username;
+
+    const existing = this.activeMurders.get(client.id);
+    if (existing && existing.targetId === targetId) {
+      const hp = target.kind === 'real' ? target.socket.data.hp : target.dummy.hp;
+      const maxHp = target.kind === 'real' ? MAX_STAT : target.dummy.maxHp;
+      return buildAck(
+        [
+          `You are already attacking ${targetName}.`,
+          `${targetName} has ${Math.max(0, Math.round((hp / maxHp) * 100))}% HP remaining.`,
+        ],
+        true
+      );
+    }
+
+    // Can't be fighting a monster and murdering a player at once;
+    // redirecting to a new target cancels whatever murder was running.
+    this.clearCombat(client.id);
+    this.clearMurder(client.id);
+
+    const { messages, died } = this.resolveMurderExchange(client, target);
+    void this.persistStats(username, {
+      hp: client.data.hp,
+      mana: client.data.mana,
+      movement: client.data.movement,
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
+      exp: client.data.exp,
+      level: client.data.level,
+      skills: client.data.skills,
+      inventory: client.data.inventory,
+      consumeExp: client.data.consumeExp,
+      equipment: client.data.equipment,
+      gold: client.data.gold,
+      autoSacrifice: client.data.autoSacrifice,
+    });
+
+    if (died) {
+      return buildAck(messages, true);
+    }
+
+    const timer = setInterval(() => this.tickMurder(client, target.kind, targetId), ATTACK_INTERVAL_MS);
+    timer.unref();
+    this.activeMurders.set(client.id, { timer, targetKind: target.kind, targetId });
+
+    return buildAck(messages, true);
+  }
+
   // The only way out of a fight: ends it immediately and moves the player
   // one step in a random direction that actually leads somewhere, same
   // underlying move pipeline as ordinary movement (so it can cross a map
@@ -1074,7 +1541,7 @@ export class GameGateway
       return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
     }
 
-    if (!this.activeCombats.has(client.id)) {
+    if (!this.activeCombats.has(client.id) && !this.activeMurders.has(client.id)) {
       return {
         ok: false,
         messages: ["You aren't in a fight to flee from."],
@@ -1087,6 +1554,7 @@ export class GameGateway
     }
 
     this.clearCombat(client.id);
+    this.clearMurder(client.id);
 
     const options = this.fleeableDirections(loc);
     const direction = options[Math.floor(Math.random() * options.length)];
@@ -1131,6 +1599,8 @@ export class GameGateway
         inventory: client.data.inventory,
         consumeExp: client.data.consumeExp,
         equipment: client.data.equipment,
+        gold: client.data.gold,
+        autoSacrifice: client.data.autoSacrifice,
       });
     }
 
@@ -1220,6 +1690,8 @@ export class GameGateway
         inventory: client.data.inventory,
         consumeExp: client.data.consumeExp,
         equipment: client.data.equipment,
+        gold: client.data.gold,
+        autoSacrifice: client.data.autoSacrifice,
       });
       return buildAck([`You consume the ${name}.`], true);
     }
@@ -1254,6 +1726,8 @@ export class GameGateway
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
       equipment: client.data.equipment,
+      gold: client.data.gold,
+      autoSacrifice: client.data.autoSacrifice,
     });
 
     return buildAck(messages, true);
@@ -1261,6 +1735,8 @@ export class GameGateway
 
   // "grab"/"get <item>" — same partial-name matching as consume, but adds
   // the item to the player's permanent inventory instead of eating it.
+  // Checks the ground first, then (if there's a corpse in the room) its
+  // contents — "should be able to get items from the corpse."
   private async handleGrab(client: GameSocket, itemQuery: string): Promise<CommandAck> {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
@@ -1282,31 +1758,44 @@ export class GameGateway
       return buildAck(['Grab what?'], false);
     }
 
+    const persistAfterGrab = (): void => {
+      void this.persistStats(username, {
+        hp: client.data.hp,
+        mana: client.data.mana,
+        movement: client.data.movement,
+        strength: client.data.strength,
+        intelligence: client.data.intelligence,
+        wisdom: client.data.wisdom,
+        dexterity: client.data.dexterity,
+        constitution: client.data.constitution,
+        exp: client.data.exp,
+        level: client.data.level,
+        skills: client.data.skills,
+        inventory: client.data.inventory,
+        consumeExp: client.data.consumeExp,
+        equipment: client.data.equipment,
+        gold: client.data.gold,
+        autoSacrifice: client.data.autoSacrifice,
+      });
+    };
+
     const item = this.itemManager.findItemByNameAt(loc.mapName, loc.row, loc.col, itemQuery);
-    if (!item) {
-      return buildAck([`There is no "${itemQuery}" here to grab.`], false);
+    if (item) {
+      this.itemManager.removeItem(item.id);
+      client.data.inventory = [...client.data.inventory, item.name];
+      persistAfterGrab();
+      return buildAck([`You pick up the ${item.name}.`], true);
     }
 
-    this.itemManager.removeItem(item.id);
-    client.data.inventory = [...client.data.inventory, item.name];
-    void this.persistStats(username, {
-      hp: client.data.hp,
-      mana: client.data.mana,
-      movement: client.data.movement,
-      strength: client.data.strength,
-      intelligence: client.data.intelligence,
-      wisdom: client.data.wisdom,
-      dexterity: client.data.dexterity,
-      constitution: client.data.constitution,
-      exp: client.data.exp,
-      level: client.data.level,
-      skills: client.data.skills,
-      inventory: client.data.inventory,
-      consumeExp: client.data.consumeExp,
-      equipment: client.data.equipment,
-    });
+    const corpseMatch = this.corpseManager.findItemInCorpseAt(loc.mapName, loc.row, loc.col, itemQuery);
+    if (corpseMatch) {
+      this.corpseManager.removeItemFromCorpse(corpseMatch.corpse.id, corpseMatch.itemName);
+      client.data.inventory = [...client.data.inventory, corpseMatch.itemName];
+      persistAfterGrab();
+      return buildAck([`You take the ${corpseMatch.itemName} from the corpse.`], true);
+    }
 
-    return buildAck([`You pick up the ${item.name}.`], true);
+    return buildAck([`There is no "${itemQuery}" here to grab.`], false);
   }
 
   // "drop <item>" — the inverse of grab: partial, case-insensitive match
@@ -1344,7 +1833,15 @@ export class GameGateway
 
     const index = client.data.inventory.indexOf(itemName);
     client.data.inventory = [...client.data.inventory.slice(0, index), ...client.data.inventory.slice(index + 1)];
-    this.itemManager.dropItem(itemName, loc.mapName, loc.row, loc.col, skillForItemName(itemName));
+
+    // If there's a corpse here, dropping puts the item *into* it ("put
+    // items back in") rather than loose on the ground.
+    const corpse = this.corpseManager.getCorpseAt(loc.mapName, loc.row, loc.col);
+    if (corpse) {
+      this.corpseManager.addItemToCorpse(corpse.id, itemName);
+    } else {
+      this.itemManager.dropItem(itemName, loc.mapName, loc.row, loc.col, skillForItemName(itemName));
+    }
 
     void this.persistStats(username, {
       hp: client.data.hp,
@@ -1361,9 +1858,11 @@ export class GameGateway
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
       equipment: client.data.equipment,
+      gold: client.data.gold,
+      autoSacrifice: client.data.autoSacrifice,
     });
 
-    return buildAck([`You drop the ${itemName}.`], true);
+    return buildAck([corpse ? `You put the ${itemName} into the corpse.` : `You drop the ${itemName}.`], true);
   }
 
   // "equip <item>" — partial, case-insensitive match against inventory
@@ -1430,6 +1929,8 @@ export class GameGateway
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
       equipment: client.data.equipment,
+      gold: client.data.gold,
+      autoSacrifice: client.data.autoSacrifice,
     });
 
     const messages = previousItem
@@ -1489,6 +1990,8 @@ export class GameGateway
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
       equipment: client.data.equipment,
+      gold: client.data.gold,
+      autoSacrifice: client.data.autoSacrifice,
     });
 
     return buildAck([`You unequip the ${itemName}.`], true);
@@ -1600,6 +2103,9 @@ export class GameGateway
     if (client.data.restState !== 'sleeping') {
       messages.push(...groupedItemLines(this.itemManager.getItemsAt(loc.mapName, loc.row, loc.col)));
 
+      const corpseLine = this.corpseLineFor(loc);
+      if (corpseLine) messages.push(corpseLine);
+
       const others = this.otherPlayersAt(client, loc.worldId, loc.mapName, loc.row, loc.col);
       if (others.length === 1) {
         messages.push(`${others[0]} is here!`);
@@ -1697,6 +2203,7 @@ export class GameGateway
       `MV: ${client.data.movement}`,
       `XP: ${client.data.exp}`,
       `CXP: ${client.data.consumeExp}`,
+      `GOLD: ${client.data.gold}`,
     ];
 
     return {
@@ -1714,7 +2221,9 @@ export class GameGateway
   // "look" (same room) and "scan" (adjacent rooms). Requires the same
   // worldId, not just the same map/row/col: two players on the same map
   // but in different overflow shards are simulated independently and
-  // shouldn't see each other, even if their coordinates coincide.
+  // shouldn't see each other, even if their coordinates coincide. Dummy
+  // players (see DummyPlayerService) aren't sharded at all — they're
+  // matched by map/row/col alone, same as monsters.
   private otherPlayersAt(client: GameSocket, worldId: string, mapName: MapName, row: number, col: number): string[] {
     const results: string[] = [];
     for (const other of this.server.sockets.sockets.values()) {
@@ -1724,31 +2233,38 @@ export class GameGateway
         results.push(other.data.username);
       }
     }
+    for (const dummy of this.dummyPlayerService.getAll()) {
+      if (dummy.mapName === mapName && dummy.row === row && dummy.col === col) {
+        results.push(dummy.username);
+      }
+    }
     return results;
   }
 
-  // Same cell/scope as otherPlayersAt, but returns the actual socket (not
-  // just the username) matching a partial, case-insensitive query — used
-  // by "examine <player>", which needs the other player's full data
-  // (level, equipment, attributes), not just their name.
-  private otherPlayerSocketAt(
+  // Same cell/scope as otherPlayersAt, but returns a normalized reference
+  // to whichever kind of "player" matched a partial, case-insensitive
+  // query — a real connected socket or a dummy player — used by "examine
+  // <player>" and "murder <player>", both of which need full data (level,
+  // equipment, attributes) from either source, not just a name.
+  private findPlayerLikeAt(
     client: GameSocket,
     worldId: string,
     mapName: MapName,
     row: number,
     col: number,
     query: string
-  ): GameSocket | undefined {
+  ): PlayerLikeTarget | undefined {
     const needle = query.toLowerCase();
     for (const other of this.server.sockets.sockets.values()) {
       if (other.id === client.id) continue;
       if (!other.data.username.toLowerCase().includes(needle)) continue;
       const otherLoc = this.worldManager.getLocation(other.data.username);
       if (otherLoc && otherLoc.worldId === worldId && otherLoc.mapName === mapName && otherLoc.row === row && otherLoc.col === col) {
-        return other;
+        return { kind: 'real', socket: other };
       }
     }
-    return undefined;
+    const dummy = this.dummyPlayerService.findAt(mapName, row, col, query);
+    return dummy ? { kind: 'dummy', dummy } : undefined;
   }
 
   // Every other connected player sharing this player's actual World
@@ -1756,6 +2272,7 @@ export class GameGateway
   // concept, not just "same map name": two players on the same map but in
   // different overflow shards aren't in the same World). Self is always
   // excluded — "where" reporting your own room back to you isn't useful.
+  // Dummy players are matched by map alone (see otherPlayersAt).
   private otherPlayersInWorld(
     client: GameSocket,
     worldId: string
@@ -1766,6 +2283,14 @@ export class GameGateway
       const otherLoc = this.worldManager.getLocation(other.data.username);
       if (otherLoc && otherLoc.worldId === worldId) {
         results.push({ username: other.data.username, mapName: otherLoc.mapName, row: otherLoc.row, col: otherLoc.col });
+      }
+    }
+    const worldMapName = this.worldManager.getLocation(client.data.username)?.mapName;
+    if (worldMapName) {
+      for (const dummy of this.dummyPlayerService.getAll()) {
+        if (dummy.mapName === worldMapName) {
+          results.push({ username: dummy.username, mapName: dummy.mapName, row: dummy.row, col: dummy.col });
+        }
       }
     }
     return results;
@@ -1867,13 +2392,14 @@ export class GameGateway
       );
     }
 
-    const otherPlayer = this.otherPlayerSocketAt(client, loc.worldId, loc.mapName, loc.row, loc.col, query);
-    if (otherPlayer) {
+    const playerLike = this.findPlayerLikeAt(client, loc.worldId, loc.mapName, loc.row, loc.col, query);
+    if (playerLike) {
+      const other = playerLike.kind === 'real' ? playerLike.socket.data : playerLike.dummy;
       return buildAck(
         [
-          `${otherPlayer.data.username} is a level ${otherPlayer.data.level} ${otherPlayer.data.race}.`,
-          powerComparisonMessage(client.data.level, otherPlayer.data.level, otherPlayer.data.username),
-          ...equipmentLines(`${otherPlayer.data.username}'s equipment:`, otherPlayer.data.equipment),
+          `${other.username} is a level ${other.level} ${other.race}.`,
+          powerComparisonMessage(client.data.level, other.level, other.username),
+          ...equipmentLines(`${other.username}'s equipment:`, other.equipment),
         ],
         true
       );
@@ -1898,6 +2424,111 @@ export class GameGateway
     return buildAck([`You don't see any "${query}" here.`], false);
   }
 
+  // "sacrifice" — offers a monster corpse in the room to the gods for
+  // gold (see sacrificeCorpse); player corpses are explicitly refused, no
+  // matter what. See also autoSacrifice, which does this automatically
+  // right after a kill instead of requiring this command.
+  private handleSacrifice(client: GameSocket): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
+    });
+
+    const corpse = this.corpseManager.getCorpseAt(loc.mapName, loc.row, loc.col);
+    if (!corpse) {
+      return buildAck(['There is no corpse here to sacrifice.'], false);
+    }
+    if (corpse.ownerType === 'player') {
+      return buildAck(["You cannot sacrifice a player's corpse."], false);
+    }
+
+    const goldReward = this.sacrificeCorpse(client, corpse);
+    void this.persistStats(username, {
+      hp: client.data.hp,
+      mana: client.data.mana,
+      movement: client.data.movement,
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
+      exp: client.data.exp,
+      level: client.data.level,
+      skills: client.data.skills,
+      inventory: client.data.inventory,
+      consumeExp: client.data.consumeExp,
+      equipment: client.data.equipment,
+      gold: client.data.gold,
+      autoSacrifice: client.data.autoSacrifice,
+    });
+
+    return buildAck(
+      [`You sacrifice the ${corpse.label}'s corpse to the gods, receiving ${goldReward} gold coin${goldReward === 1 ? '' : 's'}.`],
+      true
+    );
+  }
+
+  // "auto" (bare) shows every togglable automation and its current
+  // on/off state — right now just "sacrifice" (see SocketData
+  // .autoSacrifice). "auto sac"/"auto sacrifice" (partial-matched
+  // against the toggle's own name, not the "auto" verb) flips it. The
+  // client mirrors this as a shaded ("on") or unshaded ("off") tile in
+  // its own Auto box, driven by PlayerSnapshot.autoSacrifice.
+  private handleAuto(client: GameSocket, argument: string): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: loc ? this.snapshotFor(client, loc) : undefined,
+      minimap: this.worldManager.getMinimap(username),
+      room: loc ? resolveRoom(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
+    });
+
+    if (!argument) {
+      return buildAck([`Auto-toggles: sacrifice [${client.data.autoSacrifice ? 'ON' : 'OFF'}]`], true);
+    }
+
+    if (matchesPartial(argument.toLowerCase(), 'sacrifice', AUTO_TOGGLE_MIN_LENGTH)) {
+      client.data.autoSacrifice = !client.data.autoSacrifice;
+      void this.persistStats(username, {
+        hp: client.data.hp,
+        mana: client.data.mana,
+        movement: client.data.movement,
+        strength: client.data.strength,
+        intelligence: client.data.intelligence,
+        wisdom: client.data.wisdom,
+        dexterity: client.data.dexterity,
+        constitution: client.data.constitution,
+        exp: client.data.exp,
+        level: client.data.level,
+        skills: client.data.skills,
+        inventory: client.data.inventory,
+        consumeExp: client.data.consumeExp,
+        equipment: client.data.equipment,
+        gold: client.data.gold,
+        autoSacrifice: client.data.autoSacrifice,
+      });
+      return buildAck([`Auto-sacrifice is now ${client.data.autoSacrifice ? 'ON' : 'OFF'}.`], true);
+    }
+
+    return buildAck([`Unknown auto-toggle: "${argument}".`], false);
+  }
+
   // "who" — every connected player server-wide (not scoped to the same
   // map/World instance like "where"'s bare form), self included, since
   // "who's online" naturally covers you too.
@@ -1906,7 +2537,8 @@ export class GameGateway
     const loc = this.worldManager.getLocation(username);
 
     const usernames = Array.from(this.server.sockets.sockets.values()).map((s) => s.data.username);
-    const messages = ['Players online:', ...usernames];
+    const dummyUsernames = this.dummyPlayerService.getAll().map((d) => d.username);
+    const messages = ['Players online:', ...usernames, ...dummyUsernames];
 
     return {
       ok: true,
@@ -2116,6 +2748,8 @@ export class GameGateway
         inventory: client.data.inventory,
         consumeExp: client.data.consumeExp,
         equipment: client.data.equipment,
+        gold: client.data.gold,
+        autoSacrifice: client.data.autoSacrifice,
       });
 
       const lead =
@@ -2178,17 +2812,20 @@ export class GameGateway
       'n, s, e, w - move north, south, east, or west',
       'u, d - move up or down (not available yet)',
       'attack/kill (or k) <mob> - attack a monster in your room',
+      'murder <player> - attack another player (real or a test dummy) in your room',
       'flee - break off a fight and flee in a random direction',
       'consume <item> - eat an item (on the ground, or in your inventory) for a chance at a skill',
       'grab/get <item> - pick up a dropped item into your inventory',
       'drop <item> - drop an item from your inventory onto the ground',
-      'equip <item> - equip an item from your inventory into its equipment slot',
+      'equip/wear <item> - equip an item from your inventory into its equipment slot',
       'equip/equipment (no item) - show your equipment slots, head to toe',
-      'unequip <item> - unequip an item, returning it to your inventory',
+      'unequip/remove <item> - unequip an item, returning it to your inventory',
       'examine <item, player, monster, or room> - see a description (and equipment, for a player/monster)',
       'where [mob or player] - list nearby players, or locate a monster/player by name',
       'who - list every player currently online',
       'help <topic> - look up a description of a skill or other topic',
+      'sacrifice - offer a monster corpse in the room to the gods for gold',
+      'auto - show your togglable automations, or "auto sac" to toggle auto-sacrifice',
       'inventory - show what you are carrying',
       'skills - show your learned skills',
       'look/l - look around the room again',

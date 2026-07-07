@@ -37,6 +37,8 @@ export interface PlayerStats {
   inventory: string[];
   consumeExp: number;
   equipment: Record<string, string>;
+  gold: number;
+  autoSacrifice: boolean;
 }
 
 @Injectable()

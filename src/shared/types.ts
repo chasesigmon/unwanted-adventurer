@@ -33,6 +33,11 @@ export interface PlayerSnapshot {
   // Separate from `exp`/leveling — +1 per body part consumed via
   // "consume <item>", regardless of whether the skill roll succeeded.
   consumeExp: number;
+  // Earned via "sacrifice" (manual or automatic).
+  gold: number;
+  // Toggled via "auto sac"/"auto sacrifice" — drives the shaded/unshaded
+  // tile in the client's Auto box.
+  autoSacrifice: boolean;
 }
 
 // A named area of the game world and what it connects to — coarse, no

@@ -84,6 +84,16 @@ export class Player {
   @Prop({ default: 0 })
   consumeExp!: number;
 
+  // Earned via "sacrifice" (manual or automatic — see autoSacrifice).
+  @Prop({ default: 0 })
+  gold!: number;
+
+  // Toggled via "auto sac"/"auto sacrifice" — unlike restState (which
+  // always resets to 'awake' on connect), this is a standing player
+  // preference, so it persists across sessions.
+  @Prop({ default: false })
+  autoSacrifice!: boolean;
+
   @Prop({ default: Date.now })
   lastLogin!: Date;
 }
