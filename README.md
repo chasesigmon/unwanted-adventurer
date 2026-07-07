@@ -127,15 +127,39 @@ is coincidental.
 ### Character stats
 
 New characters start with `hp: 100`, `mana: 100`, `movement: 100`,
-`exp: 0` (`players/player.schema.ts`, schema defaults —
-`PlayersService.create()` doesn't need to set them explicitly). Only `hp`
-and `exp` currently change (via combat, see below); `mana`/`movement`
-still aren't consumed by anything. All four are displayed in the client's
-Score box (top-left). They're loaded once into `socket.data` at
-connection time (`GameGateway.handleConnection`) rather than re-read from
-Mongo on every command; combat writes them back to both `socket.data` and
-Mongo (`PlayersService.updateStats`) as it happens, fire-and-forget like
-position saves, plus a final awaited write on disconnect.
+`exp: 0`, `level: 1` (`players/player.schema.ts`, schema defaults —
+`PlayersService.create()` doesn't need to set them explicitly). Only
+`hp`/`exp`/`level` currently change (via combat, see below);
+`mana`/`movement` still aren't consumed by anything. All five are
+displayed in the client's Score box (top-left). They're loaded once into
+`socket.data` at connection time (`GameGateway.handleConnection`) rather
+than re-read from Mongo on every command; combat writes them back to both
+`socket.data` and Mongo (`PlayersService.updateStats`) as it happens,
+fire-and-forget like position saves, plus a final awaited write on
+disconnect.
+
+#### Leveling
+
+`players/leveling.ts` is the whole rule, kept as two small pure functions
+independent of Mongo/sockets/anything stateful:
+
+- `maxTnlForLevel(level)` — experience needed to reach the next level,
+  simply `level x 100` (100 at level 1, 200 at level 2, ...).
+- `applyExpGain({ level, exp }, gained)` — adds the gain, then rolls over
+  into as many level-ups as it warrants in a loop (so one big gain that
+  happens to cross more than one threshold is handled correctly, not just
+  the common case of one kill's worth of progress), returning the new
+  `{ level, exp }`. `exp` resets to the (possibly nonzero) remainder on
+  each level-up rather than accumulating forever — it always represents
+  *progress toward the next level*, which is what the client's XP bar
+  renders.
+
+`GameGateway.resolveAttackExchange` calls this on a kill and appends a
+`"You leveled up! You are now level 2!"` line whenever it fires.
+`maxTnl` itself is never stored — `PlayerSnapshot.maxTnl` is computed
+fresh from `level` every time a snapshot is built, so it can never drift
+out of sync with the stored level the way a cached/duplicated value
+could.
 
 ### Monsters
 
@@ -178,13 +202,17 @@ is given, `There is no "<query>" here to attack.` if nothing matches).
 
 Each exchange (`GameGateway.resolveAttackExchange`) is the same basic
 hit: the player swings first for a flat 6 damage
-(`MonsterManagerService.applyDamage`), and every hit — win, lose, or
-draw — produces a `"You hit the skeleton for 6 damage!"` message. If
-that hit kills it, the monster is removed immediately, the player's
-`exp` increases by the monster's `expReward`, and `" You killed the
-skeleton!"` is appended. If it survives, it swings back for a flat 2
-damage, clamped so the player's `hp` never goes below 0, appending
-`" The skeleton hits you for 2 damage."`.
+(`MonsterManagerService.applyDamage`), producing its own log line —
+`"You hit the skeleton for 6 damage!"` — separate from whatever happens
+next. If that hit kills it, the monster is removed immediately, the
+player's `exp`/`level` are updated via `leveling.ts`, and `"You killed
+the skeleton!"` (plus `"You leveled up! ..."` if it applies) is appended
+as its own line. If it survives, it swings back for a flat 2 damage,
+clamped so the player's `hp` never goes below 0, appending `"The
+skeleton hits you for 2 damage."` as its own line. `CommandAck.messages`
+and `CombatUpdatePayload.messages` are both `string[]` for exactly this
+reason — the client appends each element as a separate line rather than
+rendering one concatenated sentence.
 
 The first exchange happens synchronously, in the `attack` command's own
 ack (which also carries a `combat: { monsterName, hpPercent }` status for
@@ -192,7 +220,7 @@ the client to display). If the target survives, `GameGateway` starts a
 per-connection `setInterval` (`ATTACK_INTERVAL_MS`, 4s) that repeats the
 same exchange automatically — `tickCombat` — pushing a `combat:update`
 Socket.io event after every hit (there's no ack to piggyback on, since
-the player isn't sending anything) with the updated message, player
+the player isn't sending anything) with the updated message lines, player
 snapshot, and hp percent, until the monster dies (`ended: true`, monster
 omitted, kill message) or it wanders out of the player's cell before the
 next tick (skeletons keep wandering during a fight — nothing pauses
@@ -219,6 +247,26 @@ movement, so fleeing can cross a map exit exactly like a normal step
 would. If somehow boxed in on all four sides, the fight still ends but
 the player just stays put. `flee` outside of combat is a no-op
 (`"You aren't in a fight to flee from."`).
+
+### Message log and XP bar
+
+The action area is a persistent, append-only log (`useGameConnection`'s
+`messages: string[]`), not a single line that gets overwritten — every
+sync/command/combat-tick event appends its line(s) rather than replacing
+what's there, and the client auto-scrolls to the newest line
+(`GameScreen`'s `messageListRef` effect). It's capped at `MAX_MESSAGES`
+(200) client-side so a long session doesn't grow the array (and the DOM
+it renders) without bound.
+
+Typing `clear` empties the log. This never reaches the server —
+`useGameConnection.sendCommand` intercepts it before calling
+`NetworkManager.sendCommand`, since it's a pure display action with no
+game state to change. It only clears `messages`; room name/description,
+the minimap, and everything else in `GameState` are untouched.
+
+Below the command input, a small full-width bar (`#xp-bar-track` /
+`#xp-bar-fill`) shows `player.exp / player.maxTnl` as a percentage, filled
+with a purple-to-pink gradient.
 
 ## Auth: bcrypt + JWT + Redis session tracking
 

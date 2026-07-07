@@ -21,6 +21,7 @@ export interface PlayerPosition {
 export interface PlayerStats {
   hp: number;
   exp: number;
+  level: number;
 }
 
 @Injectable()

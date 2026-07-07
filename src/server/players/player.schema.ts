@@ -35,6 +35,9 @@ export class Player {
   @Prop({ default: 0 })
   exp!: number;
 
+  @Prop({ default: 1 })
+  level!: number;
+
   @Prop({ default: Date.now })
   lastLogin!: Date;
 }

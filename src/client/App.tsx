@@ -16,7 +16,7 @@ export function App(): JSX.Element {
       room={state.room}
       monsterMessage={state.monsterMessage}
       combat={state.combat}
-      actionMessage={state.actionMessage}
+      messages={state.messages}
       onCommand={sendCommand}
     />
   );

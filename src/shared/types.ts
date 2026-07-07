@@ -11,6 +11,10 @@ export interface PlayerSnapshot {
   mana: number;
   movement: number;
   exp: number;
+  level: number;
+  // Experience needed to reach the next level (level x 100) — derived
+  // server-side, not stored; the client uses it purely to size the XP bar.
+  maxTnl: number;
 }
 
 export interface MinimapCell {

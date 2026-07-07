@@ -21,6 +21,7 @@ import { CommandRateLimiter, type CommandRateLimiterOptions } from '../rate-limi
 import { getMap } from '../game/maps.js';
 import { resolveRoom } from '../game/room.js';
 import { resolveMove } from '../game/resolveMove.js';
+import { applyExpGain, maxTnlForLevel } from '../players/leveling.js';
 import { STARTING_MAP } from '../../shared/constants.js';
 import { DIRECTION_ALIASES } from '../../shared/directions.js';
 import { commandSchema } from './command.schema.js';
@@ -130,6 +131,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.mana = doc?.mana ?? 100;
     client.data.movement = doc?.movement ?? 100;
     client.data.exp = doc?.exp ?? 0;
+    client.data.level = doc?.level ?? 1;
 
     await this.worldManager.addPlayer(username, mapName, row, col);
 
@@ -151,6 +153,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       mana: client.data.mana,
       movement: client.data.movement,
       exp: client.data.exp,
+      level: client.data.level,
+      maxTnl: maxTnlForLevel(client.data.level),
     };
   }
 
@@ -183,20 +187,31 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
   // The core "basic hit" exchange, shared by the first (synchronous) hit in
   // handleAttack and every subsequent tick in tickCombat: player swings for
-  // a flat 6 damage; if that doesn't kill it, it swings back for 2.
-  private resolveAttackExchange(client: GameSocket, target: Monster): { message: string; died: boolean } {
+  // a flat 6 damage; if that doesn't kill it, it swings back for 2. Returns
+  // one line per event (hit, kill, level-up, counter-hit) so the client can
+  // log each separately rather than one concatenated sentence.
+  private resolveAttackExchange(client: GameSocket, target: Monster): { messages: string[]; died: boolean } {
     const { kind, expReward } = target;
     const { died } = this.monsterManager.applyDamage(target.id, PLAYER_ATTACK_DAMAGE);
 
-    let message = `You hit the ${kind} for ${PLAYER_ATTACK_DAMAGE} damage!`;
+    const messages = [`You hit the ${kind} for ${PLAYER_ATTACK_DAMAGE} damage!`];
+
     if (died) {
-      client.data.exp += expReward;
-      message += ` You killed the ${kind}!`;
+      messages.push(`You killed the ${kind}!`);
+
+      const before = client.data.level;
+      const { level, exp } = applyExpGain({ level: client.data.level, exp: client.data.exp }, expReward);
+      client.data.level = level;
+      client.data.exp = exp;
+      if (level > before) {
+        messages.push(`You leveled up! You are now level ${level}!`);
+      }
     } else {
       client.data.hp = Math.max(0, client.data.hp - SKELETON_ATTACK_DAMAGE);
-      message += ` The ${kind} hits you for ${SKELETON_ATTACK_DAMAGE} damage.`;
+      messages.push(`The ${kind} hits you for ${SKELETON_ATTACK_DAMAGE} damage.`);
     }
-    return { message, died };
+
+    return { messages, died };
   }
 
   // Fires every ATTACK_INTERVAL_MS while a fight is active for this
@@ -215,7 +230,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!target) {
       this.clearCombat(client.id);
       client.emit('combat:update', {
-        message: 'Your target is gone.',
+        messages: ['Your target is gone.'],
         player: this.snapshotFor(client, loc),
         monsterMessage: this.monsterMessageFor(loc),
         ended: true,
@@ -226,7 +241,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (target.mapName !== loc.mapName || target.row !== loc.row || target.col !== loc.col) {
       this.clearCombat(client.id);
       client.emit('combat:update', {
-        message: `The ${target.kind} slips out of reach.`,
+        messages: [`The ${target.kind} slips out of reach.`],
         player: this.snapshotFor(client, loc),
         monsterMessage: this.monsterMessageFor(loc),
         ended: true,
@@ -234,13 +249,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return;
     }
 
-    const { message, died } = this.resolveAttackExchange(client, target);
-    void this.persistStats(username, { hp: client.data.hp, exp: client.data.exp });
+    const { messages, died } = this.resolveAttackExchange(client, target);
+    void this.persistStats(username, { hp: client.data.hp, exp: client.data.exp, level: client.data.level });
 
     if (died) {
       this.clearCombat(client.id);
       client.emit('combat:update', {
-        message,
+        messages,
         player: this.snapshotFor(client, loc),
         monsterMessage: this.monsterMessageFor(loc),
         ended: true,
@@ -249,7 +264,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     client.emit('combat:update', {
-      message,
+      messages,
       player: this.snapshotFor(client, loc),
       monster: { monsterName: target.kind, hpPercent: this.hpPercent(target) },
       monsterMessage: this.monsterMessageFor(loc),
@@ -271,9 +286,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   }
 
   // Same awaited-on-disconnect / fire-and-forget-after-action split as
-  // persistPosition, for the same reason — combat now mutates hp/exp
+  // persistPosition, for the same reason — combat now mutates hp/exp/level
   // mid-session (see handleAttack).
-  private async persistStats(username: string, stats: { hp: number; exp: number }): Promise<void> {
+  private async persistStats(username: string, stats: { hp: number; exp: number; level: number }): Promise<void> {
     try {
       await this.playersService.updateStats(username, stats);
     } catch (err) {
@@ -293,7 +308,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (loc) {
       await this.persistPosition(username, loc);
     }
-    await this.persistStats(username, { hp: client.data.hp, exp: client.data.exp });
+    await this.persistStats(username, { hp: client.data.hp, exp: client.data.exp, level: client.data.level });
   }
 
   // Returning a value here becomes the ack the client's emit() callback
@@ -308,12 +323,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const limiter = this.commandLimiters.get(client.id);
 
     if (!limiter?.tryConsume()) {
-      return { ok: false, message: 'Slow down — too many commands.' };
+      return { ok: false, messages: ['Slow down — too many commands.'] };
     }
 
     const parsed = commandSchema.safeParse(rawText);
     if (!parsed.success) {
-      return { ok: false, message: 'Invalid command.' };
+      return { ok: false, messages: ['Invalid command.'] };
     }
     const text = parsed.data.toLowerCase();
 
@@ -325,7 +340,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // continuation of this handler's promise, which always runs before
       // this setImmediate's macrotask callback.
       setImmediate(() => client.disconnect(true));
-      return { ok: true, message: 'You have logged out.', loggedOut: true };
+      return { ok: true, messages: ['You have logged out.'], loggedOut: true };
     }
 
     if (text === 'attack' || text.startsWith(ATTACK_PREFIX)) {
@@ -342,7 +357,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const loc = this.worldManager.getLocation(username);
       const ackPayload: CommandAck = {
         ok: false,
-        message: `Unknown command: "${rawText}".`,
+        messages: [`Unknown command: "${rawText}".`],
         minimap: this.worldManager.getMinimap(username),
       };
       if (loc) {
@@ -359,7 +374,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const loc = this.worldManager.getLocation(username);
       return {
         ok: false,
-        message: 'You\'re in a fight! Type "flee" to escape, or keep attacking.',
+        messages: ['You\'re in a fight! Type "flee" to escape, or keep attacking.'],
         player: loc ? this.snapshotFor(client, loc) : undefined,
         minimap: this.worldManager.getMinimap(username),
         room: loc ? resolveRoom(loc) : undefined,
@@ -371,7 +386,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const result = await this.worldManager.processCommand(username, direction);
 
     if (!result) {
-      return { ok: false, message: 'Your session was lost. Please reconnect.' };
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
     }
 
     let message: string;
@@ -385,7 +400,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     const loc = this.worldManager.getLocation(username);
     if (!loc) {
-      return { ok: false, message: 'Your session was lost. Please reconnect.' };
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
     }
 
     if (result.ok) {
@@ -398,7 +413,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     return {
       ok: result.ok,
-      message,
+      messages: [message],
       player: this.snapshotFor(client, loc),
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(loc),
@@ -410,17 +425,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // swings immediately (resolved synchronously, in this ack), and if the
   // target survives, a timer takes over and repeats the same exchange
   // every ATTACK_INTERVAL_MS via tickCombat until it dies, wanders out of
-  // reach, or the player moves (interruptCombat).
+  // reach, or the player flees.
   private async handleAttack(client: GameSocket, mobQuery: string): Promise<CommandAck> {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
     if (!loc) {
-      return { ok: false, message: 'Your session was lost. Please reconnect.' };
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
     }
 
-    const buildAck = (message: string, ok: boolean, combat?: CombatStatus | null): CommandAck => ({
+    const buildAck = (messages: string[], ok: boolean, combat?: CombatStatus | null): CommandAck => ({
       ok,
-      message,
+      messages,
       player: this.snapshotFor(client, loc),
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(loc),
@@ -429,19 +444,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     });
 
     if (!mobQuery) {
-      return buildAck('Attack what?', false);
+      return buildAck(['Attack what?'], false);
     }
 
     const target = this.monsterManager.findMonsterByNameAt(loc.mapName, loc.row, loc.col, mobQuery);
     if (!target) {
-      return buildAck(`There is no "${mobQuery}" here to attack.`, false);
+      return buildAck([`There is no "${mobQuery}" here to attack.`], false);
     }
 
     // Already fighting this exact target — report status without landing
     // an extra hit or resetting the 4-second cadence.
     const existing = this.activeCombats.get(client.id);
     if (existing && existing.targetId === target.id) {
-      return buildAck(`You are already attacking the ${target.kind}.`, true, {
+      return buildAck([`You are already attacking the ${target.kind}.`], true, {
         monsterName: target.kind,
         hpPercent: this.hpPercent(target),
       });
@@ -450,11 +465,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // Redirecting to a new target cancels whatever fight was running.
     this.clearCombat(client.id);
 
-    const { message, died } = this.resolveAttackExchange(client, target);
-    void this.persistStats(username, { hp: client.data.hp, exp: client.data.exp });
+    const { messages, died } = this.resolveAttackExchange(client, target);
+    void this.persistStats(username, { hp: client.data.hp, exp: client.data.exp, level: client.data.level });
 
     if (died) {
-      return buildAck(message, true, null);
+      return buildAck(messages, true, null);
     }
 
     const targetId = target.id;
@@ -462,7 +477,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     timer.unref();
     this.activeCombats.set(client.id, { timer, targetId });
 
-    return buildAck(message, true, { monsterName: target.kind, hpPercent: this.hpPercent(target) });
+    return buildAck(messages, true, { monsterName: target.kind, hpPercent: this.hpPercent(target) });
   }
 
   // The only way out of a fight: ends it immediately (combat: null — see
@@ -473,13 +488,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
     if (!loc) {
-      return { ok: false, message: 'Your session was lost. Please reconnect.' };
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
     }
 
     if (!this.activeCombats.has(client.id)) {
       return {
         ok: false,
-        message: "You aren't in a fight to flee from.",
+        messages: ["You aren't in a fight to flee from."],
         player: this.snapshotFor(client, loc),
         minimap: this.worldManager.getMinimap(username),
         room: resolveRoom(loc),
@@ -496,7 +511,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // still ends, the player just stays put.
       return {
         ok: true,
-        message: 'You break off the fight, but there is nowhere to flee!',
+        messages: ['You break off the fight, but there is nowhere to flee!'],
         player: this.snapshotFor(client, loc),
         minimap: this.worldManager.getMinimap(username),
         room: resolveRoom(loc),
@@ -508,7 +523,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const result = await this.worldManager.processCommand(username, direction);
     const newLoc = this.worldManager.getLocation(username);
     if (!result || !newLoc) {
-      return { ok: false, message: 'Your session was lost. Please reconnect.' };
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
     }
 
     // fleeableDirections already checked this direction is valid from loc,
@@ -526,7 +541,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     return {
       ok: true,
-      message,
+      messages: [message],
       player: this.snapshotFor(client, newLoc),
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(newLoc),

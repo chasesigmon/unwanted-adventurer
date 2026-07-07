@@ -5,6 +5,10 @@ import type { PlayerSnapshot, MinimapCell, RoomInfo } from '../../shared/types.j
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
 
+// Caps the persistent log so a very long session doesn't grow the array
+// (and the DOM list rendered from it) without bound.
+const MAX_MESSAGES = 200;
+
 type Screen = 'auth' | 'game';
 
 interface GameState {
@@ -15,7 +19,7 @@ interface GameState {
   room: RoomInfo | null;
   monsterMessage: string | null;
   combat: CombatStatus | null;
-  actionMessage: string;
+  messages: string[];
 }
 
 const initialState: GameState = {
@@ -26,8 +30,14 @@ const initialState: GameState = {
   room: null,
   monsterMessage: null,
   combat: null,
-  actionMessage: '',
+  messages: [],
 };
+
+function appendMessages(existing: string[], incoming: string[]): string[] {
+  if (incoming.length === 0) return existing;
+  const combined = [...existing, ...incoming];
+  return combined.length > MAX_MESSAGES ? combined.slice(combined.length - MAX_MESSAGES) : combined;
+}
 
 type Action =
   | { type: 'authError'; message: string }
@@ -41,7 +51,7 @@ type Action =
     }
   | {
       type: 'commandResult';
-      message: string;
+      messages: string[];
       player?: PlayerSnapshot;
       minimap?: MinimapCell[];
       room?: RoomInfo;
@@ -50,19 +60,23 @@ type Action =
     }
   | {
       type: 'combatUpdate';
-      message: string;
+      messages: string[];
       player: PlayerSnapshot;
       monster?: CombatStatus;
       monsterMessage?: string;
     }
   | { type: 'connectionMessage'; message: string }
+  | { type: 'clearMessages' }
   | { type: 'loggedOut'; message?: string };
 
 function reducer(state: GameState, action: Action): GameState {
   switch (action.type) {
     case 'authError':
       return { ...state, authError: action.message };
-    case 'sync':
+    case 'sync': {
+      const line = action.isReconnect
+        ? 'Reconnected — position resynced with the server.'
+        : `${action.player.username} entered ${action.player.map}.`;
       return {
         screen: 'game',
         authError: '',
@@ -73,10 +87,12 @@ function reducer(state: GameState, action: Action): GameState {
         // A fresh connection never has a fight already running (the server
         // clears any auto-attack loop on disconnect), so this always resets.
         combat: null,
-        actionMessage: action.isReconnect
-          ? 'Reconnected — position resynced with the server.'
-          : `${action.player.username} entered ${action.player.map}.`,
+        // Appended, not replaced — a reconnect shouldn't wipe the log a
+        // player was already reading (a genuinely fresh login always finds
+        // state.messages already empty, from initialState/loggedOut).
+        messages: appendMessages(state.messages, [line]),
       };
+    }
     case 'commandResult':
       return {
         ...state,
@@ -94,9 +110,9 @@ function reducer(state: GameState, action: Action): GameState {
         // combat at all (movement, unknown command) so any in-progress
         // auto-attack loop's status is left alone — it keeps running
         // server-side and is only ever cleared via a 'combatUpdate' push
-        // or an explicit null here (a killing first hit).
+        // or an explicit null here (a killing first hit, or fleeing).
         combat: action.combat === undefined ? state.combat : action.combat,
-        actionMessage: action.message,
+        messages: appendMessages(state.messages, action.messages),
       };
     case 'combatUpdate':
       return {
@@ -104,10 +120,14 @@ function reducer(state: GameState, action: Action): GameState {
         player: action.player,
         monsterMessage: action.monsterMessage ?? null,
         combat: action.monster ?? null,
-        actionMessage: action.message,
+        messages: appendMessages(state.messages, action.messages),
       };
     case 'connectionMessage':
-      return { ...state, actionMessage: action.message };
+      return { ...state, messages: appendMessages(state.messages, [action.message]) };
+    case 'clearMessages':
+      // Deliberately only touches messages — room/monsterMessage/combat
+      // (and everything else) are separate state, untouched by "clear".
+      return { ...state, messages: [] };
     case 'loggedOut':
       return { ...initialState, authError: action.message ?? '' };
     default:
@@ -146,8 +166,8 @@ export function useGameConnection(): UseGameConnection {
     }
 
     function onCombatUpdate(e: Event): void {
-      const { message, player, monster, monsterMessage } = (e as CustomEvent<CombatUpdatePayload>).detail;
-      dispatch({ type: 'combatUpdate', message, player, monster, monsterMessage });
+      const { messages, player, monster, monsterMessage } = (e as CustomEvent<CombatUpdatePayload>).detail;
+      dispatch({ type: 'combatUpdate', messages, player, monster, monsterMessage });
     }
 
     function onKicked(e: Event): void {
@@ -216,18 +236,25 @@ export function useGameConnection(): UseGameConnection {
   }
 
   async function sendCommand(text: string): Promise<void> {
+    // "clear" is a pure display action — it never touches the server (no
+    // game state to change, no reason to spend a rate-limit token).
+    if (text.trim().toLowerCase() === 'clear') {
+      dispatch({ type: 'clearMessages' });
+      return;
+    }
+
     try {
       const res = await network.sendCommand(text);
       if (res.loggedOut) {
         explicitLogoutRef.current = true;
         network.disconnectAndReset();
         hasSyncedOnceRef.current = false;
-        dispatch({ type: 'loggedOut', message: res.message });
+        dispatch({ type: 'loggedOut', message: res.messages[0] });
         return;
       }
       dispatch({
         type: 'commandResult',
-        message: res.message,
+        messages: res.messages,
         player: res.player,
         minimap: res.minimap ?? undefined,
         room: res.room,

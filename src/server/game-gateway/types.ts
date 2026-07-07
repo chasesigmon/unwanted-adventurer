@@ -24,22 +24,27 @@ export interface CombatStatus {
 
 export interface CommandAck {
   ok: boolean;
-  message: string;
+  // One or more lines to append to the client's persistent message log
+  // (never a replacement — the log only grows or is explicitly cleared by
+  // the client-side "clear" command). A combat exchange is often more than
+  // one line: e.g. ["You hit the skeleton for 6 damage!", "The skeleton
+  // hits you for 2 damage."].
+  messages: string[];
   player?: PlayerSnapshot;
   minimap?: MinimapCell[] | null;
   room?: RoomInfo;
   // Always sent alongside `room` (never independently) — its absence when
   // `room` is present means "no monster here", not "unknown".
   monsterMessage?: string;
-  // Tri-state, only ever set by "attack" acks: a CombatStatus object means
-  // this command started/continued a fight; explicit `null` means it just
-  // ended one (a killing blow — conveyed by `message`, not this field);
-  // omitted entirely (undefined) means this command doesn't pertain to
-  // combat at all (movement, unknown command) and the client should leave
-  // whatever combat status it's already showing alone — an in-progress
-  // auto-attack loop keeps running server-side regardless of what other
-  // commands the player sends, and is only ever ended via a movement
-  // command (which separately triggers a 'combat:update' push) or a kill.
+  // Tri-state, only ever set by "attack"/"flee" acks: a CombatStatus object
+  // means this command started/continued a fight; explicit `null` means it
+  // just ended one (conveyed via `messages`, not this field); omitted
+  // entirely (undefined) means this command doesn't pertain to combat at
+  // all (movement, unknown command) and the client should leave whatever
+  // combat status it's already showing alone — an in-progress auto-attack
+  // loop keeps running server-side regardless of what other commands the
+  // player sends, and is only ever ended via "flee" (which separately
+  // triggers a 'combat:update' push) or a kill.
   combat?: CombatStatus | null;
   loggedOut?: boolean;
 }
@@ -47,11 +52,10 @@ export interface CommandAck {
 // Pushed roughly every 4 seconds while an "attack <mob>" loop is running
 // for this connection, without the client sending anything — see
 // GameGateway's activeCombats/tickCombat. `ended` is true on the final
-// push for a given fight (kill, target out of reach, or interrupted by a
-// move), at which point `monster` is omitted and the client should clear
-// its combat display.
+// push for a given fight (kill or target out of reach), at which point
+// `monster` is omitted and the client should clear its combat display.
 export interface CombatUpdatePayload {
-  message: string;
+  messages: string[];
   player: PlayerSnapshot;
   monster?: CombatStatus;
   monsterMessage?: string;
@@ -79,6 +83,7 @@ export interface SocketData {
   mana: number;
   movement: number;
   exp: number;
+  level: number;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

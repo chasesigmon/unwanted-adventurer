@@ -9,7 +9,7 @@ export interface GameScreenProps {
   room: RoomInfo | null;
   monsterMessage: string | null;
   combat: CombatStatus | null;
-  actionMessage: string;
+  messages: string[];
   onCommand: (text: string) => void;
 }
 
@@ -30,9 +30,10 @@ const MOVE_KEYS: Record<string, string> = {
   ArrowRight: 'd',
 };
 
-export function GameScreen({ player, minimap, room, monsterMessage, combat, actionMessage, onCommand }: GameScreenProps): JSX.Element {
+export function GameScreen({ player, minimap, room, monsterMessage, combat, messages, onCommand }: GameScreenProps): JSX.Element {
   const [command, setCommand] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
 
   function handleKeyDown(e: KeyboardEvent<HTMLInputElement>): void {
     if (e.key !== 'Enter') return;
@@ -62,6 +63,16 @@ export function GameScreen({ player, minimap, room, monsterMessage, combat, acti
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [onCommand]);
 
+  // Keep the log pinned to the newest line as messages accumulate.
+  useEffect(() => {
+    const el = messageListRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages]);
+
+  const xpPercent = player ? Math.min(100, Math.max(0, Math.round((player.exp / player.maxTnl) * 100))) : 0;
+
   return (
     <div id="hud">
       <div id="top-bar">
@@ -71,6 +82,9 @@ export function GameScreen({ player, minimap, room, monsterMessage, combat, acti
             <div className="side-box-content">{player?.username}</div>
             {player && (
               <div id="player-stats">
+                <span>
+                  <span className="stat-label">LVL</span> {player.level}
+                </span>
                 <span>
                   <span className="stat-label">HP</span> {player.hp}
                 </span>
@@ -97,7 +111,13 @@ export function GameScreen({ player, minimap, room, monsterMessage, combat, acti
       <div id="bottom-bar">
         <div id="status-row">
           <div id="action-log">
-            <div id="action-message">{actionMessage}</div>
+            <div id="message-list" ref={messageListRef}>
+              {messages.map((line, i) => (
+                <div className="message-line" key={i}>
+                  {line}
+                </div>
+              ))}
+            </div>
             {monsterMessage && <div id="monster-message">{monsterMessage}</div>}
             {combat && (
               <div id="combat-status">
@@ -122,12 +142,15 @@ export function GameScreen({ player, minimap, room, monsterMessage, combat, acti
           type="text"
           maxLength={32}
           autoComplete="off"
-          placeholder="Type a command (w, a, s, d, up, down, attack <mob>, flee) and press Enter..."
+          placeholder="Type a command (w, a, s, d, up, down, attack <mob>, flee, clear) and press Enter..."
           value={command}
           onChange={(e) => setCommand(e.target.value)}
           onKeyDown={handleKeyDown}
           autoFocus
         />
+        <div id="xp-bar-track">
+          <div id="xp-bar-fill" style={{ width: `${xpPercent}%` }} />
+        </div>
       </div>
     </div>
   );
