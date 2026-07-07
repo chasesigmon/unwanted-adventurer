@@ -20,12 +20,14 @@ import { SocketConnectionLimiterService } from '../rate-limit/socket-connection-
 import { CommandRateLimiter, type CommandRateLimiterOptions } from '../rate-limit/command-rate-limiter.js';
 import { getMap } from '../game/maps.js';
 import { resolveRoom } from '../game/room.js';
+import { resolveMove } from '../game/resolveMove.js';
 import { STARTING_MAP } from '../../shared/constants.js';
 import { DIRECTION_ALIASES } from '../../shared/directions.js';
 import { commandSchema } from './command.schema.js';
 import type { AppConfig } from '../config/configuration.js';
 import type { Location } from '../game/types.js';
 import type { Monster } from '../monsters/monster.js';
+import type { Direction } from '../../shared/directions.js';
 import type { PlayerSnapshot } from '../../shared/types.js';
 import type { GameServer, GameSocket, CommandAck, CombatStatus } from './types.js';
 
@@ -33,6 +35,7 @@ const ATTACK_PREFIX = 'attack ';
 const PLAYER_ATTACK_DAMAGE = 6;
 const SKELETON_ATTACK_DAMAGE = 2;
 const ATTACK_INTERVAL_MS = 4000;
+const ALL_DIRECTIONS: Direction[] = ['north', 'south', 'east', 'west'];
 
 interface ActiveCombat {
   timer: NodeJS.Timeout;
@@ -168,14 +171,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
   }
 
-  // Stops an in-progress auto-attack loop (if any) and pushes one final
-  // combat:update so the client clears its combat display — used whenever
-  // something other than a kill ends the fight (moving away; disconnect
-  // doesn't need this since there's no one left to notify).
-  private interruptCombat(client: GameSocket, loc: Location, message: string): void {
-    if (!this.activeCombats.has(client.id)) return;
-    this.clearCombat(client.id);
-    client.emit('combat:update', { message, player: this.snapshotFor(client, loc), ended: true });
+  // Every cardinal direction that would actually lead somewhere from loc
+  // (in-bounds, whether or not it crosses a map exit) — used by "flee" to
+  // pick a random escape route. Pure and dependency-free like resolveMove
+  // itself, so this is safe to call directly from the gateway even though
+  // the player's authoritative position lives in a world instance that may
+  // be a separate worker_thread: it only reads the static map registry.
+  private fleeableDirections(loc: Location): Direction[] {
+    return ALL_DIRECTIONS.filter((direction) => resolveMove(loc, direction).ok);
   }
 
   // The core "basic hit" exchange, shared by the first (synchronous) hit in
@@ -185,7 +188,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const { kind, expReward } = target;
     const { died } = this.monsterManager.applyDamage(target.id, PLAYER_ATTACK_DAMAGE);
 
-    let message = `You hit the ${kind} for ${PLAYER_ATTACK_DAMAGE} damage.`;
+    let message = `You hit the ${kind} for ${PLAYER_ATTACK_DAMAGE} damage!`;
     if (died) {
       client.data.exp += expReward;
       message += ` You killed the ${kind}!`;
@@ -330,6 +333,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return this.handleAttack(client, mobQuery);
     }
 
+    if (text === 'flee') {
+      return this.handleFlee(client);
+    }
+
     const direction = DIRECTION_ALIASES[text];
     if (!direction) {
       const loc = this.worldManager.getLocation(username);
@@ -346,14 +353,21 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return ackPayload;
     }
 
-    // Moving — even bumping a wall — means the player is no longer
-    // fighting, so any auto-attack loop for this connection stops here.
-    const preMoveLoc = this.worldManager.getLocation(username);
-    if (preMoveLoc) {
-      this.interruptCombat(client, preMoveLoc, 'You stop fighting and move on.');
+    // Can't just walk out of a fight — "flee" (above) is the only way out
+    // while activeCombats has an entry for this connection.
+    if (this.activeCombats.has(client.id)) {
+      const loc = this.worldManager.getLocation(username);
+      return {
+        ok: false,
+        message: 'You\'re in a fight! Type "flee" to escape, or keep attacking.',
+        player: loc ? this.snapshotFor(client, loc) : undefined,
+        minimap: this.worldManager.getMinimap(username),
+        room: loc ? resolveRoom(loc) : undefined,
+        monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
+      };
     }
 
-    const fromMap = preMoveLoc?.mapName ?? 'the world';
+    const fromMap = this.worldManager.getLocation(username)?.mapName ?? 'the world';
     const result = await this.worldManager.processCommand(username, direction);
 
     if (!result) {
@@ -449,5 +463,75 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.activeCombats.set(client.id, { timer, targetId });
 
     return buildAck(message, true, { monsterName: target.kind, hpPercent: this.hpPercent(target) });
+  }
+
+  // The only way out of a fight: ends it immediately (combat: null — see
+  // CommandAck) and moves the player one step in a random direction that
+  // actually leads somewhere, same underlying move pipeline as ordinary
+  // movement (so it can cross a map exit same as a normal step would).
+  private async handleFlee(client: GameSocket): Promise<CommandAck> {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, message: 'Your session was lost. Please reconnect.' };
+    }
+
+    if (!this.activeCombats.has(client.id)) {
+      return {
+        ok: false,
+        message: "You aren't in a fight to flee from.",
+        player: this.snapshotFor(client, loc),
+        minimap: this.worldManager.getMinimap(username),
+        room: resolveRoom(loc),
+        monsterMessage: this.monsterMessageFor(loc),
+      };
+    }
+
+    this.clearCombat(client.id);
+
+    const options = this.fleeableDirections(loc);
+    const direction = options[Math.floor(Math.random() * options.length)];
+    if (!direction) {
+      // No adjacent cell to flee into (boxed in on every side) — the fight
+      // still ends, the player just stays put.
+      return {
+        ok: true,
+        message: 'You break off the fight, but there is nowhere to flee!',
+        player: this.snapshotFor(client, loc),
+        minimap: this.worldManager.getMinimap(username),
+        room: resolveRoom(loc),
+        monsterMessage: this.monsterMessageFor(loc),
+        combat: null,
+      };
+    }
+
+    const result = await this.worldManager.processCommand(username, direction);
+    const newLoc = this.worldManager.getLocation(username);
+    if (!result || !newLoc) {
+      return { ok: false, message: 'Your session was lost. Please reconnect.' };
+    }
+
+    // fleeableDirections already checked this direction is valid from loc,
+    // so result.ok should always be true here — this guard is just
+    // defense in depth in case position state changed underneath us.
+    if (result.ok) {
+      void this.persistPosition(username, newLoc);
+    }
+
+    const message = !result.ok
+      ? 'You break off the fight, but stumble and stay put!'
+      : result.transitioned
+        ? `You flee ${direction} and stumble out of ${result.fromMap} into ${result.mapName}!`
+        : `You flee ${direction}!`;
+
+    return {
+      ok: true,
+      message,
+      player: this.snapshotFor(client, newLoc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(newLoc),
+      monsterMessage: this.monsterMessageFor(newLoc),
+      combat: null,
+    };
   }
 }

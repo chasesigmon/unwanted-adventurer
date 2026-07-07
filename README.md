@@ -178,11 +178,13 @@ is given, `There is no "<query>" here to attack.` if nothing matches).
 
 Each exchange (`GameGateway.resolveAttackExchange`) is the same basic
 hit: the player swings first for a flat 6 damage
-(`MonsterManagerService.applyDamage`); if that kills it, the monster is
-removed immediately, the player's `exp` increases by the monster's
-`expReward`, and the message includes `"You killed the skeleton!"`. If it
-survives, it swings back for a flat 2 damage, clamped so the player's
-`hp` never goes below 0.
+(`MonsterManagerService.applyDamage`), and every hit — win, lose, or
+draw — produces a `"You hit the skeleton for 6 damage!"` message. If
+that hit kills it, the monster is removed immediately, the player's
+`exp` increases by the monster's `expReward`, and `" You killed the
+skeleton!"` is appended. If it survives, it swings back for a flat 2
+damage, clamped so the player's `hp` never goes below 0, appending
+`" The skeleton hits you for 2 damage."`.
 
 The first exchange happens synchronously, in the `attack` command's own
 ack (which also carries a `combat: { monsterName, hpPercent }` status for
@@ -191,13 +193,10 @@ per-connection `setInterval` (`ATTACK_INTERVAL_MS`, 4s) that repeats the
 same exchange automatically — `tickCombat` — pushing a `combat:update`
 Socket.io event after every hit (there's no ack to piggyback on, since
 the player isn't sending anything) with the updated message, player
-snapshot, and hp percent, until:
-
-- the monster dies (`ended: true`, monster omitted, kill message),
-- it wanders out of the player's cell before the next tick (skeletons
-  keep wandering during a fight — nothing pauses them), or
-- the player sends any movement command, which calls
-  `GameGateway.interruptCombat` before the move itself is processed.
+snapshot, and hp percent, until the monster dies (`ended: true`, monster
+omitted, kill message) or it wanders out of the player's cell before the
+next tick (skeletons keep wandering during a fight — nothing pauses
+them).
 
 Re-attacking the same target while already fighting it is a no-op (just
 reports current status, doesn't land a bonus hit or reset the 4s clock);
@@ -206,6 +205,20 @@ attacking a different target cancels the old loop and starts a new one.
 for "just ended" / omitted for "not applicable, don't touch the client's
 existing display") for the same reason `monsterMessage` is tied to
 `room`'s presence — see `game-gateway/types.ts`.
+
+**A fight blocks ordinary movement.** While `activeCombats` has an entry
+for a connection, every w/a/s/d/up/down command is refused outright
+(`"You're in a fight! Type \"flee\" to escape, or keep attacking."`) —
+the move is never even attempted. The only way out is the `flee`
+command (`GameGateway.handleFlee`): it ends the fight (`combat: null`)
+and then moves the player one step in a random direction that actually
+leads somewhere, chosen from whichever of the 4 cardinal directions
+`resolveMove` reports as in-bounds from the current cell
+(`GameGateway.fleeableDirections`) — the same move pipeline as ordinary
+movement, so fleeing can cross a map exit exactly like a normal step
+would. If somehow boxed in on all four sides, the fight still ends but
+the player just stays put. `flee` outside of combat is a no-op
+(`"You aren't in a fight to flee from."`).
 
 ## Auth: bcrypt + JWT + Redis session tracking
 
