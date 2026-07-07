@@ -13,15 +13,17 @@ type Screen = 'auth' | 'game';
 
 // A line in the persistent message log, tagged with an optional visual
 // treatment: 'sighting' (a monster/item just noticed — red, extra space
-// above and below) or 'milestone' (a kill or level-up — extra space
-// below, to set it apart from the ordinary flow). `leadsAction` is
-// independent of `variant` (a separate small margin-top, rendered
-// alongside whatever variant class also applies) — set on the first line
-// of a command's own result, so each action's output gets a little
-// breathing room from whatever came before it in the log.
+// above and below), 'milestone' (a kill or level-up — extra space below,
+// to set it apart from the ordinary flow), or 'statusPrompt' (the trailing
+// "<80hp 100m 100mv>" line the server appends to every message batch — a
+// bit of space above it). `leadsAction` is independent of `variant` (a
+// separate small margin-top, rendered alongside whatever variant class
+// also applies) — set on the first line of a command's own result, so
+// each action's output gets a little breathing room from whatever came
+// before it in the log.
 export interface LogEntry {
   text: string;
-  variant?: 'sighting' | 'milestone';
+  variant?: 'sighting' | 'milestone' | 'statusPrompt';
   leadsAction?: boolean;
 }
 
@@ -63,7 +65,12 @@ function appendEntries(existing: LogEntry[], incoming: LogEntry[]): LogEntry[] {
 // The server sends plain strings; a couple of exact, server-owned phrasings
 // get tagged for the "milestone" spacing the moment they arrive, so
 // GameScreen never has to guess from the raw text at render time.
+const STATUS_PROMPT_PATTERN = /^<\d+hp \d+m \d+mv>$/;
+
 function classifyServerLine(text: string): LogEntry['variant'] {
+  if (STATUS_PROMPT_PATTERN.test(text)) {
+    return 'statusPrompt';
+  }
   if (text.startsWith('You killed ') || text.startsWith('You leveled up!') || text.includes('hits you for')) {
     return 'milestone';
   }

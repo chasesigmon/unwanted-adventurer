@@ -276,6 +276,13 @@ body {
   margin-bottom: 0.5rem;
 }
 
+/* The trailing "<80hp 100m 100mv>" status prompt the server appends to
+   every message batch (command results, combat ticks, notice pushes) — a
+   little space above it, separating it from whatever it's reporting on. */
+.message-line--statusPrompt {
+  margin-top: 0.3rem;
+}
+
 /* The first line of a command's own result — a gap above, distinct from
    (and stackable with) the sighting/milestone spacing above, which both
    already carry their own margin. Bumped up from an initial 0.25rem —

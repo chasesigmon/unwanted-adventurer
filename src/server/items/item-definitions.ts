@@ -97,6 +97,21 @@ export function itemKindFor(name: string): ItemKind | undefined {
   return ITEM_KINDS[name.toLowerCase()];
 }
 
+// Flavor text for "examine <item>" — every known item name should have one.
+const ITEM_DESCRIPTIONS: Record<string, string> = {
+  leg: 'A gaunt, yellowed leg bone, still faintly cold to the touch.',
+  arm: 'A brittle arm bone, cracked in places from old wounds.',
+  hand: 'A skeletal hand, fingers curled as if still gripping something.',
+  skull: 'A weathered skull, jaw hanging slightly open in a silent scream.',
+  rib: 'A single curved rib bone, thin and surprisingly light.',
+  'bone dagger':
+    'A crude dagger carved from bone and sharpened along one edge. Wielding it lets you stab rather than merely hit.',
+};
+
+export function itemDescriptionFor(name: string): string | undefined {
+  return ITEM_DESCRIPTIONS[name.toLowerCase()];
+}
+
 // Iteration order for "equip"/"equipment" typed bare — head to toe,
 // matching the order the request enumerated (and EquipmentSlot is
 // declared in).

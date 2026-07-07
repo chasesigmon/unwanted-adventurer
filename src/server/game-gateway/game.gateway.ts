@@ -19,11 +19,13 @@ import { ItemManagerService } from '../items/item-manager.service.js';
 import {
   skillForItemName,
   equipmentForItemName,
+  itemDescriptionFor,
   EQUIPMENT_SLOT_ORDER,
   EQUIPMENT_SLOT_LABELS,
 } from '../items/item-definitions.js';
 import type { EquipmentSlot } from '../items/item-definitions.js';
 import type { DroppedItem } from '../items/dropped-item.js';
+import { monsterDescriptionFor } from '../monsters/monster.js';
 import { AuthService } from '../auth/auth.service.js';
 import { SessionStoreService } from '../auth/session-store.service.js';
 import { ActiveConnectionsService } from '../auth/active-connections.service.js';
@@ -48,6 +50,23 @@ import type { GameServer, GameSocket, CommandAck } from './types.js';
 
 // Base damage before any equipped weapon bonus — see EquipmentDefinition
 // .attackBonus and resolveAttackExchange's weaponForAttack.
+//
+// Two formulas live in this file, both centered on the same idea (an
+// edge in some stat should matter, but shouldn't ever swing so far it
+// feels arbitrary):
+//
+// 1. Attack damage bonus (attributeAttackBonus): every 2 points of
+//    strength advantage over the opponent, plus every 2 levels of level
+//    advantage, each contribute +1 damage — the two add together, then
+//    clamp at 0 (a weaker/lower-level attacker gets no bonus, never a
+//    penalty). floor((str_self - str_opp) / 2) + floor(level_self -
+//    level_opp) / 2), minimum 0.
+//
+// 2. Power-comparison message (powerComparisonMessage, for "examine"):
+//    level difference alone (not strength) sorted into 7 graded bands —
+//    "no match at all" / "significantly weaker" / "slightly weaker" /
+//    "evenly matched" / "slightly stronger" / "significantly stronger" /
+//    "could destroy you" — at gaps of roughly 2 and 5 levels either way.
 const PLAYER_ATTACK_DAMAGE = 6;
 const SKELETON_ATTACK_DAMAGE = 2;
 const ATTACK_INTERVAL_MS = 4000;
@@ -112,6 +131,11 @@ const SKILLS_MIN_LENGTH = 2;
 // behavior you get depends on whether there's a trailing item argument,
 // not on which exact prefix was typed — see the dispatch site.
 const EQUIP_MIN_LENGTH = 2;
+
+// "exa"/"exam"/"exami"/"examin"/"examine" — 3 is the example floor from
+// the request ("exa" all the way to "examine"); nothing else starts with
+// "exa" so there's no disambiguation requirement either.
+const EXAMINE_MIN_LENGTH = 3;
 
 // The stat tick's interval is itself randomized (not a fixed
 // setInterval) — each firing schedules the next one at a fresh random
@@ -197,6 +221,30 @@ function groupedItemLines(items: DroppedItem[]): string[] {
   return Array.from(counts.entries()).map(([name, count]) =>
     count === 1 ? `${articleFor(name, true)} ${name} lies here.` : `There are ${count} ${pluralizeItemName(name)} here.`
   );
+}
+
+// Shared by "equip"/"equipment" (bare) and "examine <player or monster>" —
+// same slot list/labels either way, just a different header and whichever
+// equipment record is being described (a monster's is always empty; there's
+// no mechanic for monsters to equip anything yet, but the request asked for
+// the slots to be shown regardless).
+function equipmentLines(header: string, equipment: Record<string, string>): string[] {
+  return [header, ...EQUIPMENT_SLOT_ORDER.map((slot) => `${EQUIPMENT_SLOT_LABELS[slot]}: ${equipment[slot] ?? '(empty)'}`)];
+}
+
+// "examine <player or monster>" — a level-difference formula that scales
+// message intensity with how significant the gap is, symmetric around 0
+// (evenly matched). See the class doc comment near PLAYER_ATTACK_DAMAGE
+// for the exact thresholds.
+function powerComparisonMessage(selfLevel: number, otherLevel: number, label: string): string {
+  const diff = otherLevel - selfLevel;
+  if (diff <= -5) return `${label} looks like no match for you at all.`;
+  if (diff <= -2) return `${label} looks significantly weaker than you.`;
+  if (diff < 0) return `${label} looks slightly weaker than you.`;
+  if (diff === 0) return `${label} looks evenly matched with you.`;
+  if (diff < 2) return `${label} looks slightly stronger than you.`;
+  if (diff < 5) return `${label} looks significantly stronger than you.`;
+  return `${label} looks like it could destroy you.`;
 }
 
 function isAttackVerb(word: string): boolean {
@@ -396,12 +444,12 @@ export class GameGateway
 
       if (loc.row === fromRow && loc.col === fromCol) {
         client.emit('notice', {
-          messages: [`The ${monster.kind} wanders out of the room.`],
+          messages: this.withStatusPrompt(client, [`The ${monster.kind} wanders out of the room.`]),
           monsterMessage: this.monsterMessageFor(client, loc) ?? null,
         });
       } else if (loc.row === toRow && loc.col === toCol) {
         client.emit('notice', {
-          messages: [`A ${monster.kind} wanders into the room!`],
+          messages: this.withStatusPrompt(client, [`A ${monster.kind} wanders into the room!`]),
           monsterMessage: this.monsterMessageFor(client, loc) ?? null,
         });
       }
@@ -449,17 +497,32 @@ export class GameGateway
     };
   }
 
+  // Strength (and level) versus the opponent's own — every 2 points of
+  // relative strength advantage, and every 2 levels of relative level
+  // advantage, each add +1 attack damage; the two add together. Clamped
+  // at 0: a weaker or lower-level attacker just gets no bonus, never a
+  // penalty below the weapon-adjusted base ("add attack points", not
+  // subtract them). See the class doc comment for the exact formula.
+  private attributeAttackBonus(client: GameSocket, target: Monster): number {
+    const strengthEdge = client.data.strength - target.strength;
+    const levelEdge = client.data.level - target.level;
+    const bonus = Math.floor(strengthEdge / 2) + Math.floor(levelEdge / 2);
+    return Math.max(0, bonus);
+  }
+
   // The core "basic hit" exchange, shared by the first (synchronous) hit in
   // handleAttack and every subsequent tick in tickCombat: player swings for
-  // PLAYER_ATTACK_DAMAGE plus whatever their equipped weapon adds; if that
-  // doesn't kill it, it swings back (reduced by 1 if the target is undead
-  // and the player has learned resistance to that). Returns one line per
-  // event (hit, hp remaining, kill, level-up, drop(s), counter-hit) so the
+  // PLAYER_ATTACK_DAMAGE plus whatever their equipped weapon adds plus an
+  // attribute-based bonus (see attributeAttackBonus); if that doesn't kill
+  // it, it swings back (reduced by 1 if the target is undead and the
+  // player has learned resistance to that). Returns one line per event
+  // (hit, hp remaining, kill, level-up, drop(s), counter-hit) so the
   // client can log each separately — nothing here is a persistent status
   // display, it's all just message lines.
   private resolveAttackExchange(client: GameSocket, target: Monster): { messages: string[]; died: boolean } {
     const { kind, expReward } = target;
-    const { damage: attackDamage, verb } = this.weaponAttack(client);
+    const { damage: weaponDamage, verb } = this.weaponAttack(client);
+    const attackDamage = weaponDamage + this.attributeAttackBonus(client, target);
     const { died } = this.monsterManager.applyDamage(target.id, attackDamage);
 
     const messages = [`You ${verb} the ${kind} for ${attackDamage} damage!`];
@@ -475,11 +538,19 @@ export class GameGateway
         // A level-up fully restores hp/mana/movement, same as a fresh
         // character — there's no separate "max stat" concept to scale yet,
         // so this is just the same 100/100/100 every character starts at.
+        // Base attributes each go up by 1 per level gained (in practice
+        // always exactly 1 level per kill, given current exp numbers).
+        const levelsGained = level - before;
+        client.data.strength += levelsGained;
+        client.data.intelligence += levelsGained;
+        client.data.wisdom += levelsGained;
+        client.data.dexterity += levelsGained;
+        client.data.constitution += levelsGained;
         client.data.hp = 100;
         client.data.mana = 100;
         client.data.movement = 100;
         messages.push(
-          `You leveled up! You are now level ${level}! Your health, mana, and movement have been fully restored.`
+          `You leveled up! You are now level ${level}! Your health, mana, and movement have been fully restored, and your attributes have increased.`
         );
       }
 
@@ -519,7 +590,7 @@ export class GameGateway
     if (!target) {
       this.clearCombat(client.id);
       client.emit('combat:update', {
-        messages: ['Your target is gone.'],
+        messages: this.withStatusPrompt(client, ['Your target is gone.']),
         player: this.snapshotFor(client, loc),
         monsterMessage: this.monsterMessageFor(client, loc),
         itemMessage: this.itemMessageFor(client, loc),
@@ -533,6 +604,11 @@ export class GameGateway
       hp: client.data.hp,
       mana: client.data.mana,
       movement: client.data.movement,
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
@@ -542,7 +618,7 @@ export class GameGateway
     });
 
     client.emit('combat:update', {
-      messages,
+      messages: this.withStatusPrompt(client, messages),
       player: this.snapshotFor(client, loc),
       monsterMessage: this.monsterMessageFor(client, loc),
       itemMessage: this.itemMessageFor(client, loc),
@@ -577,6 +653,11 @@ export class GameGateway
       hp: number;
       mana: number;
       movement: number;
+      strength: number;
+      intelligence: number;
+      wisdom: number;
+      dexterity: number;
+      constitution: number;
       exp: number;
       level: number;
       skills: string[];
@@ -608,6 +689,11 @@ export class GameGateway
       hp: client.data.hp,
       mana: client.data.mana,
       movement: client.data.movement,
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
@@ -615,6 +701,19 @@ export class GameGateway
       consumeExp: client.data.consumeExp,
       equipment: client.data.equipment,
     });
+  }
+
+  // "<80hp 100m 100mv>" — appended after every message batch sent to a
+  // client, on every channel that carries one (typed-command acks,
+  // combat:update ticks, notice pushes) via withStatusPrompt below, not
+  // just typed commands. Recognized client-side by its own shape (see
+  // useGameConnection's classifyServerLine) to get a bit of spacing above it.
+  private statusPromptFor(client: GameSocket): string {
+    return `<${client.data.hp}hp ${client.data.mana}m ${client.data.movement}mv>`;
+  }
+
+  private withStatusPrompt(client: GameSocket, messages: string[]): string[] {
+    return [...messages, this.statusPromptFor(client)];
   }
 
   // Returning a value here becomes the ack the client's emit() callback
@@ -630,10 +729,7 @@ export class GameGateway
     @MessageBody() rawText: string
   ): Promise<CommandAck> {
     const ack = await this.resolveCommandAck(client, rawText);
-    return {
-      ...ack,
-      messages: [...ack.messages, `<${client.data.hp}hp ${client.data.mana}m ${client.data.movement}mv>`],
-    };
+    return { ...ack, messages: this.withStatusPrompt(client, ack.messages) };
   }
 
   private async resolveCommandAck(client: GameSocket, rawText: string): Promise<CommandAck> {
@@ -703,6 +799,10 @@ export class GameGateway
       return this.handleWhere(client, rest);
     }
 
+    if (matchesPartial(verb, 'examine', EXAMINE_MIN_LENGTH)) {
+      return this.handleExamine(client, rest);
+    }
+
     // Bare command, no argument — "inv", "inven", "inventory", ...
     if (matchesPartial(text, 'inventory', INVENTORY_MIN_LENGTH)) {
       return this.handleInventory(client);
@@ -735,8 +835,10 @@ export class GameGateway
     // scan/score/inventory: "l" is a deliberately short alias with no
     // letters in between meant to work ("lo", "loo" don't), and it doesn't
     // collide with anything else since no other command starts with "l".
-    if (text === 'look' || text === 'l') {
-      return this.handleLook(client);
+    // With an argument, "look <x>" is just an alias for "examine <x>" —
+    // without one, it's the bare room-summary behavior it's always had.
+    if (verb === 'look' || verb === 'l') {
+      return rest ? this.handleExamine(client, rest) : this.handleLook(client);
     }
 
     if (matchesPartial(text, 'sleep', SLEEP_MIN_LENGTH)) {
@@ -898,6 +1000,11 @@ export class GameGateway
       hp: client.data.hp,
       mana: client.data.mana,
       movement: client.data.movement,
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
@@ -1048,6 +1155,11 @@ export class GameGateway
         hp: client.data.hp,
         mana: client.data.mana,
         movement: client.data.movement,
+        strength: client.data.strength,
+        intelligence: client.data.intelligence,
+        wisdom: client.data.wisdom,
+        dexterity: client.data.dexterity,
+        constitution: client.data.constitution,
         exp: client.data.exp,
         level: client.data.level,
         skills: client.data.skills,
@@ -1077,6 +1189,11 @@ export class GameGateway
       hp: client.data.hp,
       mana: client.data.mana,
       movement: client.data.movement,
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
@@ -1122,6 +1239,11 @@ export class GameGateway
       hp: client.data.hp,
       mana: client.data.mana,
       movement: client.data.movement,
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
@@ -1174,6 +1296,11 @@ export class GameGateway
       hp: client.data.hp,
       mana: client.data.mana,
       movement: client.data.movement,
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
@@ -1238,6 +1365,11 @@ export class GameGateway
       hp: client.data.hp,
       mana: client.data.mana,
       movement: client.data.movement,
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
@@ -1292,6 +1424,11 @@ export class GameGateway
       hp: client.data.hp,
       mana: client.data.mana,
       movement: client.data.movement,
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
@@ -1310,12 +1447,7 @@ export class GameGateway
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
 
-    const messages = [
-      'Your equipment:',
-      ...EQUIPMENT_SLOT_ORDER.map(
-        (slot) => `${EQUIPMENT_SLOT_LABELS[slot]}: ${client.data.equipment[slot] ?? '(empty)'}`
-      ),
-    ];
+    const messages = equipmentLines('Your equipment:', client.data.equipment);
 
     return {
       ok: true,
@@ -1541,18 +1673,45 @@ export class GameGateway
     return results;
   }
 
+  // Same cell/scope as otherPlayersAt, but returns the actual socket (not
+  // just the username) matching a partial, case-insensitive query — used
+  // by "examine <player>", which needs the other player's full data
+  // (level, equipment, attributes), not just their name.
+  private otherPlayerSocketAt(
+    client: GameSocket,
+    worldId: string,
+    mapName: MapName,
+    row: number,
+    col: number,
+    query: string
+  ): GameSocket | undefined {
+    const needle = query.toLowerCase();
+    for (const other of this.server.sockets.sockets.values()) {
+      if (other.id === client.id) continue;
+      if (!other.data.username.toLowerCase().includes(needle)) continue;
+      const otherLoc = this.worldManager.getLocation(other.data.username);
+      if (otherLoc && otherLoc.worldId === worldId && otherLoc.mapName === mapName && otherLoc.row === row && otherLoc.col === col) {
+        return other;
+      }
+    }
+    return undefined;
+  }
+
   // Every other connected player sharing this player's actual World
   // instance (WorldManagerService's worldId — the worker_thread-sharded
   // concept, not just "same map name": two players on the same map but in
   // different overflow shards aren't in the same World). Self is always
   // excluded — "where" reporting your own room back to you isn't useful.
-  private otherPlayersInWorld(client: GameSocket, worldId: string): Array<{ username: string; mapName: MapName }> {
-    const results: Array<{ username: string; mapName: MapName }> = [];
+  private otherPlayersInWorld(
+    client: GameSocket,
+    worldId: string
+  ): Array<{ username: string; mapName: MapName; row: number; col: number }> {
+    const results: Array<{ username: string; mapName: MapName; row: number; col: number }> = [];
     for (const other of this.server.sockets.sockets.values()) {
       if (other.id === client.id) continue;
       const otherLoc = this.worldManager.getLocation(other.data.username);
       if (otherLoc && otherLoc.worldId === worldId) {
-        results.push({ username: other.data.username, mapName: otherLoc.mapName });
+        results.push({ username: other.data.username, mapName: otherLoc.mapName, row: otherLoc.row, col: otherLoc.col });
       }
     }
     return results;
@@ -1587,13 +1746,16 @@ export class GameGateway
 
     if (!mobQuery) {
       const others = this.otherPlayersInWorld(client, loc.worldId);
-      const messages = ['Players nearby:', ...others.map((o) => `${o.username} is in ${getRoomName(o.mapName)}.`)];
+      const messages = [
+        'Players nearby:',
+        ...others.map((o) => `${o.username} is in ${getRoomName(o.mapName, o.row, o.col)}.`),
+      ];
       return buildAck(messages, true);
     }
 
     const target = this.monsterManager.findMonsterByName(mobQuery);
     if (target && target.mapName === loc.mapName) {
-      return buildAck([`The ${target.kind} is in ${getRoomName(target.mapName)}.`], true);
+      return buildAck([`The ${target.kind} is in ${getRoomName(target.mapName, target.row, target.col)}.`], true);
     }
 
     const needle = mobQuery.toLowerCase();
@@ -1601,10 +1763,85 @@ export class GameGateway
       o.username.toLowerCase().includes(needle)
     );
     if (matchedPlayer) {
-      return buildAck([`${matchedPlayer.username} is in ${getRoomName(matchedPlayer.mapName)}.`], true);
+      return buildAck(
+        [`${matchedPlayer.username} is in ${getRoomName(matchedPlayer.mapName, matchedPlayer.row, matchedPlayer.col)}.`],
+        true
+      );
     }
 
     return buildAck(['That monster was not found.'], false);
+  }
+
+  // "examine <argument>" ("exa" through "examine") — also reachable as
+  // "look <argument>"/"l <argument>" (see the dispatch site), which is
+  // otherwise the bare room-summary command. Checked in priority order: a
+  // monster in the room, another player in the room, a dropped item in
+  // the room, an item in inventory, then the room itself (if the query
+  // matches "room"). Examining a player or monster also shows their
+  // equipment slots and a level-based power-comparison message (see
+  // powerComparisonMessage) — items/room just get their description.
+  private handleExamine(client: GameSocket, query: string): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
+    });
+
+    if (!query) {
+      return buildAck(['Examine what?'], false);
+    }
+
+    const monster = this.monsterManager.findMonsterByNameAt(loc.mapName, loc.row, loc.col, query);
+    if (monster) {
+      return buildAck(
+        [
+          monsterDescriptionFor(monster.kind),
+          powerComparisonMessage(client.data.level, monster.level, `The ${monster.kind}`),
+          ...equipmentLines(`The ${monster.kind}'s equipment:`, {}),
+        ],
+        true
+      );
+    }
+
+    const otherPlayer = this.otherPlayerSocketAt(client, loc.worldId, loc.mapName, loc.row, loc.col, query);
+    if (otherPlayer) {
+      return buildAck(
+        [
+          `${otherPlayer.data.username} is a level ${otherPlayer.data.level} ${otherPlayer.data.race}.`,
+          powerComparisonMessage(client.data.level, otherPlayer.data.level, otherPlayer.data.username),
+          ...equipmentLines(`${otherPlayer.data.username}'s equipment:`, otherPlayer.data.equipment),
+        ],
+        true
+      );
+    }
+
+    const groundItem = this.itemManager.findItemByNameAt(loc.mapName, loc.row, loc.col, query);
+    if (groundItem) {
+      return buildAck([itemDescriptionFor(groundItem.name) ?? `A ${groundItem.name}.`], true);
+    }
+
+    const needle = query.toLowerCase();
+    const invName = client.data.inventory.find((n) => n.toLowerCase().includes(needle));
+    if (invName) {
+      return buildAck([itemDescriptionFor(invName) ?? `A ${invName}.`], true);
+    }
+
+    if ('room'.includes(needle)) {
+      const room = resolveRoom(loc);
+      return buildAck([room.name, room.description], true);
+    }
+
+    return buildAck([`You don't see any "${query}" here.`], false);
   }
 
   // "who" — every connected player server-wide (not scoped to the same
@@ -1814,6 +2051,11 @@ export class GameGateway
         hp: client.data.hp,
         mana: client.data.mana,
         movement: client.data.movement,
+        strength: client.data.strength,
+        intelligence: client.data.intelligence,
+        wisdom: client.data.wisdom,
+        dexterity: client.data.dexterity,
+        constitution: client.data.constitution,
         exp: client.data.exp,
         level: client.data.level,
         skills: client.data.skills,
@@ -1830,7 +2072,7 @@ export class GameGateway
             : 'You catch your breath';
 
       client.emit('notice', {
-        messages: [`${lead}, recovering ${hpGain} HP, ${manaGain} MP, and ${movementGain} MV.`],
+        messages: this.withStatusPrompt(client, [`${lead}, recovering ${hpGain} HP, ${manaGain} MP, and ${movementGain} MV.`]),
         player: this.snapshotFor(client, loc),
       });
     }
@@ -1889,12 +2131,14 @@ export class GameGateway
       'equip <item> - equip an item from your inventory into its equipment slot',
       'equip/equipment (no item) - show your equipment slots, head to toe',
       'unequip <item> - unequip an item, returning it to your inventory',
+      'examine <item, player, monster, or room> - see a description (and equipment, for a player/monster)',
       'where [mob or player] - list nearby players, or locate a monster/player by name',
       'who - list every player currently online',
       'help <topic> - look up a description of a skill or other topic',
       'inventory - show what you are carrying',
       'skills - show your learned skills',
       'look/l - look around the room again',
+      'look/l <item, player, monster, or room> - same as "examine"',
       'map - show this area\'s full layout',
       'scan - check the 4 adjacent rooms for monsters',
       'score - show your character\'s stats',

@@ -25,6 +25,14 @@ export interface PlayerStats {
   movement: number;
   exp: number;
   level: number;
+  // Fixed at 1 for a fresh character, but +1 each on every level-up (see
+  // GameGateway.resolveAttackExchange) — so unlike race, these do need to
+  // persist here.
+  strength: number;
+  intelligence: number;
+  wisdom: number;
+  dexterity: number;
+  constitution: number;
   skills: string[];
   inventory: string[];
   consumeExp: number;

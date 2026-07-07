@@ -17,6 +17,18 @@ const SKELETON_HOME_MAP: MapName = 'Labyrinth';
 const SKELETON_BODY_PARTS = ['leg', 'arm', 'hand', 'skull', 'rib'];
 const BONE_DAGGER_DROP_CHANCE = 0.2;
 
+// Skeletons are the entry-level monster, so level 1 keeps a fresh level-1
+// player's attack-bonus formula neutral against them (see GameGateway
+// .attributeAttackBonus) — only leveling up (or a future stronger
+// monster kind) actually swings that formula either way.
+const SKELETON_LEVEL = 1;
+
+// "Give all monsters the same base starting str/int/wis/dex/con stats" —
+// one shared baseline for every MonsterKind, matching a fresh player's
+// own starting value (1) so a level-1 player vs. a level-1 skeleton is
+// exactly neutral by default.
+const MONSTER_BASE_ATTRIBUTE = 1;
+
 export interface DeathDrop {
   name: string;
   skill?: ItemSkillReward;
@@ -103,6 +115,12 @@ export class MonsterManagerService extends EventEmitter implements OnModuleInit,
       col,
       expReward: SKELETON_EXP_REWARD,
       undead: true,
+      level: SKELETON_LEVEL,
+      strength: MONSTER_BASE_ATTRIBUTE,
+      intelligence: MONSTER_BASE_ATTRIBUTE,
+      wisdom: MONSTER_BASE_ATTRIBUTE,
+      dexterity: MONSTER_BASE_ATTRIBUTE,
+      constitution: MONSTER_BASE_ATTRIBUTE,
     });
   }
 
