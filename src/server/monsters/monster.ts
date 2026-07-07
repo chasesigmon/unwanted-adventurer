@@ -1,6 +1,10 @@
 import type { MapName } from '../../shared/constants.js';
 
-export type MonsterKind = 'skeleton';
+// "skeleton" was renamed to "wild skeleton" to disambiguate it from the
+// player-choosable "skeleton" race (see shared/constants.ts's RACES) —
+// otherwise "a skeleton is here!" would be ambiguous between a monster
+// and another player who happens to be that race.
+export type MonsterKind = 'wild skeleton' | 'wild goblin';
 
 export interface Monster {
   id: string;
@@ -32,8 +36,10 @@ export interface Monster {
 
 // Flavor text for "examine <monster>" — every MonsterKind should have one.
 const MONSTER_DESCRIPTIONS: Record<MonsterKind, string> = {
-  skeleton:
+  'wild skeleton':
     'An animated pile of bones held together by dark magic, endlessly wandering the Labyrinth in search of the living.',
+  'wild goblin':
+    'A feral, unkempt goblin that has never known a settlement, roaming the Great Plains in search of easy prey.',
 };
 
 export function monsterDescriptionFor(kind: MonsterKind): string {

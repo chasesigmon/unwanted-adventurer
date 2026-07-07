@@ -5,18 +5,42 @@ import type { WorldMapArea } from '../../shared/types.js';
 const labyrinth = new GameMap({
   name: 'Labyrinth',
   ...MAP_SIZES.Labyrinth,
-  exits: [{ row: 14, col: 7, toMap: 'World', toRow: 0, toCol: 10 }],
+  setting: 'inside',
+  terrain: 'stone',
+  exits: [
+    {
+      row: 14,
+      col: 7,
+      direction: 'south',
+      toMap: 'Great Plains',
+      toRow: 0,
+      toCol: 10,
+      description: 'Exit to Great Plains',
+    },
+  ],
 });
 
-const world = new GameMap({
-  name: 'World',
-  ...MAP_SIZES.World,
-  exits: [{ row: 0, col: 10, toMap: 'Labyrinth', toRow: 14, toCol: 7 }],
+const greatPlains = new GameMap({
+  name: 'Great Plains',
+  ...MAP_SIZES['Great Plains'],
+  setting: 'outside',
+  terrain: 'grass',
+  exits: [
+    {
+      row: 0,
+      col: 10,
+      direction: 'north',
+      toMap: 'Labyrinth',
+      toRow: 14,
+      toCol: 7,
+      description: 'Entrance to Labyrinth',
+    },
+  ],
 });
 
 export const MAPS: Map<MapName, GameMap> = new Map([
   [labyrinth.name, labyrinth],
-  [world.name, world],
+  [greatPlains.name, greatPlains],
 ]);
 
 // Every MapName is guaranteed to be registered above; this centralizes

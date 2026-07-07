@@ -10,24 +10,39 @@ import type { MapName } from '../../shared/constants.js';
 import type { ItemSkillReward } from '../items/dropped-item.js';
 import type { Monster, MonsterKind } from './monster.js';
 
-const SKELETON_MAX_COUNT = 10;
-const SKELETON_STARTING_HP = 20;
-const SKELETON_EXP_REWARD = 10;
-const SKELETON_HOME_MAP: MapName = 'Labyrinth';
 const SKELETON_BODY_PARTS = ['leg', 'arm', 'hand', 'skull', 'rib'];
 const BONE_DAGGER_DROP_CHANCE = 0.2;
 
-// Skeletons are the entry-level monster, so level 1 keeps a fresh level-1
+// Both monster kinds are entry-level, so level 1 keeps a fresh level-1
 // player's attack-bonus formula neutral against them (see GameGateway
 // .attributeAttackBonus) — only leveling up (or a future stronger
 // monster kind) actually swings that formula either way.
-const SKELETON_LEVEL = 1;
+const MONSTER_LEVEL = 1;
 
 // "Give all monsters the same base starting str/int/wis/dex/con stats" —
 // one shared baseline for every MonsterKind, matching a fresh player's
-// own starting value (1) so a level-1 player vs. a level-1 skeleton is
+// own starting value (1) so a level-1 player vs. a level-1 monster is
 // exactly neutral by default.
 const MONSTER_BASE_ATTRIBUTE = 1;
+
+// One config per roaming species — everything spawnMonster/wanderAll/
+// respawnIfBelowMax need to treat a kind generically instead of hardcoding
+// "skeleton"/"Labyrinth" everywhere. Adding a new roaming monster kind is
+// just another entry here.
+interface MonsterSpecies {
+  kind: MonsterKind;
+  homeMap: MapName;
+  maxCount: number;
+  startingHp: number;
+  expReward: number;
+  undead: boolean;
+}
+
+const MONSTER_SPECIES: MonsterSpecies[] = [
+  // "add 5 more" to the previous count of 10.
+  { kind: 'wild skeleton', homeMap: 'Labyrinth', maxCount: 15, startingHp: 20, expReward: 10, undead: true },
+  { kind: 'wild goblin', homeMap: 'Great Plains', maxCount: 30, startingHp: 15, expReward: 8, undead: false },
+];
 
 export interface DeathDrop {
   name: string;
@@ -47,11 +62,12 @@ export interface MonsterMoveEvent {
   toCol: number;
 }
 
-// Autonomous NPCs, independent of any player connection: spawn
-// SKELETON_MAX_COUNT skeletons in the Labyrinth on boot, wander them
-// randomly on a timer, and top the population back up (one at a time) on a
-// slower timer whenever it's below the max. Everything here is in-memory
-// only — monsters aren't persisted and the population resets on restart.
+// Autonomous NPCs, independent of any player connection: spawn every
+// species in MONSTER_SPECIES up to its own maxCount on boot (each in its
+// own homeMap), wander them all randomly on a shared timer, and top each
+// species back up individually (one at a time) on a slower shared timer
+// whenever it's below its own max. Everything here is in-memory only —
+// monsters aren't persisted and the population resets on restart.
 @Injectable()
 export class MonsterManagerService extends EventEmitter implements OnModuleInit, OnModuleDestroy {
   private readonly monsters = new Map<string, Monster>();
@@ -73,14 +89,16 @@ export class MonsterManagerService extends EventEmitter implements OnModuleInit,
   }
 
   onModuleInit(): void {
-    for (let i = 0; i < SKELETON_MAX_COUNT; i++) {
-      this.spawnSkeleton();
+    for (const species of MONSTER_SPECIES) {
+      for (let i = 0; i < species.maxCount; i++) {
+        this.spawnMonster(species);
+      }
     }
 
     this.wanderTimer = setInterval(() => this.wanderAll(), this.wanderIntervalMs);
     this.wanderTimer.unref();
 
-    this.respawnTimer = setInterval(() => this.respawnIfBelowMax(), this.respawnIntervalMs);
+    this.respawnTimer = setInterval(() => this.respawnBelowMax(), this.respawnIntervalMs);
     this.respawnTimer.unref();
   }
 
@@ -89,8 +107,8 @@ export class MonsterManagerService extends EventEmitter implements OnModuleInit,
     if (this.respawnTimer) clearInterval(this.respawnTimer);
   }
 
-  private randomLabyrinthCell(): { row: number; col: number } {
-    const map = getMap(SKELETON_HOME_MAP);
+  private randomCellIn(mapName: MapName): { row: number; col: number } {
+    const map = getMap(mapName);
     let row: number;
     let col: number;
     do {
@@ -100,22 +118,22 @@ export class MonsterManagerService extends EventEmitter implements OnModuleInit,
     return { row, col };
   }
 
-  private spawnSkeleton(): void {
-    const { row, col } = this.randomLabyrinthCell();
-    const id = `skeleton-${this.nextId++}`;
+  private spawnMonster(species: MonsterSpecies): void {
+    const { row, col } = this.randomCellIn(species.homeMap);
+    const id = `${species.kind.replace(/\s+/g, '-')}-${this.nextId++}`;
     this.monsters.set(id, {
       id,
-      kind: 'skeleton',
-      hp: SKELETON_STARTING_HP,
-      maxHp: SKELETON_STARTING_HP,
+      kind: species.kind,
+      hp: species.startingHp,
+      maxHp: species.startingHp,
       mana: Infinity,
       movement: Infinity,
-      mapName: SKELETON_HOME_MAP,
+      mapName: species.homeMap,
       row,
       col,
-      expReward: SKELETON_EXP_REWARD,
-      undead: true,
-      level: SKELETON_LEVEL,
+      expReward: species.expReward,
+      undead: species.undead,
+      level: MONSTER_LEVEL,
       strength: MONSTER_BASE_ATTRIBUTE,
       intelligence: MONSTER_BASE_ATTRIBUTE,
       wisdom: MONSTER_BASE_ATTRIBUTE,
@@ -125,20 +143,23 @@ export class MonsterManagerService extends EventEmitter implements OnModuleInit,
   }
 
   private wanderAll(): void {
-    const map = getMap(SKELETON_HOME_MAP);
     const deltas = Object.values(DIRECTION_DELTAS);
 
     for (const monster of this.monsters.values()) {
       if (this.engaged.has(monster.id)) continue;
 
+      // Each monster wanders within its own mapName — species now live on
+      // different maps (Labyrinth vs. Great Plains), not just one shared
+      // home map.
+      const map = getMap(monster.mapName);
       const delta = deltas[Math.floor(Math.random() * deltas.length)];
       if (!delta) continue;
 
       const nextRow = monster.row + delta.dr;
       const nextCol = monster.col + delta.dc;
 
-      // Locked to the Labyrinth — refuse any step that would leave the map
-      // or land on the exit tile. It just stays put this tick instead.
+      // Refuse any step that would leave the map or land on an exit tile
+      // — it just stays put this tick instead.
       if (map.isInBounds(nextRow, nextCol) && !map.getExitAt(nextRow, nextCol)) {
         const fromRow = monster.row;
         const fromCol = monster.col;
@@ -157,9 +178,12 @@ export class MonsterManagerService extends EventEmitter implements OnModuleInit,
     }
   }
 
-  private respawnIfBelowMax(): void {
-    if (this.monsters.size < SKELETON_MAX_COUNT) {
-      this.spawnSkeleton();
+  private respawnBelowMax(): void {
+    for (const species of MONSTER_SPECIES) {
+      const currentCount = this.getAll().filter((m) => m.kind === species.kind).length;
+      if (currentCount < species.maxCount) {
+        this.spawnMonster(species);
+      }
     }
   }
 
@@ -242,16 +266,17 @@ export class MonsterManagerService extends EventEmitter implements OnModuleInit,
   }
 
   // What a monster kind leaves behind on death — always empty for kinds
-  // without a loot table (only skeletons have one right now, kept keyed
-  // by kind rather than the `undead` flag since future undead kinds could
-  // have a different pool, or none). Skeletons always drop a body part,
-  // plus a separate BONE_DAGGER_DROP_CHANCE roll for a bone dagger, so a
-  // single kill can yield zero, one, or two items. Each item's skill
-  // reward/chance comes from items/item-definitions.ts — the same lookup
-  // GameGateway.handleDrop uses, so an item's properties don't depend on
-  // which of those two paths put it on the ground.
+  // without a loot table (only wild skeletons have one right now — wild
+  // goblins drop nothing — kept keyed by kind rather than the `undead`
+  // flag since future undead kinds could have a different pool, or none).
+  // Wild skeletons always drop a body part, plus a separate
+  // BONE_DAGGER_DROP_CHANCE roll for a bone dagger, so a single kill can
+  // yield zero, one, or two items. Each item's skill reward/chance comes
+  // from items/item-definitions.ts — the same lookup GameGateway.handleDrop
+  // uses, so an item's properties don't depend on which of those two
+  // paths put it on the ground.
   getDeathDrops(kind: MonsterKind): DeathDrop[] {
-    if (kind !== 'skeleton') return [];
+    if (kind !== 'wild skeleton') return [];
 
     const drops: DeathDrop[] = [];
     const partName = SKELETON_BODY_PARTS[Math.floor(Math.random() * SKELETON_BODY_PARTS.length)];

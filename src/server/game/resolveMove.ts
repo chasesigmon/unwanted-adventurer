@@ -10,6 +10,13 @@ import type { MapName } from '../../shared/constants.js';
 // worker_thread — the only difference between the two is *where* this
 // function is called and which in-memory location record it's called
 // against, not the game logic.
+// An exit only actually crosses into the connected map when the player
+// steps in its exact designated direction from its exact tile — landing
+// on that tile from any other direction (or just standing on it) is an
+// ordinary walkable room, not an automatic transition. Concretely: the
+// exit tile sits on a map edge in its own direction, so stepping that way
+// from it goes out of bounds — that's the only place a transition can
+// happen, checked below only once we already know the plain move failed.
 export function resolveMove(location: Location, direction: Direction): MoveResult {
   const map = getMap(location.mapName);
   const delta = DIRECTION_DELTAS[direction];
@@ -17,19 +24,18 @@ export function resolveMove(location: Location, direction: Direction): MoveResul
   const nextCol = location.col + delta.dc;
 
   if (!map.isInBounds(nextRow, nextCol)) {
+    const exit = map.getExitAt(location.row, location.col, direction);
+    if (exit) {
+      return {
+        ok: true,
+        transitioned: true,
+        fromMap: location.mapName,
+        mapName: exit.toMap,
+        row: exit.toRow,
+        col: exit.toCol,
+      };
+    }
     return { ok: false, transitioned: false, mapName: location.mapName, row: location.row, col: location.col };
-  }
-
-  const exit = map.getExitAt(nextRow, nextCol);
-  if (exit) {
-    return {
-      ok: true,
-      transitioned: true,
-      fromMap: location.mapName,
-      mapName: exit.toMap,
-      row: exit.toRow,
-      col: exit.toCol,
-    };
   }
 
   return { ok: true, transitioned: false, mapName: location.mapName, row: nextRow, col: nextCol };

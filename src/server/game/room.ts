@@ -44,10 +44,14 @@ export function getRoomName(mapName: MapName, row: number, col: number): string 
   return `${side} ${mapName}`;
 }
 
-// Placeholder content — the map name and position is all we have "for
-// now". This is the seam where real authored per-room descriptions would
-// replace the formula without changing RoomInfo's shape.
+// An exit tile gets its own authored description (e.g. "Exit to Great
+// Plains", "Entrance to Labyrinth" — see Exit.description in maps.ts);
+// everywhere else falls back to the generic map-name-and-position formula,
+// which is still the seam where more authored per-room content would
+// replace it without changing RoomInfo's shape.
 export function getRoomDescription(mapName: MapName, row: number, col: number): string {
+  const exit = getMap(mapName).getExitAt(row, col);
+  if (exit) return exit.description;
   return `${mapName} (${row}, ${col})`;
 }
 

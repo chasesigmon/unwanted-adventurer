@@ -68,11 +68,20 @@ import type { GameServer, GameSocket, CommandAck } from './types.js';
 //    "evenly matched" / "slightly stronger" / "significantly stronger" /
 //    "could destroy you" — at gaps of roughly 2 and 5 levels either way.
 const PLAYER_ATTACK_DAMAGE = 6;
-const SKELETON_ATTACK_DAMAGE = 2;
+// Flat counter-attack damage for any monster kind (not species-specific).
+const MONSTER_ATTACK_DAMAGE = 2;
 const ATTACK_INTERVAL_MS = 4000;
 const ALL_DIRECTIONS: Direction[] = ['north', 'south', 'east', 'west'];
 // hp/mana/movement all cap at this same value.
 const MAX_STAT = 100;
+
+// Per-step movement-point cost, based on the *departure* room's
+// GameMap.setting — "inside" (Labyrinth, stone) is cheaper to move
+// through than "outside" (Great Plains, grass). Applies to any move that
+// actually changes position (ordinary steps and fleeing alike); clamped
+// at 0, never blocks the move itself even at 0 movement.
+const INSIDE_MOVEMENT_COST = 2;
+const OUTSIDE_MOVEMENT_COST = 3;
 
 // "attack"/"kill" can both be partially typed ("att", "ki", ...). A
 // minimum length keeps a bare single letter from being swallowed here
@@ -566,7 +575,7 @@ export class GameGateway
       messages.push(`The ${kind} has ${this.hpPercent(target)}% HP remaining.`);
 
       const reduction = target.undead ? undeadDamageReduction(client.data.skills) : 0;
-      const damage = Math.max(0, SKELETON_ATTACK_DAMAGE - reduction);
+      const damage = Math.max(0, MONSTER_ATTACK_DAMAGE - reduction);
       client.data.hp = Math.max(0, client.data.hp - damage);
       messages.push(`The ${kind} hits you for ${damage} damage.`);
     }
@@ -628,6 +637,14 @@ export class GameGateway
     if (died) {
       this.clearCombat(client.id);
     }
+  }
+
+  // Called for every move that actually changes position (ordinary steps
+  // in resolveCommandAck, and fleeing) — never for a blocked/failed move.
+  // Cost is based on the room being left, not the destination.
+  private deductMovementCost(client: GameSocket, departureMapName: MapName): void {
+    const cost = getMap(departureMapName).setting === 'inside' ? INSIDE_MOVEMENT_COST : OUTSIDE_MOVEMENT_COST;
+    client.data.movement = Math.max(0, client.data.movement - cost);
   }
 
   // Awaited on disconnect (nothing else to do but wait); fire-and-forget
@@ -909,7 +926,8 @@ export class GameGateway
       };
     }
 
-    const fromMap = this.worldManager.getLocation(username)?.mapName ?? 'the world';
+    const fromLoc = this.worldManager.getLocation(username);
+    const fromMap = fromLoc?.mapName ?? 'the world';
     const result = await this.worldManager.processCommand(username, direction);
 
     if (!result) {
@@ -931,11 +949,30 @@ export class GameGateway
     }
 
     if (result.ok) {
+      if (fromLoc) {
+        this.deductMovementCost(client, fromLoc.mapName);
+      }
       // Not awaited — a background save shouldn't add latency to the
       // command ack. Also saved on disconnect (persistPosition above), so
       // this is about surviving a hard crash between moves, not the
       // primary persistence path.
       void this.persistPosition(username, loc);
+      void this.persistStats(username, {
+        hp: client.data.hp,
+        mana: client.data.mana,
+        movement: client.data.movement,
+        strength: client.data.strength,
+        intelligence: client.data.intelligence,
+        wisdom: client.data.wisdom,
+        dexterity: client.data.dexterity,
+        constitution: client.data.constitution,
+        exp: client.data.exp,
+        level: client.data.level,
+        skills: client.data.skills,
+        inventory: client.data.inventory,
+        consumeExp: client.data.consumeExp,
+        equipment: client.data.equipment,
+      });
     }
 
     return {
@@ -1077,7 +1114,24 @@ export class GameGateway
     // so result.ok should always be true here — this guard is just
     // defense in depth in case position state changed underneath us.
     if (result.ok) {
+      this.deductMovementCost(client, loc.mapName);
       void this.persistPosition(username, newLoc);
+      void this.persistStats(username, {
+        hp: client.data.hp,
+        mana: client.data.mana,
+        movement: client.data.movement,
+        strength: client.data.strength,
+        intelligence: client.data.intelligence,
+        wisdom: client.data.wisdom,
+        dexterity: client.data.dexterity,
+        constitution: client.data.constitution,
+        exp: client.data.exp,
+        level: client.data.level,
+        skills: client.data.skills,
+        inventory: client.data.inventory,
+        consumeExp: client.data.consumeExp,
+        equipment: client.data.equipment,
+      });
     }
 
     const message = !result.ok
