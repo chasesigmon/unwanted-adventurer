@@ -28,8 +28,9 @@ export class Player {
   @Prop({ required: true })
   col!: number;
 
-  // Starting stats for newly created characters — plain numbers for now,
-  // nothing yet consumes/regenerates them.
+  // Starting stats for newly created characters. hp/mana/movement all cap
+  // at 100 and regenerate passively on GameGateway's per-connection stat
+  // tick (faster while resting, faster still while sleeping).
   @Prop({ default: 100 })
   hp!: number;
 

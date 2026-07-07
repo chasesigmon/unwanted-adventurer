@@ -61,9 +61,9 @@ export interface CombatUpdatePayload {
 // Pushed outside of any command ack, for events the server originates on
 // its own timers rather than in response to something the client sent —
 // a monster wandering into/out of the player's room (see
-// MonsterManagerService's 'moved' event) or a sleep-tick heal (see
-// GameGateway.sleepTick). `player` is only present when stats actually
-// changed (the heal tick); `monsterMessage` is only present for a
+// MonsterManagerService's 'moved' event) or a passive stat-regen tick (see
+// GameGateway.statTick). `player` is only present when stats actually
+// changed (the regen tick); `monsterMessage` is only present for a
 // monster-movement notice, and is the authoritative post-move value (so
 // the client's own dedup state — see useGameConnection's withSightings —
 // stays in sync for next time).
@@ -106,11 +106,13 @@ export interface SocketData {
   skills: string[];
   inventory: string[];
   consumeExp: number;
-  // Toggled by "sleep" — never persisted (always false on a fresh
-  // connection). While true, monsterMessageFor/itemMessageFor report
-  // nothing at all, and a per-connection tick heals a random 5-10% of hp
-  // every 20-30s. See GameGateway.handleSleep/sleepTick.
-  sleeping: boolean;
+  // Toggled by "sleep"/"rest"/"sit"/"wake"/"stand" — never persisted
+  // (always 'awake' on a fresh connection). A per-connection tick always
+  // runs (see GameGateway.statTick) regenerating a random percentage of
+  // hp/mana/movement every 20-30s regardless of state, but the percentage
+  // range — and whether monsterMessageFor/itemMessageFor report anything
+  // at all — depends on which of these three states the player is in.
+  restState: 'awake' | 'resting' | 'sleeping';
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

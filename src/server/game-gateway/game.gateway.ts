@@ -9,6 +9,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { ConfigService } from '@nestjs/config';
+import type { OnModuleDestroy } from '@nestjs/common';
 
 import { PlayersService } from '../players/players.service.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
@@ -41,7 +42,8 @@ const PLAYER_ATTACK_DAMAGE = 6;
 const SKELETON_ATTACK_DAMAGE = 2;
 const ATTACK_INTERVAL_MS = 4000;
 const ALL_DIRECTIONS: Direction[] = ['north', 'south', 'east', 'west'];
-const MAX_HP = 100;
+// hp/mana/movement all cap at this same value.
+const MAX_STAT = 100;
 
 // "attack"/"kill" can both be partially typed ("att", "ki", ...). A
 // minimum length keeps a bare single letter from being swallowed here
@@ -76,13 +78,26 @@ const WHERE_MIN_LENGTH = 3;
 // example floor from the request, not a disambiguation requirement.
 const SLEEP_MIN_LENGTH = 3;
 
-// The sleep tick's interval is itself randomized (not a fixed
+// "re"/"res"/"rest" — nothing else starts with "re", so 2 is just the
+// example floor from the request, not a disambiguation requirement. "sit"
+// has no partial-match variants requested, so it's checked as a literal
+// alias alongside "rest" rather than through matchesPartial.
+const REST_MIN_LENGTH = 2;
+
+// The stat tick's interval is itself randomized (not a fixed
 // setInterval) — each firing schedules the next one at a fresh random
-// delay in this range. Heal amount is a random percentage of MAX_HP.
-const SLEEP_TICK_MIN_MS = 20_000;
-const SLEEP_TICK_MAX_MS = 30_000;
-const SLEEP_HEAL_MIN_PERCENT = 5;
-const SLEEP_HEAL_MAX_PERCENT = 10;
+// delay in this range. It always runs for every connection, regardless of
+// restState; only the heal percentage range (below) depends on state.
+const STAT_TICK_MIN_MS = 20_000;
+const STAT_TICK_MAX_MS = 30_000;
+
+// Heal percentage range per restState, applied identically to
+// hp/mana/movement each tick (one random roll shared across all three).
+const HEAL_PERCENT_RANGE: Record<GameSocket['data']['restState'], [number, number]> = {
+  awake: [2, 5],
+  resting: [4, 7],
+  sleeping: [5, 10],
+};
 
 function matchesPartial(text: string, word: string, minLength: number): boolean {
   return text.length >= minLength && word.startsWith(text);
@@ -113,14 +128,19 @@ function isAttackVerb(word: string): boolean {
 // cors/heartbeat are configured centrally in ws-adapter.ts, not here — this
 // stays a bare gateway so there's exactly one place that owns those options.
 @WebSocketGateway()
-export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnection<GameSocket>, OnGatewayDisconnect<GameSocket> {
+export class GameGateway
+  implements OnGatewayInit<GameServer>, OnGatewayConnection<GameSocket>, OnGatewayDisconnect<GameSocket>, OnModuleDestroy
+{
   @WebSocketServer()
   private server!: GameServer;
 
   private readonly commandLimiters = new Map<string, CommandRateLimiter>();
   private readonly commandLimiterOptions: CommandRateLimiterOptions;
   private readonly activeCombats = new Map<string, ActiveCombat>();
-  private readonly sleepTimers = new Map<string, NodeJS.Timeout>();
+  // One shared timer for every connection, not one per socket — see
+  // scheduleGlobalStatTick — so every player is on the same tick, rather
+  // than each running their own independent randomized cycle.
+  private globalStatTickTimer?: NodeJS.Timeout;
 
   constructor(
     private readonly playersService: PlayersService,
@@ -146,6 +166,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // independent of any command — this is the only way a connected player
     // finds out one just left or arrived in their room between commands.
     this.monsterManager.on('moved', (event: MonsterMoveEvent) => this.handleMonsterMoved(event));
+
+    // One global tick for every connected player — see scheduleGlobalStatTick.
+    this.scheduleGlobalStatTick();
 
     // Runs on every handshake, before 'connection' fires: connection-rate
     // limiting, then JWT + Redis session validation. A stale token
@@ -183,6 +206,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     });
   }
 
+  onModuleDestroy(): void {
+    if (this.globalStatTickTimer) clearTimeout(this.globalStatTickTimer);
+  }
+
   async handleConnection(client: GameSocket): Promise<void> {
     const { username } = client.data;
     this.commandLimiters.set(client.id, new CommandRateLimiter(this.commandLimiterOptions));
@@ -211,7 +238,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.inventory = doc?.inventory ?? [];
     client.data.consumeExp = doc?.consumeExp ?? 0;
     // Never persisted — a fresh connection always starts awake.
-    client.data.sleeping = false;
+    client.data.restState = 'awake';
 
     await this.worldManager.addPlayer(username, mapName, row, col);
 
@@ -246,15 +273,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // Sleeping players "don't see anything in the room" — both helpers below
   // report nothing at all while asleep, regardless of what's actually
   // there. This covers every ack (sync, moves, look, etc.) in one place
-  // rather than special-casing each handler.
+  // rather than special-casing each handler. Resting doesn't affect
+  // vision — only sleeping does.
   private monsterMessageFor(client: GameSocket, loc: Location): string | undefined {
-    if (client.data.sleeping) return undefined;
+    if (client.data.restState === 'sleeping') return undefined;
     const monster = this.monsterManager.getMonsterAt(loc.mapName, loc.row, loc.col);
     return monster ? `A ${monster.kind} is here!` : undefined;
   }
 
   private itemMessageFor(client: GameSocket, loc: Location): string | undefined {
-    if (client.data.sleeping) return undefined;
+    if (client.data.restState === 'sleeping') return undefined;
     const item = this.itemManager.getItemAt(loc.mapName, loc.row, loc.col);
     return item ? `${articleFor(item.name, true)} ${item.name} lies here.` : undefined;
   }
@@ -268,7 +296,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const { monster, mapName, fromRow, fromCol, toRow, toCol } = event;
 
     for (const client of this.server.sockets.sockets.values()) {
-      if (client.data.sleeping) continue;
+      if (client.data.restState === 'sleeping') continue;
 
       const loc = this.worldManager.getLocation(client.data.username);
       if (!loc || loc.mapName !== mapName) continue;
@@ -393,6 +421,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const { messages, died } = this.resolveAttackExchange(client, target);
     void this.persistStats(username, {
       hp: client.data.hp,
+      mana: client.data.mana,
+      movement: client.data.movement,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
@@ -427,11 +457,21 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   }
 
   // Same awaited-on-disconnect / fire-and-forget-after-action split as
-  // persistPosition, for the same reason — combat, consuming, and grabbing
-  // now mutate hp/exp/level/skills/inventory mid-session.
+  // persistPosition, for the same reason — combat, consuming, grabbing,
+  // and the passive stat tick all mutate hp/mana/movement/exp/level/
+  // skills/inventory mid-session.
   private async persistStats(
     username: string,
-    stats: { hp: number; exp: number; level: number; skills: string[]; inventory: string[]; consumeExp: number }
+    stats: {
+      hp: number;
+      mana: number;
+      movement: number;
+      exp: number;
+      level: number;
+      skills: string[];
+      inventory: string[];
+      consumeExp: number;
+    }
   ): Promise<void> {
     try {
       await this.playersService.updateStats(username, stats);
@@ -445,7 +485,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const { username } = client.data;
     this.commandLimiters.delete(client.id);
     this.clearCombat(client.id);
-    this.clearSleepTimer(client.id);
     this.activeConnections.clearActiveSocketIfCurrent(username, client.id);
 
     const loc = this.worldManager.getLocation(username);
@@ -455,6 +494,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     await this.persistStats(username, {
       hp: client.data.hp,
+      mana: client.data.mana,
+      movement: client.data.movement,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
@@ -563,6 +604,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     if (matchesPartial(text, 'sleep', SLEEP_MIN_LENGTH)) {
       return this.handleSleep(client);
+    }
+
+    // "rest"/"res"/"re" and "sit" are two spellings of the same toggle —
+    // no partial matching requested for "sit", so it's a literal alias.
+    if (matchesPartial(text, 'rest', REST_MIN_LENGTH) || text === 'sit') {
+      return this.handleRest(client);
+    }
+
+    // "wake"/"stand" — no partials requested for either, both literal.
+    if (text === 'wake' || text === 'stand') {
+      return this.handleWake(client);
     }
 
     if (text === 'commands') {
@@ -696,6 +748,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const { messages, died } = this.resolveAttackExchange(client, target);
     void this.persistStats(username, {
       hp: client.data.hp,
+      mana: client.data.mana,
+      movement: client.data.movement,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
@@ -843,6 +897,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!skill) {
       void this.persistStats(username, {
         hp: client.data.hp,
+        mana: client.data.mana,
+        movement: client.data.movement,
         exp: client.data.exp,
         level: client.data.level,
         skills: client.data.skills,
@@ -869,6 +925,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     void this.persistStats(username, {
       hp: client.data.hp,
+      mana: client.data.mana,
+      movement: client.data.movement,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
@@ -911,6 +969,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.inventory = [...client.data.inventory, item.name];
     void this.persistStats(username, {
       hp: client.data.hp,
+      mana: client.data.mana,
+      movement: client.data.movement,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
@@ -960,6 +1020,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     void this.persistStats(username, {
       hp: client.data.hp,
+      mana: client.data.mana,
+      movement: client.data.movement,
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
@@ -1193,13 +1255,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return buildAck(['That monster was not found.'], false);
   }
 
-  // "sleep"/"slee"/"sle" — a toggle: awake -> asleep on the first call,
-  // asleep -> awake on the next. While asleep, monsterMessageFor/
-  // itemMessageFor report nothing at all (see those methods) — the
-  // character's eyes are closed to its own room, full stop, for every
-  // command, not just this one. Falling asleep starts a per-connection
-  // heal tick (see scheduleSleepTick) that only actually heals while still
-  // asleep; waking up cancels it.
+  // "sleep"/"slee"/"sle" — a toggle: awake or resting -> asleep on the
+  // first call, asleep -> awake on the next (see handleWake for the
+  // explicit, direction-agnostic version of the "wake up" half). While
+  // asleep, monsterMessageFor/itemMessageFor report nothing at all (see
+  // those methods) — the character's eyes are closed to its own room,
+  // full stop, for every command, not just this one. The regen tick (see
+  // statTick) keeps running the whole time regardless — sleeping just
+  // changes its heal percentage and message, same as resting does.
   private handleSleep(client: GameSocket): CommandAck {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
@@ -1207,9 +1270,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
     }
 
-    if (client.data.sleeping) {
-      client.data.sleeping = false;
-      this.clearSleepTimer(client.id);
+    if (client.data.restState === 'sleeping') {
+      client.data.restState = 'awake';
       return {
         ok: true,
         messages: ['You wake up.'],
@@ -1221,8 +1283,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       };
     }
 
-    client.data.sleeping = true;
-    this.scheduleSleepTick(client);
+    client.data.restState = 'sleeping';
     return {
       ok: true,
       messages: ["You lie down and drift off to sleep. You won't see anything in the room until you wake up."],
@@ -1234,44 +1295,123 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
-  private clearSleepTimer(clientId: string): void {
-    const timer = this.sleepTimers.get(clientId);
-    if (timer) {
-      clearTimeout(timer);
-      this.sleepTimers.delete(clientId);
-    }
-  }
-
-  // Deliberately a setTimeout chain, not setInterval — each firing picks a
-  // fresh random delay in [SLEEP_TICK_MIN_MS, SLEEP_TICK_MAX_MS) for the
-  // next one, so the cadence is irregular rather than a fixed period.
-  private scheduleSleepTick(client: GameSocket): void {
-    const delay = randomBetween(SLEEP_TICK_MIN_MS, SLEEP_TICK_MAX_MS);
-    const timer = setTimeout(() => this.sleepTick(client), delay);
-    timer.unref();
-    this.sleepTimers.set(client.id, timer);
-  }
-
-  private sleepTick(client: GameSocket): void {
-    if (!client.data.sleeping) return;
-
+  // "rest"/"res"/"re", or "sit" — same toggle shape as sleep, but to/from
+  // 'resting' instead of 'sleeping': a smaller heal-percentage boost (see
+  // HEAL_PERCENT_RANGE) and, unlike sleeping, no vision suppression.
+  private handleRest(client: GameSocket): CommandAck {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
     if (!loc) {
-      this.clearSleepTimer(client.id);
-      client.data.sleeping = false;
-      return;
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
     }
 
-    const percent = randomBetween(SLEEP_HEAL_MIN_PERCENT, SLEEP_HEAL_MAX_PERCENT);
-    const healAmount = Math.round((percent / 100) * MAX_HP);
-    const before = client.data.hp;
-    client.data.hp = Math.min(MAX_HP, client.data.hp + healAmount);
-    const actualHeal = client.data.hp - before;
+    if (client.data.restState === 'resting') {
+      client.data.restState = 'awake';
+      return {
+        ok: true,
+        messages: ['You stand up.'],
+        player: this.snapshotFor(client, loc),
+        minimap: this.worldManager.getMinimap(username),
+        room: resolveRoom(loc),
+        monsterMessage: this.monsterMessageFor(client, loc),
+        itemMessage: this.itemMessageFor(client, loc),
+      };
+    }
 
-    if (actualHeal > 0) {
+    client.data.restState = 'resting';
+    return {
+      ok: true,
+      messages: ['You sit down to rest.'],
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
+    };
+  }
+
+  // "wake"/"stand" — the explicit, direction-agnostic counterpart to
+  // sleep/rest's self-toggle: always returns to 'awake' regardless of
+  // which of the two states the player was in, unlike typing "sleep"
+  // while resting (which would instead go directly from sitting to lying
+  // down) or "rest" while sleeping (sitting up from lying down).
+  private handleWake(client: GameSocket): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
+    });
+
+    if (client.data.restState === 'awake') {
+      return buildAck(['You are already up and about.'], false);
+    }
+
+    const message = client.data.restState === 'sleeping' ? 'You wake up.' : 'You stand up.';
+    client.data.restState = 'awake';
+    return buildAck([message], true);
+  }
+
+  // Deliberately a setTimeout chain, not setInterval — each firing picks a
+  // fresh random delay in [STAT_TICK_MIN_MS, STAT_TICK_MAX_MS) for the
+  // next one, so the cadence is irregular rather than a fixed period. One
+  // shared timer for the whole gateway (started once in afterInit, never
+  // per-connection) — every connected player is healed on the exact same
+  // tick, rather than each running their own independently-randomized
+  // cycle. Runs for the process's lifetime regardless of whether anyone's
+  // connected; a firing with no sockets connected is just a no-op loop.
+  private scheduleGlobalStatTick(): void {
+    const delay = randomBetween(STAT_TICK_MIN_MS, STAT_TICK_MAX_MS);
+    this.globalStatTickTimer = setTimeout(() => this.globalStatTick(), delay);
+    this.globalStatTickTimer.unref();
+  }
+
+  private globalStatTick(): void {
+    for (const client of this.server.sockets.sockets.values()) {
+      this.applyStatTick(client);
+    }
+    this.scheduleGlobalStatTick();
+  }
+
+  // The actual per-player heal effect of a single global tick — still
+  // individually rolled per player (a resting player's 4-7% and an awake
+  // player's 2-5% are each their own random roll), only the timing of the
+  // tick itself is shared across everyone.
+  private applyStatTick(client: GameSocket): void {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) return;
+
+    const [min, max] = HEAL_PERCENT_RANGE[client.data.restState];
+    const percent = randomBetween(min, max);
+    const healed = (current: number) => Math.min(MAX_STAT, current + Math.round((percent / 100) * MAX_STAT));
+
+    const beforeHp = client.data.hp;
+    const beforeMana = client.data.mana;
+    const beforeMovement = client.data.movement;
+
+    client.data.hp = healed(client.data.hp);
+    client.data.mana = healed(client.data.mana);
+    client.data.movement = healed(client.data.movement);
+
+    const hpGain = client.data.hp - beforeHp;
+    const manaGain = client.data.mana - beforeMana;
+    const movementGain = client.data.movement - beforeMovement;
+
+    if (hpGain > 0 || manaGain > 0 || movementGain > 0) {
       void this.persistStats(username, {
         hp: client.data.hp,
+        mana: client.data.mana,
+        movement: client.data.movement,
         exp: client.data.exp,
         level: client.data.level,
         skills: client.data.skills,
@@ -1279,13 +1419,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         consumeExp: client.data.consumeExp,
       });
 
+      const lead =
+        client.data.restState === 'sleeping'
+          ? 'You stir in your sleep'
+          : client.data.restState === 'resting'
+            ? 'You rest quietly'
+            : 'You catch your breath';
+
       client.emit('notice', {
-        messages: [`You stir in your sleep, recovering ${actualHeal} HP.`],
+        messages: [`${lead}, recovering ${hpGain} HP, ${manaGain} MP, and ${movementGain} MV.`],
         player: this.snapshotFor(client, loc),
       });
     }
-
-    this.scheduleSleepTick(client);
   }
 
   // "worldmap" — a coarse overview of every area and what it connects to
@@ -1345,7 +1490,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       'map - show this area\'s full layout',
       'scan - check the 4 adjacent rooms for monsters',
       'score - show your character\'s stats',
-      "sleep - close your eyes to rest, slowly recovering hp until you wake up",
+      "sleep - lie down and close your eyes, recovering hp/mana/movement faster until you wake up",
+      'rest/sit - sit down to rest, recovering hp/mana/movement a bit faster than standing around',
+      'wake/stand - get up from sleeping or resting',
       'worldmap - show an overview of the whole world',
       'clear - clear the message log',
       'logout/quit - log out',

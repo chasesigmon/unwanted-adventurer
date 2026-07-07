@@ -21,6 +21,8 @@ export interface PlayerPosition {
 
 export interface PlayerStats {
   hp: number;
+  mana: number;
+  movement: number;
   exp: number;
   level: number;
   skills: string[];
