@@ -8,6 +8,14 @@ export interface PlayerSnapshot {
   map: MapName;
   row: number;
   col: number;
+  // Base attributes — fixed at 1 for every character right now (no
+  // leveling/allocation mechanic yet), but part of the snapshot from the
+  // start so the score box/command have somewhere to read them from.
+  strength: number;
+  intelligence: number;
+  wisdom: number;
+  dexterity: number;
+  constitution: number;
   hp: number;
   mana: number;
   movement: number;

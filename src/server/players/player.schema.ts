@@ -28,6 +28,23 @@ export class Player {
   @Prop({ required: true })
   col!: number;
 
+  // Base attributes — everyone starts at 1, no allocation/leveling
+  // mechanic yet to change them.
+  @Prop({ default: 1 })
+  strength!: number;
+
+  @Prop({ default: 1 })
+  intelligence!: number;
+
+  @Prop({ default: 1 })
+  wisdom!: number;
+
+  @Prop({ default: 1 })
+  dexterity!: number;
+
+  @Prop({ default: 1 })
+  constitution!: number;
+
   // Starting stats for newly created characters. hp/mana/movement all cap
   // at 100 and regenerate passively on GameGateway's per-connection stat
   // tick (faster while resting, faster still while sleeping).

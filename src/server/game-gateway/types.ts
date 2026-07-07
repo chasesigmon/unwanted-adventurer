@@ -95,6 +95,12 @@ export interface SocketData {
   // Set once at connection time and never changed thereafter (race isn't
   // something a player can alter after registration).
   race: Race;
+  // Base attributes — fixed at 1, no allocation/leveling mechanic yet.
+  strength: number;
+  intelligence: number;
+  wisdom: number;
+  dexterity: number;
+  constitution: number;
   // Cached from Mongo at connection time. Nothing changes these mid-session
   // yet, so re-reading from the DB on every command would be wasted work —
   // this is the seam where per-session stat mutation would plug in later.

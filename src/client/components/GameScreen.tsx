@@ -131,6 +131,21 @@ export function GameScreen({
                   <span className="stat-label">LVL</span> {player.level}
                 </span>
                 <span>
+                  <span className="stat-label">STR</span> {player.strength}
+                </span>
+                <span>
+                  <span className="stat-label">INT</span> {player.intelligence}
+                </span>
+                <span>
+                  <span className="stat-label">WIS</span> {player.wisdom}
+                </span>
+                <span>
+                  <span className="stat-label">DEX</span> {player.dexterity}
+                </span>
+                <span>
+                  <span className="stat-label">CON</span> {player.constitution}
+                </span>
+                <span>
                   <span className="stat-label">HP</span> {player.hp}
                 </span>
                 <span>

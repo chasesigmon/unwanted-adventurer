@@ -34,6 +34,7 @@ import { resolveRoom, getRoomName } from '../game/room.js';
 import { resolveMove, resolveFullMapGrid } from '../game/resolveMove.js';
 import { applyExpGain, maxTnlForLevel } from '../players/leveling.js';
 import { undeadDamageReduction } from '../players/skills.js';
+import { findHelpTopic } from '../help/help-topics.js';
 import { STARTING_MAP } from '../../shared/constants.js';
 import type { MapName } from '../../shared/constants.js';
 import { DIRECTION_ALIASES, DIRECTION_DELTAS } from '../../shared/directions.js';
@@ -169,6 +170,35 @@ function describeItemsOnGround(items: DroppedItem[]): string | undefined {
   return `${joined} ${items.length === 1 ? 'lies' : 'lie'} here.`;
 }
 
+// Pluralizes just the last word of a (possibly multi-word) item name —
+// "bone dagger" -> "bone daggers", "leg" -> "legs" — since every current
+// item name is regular, a plain suffix rule covers them all.
+function pluralize(word: string): string {
+  if (/[sxz]$/i.test(word) || /(ch|sh)$/i.test(word)) return `${word}es`;
+  if (/[^aeiou]y$/i.test(word)) return `${word.slice(0, -1)}ies`;
+  return `${word}s`;
+}
+
+function pluralizeItemName(name: string): string {
+  const lastSpace = name.lastIndexOf(' ');
+  if (lastSpace === -1) return pluralize(name);
+  return `${name.slice(0, lastSpace)} ${pluralize(name.slice(lastSpace + 1))}`;
+}
+
+// "look" — unlike describeItemsOnGround (one combined sentence, used for
+// the itemMessage sighting field), this puts each *unique* item name on
+// its own line, collapsing duplicates into a count ("There are 4 bone
+// daggers here.") instead of listing each one individually.
+function groupedItemLines(items: DroppedItem[]): string[] {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    counts.set(item.name, (counts.get(item.name) ?? 0) + 1);
+  }
+  return Array.from(counts.entries()).map(([name, count]) =>
+    count === 1 ? `${articleFor(name, true)} ${name} lies here.` : `There are ${count} ${pluralizeItemName(name)} here.`
+  );
+}
+
 function isAttackVerb(word: string): boolean {
   if (word === KILL_SHORTHAND) return true;
   return word.length >= ATTACK_VERB_MIN_LENGTH && ATTACK_VERBS.some((verb) => verb.startsWith(word));
@@ -282,6 +312,11 @@ export class GameGateway
     const col = doc?.col ?? Math.floor(startingMap.cols / 2);
     // Cached on the socket for the rest of the session — see SocketData.
     client.data.race = doc?.race ?? 'goblin';
+    client.data.strength = doc?.strength ?? 1;
+    client.data.intelligence = doc?.intelligence ?? 1;
+    client.data.wisdom = doc?.wisdom ?? 1;
+    client.data.dexterity = doc?.dexterity ?? 1;
+    client.data.constitution = doc?.constitution ?? 1;
     client.data.hp = doc?.hp ?? 100;
     client.data.mana = doc?.mana ?? 100;
     client.data.movement = doc?.movement ?? 100;
@@ -312,6 +347,11 @@ export class GameGateway
       map: loc.mapName,
       row: loc.row,
       col: loc.col,
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
       hp: client.data.hp,
       mana: client.data.mana,
       movement: client.data.movement,
@@ -579,12 +619,24 @@ export class GameGateway
 
   // Returning a value here becomes the ack the client's emit() callback
   // receives (Nest's built-in behavior for WS handlers with a client-side
-  // acknowledgement) — no need to accept/call the raw ack function.
+  // acknowledgement) — no need to accept/call the raw ack function. A thin
+  // wrapper around resolveCommandAck so every typed command's ack — success
+  // or failure alike — gets the trailing hp/mana/movement status prompt
+  // appended in exactly one place, rather than every individual handler
+  // needing to remember to add it.
   @SubscribeMessage('command')
   async handleCommand(
     @ConnectedSocket() client: GameSocket,
     @MessageBody() rawText: string
   ): Promise<CommandAck> {
+    const ack = await this.resolveCommandAck(client, rawText);
+    return {
+      ...ack,
+      messages: [...ack.messages, `<${client.data.hp}hp ${client.data.mana}m ${client.data.movement}mv>`],
+    };
+  }
+
+  private async resolveCommandAck(client: GameSocket, rawText: string): Promise<CommandAck> {
     const { username } = client.data;
     const limiter = this.commandLimiters.get(client.id);
 
@@ -700,6 +752,17 @@ export class GameGateway
     // "wake"/"stand" — no partials requested for either, both literal.
     if (text === 'wake' || text === 'stand') {
       return this.handleWake(client);
+    }
+
+    // "who" — no partials requested, literal only.
+    if (text === 'who') {
+      return this.handleWho(client);
+    }
+
+    // "help <argument>" — the verb itself is exact-match only; the
+    // argument is what partially matches (see findHelpTopic).
+    if (verb === 'help') {
+      return this.handleHelp(client, rest);
     }
 
     if (text === 'commands') {
@@ -1338,10 +1401,19 @@ export class GameGateway
     }
 
     const monsterMessage = this.monsterMessageFor(client, loc);
+    // itemMessage (below, for the ack's sighting-dedup field) stays one
+    // combined sentence — but the log lines "look" actually prints break
+    // out each unique item onto its own line (see groupedItemLines), which
+    // is also what makes a second item dropped in the same kill (e.g. a
+    // bone dagger alongside a body part) visible rather than only ever
+    // showing whichever item happened to be first.
     const itemMessage = this.itemMessageFor(client, loc);
-    const messages = [monsterMessage, itemMessage].filter((m): m is string => !!m);
+    const messages: string[] = [];
+    if (monsterMessage) messages.push(monsterMessage);
 
     if (client.data.restState !== 'sleeping') {
+      messages.push(...groupedItemLines(this.itemManager.getItemsAt(loc.mapName, loc.row, loc.col)));
+
       const others = this.otherPlayersAt(client, loc.worldId, loc.mapName, loc.row, loc.col);
       if (others.length === 1) {
         messages.push(`${others[0]} is here!`);
@@ -1419,8 +1491,8 @@ export class GameGateway
 
   // "score"/"sc"/"sco"/"scor" — a text rendering of exactly what the Score
   // box on screen already shows: username, then one line per stat (race,
-  // level, hp, mana, movement, exp, consumeExp), same labels as the box.
-  // Purely informational, same as skills/inventory/map.
+  // level, attributes, hp, mana, movement, exp, consumeExp), same labels
+  // and order as the box. Purely informational, same as skills/inventory/map.
   private handleScore(client: GameSocket): CommandAck {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
@@ -1429,6 +1501,11 @@ export class GameGateway
       username,
       `RACE: ${client.data.race}`,
       `LVL: ${client.data.level}`,
+      `STR: ${client.data.strength}`,
+      `INT: ${client.data.intelligence}`,
+      `WIS: ${client.data.wisdom}`,
+      `DEX: ${client.data.dexterity}`,
+      `CON: ${client.data.constitution}`,
       `HP: ${client.data.hp}`,
       `MP: ${client.data.mana}`,
       `MV: ${client.data.movement}`,
@@ -1528,6 +1605,56 @@ export class GameGateway
     }
 
     return buildAck(['That monster was not found.'], false);
+  }
+
+  // "who" — every connected player server-wide (not scoped to the same
+  // map/World instance like "where"'s bare form), self included, since
+  // "who's online" naturally covers you too.
+  private handleWho(client: GameSocket): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+
+    const usernames = Array.from(this.server.sockets.sockets.values()).map((s) => s.data.username);
+    const messages = ['Players online:', ...usernames];
+
+    return {
+      ok: true,
+      messages,
+      player: loc ? this.snapshotFor(client, loc) : undefined,
+      minimap: this.worldManager.getMinimap(username),
+      room: loc ? resolveRoom(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
+    };
+  }
+
+  // "help <argument>" — partial, case-insensitive match against known
+  // help topics (see help/help-topics.ts). The verb itself must be typed
+  // in full; only the argument partially matches.
+  private handleHelp(client: GameSocket, query: string): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: loc ? this.snapshotFor(client, loc) : undefined,
+      minimap: this.worldManager.getMinimap(username),
+      room: loc ? resolveRoom(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
+    });
+
+    if (!query) {
+      return buildAck(['Help with what? Try "help <topic>".'], false);
+    }
+
+    const found = findHelpTopic(query);
+    if (!found) {
+      return buildAck([`No help found for "${query}".`], false);
+    }
+
+    return buildAck([`${found.topic}: ${found.description}`], true);
   }
 
   // "sleep"/"slee"/"sle" — a toggle: awake or resting -> asleep on the
@@ -1763,6 +1890,8 @@ export class GameGateway
       'equip/equipment (no item) - show your equipment slots, head to toe',
       'unequip <item> - unequip an item, returning it to your inventory',
       'where [mob or player] - list nearby players, or locate a monster/player by name',
+      'who - list every player currently online',
+      'help <topic> - look up a description of a skill or other topic',
       'inventory - show what you are carrying',
       'skills - show your learned skills',
       'look/l - look around the room again',
