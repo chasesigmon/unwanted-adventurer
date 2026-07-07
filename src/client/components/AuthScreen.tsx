@@ -45,7 +45,10 @@ export function AuthScreen({ errorMessage, onLogin, onRegister }: AuthScreenProp
             Register
           </button>
         </div>
-        <p>Type a command and press Enter: w/up, a, s/down, d. Type &quot;logout&quot; to end your session.</p>
+        <p>
+          Type a command and press Enter: n, s, e, w to move. Type &quot;commands&quot; to see everything, or
+          &quot;logout&quot;/&quot;quit&quot; to end your session.
+        </p>
         <input
           id="username-input"
           type="text"

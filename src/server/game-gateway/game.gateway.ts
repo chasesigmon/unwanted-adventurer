@@ -25,7 +25,7 @@ import { resolveMove, resolveFullMapGrid } from '../game/resolveMove.js';
 import { applyExpGain, maxTnlForLevel } from '../players/leveling.js';
 import { undeadDamageReduction } from '../players/skills.js';
 import { STARTING_MAP } from '../../shared/constants.js';
-import { DIRECTION_ALIASES } from '../../shared/directions.js';
+import { DIRECTION_ALIASES, DIRECTION_DELTAS } from '../../shared/directions.js';
 import { commandSchema } from './command.schema.js';
 import type { AppConfig } from '../config/configuration.js';
 import type { Location } from '../game/types.js';
@@ -37,7 +37,6 @@ import type { GameServer, GameSocket, CommandAck } from './types.js';
 const PLAYER_ATTACK_DAMAGE = 6;
 const SKELETON_ATTACK_DAMAGE = 2;
 const ATTACK_INTERVAL_MS = 4000;
-const SKILL_GAIN_CHANCE = 0.2;
 const ALL_DIRECTIONS: Direction[] = ['north', 'south', 'east', 'west'];
 
 // "attack"/"kill" can both be partially typed ("att", "ki", ...). A
@@ -250,11 +249,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       client.data.level = level;
       client.data.exp = exp;
       if (level > before) {
-        messages.push(`You leveled up! You are now level ${level}!`);
+        // A level-up fully restores hp/mana/movement, same as a fresh
+        // character — there's no separate "max stat" concept to scale yet,
+        // so this is just the same 100/100/100 every character starts at.
+        client.data.hp = 100;
+        client.data.mana = 100;
+        client.data.movement = 100;
+        messages.push(
+          `You leveled up! You are now level ${level}! Your health, mana, and movement have been fully restored.`
+        );
       }
 
       this.monsterManager.getDeathDrops(target.kind).forEach((drop, i) => {
-        this.itemManager.dropItem(drop.name, target.mapName, target.row, target.col, drop.skillReward);
+        this.itemManager.dropItem(drop.name, target.mapName, target.row, target.col, drop.skill);
         messages.push(
           i === 0
             ? `The ${kind} crumbles, leaving behind ${articleFor(drop.name)} ${drop.name}.`
@@ -439,6 +446,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     if (text === 'map') {
       return this.handleMap(client);
+    }
+
+    if (text === 'scan') {
+      return this.handleScan(client);
     }
 
     if (text === 'commands') {
@@ -666,7 +677,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // "consume <item>" — partial, case-insensitive match against a dropped
   // item's name in the player's current room. Always removes the item once
   // found, regardless of outcome. If the item teaches a skill the player
-  // doesn't already have, there's a SKILL_GAIN_CHANCE chance of learning it.
+  // doesn't already have, there's a per-item chance of learning it (e.g.
+  // 20% for a body part's "lesser undead resistance", 5% for a bone
+  // dagger's "bone finger dagger strike" — see DroppedItem.skill).
   private async handleConsume(client: GameSocket, itemQuery: string): Promise<CommandAck> {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
@@ -695,7 +708,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     this.itemManager.removeItem(item.id);
 
-    if (!item.skillReward) {
+    if (!item.skill) {
       return buildAck([`You consume the ${item.name}.`], true);
     }
 
@@ -703,14 +716,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // whether the skill roll below actually succeeds.
     client.data.consumeExp += 1;
 
+    const { reward, chance } = item.skill;
     let messages: string[];
-    if (client.data.skills.includes(item.skillReward)) {
+    if (client.data.skills.includes(reward)) {
       messages = [`You consume the ${item.name}, but you already know this secret.`];
-    } else if (Math.random() >= SKILL_GAIN_CHANCE) {
+    } else if (Math.random() >= chance) {
       messages = [`You consume the ${item.name}, but feel nothing happen.`];
     } else {
-      client.data.skills = [...client.data.skills, item.skillReward];
-      messages = [`You consume the ${item.name}.`, `You have gained ${item.skillReward}!`];
+      client.data.skills = [...client.data.skills, reward];
+      messages = [`You consume the ${item.name}.`, `You have gained ${reward}!`];
     }
 
     void this.persistStats(username, {
@@ -825,6 +839,43 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
+  // "scan" — checks the 4 adjacent cells (1 step north/south/east/west,
+  // never leaving the current map) and reports which ones have a monster
+  // in them, same "A skeleton is here!" phrasing as monsterMessage. A
+  // direction that would fall off the map's edge is skipped entirely
+  // rather than reported on — there's no room there to scan.
+  private handleScan(client: GameSocket): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const map = getMap(loc.mapName);
+    const messages = ['You scan the surrounding rooms:'];
+
+    for (const direction of ALL_DIRECTIONS) {
+      const delta = DIRECTION_DELTAS[direction];
+      const row = loc.row + delta.dr;
+      const col = loc.col + delta.dc;
+      if (!map.isInBounds(row, col)) continue;
+
+      const label = direction.charAt(0).toUpperCase() + direction.slice(1);
+      const monster = this.monsterManager.getMonsterAt(loc.mapName, row, col);
+      messages.push(monster ? `${label}: A ${monster.kind} is here!` : `${label}: Nothing of note.`);
+    }
+
+    return {
+      ok: true,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(loc),
+      itemMessage: this.itemMessageFor(loc),
+    };
+  }
+
   // "worldmap" — a coarse overview of every area and what it connects to
   // (no per-room detail). The client opens a modal for this rather than
   // logging it as a message line — see CommandAck.worldMap.
@@ -877,6 +928,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       'inventory - show what you are carrying',
       'skills - show your learned skills',
       'map - show this area\'s full layout',
+      'scan - check the 4 adjacent rooms for monsters',
       'worldmap - show an overview of the whole world',
       'clear - clear the message log',
       'logout/quit - log out',

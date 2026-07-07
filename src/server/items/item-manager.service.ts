@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { MapName } from '../../shared/constants.js';
-import type { DroppedItem } from './dropped-item.js';
+import type { DroppedItem, ItemSkillReward } from './dropped-item.js';
 
 // In-memory only, same as MonsterManagerService — items dropped by killed
 // monsters live only as long as the server process does.
@@ -9,9 +9,9 @@ export class ItemManagerService {
   private readonly items = new Map<string, DroppedItem>();
   private nextId = 1;
 
-  dropItem(name: string, mapName: MapName, row: number, col: number, skillReward?: string): DroppedItem {
+  dropItem(name: string, mapName: MapName, row: number, col: number, skill?: ItemSkillReward): DroppedItem {
     const id = `item-${this.nextId++}`;
-    const item: DroppedItem = { id, name, mapName, row, col, skillReward };
+    const item: DroppedItem = { id, name, mapName, row, col, skill };
     this.items.set(id, item);
     return item;
   }

@@ -4,6 +4,11 @@
 // leveling.ts.
 export const LESSER_UNDEAD_RESISTANCE = 'lesser undead resistance';
 
+// Learnable from consuming a bone dagger. No mechanical effect yet — same
+// "seam for later" as LESSER_UNDEAD_RESISTANCE was before
+// undeadDamageReduction existed.
+export const BONE_FINGER_DAGGER_STRIKE = 'bone finger dagger strike';
+
 // How much a player's known skills reduce an incoming hit from an undead
 // monster. Only one skill affects this so far; kept as a function (not a
 // flat lookup) so it stays the single place this rule lives as more skills
