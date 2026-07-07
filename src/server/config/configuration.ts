@@ -52,7 +52,7 @@ export default (): AppConfig => {
 
     worldCapacity: Number(process.env.WORLD_CAPACITY) || 50,
 
-    skeletonWanderIntervalMs: Number(process.env.SKELETON_WANDER_INTERVAL_MS) || 3000,
+    skeletonWanderIntervalMs: Number(process.env.SKELETON_WANDER_INTERVAL_MS) || 60000,
     skeletonRespawnIntervalMs: Number(process.env.SKELETON_RESPAWN_INTERVAL_MS) || 60000,
   };
 };

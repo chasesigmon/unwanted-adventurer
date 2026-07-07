@@ -11,4 +11,6 @@ export interface Monster {
   mapName: MapName;
   row: number;
   col: number;
+  // Awarded to whichever player lands the killing blow.
+  expReward: number;
 }

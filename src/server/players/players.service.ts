@@ -18,6 +18,11 @@ export interface PlayerPosition {
   col: number;
 }
 
+export interface PlayerStats {
+  hp: number;
+  exp: number;
+}
+
 @Injectable()
 export class PlayersService {
   constructor(@InjectModel(Player.name) private readonly playerModel: Model<Player>) {}
@@ -44,5 +49,9 @@ export class PlayersService {
 
   async updatePosition(username: string, position: PlayerPosition): Promise<void> {
     await this.playerModel.updateOne({ username }, { $set: position });
+  }
+
+  async updateStats(username: string, stats: PlayerStats): Promise<void> {
+    await this.playerModel.updateOne({ username }, { $set: stats });
   }
 }

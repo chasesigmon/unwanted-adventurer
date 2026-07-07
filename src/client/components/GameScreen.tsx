@@ -78,6 +78,9 @@ export function GameScreen({ player, minimap, room, monsterMessage, actionMessag
                 <span>
                   <span className="stat-label">MV</span> {player.movement}
                 </span>
+                <span>
+                  <span className="stat-label">XP</span> {player.exp}
+                </span>
               </div>
             )}
           </div>
@@ -112,7 +115,7 @@ export function GameScreen({ player, minimap, room, monsterMessage, actionMessag
           type="text"
           maxLength={32}
           autoComplete="off"
-          placeholder="Type a command (w, a, s, d, up, down) and press Enter..."
+          placeholder="Type a command (w, a, s, d, up, down, attack <mob>) and press Enter..."
           value={command}
           onChange={(e) => setCommand(e.target.value)}
           onKeyDown={handleKeyDown}

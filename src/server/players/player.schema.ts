@@ -32,6 +32,9 @@ export class Player {
   @Prop({ default: 100 })
   movement!: number;
 
+  @Prop({ default: 0 })
+  exp!: number;
+
   @Prop({ default: Date.now })
   lastLogin!: Date;
 }

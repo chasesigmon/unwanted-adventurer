@@ -45,6 +45,7 @@ export interface SocketData {
   hp: number;
   mana: number;
   movement: number;
+  exp: number;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

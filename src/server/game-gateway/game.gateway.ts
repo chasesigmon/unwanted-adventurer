@@ -28,6 +28,10 @@ import type { Location } from '../game/types.js';
 import type { PlayerSnapshot } from '../../shared/types.js';
 import type { GameServer, GameSocket, CommandAck } from './types.js';
 
+const ATTACK_PREFIX = 'attack ';
+const PLAYER_ATTACK_DAMAGE = 6;
+const SKELETON_ATTACK_DAMAGE = 2;
+
 // cors/heartbeat are configured centrally in ws-adapter.ts, not here — this
 // stays a bare gateway so there's exactly one place that owns those options.
 @WebSocketGateway()
@@ -114,6 +118,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.hp = doc?.hp ?? 100;
     client.data.mana = doc?.mana ?? 100;
     client.data.movement = doc?.movement ?? 100;
+    client.data.exp = doc?.exp ?? 0;
 
     await this.worldManager.addPlayer(username, mapName, row, col);
 
@@ -134,6 +139,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       hp: client.data.hp,
       mana: client.data.mana,
       movement: client.data.movement,
+      exp: client.data.exp,
     };
   }
 
@@ -155,6 +161,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
   }
 
+  // Same awaited-on-disconnect / fire-and-forget-after-action split as
+  // persistPosition, for the same reason — combat now mutates hp/exp
+  // mid-session (see handleAttack).
+  private async persistStats(username: string, stats: { hp: number; exp: number }): Promise<void> {
+    try {
+      await this.playersService.updateStats(username, stats);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[db] could not persist player stats:', message);
+    }
+  }
+
   async handleDisconnect(client: GameSocket): Promise<void> {
     const { username } = client.data;
     this.commandLimiters.delete(client.id);
@@ -165,6 +183,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (loc) {
       await this.persistPosition(username, loc);
     }
+    await this.persistStats(username, { hp: client.data.hp, exp: client.data.exp });
   }
 
   // Returning a value here becomes the ack the client's emit() callback
@@ -197,6 +216,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // this setImmediate's macrotask callback.
       setImmediate(() => client.disconnect(true));
       return { ok: true, message: 'You have logged out.', loggedOut: true };
+    }
+
+    if (text === 'attack' || text.startsWith(ATTACK_PREFIX)) {
+      const mobQuery = text === 'attack' ? '' : text.slice(ATTACK_PREFIX.length).trim();
+      return this.handleAttack(client, mobQuery);
     }
 
     const direction = DIRECTION_ALIASES[text];
@@ -252,5 +276,50 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       room: resolveRoom(loc),
       monsterMessage: this.monsterMessageFor(loc),
     };
+  }
+
+  // A single "attack <mob>" exchange: the player always swings first (6
+  // damage); if that doesn't kill the target, it swings back (2 damage).
+  // Both sides' hp only ever move within this one command — there's no
+  // separate turn/tick loop for combat.
+  private async handleAttack(client: GameSocket, mobQuery: string): Promise<CommandAck> {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, message: 'Your session was lost. Please reconnect.' };
+    }
+
+    const buildAck = (message: string, ok: boolean): CommandAck => ({
+      ok,
+      message,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(loc),
+    });
+
+    if (!mobQuery) {
+      return buildAck('Attack what?', false);
+    }
+
+    const target = this.monsterManager.findMonsterByNameAt(loc.mapName, loc.row, loc.col, mobQuery);
+    if (!target) {
+      return buildAck(`There is no "${mobQuery}" here to attack.`, false);
+    }
+
+    const { kind, expReward } = target;
+    const { died } = this.monsterManager.applyDamage(target.id, PLAYER_ATTACK_DAMAGE);
+
+    let message = `You hit the ${kind} for ${PLAYER_ATTACK_DAMAGE} damage.`;
+    if (died) {
+      client.data.exp += expReward;
+      message += ` You killed the ${kind}!`;
+    } else {
+      client.data.hp = Math.max(0, client.data.hp - SKELETON_ATTACK_DAMAGE);
+      message += ` The ${kind} hits you for ${SKELETON_ATTACK_DAMAGE} damage.`;
+    }
+    void this.persistStats(username, { hp: client.data.hp, exp: client.data.exp });
+
+    return buildAck(message, true);
   }
 }

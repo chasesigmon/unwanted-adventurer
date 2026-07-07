@@ -10,6 +10,7 @@ export interface PlayerSnapshot {
   hp: number;
   mana: number;
   movement: number;
+  exp: number;
 }
 
 export interface MinimapCell {

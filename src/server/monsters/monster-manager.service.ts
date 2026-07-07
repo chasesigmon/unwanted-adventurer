@@ -9,6 +9,7 @@ import type { Monster } from './monster.js';
 
 const SKELETON_MAX_COUNT = 10;
 const SKELETON_STARTING_HP = 20;
+const SKELETON_EXP_REWARD = 10;
 const SKELETON_HOME_MAP: MapName = 'Labyrinth';
 
 // Autonomous NPCs, independent of any player connection: spawn
@@ -71,6 +72,7 @@ export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
       mapName: SKELETON_HOME_MAP,
       row,
       col,
+      expReward: SKELETON_EXP_REWARD,
     });
   }
 
@@ -100,10 +102,6 @@ export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // Not called from anywhere yet — there's no combat system, so nothing
-  // currently kills a skeleton. Kept as the counterpart to spawnSkeleton()
-  // so a future "kill" mechanic has something to call, and the respawn
-  // logic above has a population drop to actually react to.
   removeMonster(id: string): boolean {
     return this.monsters.delete(id);
   }
@@ -115,6 +113,36 @@ export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
       }
     }
     return undefined;
+  }
+
+  // Partial, case-insensitive match against the monster's kind — "attack
+  // skel" and "attack skeleton" both find a skeleton standing in the given
+  // cell. Only meaningful within a single room: this never searches beyond
+  // the given position.
+  findMonsterByNameAt(mapName: MapName, row: number, col: number, query: string): Monster | undefined {
+    const needle = query.toLowerCase();
+    for (const monster of this.monsters.values()) {
+      if (monster.mapName === mapName && monster.row === row && monster.col === col && monster.kind.includes(needle)) {
+        return monster;
+      }
+    }
+    return undefined;
+  }
+
+  // Applies combat damage to a monster, removing it once its hp drops to 0
+  // or below. Returns whether it died so the caller (which knows about
+  // players/exp, neither of which this service is aware of) can react.
+  applyDamage(id: string, amount: number): { died: boolean } {
+    const monster = this.monsters.get(id);
+    if (!monster) {
+      return { died: true };
+    }
+    monster.hp -= amount;
+    if (monster.hp <= 0) {
+      this.removeMonster(id);
+      return { died: true };
+    }
+    return { died: false };
   }
 
   getAll(): Monster[] {

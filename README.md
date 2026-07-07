@@ -126,15 +126,16 @@ is coincidental.
 
 ### Character stats
 
-New characters start with `hp: 100`, `mana: 100`, `movement: 100`
-(`players/player.schema.ts`, schema defaults — `PlayersService.create()`
-doesn't need to set them explicitly). Nothing consumes or regenerates
-these yet; they exist to be displayed (the client's Score box, top-left)
-and as the seam for future mechanics. They're loaded once into
-`socket.data` at connection time (`GameGateway.handleConnection`) rather
-than re-read from Mongo on every command, since nothing changes them
-mid-session yet — the same reasoning as the `hp`/`mana`/`movement` cache in
-`SocketData`.
+New characters start with `hp: 100`, `mana: 100`, `movement: 100`,
+`exp: 0` (`players/player.schema.ts`, schema defaults —
+`PlayersService.create()` doesn't need to set them explicitly). Only `hp`
+and `exp` currently change (via combat, see below); `mana`/`movement`
+still aren't consumed by anything. All four are displayed in the client's
+Score box (top-left). They're loaded once into `socket.data` at
+connection time (`GameGateway.handleConnection`) rather than re-read from
+Mongo on every command; combat writes them back to both `socket.data` and
+Mongo (`PlayersService.updateStats`) as it happens, fire-and-forget like
+position saves, plus a final awaited write on disconnect.
 
 ### Monsters
 
@@ -144,19 +145,17 @@ persistence — the population resets on restart) that, on boot
 (`onModuleInit`):
 
 - Spawns 10 skeletons at random cells in the Labyrinth (never on the exit
-  tile), each with `hp: 20`, `mana: Infinity`, `movement: Infinity`.
-- Starts a timer (`SKELETON_WANDER_INTERVAL_MS`, default 3s) that moves
-  every skeleton one random cardinal step per tick. A step that would
-  leave the Labyrinth's bounds or land on its exit tile is refused — the
-  skeleton just stays put that tick instead. This is how they're "locked"
-  to the map: there's no transition logic for monsters at all, only a
-  bounds/exit check on candidate moves.
-- Starts a second, slower timer (`SKELETON_RESPAWN_INTERVAL_MS`, default
-  60s = 1 minute) that spawns exactly one more skeleton if the population
-  is below the max of 10. Nothing currently reduces the population below
-  10 (no combat system exists yet), so this path isn't exercised in
-  practice — it's forward-looking infrastructure for whenever a "kill"
-  mechanic is added, alongside the also-unused `removeMonster()` method.
+  tile), each with `hp: 20`, `mana: Infinity`, `movement: Infinity`, and
+  an `expReward: 10` awarded to whoever lands the killing blow.
+- Starts a timer (`SKELETON_WANDER_INTERVAL_MS`, default 60s = 1 minute)
+  that moves every skeleton one random cardinal step per tick. A step
+  that would leave the Labyrinth's bounds or land on its exit tile is
+  refused — the skeleton just stays put that tick instead. This is how
+  they're "locked" to the map: there's no transition logic for monsters
+  at all, only a bounds/exit check on candidate moves.
+- Starts a second timer (`SKELETON_RESPAWN_INTERVAL_MS`, default 60s)
+  that spawns exactly one more skeleton if the population is below the
+  max of 10 — which combat (below) can now actually cause.
 
 When a player's current cell has a monster in it, the gateway computes a
 `monsterMessage` (e.g. `"A skeleton is here!"`) and includes it alongside
@@ -166,7 +165,24 @@ apart from "this ack didn't touch location info at all" (room absent,
 e.g. a rate-limited command), and only overwrites its last-known monster
 state in the former case. The client renders it as a highlighted line in
 the action log, above the room name/description. `/health` also reports
-each live monster's id/kind/position for diagnostics.
+each live monster's id/kind/hp/position for diagnostics.
+
+### Combat
+
+`attack <mob>` (handled in `GameGateway.handleAttack`) resolves a single
+exchange against a monster in the player's current room:
+`MonsterManagerService.findMonsterByNameAt` does a case-insensitive
+substring match against the monster's kind, so `attack skel` and
+`attack skeleton` both find a skeleton (`"Attack what?"` if no mob name
+is given, `There is no "<query>" here to attack.` if nothing matches).
+The player always swings first for a flat 6 damage
+(`MonsterManagerService.applyDamage`); if that kills it, the monster is
+removed immediately, the player's `exp` increases by the monster's
+`expReward`, and the ack message includes `"You killed the skeleton!"`.
+If it survives, it swings back for a flat 2 damage, clamped so the
+player's `hp` never goes below 0. There's no separate turn/tick loop —
+everything happens synchronously within the one `attack` command, same
+as movement.
 
 ## Auth: bcrypt + JWT + Redis session tracking
 
