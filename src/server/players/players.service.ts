@@ -33,7 +33,7 @@ export interface PlayerStats {
   wisdom: number;
   dexterity: number;
   constitution: number;
-  skills: string[];
+  skillLevels: Record<string, number>;
   inventory: string[];
   consumeExp: number;
   equipment: Record<string, string>;

@@ -1,10 +1,20 @@
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 import { getMap } from '../game/maps.js';
+import { GOBLIN_STARTING_SKILLS, STARTING_SKILL_PERCENT } from './skills.js';
 import type { MapName, Race } from '../../shared/constants.js';
 
 const DUMMY_LEVEL = 1;
 const DUMMY_BASE_ATTRIBUTE = 1;
 const DUMMY_MAX_HP = 100;
+
+// Same "goblin gets a starting kit" rule as a real player (see
+// GameGateway.handleConnection) — TrainingGoblin is goblin-race too, so
+// it gets the same dodge/parry/dagger/kick baseline for consistent combat
+// math against it.
+function startingSkillLevelsFor(race: Race): Record<string, number> {
+  if (race !== 'goblin') return {};
+  return Object.fromEntries(GOBLIN_STARTING_SKILLS.map((skill) => [skill, STARTING_SKILL_PERCENT]));
+}
 
 // Fixed "test/dummy players" — practice targets for "murder <player>",
 // each pre-equipped with a bone dagger. Not real accounts (no login, no
@@ -36,6 +46,7 @@ export interface DummyPlayer {
   constitution: number;
   equipment: Record<string, string>;
   inventory: string[];
+  skillLevels: Record<string, number>;
 }
 
 @Injectable()
@@ -78,6 +89,7 @@ export class DummyPlayerService implements OnModuleInit {
       constitution: DUMMY_BASE_ATTRIBUTE,
       equipment: { weapon: 'bone dagger' },
       inventory: [],
+      skillLevels: startingSkillLevelsFor(config.race),
     });
   }
 

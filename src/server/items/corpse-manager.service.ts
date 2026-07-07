@@ -57,30 +57,69 @@ export class CorpseManagerService implements OnModuleDestroy {
     return corpse;
   }
 
-  // Just the first corpse at a cell — two corpses landing in the exact
-  // same cell at once is a rare edge case with no ordering concept to get
-  // right if it happened, same reasoning as ItemManagerService.getItemAt
-  // originally had for items.
+  // The first corpse at a cell — a thin convenience wrapper around
+  // getCorpsesAt for the common single-corpse case.
   getCorpseAt(mapName: MapName, row: number, col: number): Corpse | undefined {
+    return this.getCorpsesAt(mapName, row, col)[0];
+  }
+
+  // Every corpse at a cell, in a stable order (insertion order, since
+  // `corpses` is a Map) — order 1 is whichever landed first. Needed once
+  // a room can hold more than one corpse at a time, disambiguated via
+  // "N.corpse" (see resolveCorpseAt).
+  getCorpsesAt(mapName: MapName, row: number, col: number): Corpse[] {
+    const results: Corpse[] = [];
     for (const corpse of this.corpses.values()) {
       if (corpse.mapName === mapName && corpse.row === row && corpse.col === col) {
-        return corpse;
+        results.push(corpse);
       }
     }
-    return undefined;
+    return results;
+  }
+
+  // Resolves "corpse"/"cor"/"corp"/"corps" (min 3, partial-matched against
+  // the literal word "corpse") to whichever corpse the query refers to —
+  // the *first* one at this cell by default, or a specific one via
+  // "N.corpse" (1-based, e.g. "2.cor") when the room holds more than one.
+  // Used by "l in <query>", "sacrifice <query>", and "grab ... from
+  // <query>".
+  resolveCorpseAt(mapName: MapName, row: number, col: number, query: string): Corpse | undefined {
+    const corpses = this.getCorpsesAt(mapName, row, col);
+    if (corpses.length === 0) return undefined;
+
+    const dotIdx = query.indexOf('.');
+    const indexPart = dotIdx === -1 ? undefined : query.slice(0, dotIdx);
+    const namePart = dotIdx === -1 ? query : query.slice(dotIdx + 1);
+
+    if (namePart.length < 3 || !'corpse'.startsWith(namePart.toLowerCase())) {
+      return undefined;
+    }
+
+    if (indexPart === undefined) {
+      return corpses[0];
+    }
+
+    const index = Number(indexPart);
+    if (!Number.isInteger(index) || index < 1 || index > corpses.length) {
+      return undefined;
+    }
+    return corpses[index - 1];
   }
 
   // Partial, case-insensitive match against a corpse's contents at a
   // specific cell — same style as ItemManagerService.findItemByNameAt.
+  // `containerQuery` resolves which corpse the same way resolveCorpseAt
+  // does (supports "N.corpse" when there's more than one).
   findItemInCorpseAt(
     mapName: MapName,
     row: number,
     col: number,
-    query: string
+    containerQuery: string,
+    itemQuery: string
   ): { corpse: Corpse; itemName: string } | undefined {
-    const corpse = this.getCorpseAt(mapName, row, col);
+    const corpse = this.resolveCorpseAt(mapName, row, col, containerQuery);
     if (!corpse) return undefined;
-    const needle = query.toLowerCase();
+    const needle = itemQuery.toLowerCase();
     const itemName = corpse.items.find((name) => name.toLowerCase().includes(needle));
     return itemName ? { corpse, itemName } : undefined;
   }

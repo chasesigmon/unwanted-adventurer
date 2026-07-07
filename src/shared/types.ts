@@ -24,10 +24,11 @@ export interface PlayerSnapshot {
   // Experience needed to reach the next level (level x 100) — derived
   // server-side, not stored; the client uses it purely to size the XP bar.
   maxTnl: number;
-  // Permanent abilities gained via "consume <item>" (e.g. "lesser undead
-  // resistance"). Not currently displayed anywhere client-side, but part
-  // of the full player snapshot like every other stat.
-  skills: string[];
+  // Permanent abilities, keyed by name with a 1-100 percentage value —
+  // gained either from a goblin's level-1 starter kit (dodge/parry/
+  // dagger/kick) or from consuming a body part ("lesser undead monster
+  // resistance", "lesser <race> resistance"). See players/skills.ts.
+  skillLevels: Record<string, number>;
   // Items picked up via "grab"/"get <item>" — see the "inventory" command.
   inventory: string[];
   // Separate from `exp`/leveling — +1 per body part consumed via

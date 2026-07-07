@@ -109,9 +109,15 @@ export interface SocketData {
   movement: number;
   exp: number;
   level: number;
-  skills: string[];
+  // Permanent abilities, keyed by name with a 1-100 percentage value — see
+  // players/skills.ts.
+  skillLevels: Record<string, number>;
   inventory: string[];
   consumeExp: number;
+  // "kick" queues rather than firing immediately (see GameGateway
+  // .processQueuedKick) — never persisted, reset to 0 on a fresh
+  // connection; combat-transient state, same as restState/respawnState.
+  queuedKicks: number;
   // Earned via "sacrifice" (manual or automatic).
   gold: number;
   // Toggled via "auto sac"/"auto sacrifice" — a standing preference

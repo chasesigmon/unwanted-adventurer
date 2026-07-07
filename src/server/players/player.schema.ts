@@ -63,10 +63,10 @@ export class Player {
   @Prop({ default: 1 })
   level!: number;
 
-  // Permanent abilities gained via "consume <item>" — see
-  // players/skills.ts. Never removed once gained.
-  @Prop({ type: [String], default: [] })
-  skills!: string[];
+  // Permanent abilities, keyed by name with a 1-100 percentage value —
+  // see players/skills.ts. Never removed once gained, only ever grows.
+  @Prop({ type: Object, default: {} })
+  skillLevels!: Record<string, number>;
 
   // Items picked up via "grab"/"get <item>" — see items/item-manager.service.ts.
   @Prop({ type: [String], default: [] })

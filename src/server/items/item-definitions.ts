@@ -1,4 +1,5 @@
-import { LESSER_UNDEAD_RESISTANCE, BONE_FINGER_DAGGER_STRIKE } from '../players/skills.js';
+import { LESSER_UNDEAD_MONSTER_RESISTANCE, BODY_PART_SKILL_STARTING_PERCENT, lesserRaceResistanceName } from '../players/skills.js';
+import { RACES, type Race } from '../../shared/constants.js';
 import type { ItemSkillReward } from './dropped-item.js';
 
 // Static lookup of what a known item name teaches when consumed, if
@@ -9,8 +10,13 @@ import type { ItemSkillReward } from './dropped-item.js';
 // (Player.inventory: string[]), not full item data, so this is also what
 // lets a dropped-from-inventory item regain its original skill properties
 // instead of becoming an inert copy.
-const BODY_PART_SKILL: ItemSkillReward = { reward: LESSER_UNDEAD_RESISTANCE, chance: 0.2 };
-const BONE_DAGGER_SKILL: ItemSkillReward = { reward: BONE_FINGER_DAGGER_STRIKE, chance: 0.05 };
+//
+// "bone dagger" used to also teach a skill here ("bone finger dagger
+// strike", a placeholder with no mechanical effect) — retired now that
+// wielding a dagger has a real, always-available effect via the goblin
+// starting "dagger" skill (see GameGateway.weaponAttack), which makes a
+// second, redundant skill from consuming one pointless.
+const BODY_PART_SKILL: ItemSkillReward = { reward: LESSER_UNDEAD_MONSTER_RESISTANCE, chance: 0.2 };
 
 const ITEM_DEFINITIONS: Record<string, ItemSkillReward> = {
   leg: BODY_PART_SKILL,
@@ -18,21 +24,46 @@ const ITEM_DEFINITIONS: Record<string, ItemSkillReward> = {
   hand: BODY_PART_SKILL,
   skull: BODY_PART_SKILL,
   rib: BODY_PART_SKILL,
-  'bone dagger': BONE_DAGGER_SKILL,
 };
 
-export function skillForItemName(name: string): ItemSkillReward | undefined {
-  return ITEM_DEFINITIONS[name.toLowerCase()];
-}
-
 // The canonical "these are body parts" list — used by GameGateway
-// .resolveAttackExchange to route a monster's death drops: body parts
-// always land loose on the ground (as before), while anything else (e.g.
-// "bone dagger") goes into the new monster corpse container instead.
+// .resolveAttackExchange/.handlePlayerLikeDeath to route death drops: body
+// parts always land loose on the ground, while anything else (e.g. "bone
+// dagger") goes into a corpse container instead. Also the suffix checked
+// for a player-corpse body part's "<race> <part>" name (see isBodyPart).
 const BODY_PARTS = ['leg', 'arm', 'hand', 'skull', 'rib'];
 
+// A player corpse's dropped body part (see GameGateway.handlePlayerLikeDeath)
+// picks one of these at random, same pool a wild skeleton draws from.
+export function randomBodyPartName(): string {
+  return BODY_PARTS[Math.floor(Math.random() * BODY_PARTS.length)] ?? 'bone';
+}
+
 export function isBodyPart(name: string): boolean {
-  return BODY_PARTS.includes(name.toLowerCase());
+  const lower = name.toLowerCase();
+  if (BODY_PARTS.includes(lower)) return true;
+  const spaceIdx = lower.lastIndexOf(' ');
+  return spaceIdx !== -1 && BODY_PARTS.includes(lower.slice(spaceIdx + 1));
+}
+
+// A body part dropped from a *player's* corpse is named "<race> <part>"
+// (e.g. "goblin leg" — see GameGateway.handlePlayerLikeDeath), so the same
+// item name can teach a different skill depending on context, without
+// inventory needing to store anything beyond the bare name. Recognized
+// dynamically here rather than listed item-by-item, since it's every
+// Race x body-part combination.
+function raceBodyPartSkill(name: string): ItemSkillReward | undefined {
+  const lower = name.toLowerCase();
+  const spaceIdx = lower.lastIndexOf(' ');
+  if (spaceIdx === -1) return undefined;
+  const racePart = lower.slice(0, spaceIdx);
+  const bodyPart = lower.slice(spaceIdx + 1);
+  if (!BODY_PARTS.includes(bodyPart) || !RACES.includes(racePart as Race)) return undefined;
+  return { reward: lesserRaceResistanceName(racePart as Race), chance: 0.1 };
+}
+
+export function skillForItemName(name: string): ItemSkillReward | undefined {
+  return ITEM_DEFINITIONS[name.toLowerCase()] ?? raceBodyPartSkill(name);
 }
 
 // Every slot a player can equip something into. Body parts come in pairs
@@ -104,10 +135,13 @@ const ITEM_KINDS: Record<string, ItemKind> = {
 };
 
 export function itemKindFor(name: string): ItemKind | undefined {
-  return ITEM_KINDS[name.toLowerCase()];
+  if (ITEM_KINDS[name.toLowerCase()]) return 'item';
+  return isBodyPart(name) ? 'item' : undefined;
 }
 
-// Flavor text for "examine <item>" — every known item name should have one.
+// Flavor text for "examine <item>" — every known item name should have
+// one; a player-corpse "<race> <part>" name (see isBodyPart) falls back
+// to a generic race-flavored line instead of a fixed entry per race.
 const ITEM_DESCRIPTIONS: Record<string, string> = {
   leg: 'A gaunt, yellowed leg bone, still faintly cold to the touch.',
   arm: 'A brittle arm bone, cracked in places from old wounds.',
@@ -119,7 +153,17 @@ const ITEM_DESCRIPTIONS: Record<string, string> = {
 };
 
 export function itemDescriptionFor(name: string): string | undefined {
-  return ITEM_DESCRIPTIONS[name.toLowerCase()];
+  const lower = name.toLowerCase();
+  if (ITEM_DESCRIPTIONS[lower]) return ITEM_DESCRIPTIONS[lower];
+  const spaceIdx = lower.lastIndexOf(' ');
+  if (spaceIdx !== -1) {
+    const race = lower.slice(0, spaceIdx);
+    const part = lower.slice(spaceIdx + 1);
+    if (RACES.includes(race as Race) && BODY_PARTS.includes(part)) {
+      return `A ${part} bone, unmistakably ${race} in origin.`;
+    }
+  }
+  return undefined;
 }
 
 // Iteration order for "equip"/"equipment" typed bare — head to toe,
