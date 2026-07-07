@@ -129,7 +129,10 @@ export function GameScreen({
             )}
             <div id="message-list" ref={messageListRef}>
               {messages.map((entry, i) => (
-                <div className={`message-line${entry.variant ? ` message-line--${entry.variant}` : ''}`} key={i}>
+                <div
+                  className={`message-line${entry.variant ? ` message-line--${entry.variant}` : ''}${entry.leadsAction ? ' message-line--leads-action' : ''}`}
+                  key={i}
+                >
                   {entry.text}
                 </div>
               ))}

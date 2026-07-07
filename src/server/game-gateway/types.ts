@@ -106,6 +106,14 @@ export interface SocketData {
   skills: string[];
   inventory: string[];
   consumeExp: number;
+  // Populated via "equip <item>" — see items/item-definitions.ts for the
+  // full EquipmentSlot list and which items map to which slot/category.
+  // Only occupied slots are present as keys. Keyed loosely as
+  // Record<string, string> (matching PlayerStats/updateStats, which
+  // persists this as a plain object) rather than
+  // Partial<Record<EquipmentSlot, string>> — callers that need the
+  // stricter slot type get it from EquipmentDefinition.slot instead.
+  equipment: Record<string, string>;
   // Toggled by "sleep"/"rest"/"sit"/"wake"/"stand" — never persisted
   // (always 'awake' on a fresh connection). A per-connection tick always
   // runs (see GameGateway.statTick) regenerating a random percentage of

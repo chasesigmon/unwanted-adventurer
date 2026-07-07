@@ -265,6 +265,15 @@ body {
   margin-bottom: 0.5rem;
 }
 
+/* The first line of a command's own result — a small gap above, distinct
+   from (and stackable with) the sighting/milestone spacing above, which
+   both already carry their own margin. Deliberately smaller than those
+   (0.5rem) since this is just everyday breathing room between actions,
+   not something meant to stand out. */
+.message-line--leads-action {
+  margin-top: 0.25rem;
+}
+
 #minimap {
   flex-shrink: 0;
   display: grid;

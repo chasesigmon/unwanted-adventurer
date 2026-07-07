@@ -14,10 +14,15 @@ type Screen = 'auth' | 'game';
 // A line in the persistent message log, tagged with an optional visual
 // treatment: 'sighting' (a monster/item just noticed — red, extra space
 // above and below) or 'milestone' (a kill or level-up — extra space
-// below, to set it apart from the ordinary flow).
+// below, to set it apart from the ordinary flow). `leadsAction` is
+// independent of `variant` (a separate small margin-top, rendered
+// alongside whatever variant class also applies) — set on the first line
+// of a command's own result, so each action's output gets a little
+// breathing room from whatever came before it in the log.
 export interface LogEntry {
   text: string;
   variant?: 'sighting' | 'milestone';
+  leadsAction?: boolean;
 }
 
 interface GameState {
@@ -68,8 +73,16 @@ function classifyServerLine(text: string): LogEntry['variant'] {
   return undefined;
 }
 
-function toEntries(lines: string[]): LogEntry[] {
-  return lines.map((text) => ({ text, variant: classifyServerLine(text) }));
+// `leadsAction` only ever applies to the very first line of a batch (the
+// start of this action's output) — never to every line, so a multi-line
+// combat exchange still reads as one tight block with just a small gap
+// above the whole thing, not gaps between its own lines.
+function toEntries(lines: string[], leadsAction = false): LogEntry[] {
+  return lines.map((text, i) => ({
+    text,
+    variant: classifyServerLine(text),
+    leadsAction: i === 0 && leadsAction,
+  }));
 }
 
 // Folds "a skeleton is here"/"a leg lies here" into the same natural,
@@ -84,7 +97,8 @@ function withSightings(
   state: GameState,
   newMonsterMessage: string | null,
   newItemMessage: string | null,
-  ownMessages: string[]
+  ownMessages: string[],
+  leadsAction = false
 ): Pick<GameState, 'messages' | 'monsterMessage' | 'itemMessage'> {
   const sightings: LogEntry[] = [];
   if (newMonsterMessage && newMonsterMessage !== state.monsterMessage) {
@@ -94,7 +108,7 @@ function withSightings(
     sightings.push({ text: newItemMessage, variant: 'milestone' });
   }
   return {
-    messages: appendEntries(state.messages, [...toEntries(ownMessages), ...sightings]),
+    messages: appendEntries(state.messages, [...toEntries(ownMessages, leadsAction), ...sightings]),
     monsterMessage: newMonsterMessage,
     itemMessage: newItemMessage,
   };
@@ -174,7 +188,10 @@ function reducer(state: GameState, action: Action): GameState {
       // state alone rather than clearing (or re-triggering) it.
       const newMonsterMessage = action.room ? (action.monsterMessage ?? null) : state.monsterMessage;
       const newItemMessage = action.room ? (action.itemMessage ?? null) : state.itemMessage;
-      const sighted = withSightings(state, newMonsterMessage, newItemMessage, action.messages);
+      // Every command result is "the player performing an action" — a
+      // small gap above its first line sets it apart from whatever was
+      // already in the log.
+      const sighted = withSightings(state, newMonsterMessage, newItemMessage, action.messages, true);
       return {
         ...state,
         player: action.player ?? state.player,

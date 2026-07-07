@@ -55,6 +55,13 @@ export class Player {
   @Prop({ type: [String], default: [] })
   inventory!: string[];
 
+  // Keyed by EquipmentSlot (see items/item-definitions.ts) — only
+  // occupied slots are present, so this starts empty rather than
+  // pre-populated with nulls. Populated via "equip <item>", which moves
+  // the item out of `inventory` into here.
+  @Prop({ type: Object, default: {} })
+  equipment!: Record<string, string>;
+
   // Separate from `exp`/leveling — tracks how many body parts have been
   // consumed, regardless of whether the skill roll succeeded.
   @Prop({ default: 0 })

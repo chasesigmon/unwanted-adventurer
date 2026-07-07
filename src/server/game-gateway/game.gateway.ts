@@ -16,7 +16,8 @@ import { WorldManagerService } from '../worlds/world-manager.service.js';
 import { MonsterManagerService } from '../monsters/monster-manager.service.js';
 import type { MonsterMoveEvent } from '../monsters/monster-manager.service.js';
 import { ItemManagerService } from '../items/item-manager.service.js';
-import { skillForItemName } from '../items/item-definitions.js';
+import { skillForItemName, equipmentForItemName } from '../items/item-definitions.js';
+import type { EquipmentSlot } from '../items/item-definitions.js';
 import { AuthService } from '../auth/auth.service.js';
 import { SessionStoreService } from '../auth/session-store.service.js';
 import { ActiveConnectionsService } from '../auth/active-connections.service.js';
@@ -38,6 +39,8 @@ import type { Direction } from '../../shared/directions.js';
 import type { PlayerSnapshot } from '../../shared/types.js';
 import type { GameServer, GameSocket, CommandAck } from './types.js';
 
+// Base damage before any equipped weapon bonus — see EquipmentDefinition
+// .attackBonus and resolveAttackExchange's weaponForAttack.
 const PLAYER_ATTACK_DAMAGE = 6;
 const SKELETON_ATTACK_DAMAGE = 2;
 const ATTACK_INTERVAL_MS = 4000;
@@ -54,9 +57,16 @@ const ATTACK_VERBS = ['attack', 'kill'];
 const ATTACK_VERB_MIN_LENGTH = 2;
 const KILL_SHORTHAND = 'k';
 
-// "inventory" can be partially typed too ("inv", "invent", ...), but as a
-// bare command (it takes no argument) — same minimum-length reasoning.
-const INVENTORY_MIN_LENGTH = 2;
+// "grab"/"get" are two spellings of the same action, so both accept
+// prefixes down to a single letter ("g") — unlike attack/kill, there's no
+// ambiguity to worry about (either word resolves to the same handler), and
+// nothing else claims "g".
+const GRAB_VERBS = ['grab', 'get'];
+const GRAB_VERB_MIN_LENGTH = 1;
+
+// "inventory" can be partially typed too, down to a single letter ("i") —
+// nothing else claims "i" as a bare command.
+const INVENTORY_MIN_LENGTH = 1;
 
 // "con" only ever prefixes "consume" ("com" is "commands"), so 3 is the
 // minimum that avoids that collision (2 chars, "co", would be ambiguous).
@@ -123,6 +133,10 @@ function articleFor(word: string, capitalized = false): string {
 function isAttackVerb(word: string): boolean {
   if (word === KILL_SHORTHAND) return true;
   return word.length >= ATTACK_VERB_MIN_LENGTH && ATTACK_VERBS.some((verb) => verb.startsWith(word));
+}
+
+function isGrabVerb(word: string): boolean {
+  return word.length >= GRAB_VERB_MIN_LENGTH && GRAB_VERBS.some((verb) => verb.startsWith(word));
 }
 
 // cors/heartbeat are configured centrally in ws-adapter.ts, not here — this
@@ -237,6 +251,7 @@ export class GameGateway
     client.data.skills = doc?.skills ?? [];
     client.data.inventory = doc?.inventory ?? [];
     client.data.consumeExp = doc?.consumeExp ?? 0;
+    client.data.equipment = doc?.equipment ?? {};
     // Never persisted — a fresh connection always starts awake.
     client.data.restState = 'awake';
 
@@ -341,18 +356,35 @@ export class GameGateway
     return ALL_DIRECTIONS.filter((direction) => resolveMove(loc, direction).ok);
   }
 
+  // The equipped weapon's contribution to an attack — a damage bonus
+  // added to PLAYER_ATTACK_DAMAGE, and a verb that replaces "hit" in the
+  // attack line (e.g. a bone dagger "stabs" rather than "hits"). No
+  // weapon equipped (or an equipped item with no EquipmentDefinition, in
+  // practice never possible for something already in the 'weapon' slot)
+  // falls back to bare-handed values.
+  private weaponAttack(client: GameSocket): { damage: number; verb: string } {
+    const weaponName = client.data.equipment.weapon;
+    const definition = weaponName ? equipmentForItemName(weaponName) : undefined;
+    return {
+      damage: PLAYER_ATTACK_DAMAGE + (definition?.attackBonus ?? 0),
+      verb: definition?.attackVerb ?? 'hit',
+    };
+  }
+
   // The core "basic hit" exchange, shared by the first (synchronous) hit in
   // handleAttack and every subsequent tick in tickCombat: player swings for
-  // a flat 6 damage; if that doesn't kill it, it swings back (reduced by 1
-  // if the target is undead and the player has learned resistance to
-  // that). Returns one line per event (hit, hp remaining, kill, level-up,
-  // drop(s), counter-hit) so the client can log each separately — nothing
-  // here is a persistent status display, it's all just message lines.
+  // PLAYER_ATTACK_DAMAGE plus whatever their equipped weapon adds; if that
+  // doesn't kill it, it swings back (reduced by 1 if the target is undead
+  // and the player has learned resistance to that). Returns one line per
+  // event (hit, hp remaining, kill, level-up, drop(s), counter-hit) so the
+  // client can log each separately — nothing here is a persistent status
+  // display, it's all just message lines.
   private resolveAttackExchange(client: GameSocket, target: Monster): { messages: string[]; died: boolean } {
     const { kind, expReward } = target;
-    const { died } = this.monsterManager.applyDamage(target.id, PLAYER_ATTACK_DAMAGE);
+    const { damage: attackDamage, verb } = this.weaponAttack(client);
+    const { died } = this.monsterManager.applyDamage(target.id, attackDamage);
 
-    const messages = [`You hit the ${kind} for ${PLAYER_ATTACK_DAMAGE} damage!`];
+    const messages = [`You ${verb} the ${kind} for ${attackDamage} damage!`];
 
     if (died) {
       messages.push(`You killed the ${kind}!`);
@@ -428,6 +460,7 @@ export class GameGateway
       skills: client.data.skills,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
+      equipment: client.data.equipment,
     });
 
     client.emit('combat:update', {
@@ -471,6 +504,7 @@ export class GameGateway
       skills: string[];
       inventory: string[];
       consumeExp: number;
+      equipment: Record<string, string>;
     }
   ): Promise<void> {
     try {
@@ -501,6 +535,7 @@ export class GameGateway
       skills: client.data.skills,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
+      equipment: client.data.equipment,
     });
   }
 
@@ -554,12 +589,17 @@ export class GameGateway
       return this.handleConsume(client, rest);
     }
 
-    if (verb === 'grab' || verb === 'get') {
+    // "grab"/"get" and any prefix down to "g" — same handler either way.
+    if (isGrabVerb(verb)) {
       return this.handleGrab(client, rest);
     }
 
     if (verb === 'drop') {
       return this.handleDrop(client, rest);
+    }
+
+    if (verb === 'equip') {
+      return this.handleEquip(client, rest);
     }
 
     if (matchesPartial(verb, 'where', WHERE_MIN_LENGTH)) {
@@ -755,6 +795,7 @@ export class GameGateway
       skills: client.data.skills,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
+      equipment: client.data.equipment,
     });
 
     if (died) {
@@ -904,6 +945,7 @@ export class GameGateway
         skills: client.data.skills,
         inventory: client.data.inventory,
         consumeExp: client.data.consumeExp,
+        equipment: client.data.equipment,
       });
       return buildAck([`You consume the ${name}.`], true);
     }
@@ -932,6 +974,7 @@ export class GameGateway
       skills: client.data.skills,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
+      equipment: client.data.equipment,
     });
 
     return buildAck(messages, true);
@@ -976,6 +1019,7 @@ export class GameGateway
       skills: client.data.skills,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
+      equipment: client.data.equipment,
     });
 
     return buildAck([`You pick up the ${item.name}.`], true);
@@ -1027,9 +1071,78 @@ export class GameGateway
       skills: client.data.skills,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
+      equipment: client.data.equipment,
     });
 
     return buildAck([`You drop the ${itemName}.`], true);
+  }
+
+  // "equip <item>" — partial, case-insensitive match against inventory
+  // (same style as drop). Only items with an EquipmentDefinition (see
+  // items/item-definitions.ts) can be equipped at all — right now that's
+  // just "bone dagger" (the 'weapon' slot); everything else (body parts,
+  // or any item with no definition) is rejected. Equipping into an
+  // already-occupied slot swaps: whatever was there goes back into
+  // inventory rather than being lost.
+  private async handleEquip(client: GameSocket, itemQuery: string): Promise<CommandAck> {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
+    });
+
+    if (!itemQuery) {
+      return buildAck(['Equip what?'], false);
+    }
+
+    const needle = itemQuery.toLowerCase();
+    const itemName = client.data.inventory.find((name) => name.toLowerCase().includes(needle));
+    if (!itemName) {
+      return buildAck([`You aren't carrying a "${itemQuery}".`], false);
+    }
+
+    const definition = equipmentForItemName(itemName);
+    if (!definition) {
+      return buildAck([`You can't equip the ${itemName}.`], false);
+    }
+
+    const index = client.data.inventory.indexOf(itemName);
+    client.data.inventory = [...client.data.inventory.slice(0, index), ...client.data.inventory.slice(index + 1)];
+
+    const slot: EquipmentSlot = definition.slot;
+    const previousItem = client.data.equipment[slot];
+    client.data.equipment = { ...client.data.equipment, [slot]: itemName };
+    if (previousItem) {
+      client.data.inventory = [...client.data.inventory, previousItem];
+    }
+
+    void this.persistStats(username, {
+      hp: client.data.hp,
+      mana: client.data.mana,
+      movement: client.data.movement,
+      exp: client.data.exp,
+      level: client.data.level,
+      skills: client.data.skills,
+      inventory: client.data.inventory,
+      consumeExp: client.data.consumeExp,
+      equipment: client.data.equipment,
+    });
+
+    const messages = previousItem
+      ? [`You equip the ${itemName}, replacing the ${previousItem}.`]
+      : [`You equip the ${itemName}.`];
+
+    return buildAck(messages, true);
   }
 
   // Purely informational — no state change, so unlike every other handler
@@ -1417,6 +1530,7 @@ export class GameGateway
         skills: client.data.skills,
         inventory: client.data.inventory,
         consumeExp: client.data.consumeExp,
+        equipment: client.data.equipment,
       });
 
       const lead =
@@ -1483,6 +1597,7 @@ export class GameGateway
       'consume <item> - eat an item (on the ground, or in your inventory) for a chance at a skill',
       'grab/get <item> - pick up a dropped item into your inventory',
       'drop <item> - drop an item from your inventory onto the ground',
+      'equip <item> - equip an item from your inventory into its equipment slot',
       'where [mob or player] - list nearby players, or locate a monster/player by name',
       'inventory - show what you are carrying',
       'skills - show your learned skills',
