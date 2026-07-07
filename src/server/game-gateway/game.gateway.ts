@@ -13,6 +13,7 @@ import { ConfigService } from '@nestjs/config';
 import { PlayersService } from '../players/players.service.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
 import { MonsterManagerService } from '../monsters/monster-manager.service.js';
+import type { MonsterMoveEvent } from '../monsters/monster-manager.service.js';
 import { ItemManagerService } from '../items/item-manager.service.js';
 import { skillForItemName } from '../items/item-definitions.js';
 import { AuthService } from '../auth/auth.service.js';
@@ -21,11 +22,12 @@ import { ActiveConnectionsService } from '../auth/active-connections.service.js'
 import { SocketConnectionLimiterService } from '../rate-limit/socket-connection-limiter.service.js';
 import { CommandRateLimiter, type CommandRateLimiterOptions } from '../rate-limit/command-rate-limiter.js';
 import { getMap, getWorldOverview } from '../game/maps.js';
-import { resolveRoom } from '../game/room.js';
+import { resolveRoom, getRoomName } from '../game/room.js';
 import { resolveMove, resolveFullMapGrid } from '../game/resolveMove.js';
 import { applyExpGain, maxTnlForLevel } from '../players/leveling.js';
 import { undeadDamageReduction } from '../players/skills.js';
 import { STARTING_MAP } from '../../shared/constants.js';
+import type { MapName } from '../../shared/constants.js';
 import { DIRECTION_ALIASES, DIRECTION_DELTAS } from '../../shared/directions.js';
 import { commandSchema } from './command.schema.js';
 import type { AppConfig } from '../config/configuration.js';
@@ -39,26 +41,55 @@ const PLAYER_ATTACK_DAMAGE = 6;
 const SKELETON_ATTACK_DAMAGE = 2;
 const ATTACK_INTERVAL_MS = 4000;
 const ALL_DIRECTIONS: Direction[] = ['north', 'south', 'east', 'west'];
+const MAX_HP = 100;
 
 // "attack"/"kill" can both be partially typed ("att", "ki", ...). A
 // minimum length keeps a bare single letter from being swallowed here
 // instead of falling through to movement — "a" must stay west, not become
-// a 1-letter prefix of "attack".
+// a 1-letter prefix of "attack". "kill" gets a further single-letter
+// shorthand ("k") on top of that, since nothing else claims that letter.
 const ATTACK_VERBS = ['attack', 'kill'];
 const ATTACK_VERB_MIN_LENGTH = 2;
+const KILL_SHORTHAND = 'k';
 
 // "inventory" can be partially typed too ("inv", "invent", ...), but as a
 // bare command (it takes no argument) — same minimum-length reasoning.
 const INVENTORY_MIN_LENGTH = 2;
 
-// "scan" and "score" share the 2-letter prefix "sc", so a length-2 minimum
-// (like inventory's) would make "sc" ambiguous between them. Requiring 3
-// resolves that ("sca"/"scan" only ever prefixes scan, "sco"/"scor"/"score"
-// only ever prefixes score) while still leaving bare "s" reserved for south.
-const SCAN_SCORE_MIN_LENGTH = 3;
+// "con" only ever prefixes "consume" ("com" is "commands"), so 3 is the
+// minimum that avoids that collision (2 chars, "co", would be ambiguous).
+const CONSUME_MIN_LENGTH = 3;
+
+// "scan" and "score" share the 2-letter prefix "sc". "sca"/"scan" only
+// ever prefixes scan (score's 3rd letter is "o", not "a"), so scan keeps
+// requiring 3 — but "sc" itself is explicitly claimed by score, so score's
+// minimum can drop to 2 as long as scan's stricter check runs first in the
+// dispatch order.
+const SCAN_MIN_LENGTH = 3;
+const SCORE_MIN_LENGTH = 2;
+
+// "whe"/"wher"/"where" — 3 is the natural floor since "w" alone must stay
+// reserved for west movement.
+const WHERE_MIN_LENGTH = 3;
+
+// "sle"/"slee"/"sleep" — nothing else starts with "sl", so 3 is just the
+// example floor from the request, not a disambiguation requirement.
+const SLEEP_MIN_LENGTH = 3;
+
+// The sleep tick's interval is itself randomized (not a fixed
+// setInterval) — each firing schedules the next one at a fresh random
+// delay in this range. Heal amount is a random percentage of MAX_HP.
+const SLEEP_TICK_MIN_MS = 20_000;
+const SLEEP_TICK_MAX_MS = 30_000;
+const SLEEP_HEAL_MIN_PERCENT = 5;
+const SLEEP_HEAL_MAX_PERCENT = 10;
 
 function matchesPartial(text: string, word: string, minLength: number): boolean {
   return text.length >= minLength && word.startsWith(text);
+}
+
+function randomBetween(min: number, max: number): number {
+  return min + Math.random() * (max - min);
 }
 
 interface ActiveCombat {
@@ -75,6 +106,7 @@ function articleFor(word: string, capitalized = false): string {
 }
 
 function isAttackVerb(word: string): boolean {
+  if (word === KILL_SHORTHAND) return true;
   return word.length >= ATTACK_VERB_MIN_LENGTH && ATTACK_VERBS.some((verb) => verb.startsWith(word));
 }
 
@@ -88,6 +120,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   private readonly commandLimiters = new Map<string, CommandRateLimiter>();
   private readonly commandLimiterOptions: CommandRateLimiterOptions;
   private readonly activeCombats = new Map<string, ActiveCombat>();
+  private readonly sleepTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(
     private readonly playersService: PlayersService,
@@ -108,6 +141,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
   afterInit(server: GameServer): void {
     this.activeConnections.setServer(server);
+
+    // Monsters wander on their own timer (MonsterManagerService.wanderAll),
+    // independent of any command — this is the only way a connected player
+    // finds out one just left or arrived in their room between commands.
+    this.monsterManager.on('moved', (event: MonsterMoveEvent) => this.handleMonsterMoved(event));
 
     // Runs on every handshake, before 'connection' fires: connection-rate
     // limiting, then JWT + Redis session validation. A stale token
@@ -172,6 +210,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.skills = doc?.skills ?? [];
     client.data.inventory = doc?.inventory ?? [];
     client.data.consumeExp = doc?.consumeExp ?? 0;
+    // Never persisted — a fresh connection always starts awake.
+    client.data.sleeping = false;
 
     await this.worldManager.addPlayer(username, mapName, row, col);
 
@@ -179,8 +219,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: this.snapshotFor(client, { mapName, row, col }),
       minimap: this.worldManager.getMinimap(username) ?? [],
       room: resolveRoom({ mapName, row, col }),
-      monsterMessage: this.monsterMessageFor({ mapName, row, col }),
-      itemMessage: this.itemMessageFor({ mapName, row, col }),
+      monsterMessage: this.monsterMessageFor(client, { mapName, row, col }),
+      itemMessage: this.itemMessageFor(client, { mapName, row, col }),
     });
   }
 
@@ -203,14 +243,48 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
-  private monsterMessageFor(loc: Location): string | undefined {
+  // Sleeping players "don't see anything in the room" — both helpers below
+  // report nothing at all while asleep, regardless of what's actually
+  // there. This covers every ack (sync, moves, look, etc.) in one place
+  // rather than special-casing each handler.
+  private monsterMessageFor(client: GameSocket, loc: Location): string | undefined {
+    if (client.data.sleeping) return undefined;
     const monster = this.monsterManager.getMonsterAt(loc.mapName, loc.row, loc.col);
     return monster ? `A ${monster.kind} is here!` : undefined;
   }
 
-  private itemMessageFor(loc: Location): string | undefined {
+  private itemMessageFor(client: GameSocket, loc: Location): string | undefined {
+    if (client.data.sleeping) return undefined;
     const item = this.itemManager.getItemAt(loc.mapName, loc.row, loc.col);
     return item ? `${articleFor(item.name, true)} ${item.name} lies here.` : undefined;
+  }
+
+  // Notifies any connected player standing in the monster's old or new
+  // cell that it just wandered off or arrived — the only way to see this
+  // happen live, since MonsterManagerService.wanderAll runs on its own
+  // timer, independent of anyone's commands. Sleeping players are skipped
+  // (see monsterMessageFor) — their eyes are closed either way.
+  private handleMonsterMoved(event: MonsterMoveEvent): void {
+    const { monster, mapName, fromRow, fromCol, toRow, toCol } = event;
+
+    for (const client of this.server.sockets.sockets.values()) {
+      if (client.data.sleeping) continue;
+
+      const loc = this.worldManager.getLocation(client.data.username);
+      if (!loc || loc.mapName !== mapName) continue;
+
+      if (loc.row === fromRow && loc.col === fromCol) {
+        client.emit('notice', {
+          messages: [`The ${monster.kind} wanders out of the room.`],
+          monsterMessage: this.monsterMessageFor(client, loc) ?? null,
+        });
+      } else if (loc.row === toRow && loc.col === toCol) {
+        client.emit('notice', {
+          messages: [`A ${monster.kind} wanders into the room!`],
+          monsterMessage: this.monsterMessageFor(client, loc) ?? null,
+        });
+      }
+    }
   }
 
   private hpPercent(monster: Monster): number {
@@ -309,8 +383,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       client.emit('combat:update', {
         messages: ['Your target is gone.'],
         player: this.snapshotFor(client, loc),
-        monsterMessage: this.monsterMessageFor(loc),
-        itemMessage: this.itemMessageFor(loc),
+        monsterMessage: this.monsterMessageFor(client, loc),
+        itemMessage: this.itemMessageFor(client, loc),
         ended: true,
       });
       return;
@@ -329,8 +403,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.emit('combat:update', {
       messages,
       player: this.snapshotFor(client, loc),
-      monsterMessage: this.monsterMessageFor(loc),
-      itemMessage: this.itemMessageFor(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
       ended: died,
     });
 
@@ -371,6 +445,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const { username } = client.data;
     this.commandLimiters.delete(client.id);
     this.clearCombat(client.id);
+    this.clearSleepTimer(client.id);
     this.activeConnections.clearActiveSocketIfCurrent(username, client.id);
 
     const loc = this.worldManager.getLocation(username);
@@ -434,7 +509,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return this.handleFlee(client);
     }
 
-    if (verb === 'consume') {
+    if (matchesPartial(verb, 'consume', CONSUME_MIN_LENGTH)) {
       return this.handleConsume(client, rest);
     }
 
@@ -444,6 +519,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     if (verb === 'drop') {
       return this.handleDrop(client, rest);
+    }
+
+    if (matchesPartial(verb, 'where', WHERE_MIN_LENGTH)) {
+      return this.handleWhere(client, rest);
     }
 
     // Bare command, no argument — "inv", "inven", "inventory", ...
@@ -463,13 +542,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return this.handleMap(client);
     }
 
-    // "sc"/"s" alone stay ambiguous/reserved (south) — 3+ chars needed to
-    // disambiguate "sca"/"scan" from "sco"/"score".
-    if (matchesPartial(text, 'scan', SCAN_SCORE_MIN_LENGTH)) {
+    // scan's stricter check runs first: "sca"/"scan" only ever prefix scan
+    // (score's 3rd letter is "o"), so this never wrongly claims a score
+    // input. Bare "sc" falls through to score below.
+    if (matchesPartial(text, 'scan', SCAN_MIN_LENGTH)) {
       return this.handleScan(client);
     }
 
-    if (matchesPartial(text, 'score', SCAN_SCORE_MIN_LENGTH)) {
+    if (matchesPartial(text, 'score', SCORE_MIN_LENGTH)) {
       return this.handleScore(client);
     }
 
@@ -479,6 +559,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // collide with anything else since no other command starts with "l".
     if (text === 'look' || text === 'l') {
       return this.handleLook(client);
+    }
+
+    if (matchesPartial(text, 'sleep', SLEEP_MIN_LENGTH)) {
+      return this.handleSleep(client);
     }
 
     if (text === 'commands') {
@@ -502,8 +586,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (loc) {
         ackPayload.player = this.snapshotFor(client, loc);
         ackPayload.room = resolveRoom(loc);
-        ackPayload.monsterMessage = this.monsterMessageFor(loc);
-        ackPayload.itemMessage = this.itemMessageFor(loc);
+        ackPayload.monsterMessage = this.monsterMessageFor(client, loc);
+        ackPayload.itemMessage = this.itemMessageFor(client, loc);
       }
       return ackPayload;
     }
@@ -518,8 +602,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         player: loc ? this.snapshotFor(client, loc) : undefined,
         minimap: this.worldManager.getMinimap(username),
         room: loc ? resolveRoom(loc) : undefined,
-        monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
-        itemMessage: loc ? this.itemMessageFor(loc) : undefined,
+        monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
+        itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
       };
     }
 
@@ -558,8 +642,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: this.snapshotFor(client, loc),
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(loc),
-      monsterMessage: this.monsterMessageFor(loc),
-      itemMessage: this.itemMessageFor(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
     };
   }
 
@@ -583,8 +667,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: this.snapshotFor(client, loc),
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(loc),
-      monsterMessage: this.monsterMessageFor(loc),
-      itemMessage: this.itemMessageFor(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
     });
 
     if (!mobQuery) {
@@ -650,8 +734,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         player: this.snapshotFor(client, loc),
         minimap: this.worldManager.getMinimap(username),
         room: resolveRoom(loc),
-        monsterMessage: this.monsterMessageFor(loc),
-        itemMessage: this.itemMessageFor(loc),
+        monsterMessage: this.monsterMessageFor(client, loc),
+        itemMessage: this.itemMessageFor(client, loc),
       };
     }
 
@@ -668,8 +752,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         player: this.snapshotFor(client, loc),
         minimap: this.worldManager.getMinimap(username),
         room: resolveRoom(loc),
-        monsterMessage: this.monsterMessageFor(loc),
-        itemMessage: this.itemMessageFor(loc),
+        monsterMessage: this.monsterMessageFor(client, loc),
+        itemMessage: this.itemMessageFor(client, loc),
       };
     }
 
@@ -698,8 +782,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: this.snapshotFor(client, newLoc),
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(newLoc),
-      monsterMessage: this.monsterMessageFor(newLoc),
-      itemMessage: this.itemMessageFor(newLoc),
+      monsterMessage: this.monsterMessageFor(client, newLoc),
+      itemMessage: this.itemMessageFor(client, newLoc),
     };
   }
 
@@ -728,8 +812,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: this.snapshotFor(client, loc),
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(loc),
-      monsterMessage: this.monsterMessageFor(loc),
-      itemMessage: this.itemMessageFor(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
     });
 
     if (!itemQuery) {
@@ -810,8 +894,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: this.snapshotFor(client, loc),
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(loc),
-      monsterMessage: this.monsterMessageFor(loc),
-      itemMessage: this.itemMessageFor(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
     });
 
     if (!itemQuery) {
@@ -856,8 +940,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: this.snapshotFor(client, loc),
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(loc),
-      monsterMessage: this.monsterMessageFor(loc),
-      itemMessage: this.itemMessageFor(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
     });
 
     if (!itemQuery) {
@@ -900,8 +984,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: loc ? this.snapshotFor(client, loc) : undefined,
       minimap: this.worldManager.getMinimap(username),
       room: loc ? resolveRoom(loc) : undefined,
-      monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
-      itemMessage: loc ? this.itemMessageFor(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
     };
   }
 
@@ -917,8 +1001,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: loc ? this.snapshotFor(client, loc) : undefined,
       minimap: this.worldManager.getMinimap(username),
       room: loc ? resolveRoom(loc) : undefined,
-      monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
-      itemMessage: loc ? this.itemMessageFor(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
     };
   }
 
@@ -939,8 +1023,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: this.snapshotFor(client, loc),
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(loc),
-      monsterMessage: this.monsterMessageFor(loc),
-      itemMessage: this.itemMessageFor(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
     };
   }
 
@@ -958,8 +1042,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
     }
 
-    const monsterMessage = this.monsterMessageFor(loc);
-    const itemMessage = this.itemMessageFor(loc);
+    const monsterMessage = this.monsterMessageFor(client, loc);
+    const itemMessage = this.itemMessageFor(client, loc);
     const messages = [monsterMessage, itemMessage].filter((m): m is string => !!m);
     if (messages.length === 0) {
       messages.push('There is nothing else of note here.');
@@ -1008,23 +1092,28 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: this.snapshotFor(client, loc),
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(loc),
-      monsterMessage: this.monsterMessageFor(loc),
-      itemMessage: this.itemMessageFor(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
     };
   }
 
-  // "score" — a text rendering of the same stats the Score box already
-  // shows on screen (race/level/hp/mana/movement/exp/consumeExp), for
-  // players who'd rather read it as a log line. Purely informational, same
-  // as skills/inventory/map.
+  // "score"/"sc"/"sco"/"scor" — a text rendering of exactly what the Score
+  // box on screen already shows: username, then one line per stat (race,
+  // level, hp, mana, movement, exp, consumeExp), same labels as the box.
+  // Purely informational, same as skills/inventory/map.
   private handleScore(client: GameSocket): CommandAck {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
 
     const messages = [
-      `${username} — ${client.data.race}, level ${client.data.level}`,
-      `HP: ${client.data.hp}  MP: ${client.data.mana}  MV: ${client.data.movement}`,
-      `XP: ${client.data.exp}/${maxTnlForLevel(client.data.level)}  CXP: ${client.data.consumeExp}`,
+      username,
+      `RACE: ${client.data.race}`,
+      `LVL: ${client.data.level}`,
+      `HP: ${client.data.hp}`,
+      `MP: ${client.data.mana}`,
+      `MV: ${client.data.movement}`,
+      `XP: ${client.data.exp}`,
+      `CXP: ${client.data.consumeExp}`,
     ];
 
     return {
@@ -1033,9 +1122,170 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: loc ? this.snapshotFor(client, loc) : undefined,
       minimap: this.worldManager.getMinimap(username),
       room: loc ? resolveRoom(loc) : undefined,
-      monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
-      itemMessage: loc ? this.itemMessageFor(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
     };
+  }
+
+  // Every other connected player sharing this player's actual World
+  // instance (WorldManagerService's worldId — the worker_thread-sharded
+  // concept, not just "same map name": two players on the same map but in
+  // different overflow shards aren't in the same World). Self is always
+  // excluded — "where" reporting your own room back to you isn't useful.
+  private otherPlayersInWorld(client: GameSocket, worldId: string): Array<{ username: string; mapName: MapName }> {
+    const results: Array<{ username: string; mapName: MapName }> = [];
+    for (const other of this.server.sockets.sockets.values()) {
+      if (other.id === client.id) continue;
+      const otherLoc = this.worldManager.getLocation(other.data.username);
+      if (otherLoc && otherLoc.worldId === worldId) {
+        results.push({ username: other.data.username, mapName: otherLoc.mapName });
+      }
+    }
+    return results;
+  }
+
+  // "where" (bare) lists every other player sharing the caller's World
+  // instance and which room they're in — "Players nearby:" with nothing
+  // under it if there are none. "where <query>" (or "whe"/"wher") checks
+  // monsters first, same as before, then falls back to a partial,
+  // case-insensitive match against other players' usernames — so it can
+  // locate a person the same way it locates a monster. Monsters aren't
+  // sharded per World instance the way player positions are (there's only
+  // ever one MonsterManagerService, global to the process), so a
+  // monster's "same World" check is by map name; a player's is by the
+  // real worldId, since that's the concept that actually applies to them.
+  private handleWhere(client: GameSocket, mobQuery: string): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
+    });
+
+    if (!mobQuery) {
+      const others = this.otherPlayersInWorld(client, loc.worldId);
+      const messages = ['Players nearby:', ...others.map((o) => `${o.username} is in ${getRoomName(o.mapName)}.`)];
+      return buildAck(messages, true);
+    }
+
+    const target = this.monsterManager.findMonsterByName(mobQuery);
+    if (target && target.mapName === loc.mapName) {
+      return buildAck([`The ${target.kind} is in ${getRoomName(target.mapName)}.`], true);
+    }
+
+    const needle = mobQuery.toLowerCase();
+    const matchedPlayer = this.otherPlayersInWorld(client, loc.worldId).find((o) =>
+      o.username.toLowerCase().includes(needle)
+    );
+    if (matchedPlayer) {
+      return buildAck([`${matchedPlayer.username} is in ${getRoomName(matchedPlayer.mapName)}.`], true);
+    }
+
+    return buildAck(['That monster was not found.'], false);
+  }
+
+  // "sleep"/"slee"/"sle" — a toggle: awake -> asleep on the first call,
+  // asleep -> awake on the next. While asleep, monsterMessageFor/
+  // itemMessageFor report nothing at all (see those methods) — the
+  // character's eyes are closed to its own room, full stop, for every
+  // command, not just this one. Falling asleep starts a per-connection
+  // heal tick (see scheduleSleepTick) that only actually heals while still
+  // asleep; waking up cancels it.
+  private handleSleep(client: GameSocket): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    if (client.data.sleeping) {
+      client.data.sleeping = false;
+      this.clearSleepTimer(client.id);
+      return {
+        ok: true,
+        messages: ['You wake up.'],
+        player: this.snapshotFor(client, loc),
+        minimap: this.worldManager.getMinimap(username),
+        room: resolveRoom(loc),
+        monsterMessage: this.monsterMessageFor(client, loc),
+        itemMessage: this.itemMessageFor(client, loc),
+      };
+    }
+
+    client.data.sleeping = true;
+    this.scheduleSleepTick(client);
+    return {
+      ok: true,
+      messages: ["You lie down and drift off to sleep. You won't see anything in the room until you wake up."],
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
+    };
+  }
+
+  private clearSleepTimer(clientId: string): void {
+    const timer = this.sleepTimers.get(clientId);
+    if (timer) {
+      clearTimeout(timer);
+      this.sleepTimers.delete(clientId);
+    }
+  }
+
+  // Deliberately a setTimeout chain, not setInterval — each firing picks a
+  // fresh random delay in [SLEEP_TICK_MIN_MS, SLEEP_TICK_MAX_MS) for the
+  // next one, so the cadence is irregular rather than a fixed period.
+  private scheduleSleepTick(client: GameSocket): void {
+    const delay = randomBetween(SLEEP_TICK_MIN_MS, SLEEP_TICK_MAX_MS);
+    const timer = setTimeout(() => this.sleepTick(client), delay);
+    timer.unref();
+    this.sleepTimers.set(client.id, timer);
+  }
+
+  private sleepTick(client: GameSocket): void {
+    if (!client.data.sleeping) return;
+
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      this.clearSleepTimer(client.id);
+      client.data.sleeping = false;
+      return;
+    }
+
+    const percent = randomBetween(SLEEP_HEAL_MIN_PERCENT, SLEEP_HEAL_MAX_PERCENT);
+    const healAmount = Math.round((percent / 100) * MAX_HP);
+    const before = client.data.hp;
+    client.data.hp = Math.min(MAX_HP, client.data.hp + healAmount);
+    const actualHeal = client.data.hp - before;
+
+    if (actualHeal > 0) {
+      void this.persistStats(username, {
+        hp: client.data.hp,
+        exp: client.data.exp,
+        level: client.data.level,
+        skills: client.data.skills,
+        inventory: client.data.inventory,
+        consumeExp: client.data.consumeExp,
+      });
+
+      client.emit('notice', {
+        messages: [`You stir in your sleep, recovering ${actualHeal} HP.`],
+        player: this.snapshotFor(client, loc),
+      });
+    }
+
+    this.scheduleSleepTick(client);
   }
 
   // "worldmap" — a coarse overview of every area and what it connects to
@@ -1051,8 +1301,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: loc ? this.snapshotFor(client, loc) : undefined,
       minimap: this.worldManager.getMinimap(username),
       room: loc ? resolveRoom(loc) : undefined,
-      monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
-      itemMessage: loc ? this.itemMessageFor(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
       worldMap: getWorldOverview(),
     };
   }
@@ -1069,8 +1319,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: loc ? this.snapshotFor(client, loc) : undefined,
       minimap: this.worldManager.getMinimap(username),
       room: loc ? resolveRoom(loc) : undefined,
-      monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
-      itemMessage: loc ? this.itemMessageFor(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
     };
   }
 
@@ -1083,17 +1333,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       'Available commands:',
       'n, s, e, w - move north, south, east, or west',
       'u, d - move up or down (not available yet)',
-      'attack/kill <mob> - attack a monster in your room',
+      'attack/kill (or k) <mob> - attack a monster in your room',
       'flee - break off a fight and flee in a random direction',
       'consume <item> - eat an item (on the ground, or in your inventory) for a chance at a skill',
       'grab/get <item> - pick up a dropped item into your inventory',
       'drop <item> - drop an item from your inventory onto the ground',
+      'where [mob or player] - list nearby players, or locate a monster/player by name',
       'inventory - show what you are carrying',
       'skills - show your learned skills',
       'look/l - look around the room again',
       'map - show this area\'s full layout',
       'scan - check the 4 adjacent rooms for monsters',
       'score - show your character\'s stats',
+      "sleep - close your eyes to rest, slowly recovering hp until you wake up",
       'worldmap - show an overview of the whole world',
       'clear - clear the message log',
       'logout/quit - log out',
@@ -1106,8 +1358,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       player: loc ? this.snapshotFor(client, loc) : undefined,
       minimap: this.worldManager.getMinimap(username),
       room: loc ? resolveRoom(loc) : undefined,
-      monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
-      itemMessage: loc ? this.itemMessageFor(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
     };
   }
 }

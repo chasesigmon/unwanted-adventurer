@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events';
 import { Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -21,13 +22,26 @@ export interface DeathDrop {
   skill?: ItemSkillReward;
 }
 
+// Emitted by wanderAll whenever a monster steps from one cell to another
+// (never on a kill/despawn) — GameGateway listens for this to tell any
+// connected player standing in the from/to cell that a monster just left
+// or arrived, since that's otherwise invisible between commands.
+export interface MonsterMoveEvent {
+  monster: Monster;
+  mapName: MapName;
+  fromRow: number;
+  fromCol: number;
+  toRow: number;
+  toCol: number;
+}
+
 // Autonomous NPCs, independent of any player connection: spawn
 // SKELETON_MAX_COUNT skeletons in the Labyrinth on boot, wander them
 // randomly on a timer, and top the population back up (one at a time) on a
 // slower timer whenever it's below the max. Everything here is in-memory
 // only — monsters aren't persisted and the population resets on restart.
 @Injectable()
-export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
+export class MonsterManagerService extends EventEmitter implements OnModuleInit, OnModuleDestroy {
   private readonly monsters = new Map<string, Monster>();
   // Monster ids currently locked in a fight — excluded from wanderAll so a
   // monster being fought can never wander out of reach mid-combat. See
@@ -41,6 +55,7 @@ export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
   private readonly respawnIntervalMs: number;
 
   constructor(configService: ConfigService<AppConfig, true>) {
+    super();
     this.wanderIntervalMs = configService.get('skeletonWanderIntervalMs', { infer: true });
     this.respawnIntervalMs = configService.get('skeletonRespawnIntervalMs', { infer: true });
   }
@@ -107,8 +122,19 @@ export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
       // Locked to the Labyrinth — refuse any step that would leave the map
       // or land on the exit tile. It just stays put this tick instead.
       if (map.isInBounds(nextRow, nextCol) && !map.getExitAt(nextRow, nextCol)) {
+        const fromRow = monster.row;
+        const fromCol = monster.col;
         monster.row = nextRow;
         monster.col = nextCol;
+        const event: MonsterMoveEvent = {
+          monster,
+          mapName: monster.mapName,
+          fromRow,
+          fromCol,
+          toRow: nextRow,
+          toCol: nextCol,
+        };
+        this.emit('moved', event);
       }
     }
   }
@@ -158,6 +184,19 @@ export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
     const needle = query.toLowerCase();
     for (const monster of this.monsters.values()) {
       if (monster.mapName === mapName && monster.row === row && monster.col === col && monster.kind.includes(needle)) {
+        return monster;
+      }
+    }
+    return undefined;
+  }
+
+  // Same partial, case-insensitive match as findMonsterByNameAt, but across
+  // every monster regardless of location — used by "where <mob>" to find
+  // one anywhere the player might sense it, not just their own room.
+  findMonsterByName(query: string): Monster | undefined {
+    const needle = query.toLowerCase();
+    for (const monster of this.monsters.values()) {
+      if (monster.kind.includes(needle)) {
         return monster;
       }
     }

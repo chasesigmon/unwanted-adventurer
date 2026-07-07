@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { NetworkManager, type DisconnectedDetail } from '../net/NetworkManager.js';
-import type { SyncPayload, KickedPayload, CombatUpdatePayload } from '../../server/game-gateway/types.js';
+import type { SyncPayload, KickedPayload, CombatUpdatePayload, NoticePayload } from '../../server/game-gateway/types.js';
 import type { PlayerSnapshot, MinimapCell, RoomInfo, WorldMapArea } from '../../shared/types.js';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
@@ -61,6 +61,9 @@ function appendEntries(existing: LogEntry[], incoming: LogEntry[]): LogEntry[] {
 function classifyServerLine(text: string): LogEntry['variant'] {
   if (text.startsWith('You killed ') || text.startsWith('You leveled up!') || text.includes('hits you for')) {
     return 'milestone';
+  }
+  if (text.includes('wanders into the room')) {
+    return 'sighting';
   }
   return undefined;
 }
@@ -124,6 +127,18 @@ type Action =
       monsterMessage?: string;
       itemMessage?: string;
     }
+  | {
+      // Pushed on the server's own timers, never in response to a command
+      // — a monster wandering into/out of the player's room, or a
+      // sleep-tick heal. `monsterMessage` uses `null` (not just omitted)
+      // to mean "authoritatively nothing here now" — see the reducer case,
+      // which needs to tell that apart from "this notice doesn't carry
+      // room info at all" (a heal tick).
+      type: 'notice';
+      messages: string[];
+      player?: PlayerSnapshot;
+      monsterMessage?: string | null;
+    }
   | { type: 'connectionMessage'; message: string }
   | { type: 'clearMessages' }
   | { type: 'closeWorldMap' }
@@ -179,6 +194,14 @@ function reducer(state: GameState, action: Action): GameState {
         ...sighted,
       };
     }
+    case 'notice': {
+      return {
+        ...state,
+        player: action.player ?? state.player,
+        monsterMessage: action.monsterMessage !== undefined ? action.monsterMessage : state.monsterMessage,
+        messages: appendEntries(state.messages, toEntries(action.messages)),
+      };
+    }
     case 'connectionMessage':
       return { ...state, messages: appendEntries(state.messages, [{ text: action.message }]) };
     case 'clearMessages':
@@ -227,6 +250,11 @@ export function useGameConnection(): UseGameConnection {
       dispatch({ type: 'combatUpdate', messages, player, monsterMessage, itemMessage });
     }
 
+    function onNotice(e: Event): void {
+      const { messages, player, monsterMessage } = (e as CustomEvent<NoticePayload>).detail;
+      dispatch({ type: 'notice', messages, player, monsterMessage });
+    }
+
     function onKicked(e: Event): void {
       const { message } = (e as CustomEvent<KickedPayload>).detail;
       network.disconnectAndReset();
@@ -258,6 +286,7 @@ export function useGameConnection(): UseGameConnection {
 
     network.addEventListener('sync', onSync);
     network.addEventListener('combatUpdate', onCombatUpdate);
+    network.addEventListener('notice', onNotice);
     network.addEventListener('kicked', onKicked);
     network.addEventListener('disconnected', onDisconnected);
     network.addEventListener('reconnect_failed', onReconnectFailed);
@@ -265,6 +294,7 @@ export function useGameConnection(): UseGameConnection {
     return () => {
       network.removeEventListener('sync', onSync);
       network.removeEventListener('combatUpdate', onCombatUpdate);
+      network.removeEventListener('notice', onNotice);
       network.removeEventListener('kicked', onKicked);
       network.removeEventListener('disconnected', onDisconnected);
       network.removeEventListener('reconnect_failed', onReconnectFailed);

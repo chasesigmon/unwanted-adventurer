@@ -58,10 +58,30 @@ export interface CombatUpdatePayload {
   ended: boolean;
 }
 
+// Pushed outside of any command ack, for events the server originates on
+// its own timers rather than in response to something the client sent —
+// a monster wandering into/out of the player's room (see
+// MonsterManagerService's 'moved' event) or a sleep-tick heal (see
+// GameGateway.sleepTick). `player` is only present when stats actually
+// changed (the heal tick); `monsterMessage` is only present for a
+// monster-movement notice, and is the authoritative post-move value (so
+// the client's own dedup state — see useGameConnection's withSightings —
+// stays in sync for next time).
+export interface NoticePayload {
+  messages: string[];
+  player?: PlayerSnapshot;
+  // `null` (not just omitted) means "authoritatively nothing here now" —
+  // omitted entirely means this notice doesn't carry room info at all
+  // (a heal tick). The client's dedup state only updates in the former
+  // case; see useGameConnection's 'notice' reducer case.
+  monsterMessage?: string | null;
+}
+
 export interface ServerToClientEvents {
   sync: (data: SyncPayload) => void;
   'session:kicked': (data: KickedPayload) => void;
   'combat:update': (data: CombatUpdatePayload) => void;
+  notice: (data: NoticePayload) => void;
 }
 
 export interface ClientToServerEvents {
@@ -86,6 +106,11 @@ export interface SocketData {
   skills: string[];
   inventory: string[];
   consumeExp: number;
+  // Toggled by "sleep" — never persisted (always false on a fresh
+  // connection). While true, monsterMessageFor/itemMessageFor report
+  // nothing at all, and a per-connection tick heals a random 5-10% of hp
+  // every 20-30s. See GameGateway.handleSleep/sleepTick.
+  sleeping: boolean;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
