@@ -28,6 +28,7 @@ import {
   randomBodyPartName,
   EQUIPMENT_SLOT_ORDER,
   EQUIPMENT_SLOT_LABELS,
+  allowedSlotsForRace,
 } from '../items/item-definitions.js';
 import type { EquipmentSlot } from '../items/item-definitions.js';
 import type { DroppedItem } from '../items/dropped-item.js';
@@ -63,7 +64,7 @@ import {
 } from '../players/skills.js';
 import { findHelpTopic } from '../help/help-topics.js';
 import { STARTING_MAP } from '../../shared/constants.js';
-import type { MapName } from '../../shared/constants.js';
+import type { MapName, Race } from '../../shared/constants.js';
 import { DIRECTION_ALIASES, DIRECTION_DELTAS } from '../../shared/directions.js';
 import { commandSchema } from './command.schema.js';
 import type { AppConfig } from '../config/configuration.js';
@@ -209,9 +210,11 @@ const SACRIFICE_MIN_LENGTH = 3;
 // worth, never a truncated worldmap.
 const WORTH_MIN_LENGTH = 2;
 
-// "kic" through "kick" — nothing else starts with "kic". "slap" (slime's
-// equivalent) has no partials requested, so it stays a literal match.
+// "kic" through "kick" — nothing else starts with "kic".
 const KICK_MIN_LENGTH = 3;
+
+// "sla" through "slap" — nothing else starts with "sla".
+const SLAP_MIN_LENGTH = 3;
 
 // The stat tick's interval is itself randomized (not a fixed
 // setInterval) — each firing schedules the next one at a fresh random
@@ -345,12 +348,14 @@ function groupedItemLines(items: DroppedItem[]): string[] {
 }
 
 // Shared by "equip"/"equipment" (bare) and "examine <player or monster>" —
-// same slot list/labels either way, just a different header and whichever
+// same labels either way, just a different header, slot list (see
+// allowedSlotsForRace — a slime only has head/torso), and whichever
 // equipment record is being described (a monster's is always empty; there's
 // no mechanic for monsters to equip anything yet, but the request asked for
-// the slots to be shown regardless).
-function equipmentLines(header: string, equipment: Record<string, string>): string[] {
-  return [header, ...EQUIPMENT_SLOT_ORDER.map((slot) => `${EQUIPMENT_SLOT_LABELS[slot]}: ${equipment[slot] ?? '(empty)'}`)];
+// the slots to be shown regardless, so monster callers just pass the full
+// EQUIPMENT_SLOT_ORDER).
+function equipmentLines(header: string, equipment: Record<string, string>, slots: EquipmentSlot[]): string[] {
+  return [header, ...slots.map((slot) => `${EQUIPMENT_SLOT_LABELS[slot]}: ${equipment[slot] ?? '(empty)'}`)];
 }
 
 // "examine <player or monster>" — a level-difference formula that scales
@@ -725,11 +730,12 @@ export class GameGateway
   // practice, every real/dummy player — see startingSkillsForRace); anyone
   // else has no entry in skillLevels and gets a flat 0% here, never
   // falling back to the bare formula. Parry additionally requires a
-  // wielded weapon. Takes
-  // plain data shapes (not GameSocket) so the same check covers a real
-  // player, a dummy, or a Monster (whose missing skillLevels/equipment
-  // fields make it naturally always 0 here — see MONSTER_DODGE_CHANCE for
-  // a monster's own flat dodge instead).
+  // wielded weapon — except for slime, which can't equip a weapon at all
+  // (see allowedSlotsForRace) but still parries bare-bodied. Takes plain
+  // data shapes (not GameSocket) so the same check covers a real player, a
+  // dummy, or a Monster (whose missing skillLevels/equipment fields make it
+  // naturally always 0 here — see MONSTER_DODGE_CHANCE for a monster's own
+  // flat dodge instead).
   private computeDodgeChance(
     defender: { level: number; dexterity: number; skillLevels?: Record<string, number> },
     attacker: { level: number; dexterity: number }
@@ -740,11 +746,18 @@ export class GameGateway
   }
 
   private computeParryChance(
-    defender: { level: number; strength: number; skillLevels?: Record<string, number>; equipment?: Record<string, string> },
+    defender: {
+      level: number;
+      strength: number;
+      race?: Race;
+      skillLevels?: Record<string, number>;
+      equipment?: Record<string, string>;
+    },
     attacker: { level: number; strength: number }
   ): number {
     const skill = defender.skillLevels?.[PARRY];
-    if (skill === undefined || !defender.equipment?.weapon) return 0;
+    if (skill === undefined) return 0;
+    if (defender.race !== 'slime' && !defender.equipment?.weapon) return 0;
     return avoidChance(defender.level, defender.strength, skill, attacker.level, attacker.strength);
   }
 
@@ -791,24 +804,37 @@ export class GameGateway
   // Consumes one queued active-skill use (see SocketData
   // .queuedActiveSkillUses/"kick"-or-"slap" command) if any are waiting and
   // the target is still alive — an extra KICK_DAMAGE damage instance
-  // layered onto the same exchange as the normal weapon swing, growing the
-  // skill on each use. Whichever of kick/slap the player actually has (see
-  // activeSkillFor) determines the verb. Returns the message lines and
+  // layered onto the same exchange as the normal weapon swing. The kick/
+  // slap itself can be dodged/parried too (see `computeMiss`, supplied by
+  // the caller since a monster target and a player-like target use
+  // different avoidance mechanics) — the skill grows either way, hit or
+  // missed, same as dagger. Whichever of kick/slap the player actually has
+  // (see activeSkillFor) determines the verb. Returns the message lines and
   // updated death status, or undefined if nothing was queued (in which
   // case the caller's own `died` should be left as-is).
   private processQueuedActiveSkill(
     client: GameSocket,
     applyDamage: (amount: number) => { died: boolean },
-    targetLabel: string
+    targetLabel: string,
+    computeMiss: (verb: string) => string | undefined
   ): { messages: string[]; died: boolean } | undefined {
     if (client.data.queuedActiveSkillUses <= 0) return undefined;
     const skill = activeSkillFor(client.data.skillLevels);
     if (!skill) return undefined;
-    const verb = ACTIVE_SKILL_VERB[skill];
+    const verb = ACTIVE_SKILL_VERB[skill] ?? 'kick';
     client.data.queuedActiveSkillUses -= 1;
+
+    const messages: string[] = [];
+    let died = false;
+    const missMessage = computeMiss(verb);
+    if (missMessage) {
+      messages.push(missMessage);
+    } else {
+      ({ died } = applyDamage(KICK_DAMAGE));
+      messages.push(`You ${verb} ${targetLabel} for ${KICK_DAMAGE} damage!`);
+    }
+    // Grows whether the kick/slap connected or was evaded.
     const growthMessage = this.maybeGrowSkill(client, skill, SKILL_GROWTH_CHANCE);
-    const { died } = applyDamage(KICK_DAMAGE);
-    const messages = [`You ${verb} ${targetLabel} for ${KICK_DAMAGE} damage!`];
     if (growthMessage) messages.push(growthMessage);
     return { messages, died };
   }
@@ -857,19 +883,20 @@ export class GameGateway
       const attackDamage = weaponDamage + this.attributeAttackBonus(client, target);
       ({ died } = this.monsterManager.applyDamage(target.id, attackDamage));
       messages.push(`You ${verb} the ${kind} for ${attackDamage} damage!`);
-      // Dagger only grows through hits actually landed while wielding one
-      // — not every hit regardless of weapon.
-      if (isWieldingDagger) {
-        const daggerGrowth = this.maybeGrowSkill(client, DAGGER, SKILL_GROWTH_CHANCE);
-        if (daggerGrowth) messages.push(daggerGrowth);
-      }
+    }
+    // Dagger grows from every swing while wielding one — hit or missed
+    // (dodged) alike, not just a landed hit.
+    if (isWieldingDagger) {
+      const daggerGrowth = this.maybeGrowSkill(client, DAGGER, SKILL_GROWTH_CHANCE);
+      if (daggerGrowth) messages.push(daggerGrowth);
     }
 
     if (!died) {
       const activeSkillResult = this.processQueuedActiveSkill(
         client,
         (amount) => this.monsterManager.applyDamage(target.id, amount),
-        `the ${kind}`
+        `the ${kind}`,
+        (verb) => (Math.random() < MONSTER_DODGE_CHANCE ? `The ${kind} dodges your ${verb}!` : undefined)
       );
       if (activeSkillResult) {
         messages.push(...activeSkillResult.messages);
@@ -1050,16 +1077,24 @@ export class GameGateway
       const attackDamage = Math.max(0, weaponDamage + attributeBonus - raceReduction);
       ({ died } = applyDamageToTarget(attackDamage));
       messages.push(`You ${verb} ${targetData.username} for ${attackDamage} damage!`);
-      if (attackerWieldingDagger) {
-        const daggerGrowth = this.maybeGrowSkill(client, DAGGER, SKILL_GROWTH_CHANCE);
-        if (daggerGrowth) messages.push(daggerGrowth);
-      }
       const resistGrowth = this.growSkillFor(target, lesserRaceResistanceName(client.data.race), BODY_PART_SKILL_GROWTH_CHANCE);
       if (resistGrowth) defenderMessages.push(resistGrowth);
     }
+    // Dagger grows from every swing while wielding one — hit or missed
+    // (dodged/parried) alike, not just a landed hit.
+    if (attackerWieldingDagger) {
+      const daggerGrowth = this.maybeGrowSkill(client, DAGGER, SKILL_GROWTH_CHANCE);
+      if (daggerGrowth) messages.push(daggerGrowth);
+    }
 
     if (!died) {
-      const activeSkillResult = this.processQueuedActiveSkill(client, applyDamageToTarget, targetData.username);
+      const activeSkillResult = this.processQueuedActiveSkill(client, applyDamageToTarget, targetData.username, (verb) => {
+        const skillDodged = Math.random() < this.computeDodgeChance(targetData, client.data);
+        const skillParried = !skillDodged && Math.random() < this.computeParryChance(targetData, client.data);
+        if (skillDodged) return `${targetData.username} dodges your ${verb}!`;
+        if (skillParried) return `${targetData.username} parries your ${verb}!`;
+        return undefined;
+      });
       if (activeSkillResult) {
         messages.push(...activeSkillResult.messages);
         died = activeSkillResult.died;
@@ -1091,10 +1126,13 @@ export class GameGateway
       const counterDamage = counterWeaponDamage + counterAttributeBonus;
       client.data.hp = Math.max(0, client.data.hp - counterDamage);
       messages.push(`${targetData.username} ${thirdPersonVerb(counterVerb)} you for ${counterDamage} damage.`);
-      if (defenderWieldingDagger) {
-        const growth = this.growSkillFor(target, DAGGER, SKILL_GROWTH_CHANCE);
-        if (growth) defenderMessages.push(growth);
-      }
+    }
+    // Same "every swing counts" rule as the attacker's own dagger, above —
+    // the defender's counter-attack grows their dagger whether it landed
+    // or was dodged/parried.
+    if (defenderWieldingDagger) {
+      const growth = this.growSkillFor(target, DAGGER, SKILL_GROWTH_CHANCE);
+      if (growth) defenderMessages.push(growth);
     }
 
     // The HP-remaining line goes at the very bottom, after every hit and
@@ -1554,8 +1592,8 @@ export class GameGateway
       return this.handleActiveSkillCommand(client, KICK, 'kick');
     }
 
-    // "slap" — slime's equivalent of kick; no partials requested.
-    if (text === 'slap') {
+    // "sla"/"slap" — slime's equivalent of kick.
+    if (matchesPartial(text, 'slap', SLAP_MIN_LENGTH)) {
       return this.handleActiveSkillCommand(client, SLAP, 'slap');
     }
 
@@ -2463,6 +2501,9 @@ export class GameGateway
     if (!definition) {
       return buildAck([`You can't equip the ${itemName}.`], false);
     }
+    if (!allowedSlotsForRace(client.data.race).includes(definition.slot)) {
+      return buildAck([`You can't equip the ${itemName} as a ${client.data.race}.`], false);
+    }
 
     const index = client.data.inventory.indexOf(itemName);
     client.data.inventory = [...client.data.inventory.slice(0, index), ...client.data.inventory.slice(index + 1)];
@@ -2566,7 +2607,7 @@ export class GameGateway
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
 
-    const messages = equipmentLines('Your equipment:', client.data.equipment);
+    const messages = equipmentLines('Your equipment:', client.data.equipment, allowedSlotsForRace(client.data.race));
 
     return {
       ok: true,
@@ -2991,7 +3032,7 @@ export class GameGateway
         [
           monsterDescriptionFor(monster.kind),
           powerComparisonMessage(client.data.level, monster.level, `The ${monster.kind}`),
-          ...equipmentLines(`The ${monster.kind}'s equipment:`, {}),
+          ...equipmentLines(`The ${monster.kind}'s equipment:`, {}, EQUIPMENT_SLOT_ORDER),
         ],
         true
       );
@@ -3004,7 +3045,7 @@ export class GameGateway
         [
           `${other.username} is a level ${other.level} ${other.race}.`,
           powerComparisonMessage(client.data.level, other.level, other.username),
-          ...equipmentLines(`${other.username}'s equipment:`, other.equipment),
+          ...equipmentLines(`${other.username}'s equipment:`, other.equipment, allowedSlotsForRace(other.race)),
         ],
         true
       );

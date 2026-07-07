@@ -202,3 +202,13 @@ export const EQUIPMENT_SLOT_LABELS: Record<EquipmentSlot, string> = {
   rightShin: 'Right Shin',
   boots: 'Boots',
 };
+
+// Slimes have no limbs, ears, fingers, or shape to speak of — a helmet
+// and a torso wrap are the only things that make sense on one, so every
+// other slot (including "weapon" — a slime can't wield anything) is off
+// limits. Every other race can use the full slot list. See
+// GameGateway.handleEquip/handleEquipmentView/handleExamine.
+export function allowedSlotsForRace(race: Race): EquipmentSlot[] {
+  if (race === 'slime') return ['head', 'torso'];
+  return EQUIPMENT_SLOT_ORDER;
+}

@@ -14,6 +14,13 @@ function startingSkillLevelsFor(race: Race): Record<string, number> {
   return Object.fromEntries(startingSkillsForRace(race).map((skill) => [skill, STARTING_SKILL_PERCENT]));
 }
 
+// Slime can't wield a weapon at all (see item-definitions.ts's
+// allowedSlotsForRace) — every other race starts pre-equipped with a bone
+// dagger for consistent combat math against it.
+function startingEquipmentFor(race: Race): Record<string, string> {
+  return race === 'slime' ? {} : { weapon: 'bone dagger' };
+}
+
 // Fixed "test/dummy players" — practice targets for "murder <player>",
 // each pre-equipped with a bone dagger. Not real accounts (no login, no
 // socket), but everything that treats a *real* connected player as
@@ -85,7 +92,7 @@ export class DummyPlayerService implements OnModuleInit {
       wisdom: DUMMY_BASE_ATTRIBUTE,
       dexterity: DUMMY_BASE_ATTRIBUTE,
       constitution: DUMMY_BASE_ATTRIBUTE,
-      equipment: { weapon: 'bone dagger' },
+      equipment: startingEquipmentFor(config.race),
       inventory: [],
       skillLevels: startingSkillLevelsFor(config.race),
     });
@@ -132,9 +139,10 @@ export class DummyPlayerService implements OnModuleInit {
     dummy.row = row;
     dummy.col = col;
     dummy.hp = dummy.maxHp;
-    // Always a fresh bone dagger — these are meant to be murdered
-    // repeatedly for testing, not a depleting resource.
-    dummy.equipment = { weapon: 'bone dagger' };
+    // Always a fresh bone dagger (except slime, which can't wield one) —
+    // these are meant to be murdered repeatedly for testing, not a
+    // depleting resource.
+    dummy.equipment = startingEquipmentFor(dummy.race);
     dummy.inventory = [];
   }
 }
