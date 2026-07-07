@@ -32,15 +32,24 @@ import type { Location } from '../game/types.js';
 import type { Monster } from '../monsters/monster.js';
 import type { Direction } from '../../shared/directions.js';
 import type { PlayerSnapshot } from '../../shared/types.js';
-import type { GameServer, GameSocket, CommandAck, CombatStatus } from './types.js';
+import type { GameServer, GameSocket, CommandAck } from './types.js';
 
-const ATTACK_PREFIX = 'attack ';
-const CONSUME_PREFIX = 'consume ';
 const PLAYER_ATTACK_DAMAGE = 6;
 const SKELETON_ATTACK_DAMAGE = 2;
 const ATTACK_INTERVAL_MS = 4000;
 const SKILL_GAIN_CHANCE = 0.2;
 const ALL_DIRECTIONS: Direction[] = ['north', 'south', 'east', 'west'];
+
+// "attack"/"kill" can both be partially typed ("att", "ki", ...). A
+// minimum length keeps a bare single letter from being swallowed here
+// instead of falling through to movement — "a" must stay west, not become
+// a 1-letter prefix of "attack".
+const ATTACK_VERBS = ['attack', 'kill'];
+const ATTACK_VERB_MIN_LENGTH = 2;
+
+// "inventory" can be partially typed too ("inv", "invent", ...), but as a
+// bare command (it takes no argument) — same minimum-length reasoning.
+const INVENTORY_MIN_LENGTH = 2;
 
 interface ActiveCombat {
   timer: NodeJS.Timeout;
@@ -53,6 +62,10 @@ interface ActiveCombat {
 function articleFor(word: string, capitalized = false): string {
   const article = /^[aeiou]/i.test(word) ? 'an' : 'a';
   return capitalized ? article.charAt(0).toUpperCase() + article.slice(1) : article;
+}
+
+function isAttackVerb(word: string): boolean {
+  return word.length >= ATTACK_VERB_MIN_LENGTH && ATTACK_VERBS.some((verb) => verb.startsWith(word));
 }
 
 // cors/heartbeat are configured centrally in ws-adapter.ts, not here — this
@@ -146,6 +159,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.exp = doc?.exp ?? 0;
     client.data.level = doc?.level ?? 1;
     client.data.skills = doc?.skills ?? [];
+    client.data.inventory = doc?.inventory ?? [];
 
     await this.worldManager.addPlayer(username, mapName, row, col);
 
@@ -171,6 +185,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       level: client.data.level,
       maxTnl: maxTnlForLevel(client.data.level),
       skills: client.data.skills,
+      inventory: client.data.inventory,
     };
   }
 
@@ -210,9 +225,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // handleAttack and every subsequent tick in tickCombat: player swings for
   // a flat 6 damage; if that doesn't kill it, it swings back (reduced by 1
   // if the target is undead and the player has learned resistance to
-  // that). Returns one line per event (hit, kill, level-up, drop,
-  // counter-hit) so the client can log each separately rather than one
-  // concatenated sentence.
+  // that). Returns one line per event (hit, hp remaining, kill, level-up,
+  // drop(s), counter-hit) so the client can log each separately — nothing
+  // here is a persistent status display, it's all just message lines.
   private resolveAttackExchange(client: GameSocket, target: Monster): { messages: string[]; died: boolean } {
     const { kind, expReward } = target;
     const { died } = this.monsterManager.applyDamage(target.id, PLAYER_ATTACK_DAMAGE);
@@ -230,12 +245,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         messages.push(`You leveled up! You are now level ${level}!`);
       }
 
-      const drop = this.monsterManager.getDeathDrop(target.kind);
-      if (drop) {
+      this.monsterManager.getDeathDrops(target.kind).forEach((drop, i) => {
         this.itemManager.dropItem(drop.name, target.mapName, target.row, target.col, drop.skillReward);
-        messages.push(`The ${kind} crumbles, leaving behind ${articleFor(drop.name)} ${drop.name}.`);
-      }
+        messages.push(
+          i === 0
+            ? `The ${kind} crumbles, leaving behind ${articleFor(drop.name)} ${drop.name}.`
+            : `It also drops ${articleFor(drop.name)} ${drop.name}.`
+        );
+      });
     } else {
+      messages.push(`The ${kind} has ${this.hpPercent(target)}% HP remaining.`);
+
       const reduction = target.undead ? undeadDamageReduction(client.data.skills) : 0;
       const damage = Math.max(0, SKELETON_ATTACK_DAMAGE - reduction);
       client.data.hp = Math.max(0, client.data.hp - damage);
@@ -288,28 +308,20 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
+      inventory: client.data.inventory,
     });
-
-    if (died) {
-      this.clearCombat(client.id);
-      client.emit('combat:update', {
-        messages,
-        player: this.snapshotFor(client, loc),
-        monsterMessage: this.monsterMessageFor(loc),
-        itemMessage: this.itemMessageFor(loc),
-        ended: true,
-      });
-      return;
-    }
 
     client.emit('combat:update', {
       messages,
       player: this.snapshotFor(client, loc),
-      monster: { monsterName: target.kind, hpPercent: this.hpPercent(target) },
       monsterMessage: this.monsterMessageFor(loc),
       itemMessage: this.itemMessageFor(loc),
-      ended: false,
+      ended: died,
     });
+
+    if (died) {
+      this.clearCombat(client.id);
+    }
   }
 
   // Awaited on disconnect (nothing else to do but wait); fire-and-forget
@@ -326,11 +338,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   }
 
   // Same awaited-on-disconnect / fire-and-forget-after-action split as
-  // persistPosition, for the same reason — combat and consuming now
-  // mutate hp/exp/level/skills mid-session (see handleAttack, handleConsume).
+  // persistPosition, for the same reason — combat, consuming, and grabbing
+  // now mutate hp/exp/level/skills/inventory mid-session.
   private async persistStats(
     username: string,
-    stats: { hp: number; exp: number; level: number; skills: string[] }
+    stats: { hp: number; exp: number; level: number; skills: string[]; inventory: string[] }
   ): Promise<void> {
     try {
       await this.playersService.updateStats(username, stats);
@@ -356,6 +368,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
+      inventory: client.data.inventory,
     });
   }
 
@@ -380,6 +393,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     const text = parsed.data.toLowerCase();
 
+    const spaceIdx = text.indexOf(' ');
+    const verb = spaceIdx === -1 ? text : text.slice(0, spaceIdx);
+    const rest = spaceIdx === -1 ? '' : text.slice(spaceIdx + 1).trim();
+
     if (text === 'logout') {
       await this.sessionStore.clearActiveSession(username);
       this.activeConnections.clearActiveSocketIfCurrent(username, client.id);
@@ -391,18 +408,27 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: true, messages: ['You have logged out.'], loggedOut: true };
     }
 
-    if (text === 'attack' || text.startsWith(ATTACK_PREFIX)) {
-      const mobQuery = text === 'attack' ? '' : text.slice(ATTACK_PREFIX.length).trim();
-      return this.handleAttack(client, mobQuery);
+    // "attack"/"kill" and any of their prefixes (min 2 chars) all work —
+    // "att skeleton", "ki skel", "attack skeleton" are equivalent.
+    if (isAttackVerb(verb)) {
+      return this.handleAttack(client, rest);
     }
 
     if (text === 'flee') {
       return this.handleFlee(client);
     }
 
-    if (text === 'consume' || text.startsWith(CONSUME_PREFIX)) {
-      const itemQuery = text === 'consume' ? '' : text.slice(CONSUME_PREFIX.length).trim();
-      return this.handleConsume(client, itemQuery);
+    if (verb === 'consume') {
+      return this.handleConsume(client, rest);
+    }
+
+    if (verb === 'grab' || verb === 'get') {
+      return this.handleGrab(client, rest);
+    }
+
+    // Bare command, no argument — "inv", "inven", "inventory", ...
+    if (text.length >= INVENTORY_MIN_LENGTH && 'inventory'.startsWith(text)) {
+      return this.handleInventory(client);
     }
 
     if (text === 'skills') {
@@ -481,11 +507,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
-  // "attack <mob>" starts (or redirects) an auto-attack loop: the player
-  // swings immediately (resolved synchronously, in this ack), and if the
-  // target survives, a timer takes over and repeats the same exchange
-  // every ATTACK_INTERVAL_MS via tickCombat until it dies, wanders out of
-  // reach, or the player flees.
+  // "attack <mob>" (or "kill", or a prefix of either) starts or redirects
+  // an auto-attack loop: the player swings immediately (resolved
+  // synchronously, in this ack), and if the target survives, a timer takes
+  // over and repeats the same exchange every ATTACK_INTERVAL_MS via
+  // tickCombat until it dies, wanders out of reach, or the player flees.
   private async handleAttack(client: GameSocket, mobQuery: string): Promise<CommandAck> {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
@@ -493,7 +519,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
     }
 
-    const buildAck = (messages: string[], ok: boolean, combat?: CombatStatus | null): CommandAck => ({
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
       ok,
       messages,
       player: this.snapshotFor(client, loc),
@@ -501,7 +527,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       room: resolveRoom(loc),
       monsterMessage: this.monsterMessageFor(loc),
       itemMessage: this.itemMessageFor(loc),
-      combat,
     });
 
     if (!mobQuery) {
@@ -517,10 +542,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // an extra hit or resetting the 4-second cadence.
     const existing = this.activeCombats.get(client.id);
     if (existing && existing.targetId === target.id) {
-      return buildAck([`You are already attacking the ${target.kind}.`], true, {
-        monsterName: target.kind,
-        hpPercent: this.hpPercent(target),
-      });
+      return buildAck(
+        [`You are already attacking the ${target.kind}.`, `The ${target.kind} has ${this.hpPercent(target)}% HP remaining.`],
+        true
+      );
     }
 
     // Redirecting to a new target cancels whatever fight was running.
@@ -532,10 +557,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
+      inventory: client.data.inventory,
     });
 
     if (died) {
-      return buildAck(messages, true, null);
+      return buildAck(messages, true);
     }
 
     const targetId = target.id;
@@ -543,13 +569,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     timer.unref();
     this.activeCombats.set(client.id, { timer, targetId });
 
-    return buildAck(messages, true, { monsterName: target.kind, hpPercent: this.hpPercent(target) });
+    return buildAck(messages, true);
   }
 
-  // The only way out of a fight: ends it immediately (combat: null — see
-  // CommandAck) and moves the player one step in a random direction that
-  // actually leads somewhere, same underlying move pipeline as ordinary
-  // movement (so it can cross a map exit same as a normal step would).
+  // The only way out of a fight: ends it immediately and moves the player
+  // one step in a random direction that actually leads somewhere, same
+  // underlying move pipeline as ordinary movement (so it can cross a map
+  // exit same as a normal step would).
   private async handleFlee(client: GameSocket): Promise<CommandAck> {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
@@ -584,7 +610,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         room: resolveRoom(loc),
         monsterMessage: this.monsterMessageFor(loc),
         itemMessage: this.itemMessageFor(loc),
-        combat: null,
       };
     }
 
@@ -615,7 +640,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       room: resolveRoom(newLoc),
       monsterMessage: this.monsterMessageFor(newLoc),
       itemMessage: this.itemMessageFor(newLoc),
-      combat: null,
     };
   }
 
@@ -669,13 +693,72 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       exp: client.data.exp,
       level: client.data.level,
       skills: client.data.skills,
+      inventory: client.data.inventory,
     });
 
     return buildAck([`You consume the ${item.name}.`, `You have gained ${item.skillReward}!`], true);
   }
 
+  // "grab"/"get <item>" — same partial-name matching as consume, but adds
+  // the item to the player's permanent inventory instead of eating it.
+  private async handleGrab(client: GameSocket, itemQuery: string): Promise<CommandAck> {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(loc),
+      itemMessage: this.itemMessageFor(loc),
+    });
+
+    if (!itemQuery) {
+      return buildAck(['Grab what?'], false);
+    }
+
+    const item = this.itemManager.findItemByNameAt(loc.mapName, loc.row, loc.col, itemQuery);
+    if (!item) {
+      return buildAck([`There is no "${itemQuery}" here to grab.`], false);
+    }
+
+    this.itemManager.removeItem(item.id);
+    client.data.inventory = [...client.data.inventory, item.name];
+    void this.persistStats(username, {
+      hp: client.data.hp,
+      exp: client.data.exp,
+      level: client.data.level,
+      skills: client.data.skills,
+      inventory: client.data.inventory,
+    });
+
+    return buildAck([`You pick up the ${item.name}.`], true);
+  }
+
   // Purely informational — no state change, so unlike every other handler
-  // here this doesn't need to be async.
+  // here neither of these needs to be async.
+  private handleInventory(client: GameSocket): CommandAck {
+    const { username, inventory } = client.data;
+    const loc = this.worldManager.getLocation(username);
+
+    const messages = inventory.length > 0 ? [`Your inventory: ${inventory.join(', ')}.`] : ['Your inventory is empty.'];
+
+    return {
+      ok: true,
+      messages,
+      player: loc ? this.snapshotFor(client, loc) : undefined,
+      minimap: this.worldManager.getMinimap(username),
+      room: loc ? resolveRoom(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(loc) : undefined,
+    };
+  }
+
   private handleSkills(client: GameSocket): CommandAck {
     const { username, skills } = client.data;
     const loc = this.worldManager.getLocation(username);

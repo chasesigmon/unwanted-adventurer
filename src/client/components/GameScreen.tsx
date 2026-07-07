@@ -1,15 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { PlayerSnapshot, MinimapCell, RoomInfo } from '../../shared/types.js';
-import type { CombatStatus } from '../../server/game-gateway/types.js';
 import { Minimap } from './Minimap.js';
 
 export interface GameScreenProps {
   player: PlayerSnapshot | null;
   minimap: MinimapCell[];
   room: RoomInfo | null;
-  monsterMessage: string | null;
-  itemMessage: string | null;
-  combat: CombatStatus | null;
   messages: string[];
   onCommand: (text: string) => void;
 }
@@ -31,7 +27,7 @@ const MOVE_KEYS: Record<string, string> = {
   ArrowRight: 'd',
 };
 
-export function GameScreen({ player, minimap, room, monsterMessage, itemMessage, combat, messages, onCommand }: GameScreenProps): JSX.Element {
+export function GameScreen({ player, minimap, room, messages, onCommand }: GameScreenProps): JSX.Element {
   const [command, setCommand] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -112,13 +108,6 @@ export function GameScreen({ player, minimap, room, monsterMessage, itemMessage,
                 </div>
               ))}
             </div>
-            {monsterMessage && <div id="monster-message">{monsterMessage}</div>}
-            {itemMessage && <div id="item-message">{itemMessage}</div>}
-            {combat && (
-              <div id="combat-status">
-                {combat.monsterName}: {combat.hpPercent}% HP
-              </div>
-            )}
             {room && (
               <>
                 <div id="room-name">{room.name}</div>
@@ -145,7 +134,7 @@ export function GameScreen({ player, minimap, room, monsterMessage, itemMessage,
         type="text"
         maxLength={32}
         autoComplete="off"
-        placeholder="Type a command (w, a, s, d, up, down, attack <mob>, flee, consume <item>, skills, clear) and press Enter..."
+        placeholder="Type a command (w/a/s/d, attack or kill <mob>, flee, consume/grab/get <item>, inventory, skills, clear) and press Enter..."
         value={command}
         onChange={(e) => setCommand(e.target.value)}
         onKeyDown={handleKeyDown}

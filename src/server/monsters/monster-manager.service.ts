@@ -13,6 +13,7 @@ const SKELETON_STARTING_HP = 20;
 const SKELETON_EXP_REWARD = 10;
 const SKELETON_HOME_MAP: MapName = 'Labyrinth';
 const SKELETON_BODY_PARTS = ['leg', 'arm', 'hand', 'skull', 'rib'];
+const BONE_DAGGER_DROP_CHANCE = 0.2;
 
 export interface DeathDrop {
   name: string;
@@ -164,14 +165,23 @@ export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
     return Array.from(this.monsters.values());
   }
 
-  // What a monster kind leaves behind on death, or undefined if it doesn't
-  // drop anything — only skeletons have a loot table right now. Kept keyed
-  // by kind (not the `undead` flag) since future undead kinds could have a
-  // different body-part pool, or no drop at all.
-  getDeathDrop(kind: MonsterKind): DeathDrop | undefined {
-    if (kind !== 'skeleton') return undefined;
-    const name = SKELETON_BODY_PARTS[Math.floor(Math.random() * SKELETON_BODY_PARTS.length)];
-    if (!name) return undefined;
-    return { name, skillReward: LESSER_UNDEAD_RESISTANCE };
+  // What a monster kind leaves behind on death — always empty for kinds
+  // without a loot table (only skeletons have one right now, kept keyed
+  // by kind rather than the `undead` flag since future undead kinds could
+  // have a different pool, or none). Skeletons always drop a body part,
+  // plus a separate BONE_DAGGER_DROP_CHANCE roll for a bone dagger, so a
+  // single kill can yield zero, one, or two items.
+  getDeathDrops(kind: MonsterKind): DeathDrop[] {
+    if (kind !== 'skeleton') return [];
+
+    const drops: DeathDrop[] = [];
+    const partName = SKELETON_BODY_PARTS[Math.floor(Math.random() * SKELETON_BODY_PARTS.length)];
+    if (partName) {
+      drops.push({ name: partName, skillReward: LESSER_UNDEAD_RESISTANCE });
+    }
+    if (Math.random() < BONE_DAGGER_DROP_CHANCE) {
+      drops.push({ name: 'bone dagger' });
+    }
+    return drops;
   }
 }

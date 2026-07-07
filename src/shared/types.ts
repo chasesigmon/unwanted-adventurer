@@ -19,6 +19,8 @@ export interface PlayerSnapshot {
   // resistance"). Not currently displayed anywhere client-side, but part
   // of the full player snapshot like every other stat.
   skills: string[];
+  // Items picked up via "grab"/"get <item>" — see the "inventory" command.
+  inventory: string[];
 }
 
 export interface MinimapCell {

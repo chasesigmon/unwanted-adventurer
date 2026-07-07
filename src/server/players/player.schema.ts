@@ -43,6 +43,10 @@ export class Player {
   @Prop({ type: [String], default: [] })
   skills!: string[];
 
+  // Items picked up via "grab"/"get <item>" — see items/item-manager.service.ts.
+  @Prop({ type: [String], default: [] })
+  inventory!: string[];
+
   @Prop({ default: Date.now })
   lastLogin!: Date;
 }

@@ -195,89 +195,98 @@ each live monster's id/kind/hp/position for diagnostics.
 
 ### Combat
 
-`attack <mob>` (`GameGateway.handleAttack`) starts an auto-attack loop
-against a monster in the player's current room.
+`attack <mob>` — or `kill`, or any prefix of either at least 2 characters
+(`att`, `atta`, `ki`, `kil`, ...; see `isAttackVerb`) — starts an
+auto-attack loop against a monster in the player's current room.
 `MonsterManagerService.findMonsterByNameAt` does a case-insensitive
 substring match against the monster's kind, so `attack skel` and
-`attack skeleton` both find a skeleton (`"Attack what?"` if no mob name
-is given, `There is no "<query>" here to attack.` if nothing matches).
+`kill skeleton` both find a skeleton (`"Attack what?"` if no mob name is
+given, `There is no "<query>" here to attack.` if nothing matches).
 
 Each exchange (`GameGateway.resolveAttackExchange`) is the same basic
 hit: the player swings first for a flat 6 damage
 (`MonsterManagerService.applyDamage`), producing its own log line —
 `"You hit the skeleton for 6 damage!"` — separate from whatever happens
-next. If that hit kills it, the monster is removed immediately, the
-player's `exp`/`level` are updated via `leveling.ts`, it drops loot (see
-"Dropped items and skills" below), and `"You killed the skeleton!"`
-(plus `"You leveled up! ..."` and a drop line, as they apply) is appended,
-each as its own line. If it survives, it swings back — 2 damage, or 1 if
-the monster is `undead` and the player knows "lesser undead resistance"
-(`players/skills.ts`'s `undeadDamageReduction`) — clamped so the player's
-`hp` never goes below 0, appending `"The skeleton hits you for 2
-damage."` (or `1`) as its own line. `CommandAck.messages` and
-`CombatUpdatePayload.messages` are both `string[]` for exactly this
-reason — the client appends each element as a separate line rather than
-rendering one concatenated sentence.
+next. If it survives, the next line is `"The skeleton has 70% HP
+remaining."`, then it swings back — 2 damage, or 1 if the monster is
+`undead` and the player knows "lesser undead resistance"
+(`players/skills.ts`'s `undeadDamageReduction`) — clamped so the
+player's `hp` never goes below 0, appending `"The skeleton hits you for
+2 damage."` (or `1`). If the hit kills it instead, the monster is removed
+immediately, the player's `exp`/`level` are updated via `leveling.ts`, it
+drops loot (see "Dropped items and skills" below), and `"You killed the
+skeleton!"` (plus `"You leveled up! ..."` and a drop line per item, as
+they apply) is appended. Every one of these is its own array element —
+`CommandAck.messages` and `CombatUpdatePayload.messages` are both
+`string[]` for exactly this reason, so the client renders each as a
+separate line rather than one concatenated sentence, and nothing about
+combat needs a persistent status display of its own (see "Message log"
+below).
 
 The first exchange happens synchronously, in the `attack` command's own
-ack (which also carries a `combat: { monsterName, hpPercent }` status for
-the client to display). If the target survives, `GameGateway` starts a
-per-connection `setInterval` (`ATTACK_INTERVAL_MS`, 4s) that repeats the
-same exchange automatically — `tickCombat` — pushing a `combat:update`
-Socket.io event after every hit (there's no ack to piggyback on, since
-the player isn't sending anything) with the updated message lines, player
-snapshot, and hp percent, until the monster dies (`ended: true`, monster
-omitted, kill message) or it wanders out of the player's cell before the
-next tick (skeletons keep wandering during a fight — nothing pauses
-them).
+ack. If the target survives, `GameGateway` starts a per-connection
+`setInterval` (`ATTACK_INTERVAL_MS`, 4s) that repeats the same exchange
+automatically — `tickCombat` — pushing a `combat:update` Socket.io event
+after every hit (there's no ack to piggyback on, since the player isn't
+sending anything) with the updated message lines and player snapshot,
+until the monster dies (`ended: true`) or it wanders out of the player's
+cell before the next tick (skeletons keep wandering during a fight —
+nothing pauses them).
 
 Re-attacking the same target while already fighting it is a no-op (just
-reports current status, doesn't land a bonus hit or reset the 4s clock);
-attacking a different target cancels the old loop and starts a new one.
-`CommandAck.combat` is tri-state (`CombatStatus` object / explicit `null`
-for "just ended" / omitted for "not applicable, don't touch the client's
-existing display") for the same reason `monsterMessage` is tied to
-`room`'s presence — see `game-gateway/types.ts`.
+reports current status and hp again, doesn't land a bonus hit or reset
+the 4s clock); attacking a different target cancels the old loop and
+starts a new one.
 
 **A fight blocks ordinary movement.** While `activeCombats` has an entry
 for a connection, every w/a/s/d/up/down command is refused outright
 (`"You're in a fight! Type \"flee\" to escape, or keep attacking."`) —
 the move is never even attempted. The only way out is the `flee`
-command (`GameGateway.handleFlee`): it ends the fight (`combat: null`)
-and then moves the player one step in a random direction that actually
-leads somewhere, chosen from whichever of the 4 cardinal directions
-`resolveMove` reports as in-bounds from the current cell
-(`GameGateway.fleeableDirections`) — the same move pipeline as ordinary
-movement, so fleeing can cross a map exit exactly like a normal step
-would. If somehow boxed in on all four sides, the fight still ends but
-the player just stays put. `flee` outside of combat is a no-op
-(`"You aren't in a fight to flee from."`).
+command (`GameGateway.handleFlee`): it ends the fight and then moves the
+player one step in a random direction that actually leads somewhere,
+chosen from whichever of the 4 cardinal directions `resolveMove` reports
+as in-bounds from the current cell (`GameGateway.fleeableDirections`) —
+the same move pipeline as ordinary movement, so fleeing can cross a map
+exit exactly like a normal step would. If somehow boxed in on all four
+sides, the fight still ends but the player just stays put. `flee`
+outside of combat is a no-op (`"You aren't in a fight to flee from."`).
 
 ### Dropped items and skills
 
 Killing a monster leaves something behind, resolved by
-`MonsterManagerService.getDeathDrop(kind)` — keyed by kind rather than the
-`undead` flag, since future undead kinds could have a different loot
-table or none at all. Skeletons always drop one random body part (`leg`,
-`arm`, `hand`, `skull`, `rib`) via `ItemManagerService.dropItem`, another
-in-memory-only, per-cell registry exactly like `MonsterManagerService`
-(no Mongo persistence — dropped items reset on restart). While one sits
-in a room, `itemMessage` (e.g. `"A leg lies here."` / `"An arm lies
-here."`) is computed and threaded through every event alongside
-`monsterMessage`, the same "always sent together with `room`" convention
-(see `game-gateway/types.ts`).
+`MonsterManagerService.getDeathDrops(kind)` — keyed by kind rather than
+the `undead` flag, since future undead kinds could have a different loot
+table or none at all, and returning an array since a single kill can
+yield more than one item. Skeletons always drop one random body part
+(`leg`, `arm`, `hand`, `skull`, `rib`), each carrying the
+`"lesser undead resistance"` skill reward, plus a separate
+`BONE_DAGGER_DROP_CHANCE` (20%) roll for a `"bone dagger"` (no skill
+reward — it's a plain inventory item, not something you eat). Both go
+through `ItemManagerService.dropItem`, an in-memory-only, per-cell
+registry exactly like `MonsterManagerService` (no Mongo persistence —
+dropped items reset on restart). While one sits in a room, `itemMessage`
+(e.g. `"A leg lies here."` / `"An arm lies here."`) is computed and
+threaded through every event alongside `monsterMessage`, the same
+"always sent together with `room`" convention (see `game-gateway/types.ts`).
 
-`consume <item>` (`GameGateway.handleConsume`) does a case-insensitive
-substring match against dropped items in the current room
-(`ItemManagerService.findItemByNameAt`) and always removes the item once
-found, regardless of outcome. A skeleton part's `skillReward` is
-`"lesser undead resistance"` (`players/skills.ts`): if the player already
-has it, consuming does nothing further (`"...but you already know this
-secret."`); otherwise there's a `SKILL_GAIN_CHANCE` (20%) chance of
-learning it (`"You have gained lesser undead resistance!"`), added to
-`Player.skills` (a permanent, never-removed string array) and persisted
-immediately. That skill is checked in `resolveAttackExchange` (above) via
-`undeadDamageReduction`, currently the only thing skills affect.
+Two commands act on a dropped item, both doing the same case-insensitive
+substring match (`ItemManagerService.findItemByNameAt`) and always
+removing the item once found, regardless of outcome:
+
+- `consume <item>` (`GameGateway.handleConsume`) eats it. If it has a
+  `skillReward` the player doesn't already have, there's a
+  `SKILL_GAIN_CHANCE` (20%) chance of learning it
+  (`"You have gained lesser undead resistance!"`), added to
+  `Player.skills` (a permanent, never-removed string array) and
+  persisted immediately; already knowing it is a no-op
+  (`"...but you already know this secret."`). That skill is checked in
+  `resolveAttackExchange` (above) via `undeadDamageReduction`, currently
+  the only thing skills affect.
+- `grab`/`get <item>` (`GameGateway.handleGrab`) picks it up instead,
+  adding its name to `Player.inventory` (also a permanent string array,
+  persisted immediately) rather than consuming it. This is how a bone
+  dagger (or, if you'd rather keep it than eat it, a body part) ends up
+  in your inventory — see "Inventory" below.
 
 ### Layout: three columns
 
@@ -304,6 +313,22 @@ what's there, and the client auto-scrolls to the newest line
 (200) client-side so a long session doesn't grow the array (and the DOM
 it renders) without bound.
 
+There's no separate persistent banner for "a skeleton is here", a
+monster's hp, or a dropped item — everything transient flows through
+this one log, one line at a time, in the order it actually happened.
+Sightings (`monsterMessage`/`itemMessage`) are the one exception that
+needs special handling: the server recomputes and sends them on *every*
+event regardless of whether anything changed (so it can't just always
+log them, or standing in the same room across several actions would
+reprint "a skeleton is here" every time). `useGameConnection`'s
+`withSightings` compares the freshly-computed value against what the
+client last saw and only appends a line when it's genuinely new —
+`state.monsterMessage`/`state.itemMessage` exist purely so this
+comparison has something to check against; nothing renders them
+directly. The action's own message(s) always come first, sightings
+after, so `"A skeleton is here!"` reads immediately following whatever
+move revealed it rather than the other way around.
+
 Typing `clear` empties the log. This never reaches the server —
 `useGameConnection.sendCommand` intercepts it before calling
 `NetworkManager.sendCommand`, since it's a pure display action with no
@@ -315,20 +340,27 @@ Below the command input, a small full-width bar (`#xp-bar-track` /
 with a purple-to-pink gradient.
 
 Inside the message box, the scrolling log comes first (`flex: 1`, so it
-fills whatever space the fixed-size elements below it don't need), then
-`monsterMessage`/`itemMessage`, then combat status, then room
-name/description — in that order so "a skeleton is here" reads
-immediately after whatever action (e.g. `"<player> moved north."`) just
-revealed it, rather than as a banner sitting above the newest log line.
-The Score box's stats (`LVL`/`HP`/`MP`/`MV`/`XP`) are stacked one per
-line rather than in a row.
+fills whatever space room name/description below it doesn't need). The
+Score box's stats (`LVL`/`HP`/`MP`/`MV`/`XP`) are stacked one per line
+rather than in a row.
 
 ### Skills
 
 `skills` (`GameGateway.handleSkills`) lists everything in `Player.skills`
 — `"Your skills: lesser undead resistance."`, or `"You haven't learned
 any skills yet."` if empty. Purely informational, no state change, so
-it's the one command handler that isn't `async`.
+it's one of two command handlers that isn't `async` (the other is
+`handleInventory`, below).
+
+### Inventory
+
+`inventory` — or any prefix of it at least 2 characters (`inv`, `inven`,
+...) — lists everything in `Player.inventory`, the same
+list-or-"empty" shape as `skills`: `"Your inventory: bone dagger."` or
+`"Your inventory is empty."`. Unlike the attack/kill prefix match, this
+one is a bare command (no argument), so the *whole* typed command has to
+be a prefix of "inventory" — `"inv 2"` wouldn't match, it'd fall through
+to "Unknown command".
 
 ## Auth: bcrypt + JWT + Redis session tracking
 

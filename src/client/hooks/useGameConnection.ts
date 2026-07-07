@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { NetworkManager, type DisconnectedDetail } from '../net/NetworkManager.js';
-import type { SyncPayload, KickedPayload, CombatStatus, CombatUpdatePayload } from '../../server/game-gateway/types.js';
+import type { SyncPayload, KickedPayload, CombatUpdatePayload } from '../../server/game-gateway/types.js';
 import type { PlayerSnapshot, MinimapCell, RoomInfo } from '../../shared/types.js';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
@@ -17,9 +17,11 @@ interface GameState {
   player: PlayerSnapshot | null;
   minimap: MinimapCell[];
   room: RoomInfo | null;
+  // Last-known monster/item indicator for the current room — not rendered
+  // directly (see withSightings): kept only so the reducer can tell a
+  // genuinely new sighting from the same one recomputed again.
   monsterMessage: string | null;
   itemMessage: string | null;
-  combat: CombatStatus | null;
   messages: string[];
 }
 
@@ -31,7 +33,6 @@ const initialState: GameState = {
   room: null,
   monsterMessage: null,
   itemMessage: null,
-  combat: null,
   messages: [],
 };
 
@@ -39,6 +40,31 @@ function appendMessages(existing: string[], incoming: string[]): string[] {
   if (incoming.length === 0) return existing;
   const combined = [...existing, ...incoming];
   return combined.length > MAX_MESSAGES ? combined.slice(combined.length - MAX_MESSAGES) : combined;
+}
+
+// Folds "a skeleton is here"/"a leg lies here" into the same natural,
+// one-at-a-time message log as everything else, instead of a separate
+// fixed banner — but only when the value is genuinely new (different from
+// what was last seen), so standing in the same room across several
+// actions doesn't reprint the same sighting on every single one.
+function withSightings(
+  state: GameState,
+  newMonsterMessage: string | null,
+  newItemMessage: string | null,
+  ownMessages: string[]
+): Pick<GameState, 'messages' | 'monsterMessage' | 'itemMessage'> {
+  const sightings: string[] = [];
+  if (newMonsterMessage && newMonsterMessage !== state.monsterMessage) {
+    sightings.push(newMonsterMessage);
+  }
+  if (newItemMessage && newItemMessage !== state.itemMessage) {
+    sightings.push(newItemMessage);
+  }
+  return {
+    messages: appendMessages(state.messages, [...ownMessages, ...sightings]),
+    monsterMessage: newMonsterMessage,
+    itemMessage: newItemMessage,
+  };
 }
 
 type Action =
@@ -60,13 +86,11 @@ type Action =
       room?: RoomInfo;
       monsterMessage?: string;
       itemMessage?: string;
-      combat?: CombatStatus | null;
     }
   | {
       type: 'combatUpdate';
       messages: string[];
       player: PlayerSnapshot;
-      monster?: CombatStatus;
       monsterMessage?: string;
       itemMessage?: string;
     }
@@ -82,59 +106,48 @@ function reducer(state: GameState, action: Action): GameState {
       const line = action.isReconnect
         ? 'Reconnected — position resynced with the server.'
         : `${action.player.username} entered ${action.player.map}.`;
+      const sighted = withSightings(state, action.monsterMessage ?? null, action.itemMessage ?? null, [line]);
       return {
         screen: 'game',
         authError: '',
         player: action.player,
         minimap: action.minimap,
         room: action.room,
-        monsterMessage: action.monsterMessage ?? null,
-        itemMessage: action.itemMessage ?? null,
-        // A fresh connection never has a fight already running (the server
-        // clears any auto-attack loop on disconnect), so this always resets.
-        combat: null,
-        // Appended, not replaced — a reconnect shouldn't wipe the log a
-        // player was already reading (a genuinely fresh login always finds
-        // state.messages already empty, from initialState/loggedOut).
-        messages: appendMessages(state.messages, [line]),
+        ...sighted,
       };
     }
-    case 'commandResult':
+    case 'commandResult': {
+      // The server only ever sends monsterMessage/itemMessage alongside
+      // room, and always sends a definitive answer (string or
+      // omitted-meaning-none) whenever it sends room — so "room present"
+      // is what distinguishes "no monster/item here" from "this ack
+      // didn't recompute location info at all" (e.g. rate-limited/
+      // invalid-command acks), which must leave the last-known sighting
+      // state alone rather than clearing (or re-triggering) it.
+      const newMonsterMessage = action.room ? (action.monsterMessage ?? null) : state.monsterMessage;
+      const newItemMessage = action.room ? (action.itemMessage ?? null) : state.itemMessage;
+      const sighted = withSightings(state, newMonsterMessage, newItemMessage, action.messages);
       return {
         ...state,
         player: action.player ?? state.player,
         minimap: action.minimap ?? state.minimap,
         room: action.room ?? state.room,
-        // The server only ever sends monsterMessage alongside room, and
-        // always sends a definitive answer (string or omitted-meaning-none)
-        // whenever it sends room — so "room present" is what distinguishes
-        // "no monster here" from "this ack didn't recompute location info
-        // at all" (e.g. rate-limited/invalid-command acks), which must
-        // leave the last-known monster state alone instead of clearing it.
-        monsterMessage: action.room ? (action.monsterMessage ?? null) : state.monsterMessage,
-        itemMessage: action.room ? (action.itemMessage ?? null) : state.itemMessage,
-        // combat is tri-state: undefined means this ack doesn't pertain to
-        // combat at all (movement, unknown command) so any in-progress
-        // auto-attack loop's status is left alone — it keeps running
-        // server-side and is only ever cleared via a 'combatUpdate' push
-        // or an explicit null here (a killing first hit, or fleeing).
-        combat: action.combat === undefined ? state.combat : action.combat,
-        messages: appendMessages(state.messages, action.messages),
+        ...sighted,
       };
-    case 'combatUpdate':
+    }
+    case 'combatUpdate': {
+      const sighted = withSightings(state, action.monsterMessage ?? null, action.itemMessage ?? null, action.messages);
       return {
         ...state,
         player: action.player,
-        monsterMessage: action.monsterMessage ?? null,
-        itemMessage: action.itemMessage ?? null,
-        combat: action.monster ?? null,
-        messages: appendMessages(state.messages, action.messages),
+        ...sighted,
       };
+    }
     case 'connectionMessage':
       return { ...state, messages: appendMessages(state.messages, [action.message]) };
     case 'clearMessages':
-      // Deliberately only touches messages — room/monsterMessage/combat
-      // (and everything else) are separate state, untouched by "clear".
+      // Deliberately only touches messages — room and everything else in
+      // GameState are untouched by "clear".
       return { ...state, messages: [] };
     case 'loggedOut':
       return { ...initialState, authError: action.message ?? '' };
@@ -174,8 +187,8 @@ export function useGameConnection(): UseGameConnection {
     }
 
     function onCombatUpdate(e: Event): void {
-      const { messages, player, monster, monsterMessage, itemMessage } = (e as CustomEvent<CombatUpdatePayload>).detail;
-      dispatch({ type: 'combatUpdate', messages, player, monster, monsterMessage, itemMessage });
+      const { messages, player, monsterMessage, itemMessage } = (e as CustomEvent<CombatUpdatePayload>).detail;
+      dispatch({ type: 'combatUpdate', messages, player, monsterMessage, itemMessage });
     }
 
     function onKicked(e: Event): void {
@@ -268,7 +281,6 @@ export function useGameConnection(): UseGameConnection {
         room: res.room,
         monsterMessage: res.monsterMessage,
         itemMessage: res.itemMessage,
-        combat: res.combat,
       });
     } catch (err) {
       dispatch({

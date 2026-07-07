@@ -201,28 +201,6 @@ body {
   color: #ffd166;
 }
 
-#monster-message {
-  font-size: 0.9rem;
-  font-weight: bold;
-  color: #f85149;
-  margin-top: 0.3rem;
-}
-
-#item-message {
-  font-size: 0.85rem;
-  font-weight: bold;
-  color: #e3b341;
-  margin-top: 0.2rem;
-}
-
-#combat-status {
-  font-size: 0.85rem;
-  font-weight: bold;
-  color: #ff9d5c;
-  text-transform: capitalize;
-  margin-top: 0.3rem;
-}
-
 #room-name {
   font-size: 0.85rem;
   font-weight: bold;
