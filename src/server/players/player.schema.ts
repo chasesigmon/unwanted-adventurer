@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import type { HydratedDocument } from 'mongoose';
-import { RACES, type MapName, type Race } from '../../shared/constants.js';
+import { ALL_RACES, type MapName, type Race } from '../../shared/constants.js';
 
 export type PlayerDocument = HydratedDocument<Player>;
 
@@ -12,11 +12,14 @@ export class Player {
   @Prop({ required: true })
   passwordHash!: string;
 
-  // Chosen at registration — see RACES/Race. Defaults to 'goblin' (the
-  // only option so far) both for new documents and as a fallback for
-  // players created before this field existed; those existing documents
-  // were also backfilled directly (see the "Race" README section).
-  @Prop({ required: true, enum: RACES, default: 'goblin' })
+  // Chosen at registration — see RACES/Race — or reached by evolving (see
+  // GameGateway.maybeEvolveToHobgoblin), which is why the enum here is
+  // ALL_RACES (registration itself is still restricted to RACES, the
+  // selectable subset — see registerCredentialsSchema). Defaults to
+  // 'goblin' both for new documents and as a fallback for players created
+  // before this field existed; those existing documents were also
+  // backfilled directly (see the "Race" README section).
+  @Prop({ required: true, enum: ALL_RACES, default: 'goblin' })
   race!: Race;
 
   @Prop({ required: true })
@@ -45,9 +48,10 @@ export class Player {
   @Prop({ default: 1 })
   constitution!: number;
 
-  // Starting stats for newly created characters. hp/mana/movement all cap
-  // at 100 and regenerate passively on GameGateway's per-connection stat
-  // tick (faster while resting, faster still while sleeping).
+  // Starting stats for newly created characters. hp/mana/movement each cap
+  // at their own max* below and regenerate passively on GameGateway's
+  // per-connection stat tick (faster while resting, faster still while
+  // sleeping).
   @Prop({ default: 100 })
   hp!: number;
 
@@ -56,6 +60,18 @@ export class Player {
 
   @Prop({ default: 100 })
   movement!: number;
+
+  // Everyone starts at 100 — only permanently raised by evolving (see
+  // GameGateway.maybeEvolveToHobgoblin), never by leveling up (a level-up
+  // fully heals to the current max, it doesn't raise the max itself).
+  @Prop({ default: 100 })
+  maxHp!: number;
+
+  @Prop({ default: 100 })
+  maxMana!: number;
+
+  @Prop({ default: 100 })
+  maxMovement!: number;
 
   @Prop({ default: 0 })
   exp!: number;

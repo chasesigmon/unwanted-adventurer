@@ -7,6 +7,7 @@ import type {
   KickedPayload,
   CombatUpdatePayload,
   NoticePayload,
+  ChatPayload,
 } from '../../server/game-gateway/types.js';
 
 // Note the reversed type-parameter order versus the server's Socket<>: from
@@ -91,6 +92,9 @@ export class NetworkManager extends EventTarget {
     );
     socket.on('notice', (data: NoticePayload) =>
       this.dispatchEvent(new CustomEvent<NoticePayload>('notice', { detail: data }))
+    );
+    socket.on('chat', (data: ChatPayload) =>
+      this.dispatchEvent(new CustomEvent<ChatPayload>('chat', { detail: data }))
     );
     socket.on('disconnect', (reason) =>
       this.dispatchEvent(new CustomEvent<DisconnectedDetail>('disconnected', { detail: { reason } }))

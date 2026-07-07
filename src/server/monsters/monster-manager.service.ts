@@ -8,9 +8,13 @@ import { skillForItemName } from '../items/item-definitions.js';
 import type { AppConfig } from '../config/configuration.js';
 import type { MapName } from '../../shared/constants.js';
 import type { ItemSkillReward } from '../items/dropped-item.js';
-import type { Monster, MonsterKind } from './monster.js';
+import type { Monster, MonsterClass, MonsterKind } from './monster.js';
 
-const SKELETON_BODY_PARTS = ['leg', 'arm', 'hand', 'skull', 'rib'];
+// Same bare pool either way — what distinguishes a skeleton's drop from a
+// goblin's is the *name* it's given at drop time (see getDeathDrops):
+// plain ("leg") for an undead kind, "wild goblin <part>" for wild goblin —
+// see items/item-definitions.ts's wildGoblinBodyPartSkill.
+const BODY_PARTS = ['leg', 'arm', 'hand', 'skull', 'rib'];
 const BONE_DAGGER_DROP_CHANCE = 0.2;
 
 // Both monster kinds are entry-level, so level 1 keeps a fresh level-1
@@ -35,13 +39,13 @@ interface MonsterSpecies {
   maxCount: number;
   startingHp: number;
   expReward: number;
-  undead: boolean;
+  monsterClass: MonsterClass;
 }
 
 const MONSTER_SPECIES: MonsterSpecies[] = [
   // "add 5 more" to the previous count of 10.
-  { kind: 'wild skeleton', homeMap: 'Labyrinth', maxCount: 15, startingHp: 20, expReward: 10, undead: true },
-  { kind: 'wild goblin', homeMap: 'Great Plains', maxCount: 30, startingHp: 15, expReward: 8, undead: false },
+  { kind: 'wild skeleton', homeMap: 'Labyrinth', maxCount: 15, startingHp: 20, expReward: 10, monsterClass: 'undead' },
+  { kind: 'wild goblin', homeMap: 'Great Plains', maxCount: 30, startingHp: 15, expReward: 8, monsterClass: 'normal' },
 ];
 
 export interface DeathDrop {
@@ -132,7 +136,7 @@ export class MonsterManagerService extends EventEmitter implements OnModuleInit,
       row,
       col,
       expReward: species.expReward,
-      undead: species.undead,
+      monsterClass: species.monsterClass,
       level: MONSTER_LEVEL,
       strength: MONSTER_BASE_ATTRIBUTE,
       intelligence: MONSTER_BASE_ATTRIBUTE,
@@ -265,25 +269,28 @@ export class MonsterManagerService extends EventEmitter implements OnModuleInit,
     return Array.from(this.monsters.values());
   }
 
-  // What a monster kind leaves behind on death — always empty for kinds
-  // without a loot table (only wild skeletons have one right now — wild
-  // goblins drop nothing — kept keyed by kind rather than the `undead`
-  // flag since future undead kinds could have a different pool, or none).
-  // Wild skeletons always drop a body part, plus a separate
-  // BONE_DAGGER_DROP_CHANCE roll for a bone dagger, so a single kill can
-  // yield zero, one, or two items. Each item's skill reward/chance comes
-  // from items/item-definitions.ts — the same lookup GameGateway.handleDrop
-  // uses, so an item's properties don't depend on which of those two
-  // paths put it on the ground.
+  // What a monster kind leaves behind on death — kept keyed by kind rather
+  // than monsterClass since future kinds sharing a class could still have
+  // a different pool, or none. Every current kind always drops a body
+  // part; only wild skeleton has the extra BONE_DAGGER_DROP_CHANCE roll for
+  // a bone dagger (unchanged from before), so a skeleton kill can yield one
+  // or two items while a goblin kill always yields exactly one. A wild
+  // skeleton's part is named plainly ("leg") — always undead resistance,
+  // see item-definitions.ts's ITEM_DEFINITIONS; a wild goblin's is named
+  // "wild goblin <part>" so it teaches normal-monster resistance instead
+  // (see wildGoblinBodyPartSkill) rather than colliding with the plain
+  // name. Each item's skill reward/chance comes from
+  // items/item-definitions.ts — the same lookup GameGateway.handleDrop
+  // uses, so an item's properties don't depend on which of those two paths
+  // put it on the ground.
   getDeathDrops(kind: MonsterKind): DeathDrop[] {
-    if (kind !== 'wild skeleton') return [];
-
+    const partName = BODY_PARTS[Math.floor(Math.random() * BODY_PARTS.length)];
     const drops: DeathDrop[] = [];
-    const partName = SKELETON_BODY_PARTS[Math.floor(Math.random() * SKELETON_BODY_PARTS.length)];
     if (partName) {
-      drops.push({ name: partName, skill: skillForItemName(partName) });
+      const name = kind === 'wild goblin' ? `wild goblin ${partName}` : partName;
+      drops.push({ name, skill: skillForItemName(name) });
     }
-    if (Math.random() < BONE_DAGGER_DROP_CHANCE) {
+    if (kind === 'wild skeleton' && Math.random() < BONE_DAGGER_DROP_CHANCE) {
       drops.push({ name: 'bone dagger', skill: skillForItemName('bone dagger') });
     }
     return drops;

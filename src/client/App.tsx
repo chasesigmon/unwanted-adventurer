@@ -15,6 +15,7 @@ export function App(): JSX.Element {
       minimap={state.minimap}
       room={state.room}
       messages={state.messages}
+      chatMessages={state.chatMessages}
       worldMapAreas={state.worldMapAreas}
       onCommand={sendCommand}
       onCloseWorldMap={closeWorldMap}

@@ -77,11 +77,23 @@ export interface NoticePayload {
   monsterMessage?: string | null;
 }
 
+// "say <message>" — broadcast server-wide (see GameGateway.handleSay) to
+// every connected socket, sender included, rather than folded into any
+// single command's own ack — that's what lets every other online player
+// see it live, not just whoever typed it. The client renders it in yellow
+// in the main log (see GameScreen's classifyServerLine-equivalent) and
+// separately appends it to the persistent chat panel.
+export interface ChatPayload {
+  username: string;
+  message: string;
+}
+
 export interface ServerToClientEvents {
   sync: (data: SyncPayload) => void;
   'session:kicked': (data: KickedPayload) => void;
   'combat:update': (data: CombatUpdatePayload) => void;
   notice: (data: NoticePayload) => void;
+  chat: (data: ChatPayload) => void;
 }
 
 export interface ClientToServerEvents {
@@ -107,6 +119,12 @@ export interface SocketData {
   hp: number;
   mana: number;
   movement: number;
+  // Everyone starts at 100 (MAX_STAT) — only permanently raised by
+  // evolving (see GameGateway.maybeEvolveToHobgoblin). A level-up heals to
+  // these, it never raises them itself.
+  maxHp: number;
+  maxMana: number;
+  maxMovement: number;
   exp: number;
   level: number;
   // Permanent abilities, keyed by name with a 1-100 percentage value — see

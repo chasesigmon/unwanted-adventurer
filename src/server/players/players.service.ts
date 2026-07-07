@@ -20,9 +20,18 @@ export interface PlayerPosition {
 }
 
 export interface PlayerStats {
+  // Unlike other stats, race is normally fixed for the session (see
+  // SocketData's own comment) — included here only because evolving (see
+  // GameGateway.maybeEvolveToHobgoblin) is the one case it changes
+  // mid-session and needs to persist.
+  race: Race;
   hp: number;
   mana: number;
   movement: number;
+  // Everyone starts at 100 — only permanently raised by evolving.
+  maxHp: number;
+  maxMana: number;
+  maxMovement: number;
   exp: number;
   level: number;
   // Fixed at 1 for a fresh character, but +1 each on every level-up (see

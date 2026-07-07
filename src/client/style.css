@@ -141,6 +141,7 @@ body {
 
 #right-column {
   flex: 0 0 20%;
+  min-height: 0;
   align-items: flex-end;
   gap: 0.75rem;
 }
@@ -192,6 +193,30 @@ body {
   background: #238636;
   border-color: #238636;
   color: white;
+}
+
+/* Fills whatever vertical space is left in #right-column below the
+   Inventory/Auto boxes above it (unlike those, which just sit at their
+   natural height) — #chat-list inside scrolls independently. */
+#chat-box {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#chat-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.chat-line {
+  font-size: 0.85rem;
+  color: #ffd166;
 }
 
 #player-stats {
@@ -267,7 +292,7 @@ body {
 
 .message-line {
   font-size: 0.95rem;
-  color: #ffd166;
+  color: #7ee787;
 }
 
 /* A spotted monster/player's name within a message (currently just
@@ -290,6 +315,12 @@ body {
    below, but no color change (it's good news, not a warning). */
 .message-line--milestone {
   margin-bottom: 0.5rem;
+}
+
+/* "say" — the same yellow the ordinary log text used before it became
+   green above, now dedicated to chat. */
+.message-line--chat {
+  color: #ffd166;
 }
 
 /* The trailing "<80hp 100m 100mv>" status prompt the server appends to

@@ -1,5 +1,10 @@
-import { LESSER_UNDEAD_MONSTER_RESISTANCE, BODY_PART_SKILL_STARTING_PERCENT, lesserRaceResistanceName } from '../players/skills.js';
-import { RACES, type Race } from '../../shared/constants.js';
+import {
+  LESSER_UNDEAD_MONSTER_RESISTANCE,
+  LESSER_NORMAL_MONSTER_RESISTANCE,
+  BODY_PART_SKILL_STARTING_PERCENT,
+  lesserRaceResistanceName,
+} from '../players/skills.js';
+import { ALL_RACES, type Race } from '../../shared/constants.js';
 import type { ItemSkillReward } from './dropped-item.js';
 
 // Static lookup of what a known item name teaches when consumed, if
@@ -25,6 +30,16 @@ const ITEM_DEFINITIONS: Record<string, ItemSkillReward> = {
   skull: BODY_PART_SKILL,
   rib: BODY_PART_SKILL,
 };
+
+// A wild goblin (a "normal"-classified monster, see monsters/monster.ts's
+// MonsterClass) drops its body parts named "wild goblin <part>" rather
+// than the bare names above — a bare "leg" always means undead resistance
+// via ITEM_DEFINITIONS, so a differently-classified monster's body part
+// needs its own name to teach a different skill (see
+// wildGoblinBodyPartSkill below), the same reasoning as the player-race
+// "<race> <part>" convention (see raceBodyPartSkill).
+const WILD_GOBLIN_BODY_PART_SKILL: ItemSkillReward = { reward: LESSER_NORMAL_MONSTER_RESISTANCE, chance: 0.1 };
+const WILD_GOBLIN_BODY_PART_PREFIX = 'wild goblin';
 
 // The canonical "these are body parts" list — used by GameGateway
 // .resolveAttackExchange/.handlePlayerLikeDeath to route death drops: body
@@ -58,12 +73,20 @@ function raceBodyPartSkill(name: string): ItemSkillReward | undefined {
   if (spaceIdx === -1) return undefined;
   const racePart = lower.slice(0, spaceIdx);
   const bodyPart = lower.slice(spaceIdx + 1);
-  if (!BODY_PARTS.includes(bodyPart) || !RACES.includes(racePart as Race)) return undefined;
+  if (!BODY_PARTS.includes(bodyPart) || !ALL_RACES.includes(racePart as Race)) return undefined;
   return { reward: lesserRaceResistanceName(racePart as Race), chance: 0.1 };
 }
 
+// "wild goblin leg"/"wild goblin arm"/etc — see WILD_GOBLIN_BODY_PART_SKILL.
+function wildGoblinBodyPartSkill(name: string): ItemSkillReward | undefined {
+  const lower = name.toLowerCase();
+  if (!lower.startsWith(`${WILD_GOBLIN_BODY_PART_PREFIX} `)) return undefined;
+  const bodyPart = lower.slice(WILD_GOBLIN_BODY_PART_PREFIX.length + 1);
+  return BODY_PARTS.includes(bodyPart) ? WILD_GOBLIN_BODY_PART_SKILL : undefined;
+}
+
 export function skillForItemName(name: string): ItemSkillReward | undefined {
-  return ITEM_DEFINITIONS[name.toLowerCase()] ?? raceBodyPartSkill(name);
+  return ITEM_DEFINITIONS[name.toLowerCase()] ?? raceBodyPartSkill(name) ?? wildGoblinBodyPartSkill(name);
 }
 
 // Every slot a player can equip something into. Body parts come in pairs
@@ -155,11 +178,17 @@ const ITEM_DESCRIPTIONS: Record<string, string> = {
 export function itemDescriptionFor(name: string): string | undefined {
   const lower = name.toLowerCase();
   if (ITEM_DESCRIPTIONS[lower]) return ITEM_DESCRIPTIONS[lower];
+  if (lower.startsWith(`${WILD_GOBLIN_BODY_PART_PREFIX} `)) {
+    const part = lower.slice(WILD_GOBLIN_BODY_PART_PREFIX.length + 1);
+    if (BODY_PARTS.includes(part)) {
+      return `A ${part} bone, unmistakably wild goblin in origin.`;
+    }
+  }
   const spaceIdx = lower.lastIndexOf(' ');
   if (spaceIdx !== -1) {
     const race = lower.slice(0, spaceIdx);
     const part = lower.slice(spaceIdx + 1);
-    if (RACES.includes(race as Race) && BODY_PARTS.includes(part)) {
+    if (ALL_RACES.includes(race as Race) && BODY_PARTS.includes(part)) {
       return `A ${part} bone, unmistakably ${race} in origin.`;
     }
   }

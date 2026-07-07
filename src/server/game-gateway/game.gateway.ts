@@ -44,6 +44,7 @@ import { resolveMove, resolveFullMapGrid } from '../game/resolveMove.js';
 import { applyExpGain, maxTnlForLevel, monsterExpGain, playerKillExpGain } from '../players/leveling.js';
 import {
   LESSER_UNDEAD_MONSTER_RESISTANCE,
+  LESSER_NORMAL_MONSTER_RESISTANCE,
   DODGE,
   PARRY,
   DAGGER,
@@ -60,11 +61,13 @@ import {
   MAX_SKILL_PERCENT,
   percentBonus,
   undeadMonsterDamageReduction,
+  normalMonsterDamageReduction,
   raceDamageReduction,
 } from '../players/skills.js';
 import { findHelpTopic } from '../help/help-topics.js';
 import { STARTING_MAP } from '../../shared/constants.js';
 import type { MapName, Race } from '../../shared/constants.js';
+import type { MonsterClass } from '../monsters/monster.js';
 import { DIRECTION_ALIASES, DIRECTION_DELTAS } from '../../shared/directions.js';
 import { commandSchema } from './command.schema.js';
 import type { AppConfig } from '../config/configuration.js';
@@ -104,10 +107,24 @@ const MONSTER_DODGE_CHANCE = 0.05;
 // weapon swing once queued (see SocketData.queuedActiveSkillUses/
 // processQueuedActiveSkill).
 const KICK_DAMAGE = 2;
+
+// Which resistance skill (see players/skills.ts) grows/reduces damage from
+// a monster of a given class — see resolveAttackExchange's counter-attack
+// branch.
+const MONSTER_CLASS_RESISTANCE_SKILL: Record<MonsterClass, string> = {
+  undead: LESSER_UNDEAD_MONSTER_RESISTANCE,
+  normal: LESSER_NORMAL_MONSTER_RESISTANCE,
+};
 const ATTACK_INTERVAL_MS = 4000;
 const ALL_DIRECTIONS: Direction[] = ['north', 'south', 'east', 'west'];
 // hp/mana/movement all cap at this same value.
 const MAX_STAT = 100;
+
+// "goblin evolves into Hobgoblin" — see maybeEvolveToHobgoblin.
+const HOBGOBLIN_EVOLUTION_CXP = 100;
+const HOBGOBLIN_BASE_ATTRIBUTE = 10;
+const HOBGOBLIN_ATTRIBUTE_BONUS = 10;
+const HOBGOBLIN_STAT_BONUS = 100;
 
 // Per-step movement-point cost, based on the *departure* room's
 // GameMap.setting — "inside" (Labyrinth, stone) is cheaper to move
@@ -505,6 +522,12 @@ export class GameGateway
     client.data.wisdom = doc?.wisdom ?? 1;
     client.data.dexterity = doc?.dexterity ?? 1;
     client.data.constitution = doc?.constitution ?? 1;
+    // A Hobgoblin's permanently raised caps (see maybeEvolveToHobgoblin) —
+    // everyone else's stay at the same MAX_STAT a fresh character starts
+    // with.
+    client.data.maxHp = doc?.maxHp ?? MAX_STAT;
+    client.data.maxMana = doc?.maxMana ?? MAX_STAT;
+    client.data.maxMovement = doc?.maxMovement ?? MAX_STAT;
     client.data.hp = doc?.hp ?? 100;
     client.data.mana = doc?.mana ?? 100;
     client.data.movement = doc?.movement ?? 100;
@@ -958,14 +981,16 @@ export class GameGateway
         const growth = this.maybeGrowSkill(client, dodged ? DODGE : PARRY, SKILL_GROWTH_CHANCE);
         if (growth) counterMessages.push(growth);
       } else {
-        const reduction = target.undead ? undeadMonsterDamageReduction(client.data.skillLevels) : 0;
+        const resistanceSkill = MONSTER_CLASS_RESISTANCE_SKILL[target.monsterClass];
+        const reduction =
+          target.monsterClass === 'undead'
+            ? undeadMonsterDamageReduction(client.data.skillLevels)
+            : normalMonsterDamageReduction(client.data.skillLevels);
         const damage = Math.max(0, MONSTER_ATTACK_DAMAGE - reduction);
         client.data.hp = Math.max(0, client.data.hp - damage);
         counterMessages.push(`The ${kind} hits you for ${damage} damage.`);
-        if (target.undead) {
-          const growth = this.maybeGrowSkill(client, LESSER_UNDEAD_MONSTER_RESISTANCE, BODY_PART_SKILL_GROWTH_CHANCE);
-          if (growth) counterMessages.push(growth);
-        }
+        const growth = this.maybeGrowSkill(client, resistanceSkill, BODY_PART_SKILL_GROWTH_CHANCE);
+        if (growth) counterMessages.push(growth);
       }
 
       // The HP-remaining line goes at the very bottom, after every hit and
@@ -1013,6 +1038,10 @@ export class GameGateway
       constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
+      race: client.data.race,
+      maxHp: client.data.maxHp,
+      maxMana: client.data.maxMana,
+      maxMovement: client.data.maxMovement,
       skillLevels: client.data.skillLevels,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
@@ -1138,7 +1167,7 @@ export class GameGateway
     // The HP-remaining line goes at the very bottom, after every hit and
     // the counter-attack have already been resolved.
     const hp = target.kind === 'real' ? target.socket.data.hp : target.dummy.hp;
-    const maxHp = target.kind === 'real' ? MAX_STAT : target.dummy.maxHp;
+    const maxHp = target.kind === 'real' ? target.socket.data.maxHp : target.dummy.maxHp;
     messages.push(`${targetData.username} has ${Math.max(0, Math.round((hp / maxHp) * 100))}% HP remaining.`);
 
     if (target.kind === 'real') {
@@ -1204,7 +1233,7 @@ export class GameGateway
     socket.data.exp = Math.max(0, socket.data.exp - expLost);
     socket.data.equipment = {};
     socket.data.inventory = [];
-    socket.data.hp = MAX_STAT;
+    socket.data.hp = socket.data.maxHp;
     socket.data.respawnState = 'dead';
 
     this.clearCombat(socket.id);
@@ -1221,6 +1250,10 @@ export class GameGateway
       constitution: socket.data.constitution,
       exp: socket.data.exp,
       level: socket.data.level,
+      race: socket.data.race,
+      maxHp: socket.data.maxHp,
+      maxMana: socket.data.maxMana,
+      maxMovement: socket.data.maxMovement,
       skillLevels: socket.data.skillLevels,
       inventory: socket.data.inventory,
       consumeExp: socket.data.consumeExp,
@@ -1300,6 +1333,10 @@ export class GameGateway
       constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
+      race: client.data.race,
+      maxHp: client.data.maxHp,
+      maxMana: client.data.maxMana,
+      maxMovement: client.data.maxMovement,
       skillLevels: client.data.skillLevels,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
@@ -1355,18 +1392,63 @@ export class GameGateway
   private consumeBodyPart(client: GameSocket, name: string, skill: ReturnType<typeof skillForItemName>, auto: boolean): string[] {
     client.data.consumeExp += 1;
     const verb = auto ? `automatically consume the ${name}` : `consume the ${name}`;
+    const messages: string[] = [];
     if (!skill) {
-      return [`You ${verb}.`];
+      messages.push(`You ${verb}.`);
+    } else {
+      const { reward, chance } = skill;
+      if (client.data.skillLevels[reward] !== undefined) {
+        messages.push(`You ${verb}, but you already know this secret.`);
+      } else if (Math.random() >= chance) {
+        messages.push(`You ${verb}, but feel nothing happen.`);
+      } else {
+        client.data.skillLevels = { ...client.data.skillLevels, [reward]: BODY_PART_SKILL_STARTING_PERCENT };
+        messages.push(`You ${verb}.`, `You have gained ${reward} (${BODY_PART_SKILL_STARTING_PERCENT}%)!`);
+      }
     }
-    const { reward, chance } = skill;
-    if (client.data.skillLevels[reward] !== undefined) {
-      return [`You ${verb}, but you already know this secret.`];
-    }
-    if (Math.random() >= chance) {
-      return [`You ${verb}, but feel nothing happen.`];
-    }
-    client.data.skillLevels = { ...client.data.skillLevels, [reward]: BODY_PART_SKILL_STARTING_PERCENT };
-    return [`You ${verb}.`, `You have gained ${reward} (${BODY_PART_SKILL_STARTING_PERCENT}%)!`];
+    messages.push(...this.maybeEvolveToHobgoblin(client));
+    return messages;
+  }
+
+  // A goblin that has consumed HOBGOBLIN_EVOLUTION_CXP body parts evolves
+  // into a Hobgoblin — a one-way, one-time transformation (not selectable
+  // at registration, see shared/constants.ts's EVOLVED_RACES). Per the
+  // request: level and exp reset to a fresh level 1; every base attribute
+  // resets to 10 and every stat cap resets to 100, each *then* raised by
+  // the evolution bonus (+10 attributes, +100 hp/mana/movement) — a full
+  // reset to a new, higher baseline, not just an increment on top of
+  // whatever the player had already built up. consumeExp resets to 0 so
+  // the threshold can't immediately refire (there's nothing left to evolve
+  // into again, but this keeps the counter meaningful either way).
+  private maybeEvolveToHobgoblin(client: GameSocket): string[] {
+    if (client.data.race !== 'goblin' || client.data.consumeExp < HOBGOBLIN_EVOLUTION_CXP) return [];
+
+    client.data.race = 'hobgoblin';
+    client.data.level = 1;
+    client.data.exp = 0;
+    client.data.consumeExp = 0;
+
+    const newAttribute = HOBGOBLIN_BASE_ATTRIBUTE + HOBGOBLIN_ATTRIBUTE_BONUS;
+    client.data.strength = newAttribute;
+    client.data.intelligence = newAttribute;
+    client.data.wisdom = newAttribute;
+    client.data.dexterity = newAttribute;
+    client.data.constitution = newAttribute;
+
+    client.data.maxHp = MAX_STAT + HOBGOBLIN_STAT_BONUS;
+    client.data.maxMana = MAX_STAT + HOBGOBLIN_STAT_BONUS;
+    client.data.maxMovement = MAX_STAT + HOBGOBLIN_STAT_BONUS;
+    client.data.hp = client.data.maxHp;
+    client.data.mana = client.data.maxMana;
+    client.data.movement = client.data.maxMovement;
+
+    return [
+      '**Your body twists and swells with dark power — you have evolved into a Hobgoblin!**',
+      'Your level has reset to 1 and your experience has been cleared.',
+      `Your strength, intelligence, wisdom, dexterity, and constitution have all reset to ${HOBGOBLIN_BASE_ATTRIBUTE}, plus a +${HOBGOBLIN_ATTRIBUTE_BONUS} evolution bonus (${newAttribute} each).`,
+      `Your hp, mana, and movement have all reset to ${MAX_STAT}, plus a +${HOBGOBLIN_STAT_BONUS} evolution bonus (${MAX_STAT + HOBGOBLIN_STAT_BONUS} each).`,
+      'Your consumed experience has been reset to 0.',
+    ];
   }
 
   // Applies an exp gain (from a monster kill or a murder) and any level-ups
@@ -1382,20 +1464,20 @@ export class GameGateway
     client.data.level = level;
     client.data.exp = exp;
     if (level > before) {
-      // A level-up fully restores hp/mana/movement, same as a fresh
-      // character — there's no separate "max stat" concept to scale yet,
-      // so this is just the same 100/100/100 every character starts at.
-      // Base attributes each go up by 1 per level gained (in practice
-      // almost always exactly 1 level per kill, given typical exp gains).
+      // A level-up fully restores hp/mana/movement to their current max —
+      // ordinarily 100/100/100, but a Hobgoblin's permanently raised max
+      // (see maybeEvolveToHobgoblin) carries through here too. Base
+      // attributes each go up by 1 per level gained (in practice almost
+      // always exactly 1 level per kill, given typical exp gains).
       const levelsGained = level - before;
       client.data.strength += levelsGained;
       client.data.intelligence += levelsGained;
       client.data.wisdom += levelsGained;
       client.data.dexterity += levelsGained;
       client.data.constitution += levelsGained;
-      client.data.hp = 100;
-      client.data.mana = 100;
-      client.data.movement = 100;
+      client.data.hp = client.data.maxHp;
+      client.data.mana = client.data.maxMana;
+      client.data.movement = client.data.maxMovement;
       messages.push(
         `You leveled up! You are now level ${level}! Your health, mana, and movement have been fully restored, and your attributes have increased.`
       );
@@ -1423,9 +1505,13 @@ export class GameGateway
   private async persistStats(
     username: string,
     stats: {
+      race: Race;
       hp: number;
       mana: number;
       movement: number;
+      maxHp: number;
+      maxMana: number;
+      maxMovement: number;
       strength: number;
       intelligence: number;
       wisdom: number;
@@ -1473,6 +1559,10 @@ export class GameGateway
       constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
+      race: client.data.race,
+      maxHp: client.data.maxHp,
+      maxMana: client.data.maxMana,
+      maxMovement: client.data.maxMovement,
       skillLevels: client.data.skillLevels,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
@@ -1551,6 +1641,10 @@ export class GameGateway
     const spaceIdx = text.indexOf(' ');
     const verb = spaceIdx === -1 ? text : text.slice(0, spaceIdx);
     const rest = spaceIdx === -1 ? '' : text.slice(spaceIdx + 1).trim();
+    // Same split, but preserving whatever casing the player actually typed
+    // — everything else is case-insensitive (item/mob/player names), but
+    // "say" needs the original text, not the folded-to-lowercase version.
+    const rawRest = spaceIdx === -1 ? '' : parsed.data.slice(spaceIdx + 1).trim();
 
     if (text === 'logout' || text === 'quit') {
       await this.sessionStore.clearActiveSession(username);
@@ -1727,6 +1821,12 @@ export class GameGateway
       return this.handleHelp(client, rest);
     }
 
+    // "say <message>" — no partials requested. Broadcasts server-wide (see
+    // handleSay) rather than returning anything in this ack's own messages.
+    if (verb === 'say') {
+      return this.handleSay(client, rawRest);
+    }
+
     // "sac"/"sacrifice" (min 3), with an optional corpse query ("cor"
     // through "corpse", or numbered "2.cor" — see
     // CorpseManagerService.resolveCorpseAt) — bare "sacrifice"/"sac" still
@@ -1825,6 +1925,10 @@ export class GameGateway
         constitution: client.data.constitution,
         exp: client.data.exp,
         level: client.data.level,
+        race: client.data.race,
+        maxHp: client.data.maxHp,
+        maxMana: client.data.maxMana,
+        maxMovement: client.data.maxMovement,
         skillLevels: client.data.skillLevels,
         inventory: client.data.inventory,
         consumeExp: client.data.consumeExp,
@@ -1910,6 +2014,10 @@ export class GameGateway
       constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
+      race: client.data.race,
+      maxHp: client.data.maxHp,
+      maxMana: client.data.maxMana,
+      maxMovement: client.data.maxMovement,
       skillLevels: client.data.skillLevels,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
@@ -1970,7 +2078,7 @@ export class GameGateway
     const existing = this.activeMurders.get(client.id);
     if (existing && existing.targetId === targetId) {
       const hp = target.kind === 'real' ? target.socket.data.hp : target.dummy.hp;
-      const maxHp = target.kind === 'real' ? MAX_STAT : target.dummy.maxHp;
+      const maxHp = target.kind === 'real' ? target.socket.data.maxHp : target.dummy.maxHp;
       return buildAck(
         [
           `You are already attacking ${targetName}.`,
@@ -1997,6 +2105,10 @@ export class GameGateway
       constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
+      race: client.data.race,
+      maxHp: client.data.maxHp,
+      maxMana: client.data.maxMana,
+      maxMovement: client.data.maxMovement,
       skillLevels: client.data.skillLevels,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
@@ -2082,6 +2194,10 @@ export class GameGateway
         constitution: client.data.constitution,
         exp: client.data.exp,
         level: client.data.level,
+        race: client.data.race,
+        maxHp: client.data.maxHp,
+        maxMana: client.data.maxMana,
+        maxMovement: client.data.maxMovement,
         skillLevels: client.data.skillLevels,
         inventory: client.data.inventory,
         consumeExp: client.data.consumeExp,
@@ -2212,6 +2328,10 @@ export class GameGateway
         constitution: client.data.constitution,
         exp: client.data.exp,
         level: client.data.level,
+        race: client.data.race,
+        maxHp: client.data.maxHp,
+        maxMana: client.data.maxMana,
+        maxMovement: client.data.maxMovement,
         skillLevels: client.data.skillLevels,
         inventory: client.data.inventory,
         consumeExp: client.data.consumeExp,
@@ -2236,6 +2356,10 @@ export class GameGateway
       constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
+      race: client.data.race,
+      maxHp: client.data.maxHp,
+      maxMana: client.data.maxMana,
+      maxMovement: client.data.maxMovement,
       skillLevels: client.data.skillLevels,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
@@ -2260,6 +2384,10 @@ export class GameGateway
       constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
+      race: client.data.race,
+      maxHp: client.data.maxHp,
+      maxMana: client.data.maxMana,
+      maxMovement: client.data.maxMovement,
       skillLevels: client.data.skillLevels,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
@@ -2403,6 +2531,10 @@ export class GameGateway
       constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
+      race: client.data.race,
+      maxHp: client.data.maxHp,
+      maxMana: client.data.maxMana,
+      maxMovement: client.data.maxMovement,
       skillLevels: client.data.skillLevels,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
@@ -2526,6 +2658,10 @@ export class GameGateway
       constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
+      race: client.data.race,
+      maxHp: client.data.maxHp,
+      maxMana: client.data.maxMana,
+      maxMovement: client.data.maxMovement,
       skillLevels: client.data.skillLevels,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
@@ -2588,6 +2724,10 @@ export class GameGateway
       constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
+      race: client.data.race,
+      maxHp: client.data.maxHp,
+      maxMana: client.data.maxMana,
+      maxMovement: client.data.maxMovement,
       skillLevels: client.data.skillLevels,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
@@ -3116,6 +3256,10 @@ export class GameGateway
       constitution: client.data.constitution,
       exp: client.data.exp,
       level: client.data.level,
+      race: client.data.race,
+      maxHp: client.data.maxHp,
+      maxMana: client.data.maxMana,
+      maxMovement: client.data.maxMovement,
       skillLevels: client.data.skillLevels,
       inventory: client.data.inventory,
       consumeExp: client.data.consumeExp,
@@ -3175,6 +3319,10 @@ export class GameGateway
         constitution: client.data.constitution,
         exp: client.data.exp,
         level: client.data.level,
+        race: client.data.race,
+        maxHp: client.data.maxHp,
+        maxMana: client.data.maxMana,
+        maxMovement: client.data.maxMovement,
         skillLevels: client.data.skillLevels,
         inventory: client.data.inventory,
         consumeExp: client.data.consumeExp,
@@ -3249,6 +3397,41 @@ export class GameGateway
     }
 
     return buildAck([`${found.topic}: ${found.description}`], true);
+  }
+
+  // "say <message>" — server-wide chat. Broadcasts a 'chat' event to every
+  // connected socket (sender included) rather than returning anything in
+  // this ack's own messages — that's what lets everyone else see it live,
+  // not just whoever typed it. The client renders the broadcast in yellow
+  // in the main log and separately appends it to the persistent chat
+  // panel; this ack itself is just the ordinary ok/status-prompt response.
+  private handleSay(client: GameSocket, message: string): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+
+    if (!message) {
+      return {
+        ok: false,
+        messages: ['Say what?'],
+        player: loc ? this.snapshotFor(client, loc) : undefined,
+        minimap: this.worldManager.getMinimap(username),
+        room: loc ? resolveRoom(loc) : undefined,
+        monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
+        itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
+      };
+    }
+
+    this.server.emit('chat', { username, message });
+
+    return {
+      ok: true,
+      messages: [],
+      player: loc ? this.snapshotFor(client, loc) : undefined,
+      minimap: this.worldManager.getMinimap(username),
+      room: loc ? resolveRoom(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
+    };
   }
 
   // "sleep"/"slee"/"sle" — a toggle: awake or resting -> asleep on the
@@ -3389,15 +3572,18 @@ export class GameGateway
 
     const [min, max] = HEAL_PERCENT_RANGE[client.data.restState];
     const percent = randomBetween(min, max);
-    const healed = (current: number) => Math.min(MAX_STAT, current + Math.round((percent / 100) * MAX_STAT));
+    // Heals a percentage of the stat's own max, not a flat MAX_STAT — a
+    // Hobgoblin's permanently raised max (see maybeEvolveToHobgoblin)
+    // heals proportionally more per tick, same percentage either way.
+    const healed = (current: number, statMax: number) => Math.min(statMax, current + Math.round((percent / 100) * statMax));
 
     const beforeHp = client.data.hp;
     const beforeMana = client.data.mana;
     const beforeMovement = client.data.movement;
 
-    client.data.hp = healed(client.data.hp);
-    client.data.mana = healed(client.data.mana);
-    client.data.movement = healed(client.data.movement);
+    client.data.hp = healed(client.data.hp, client.data.maxHp);
+    client.data.mana = healed(client.data.mana, client.data.maxMana);
+    client.data.movement = healed(client.data.movement, client.data.maxMovement);
 
     const hpGain = client.data.hp - beforeHp;
     const manaGain = client.data.mana - beforeMana;
@@ -3415,6 +3601,10 @@ export class GameGateway
         constitution: client.data.constitution,
         exp: client.data.exp,
         level: client.data.level,
+        race: client.data.race,
+        maxHp: client.data.maxHp,
+        maxMana: client.data.maxMana,
+        maxMovement: client.data.maxMovement,
         skillLevels: client.data.skillLevels,
         inventory: client.data.inventory,
         consumeExp: client.data.consumeExp,
@@ -3516,6 +3706,7 @@ export class GameGateway
       'where [mob or player] - list nearby players, or locate a monster/player by name',
       'who - list every player currently online',
       'help <topic> - look up a description of a skill or other topic',
+      'say <message> - chat with every other connected player',
       'sacrifice/sac [corpse] - offer a monster corpse in the room to the gods for gold',
       'worth/wo - show how much gold you are carrying',
       'auto - show your togglable automations ("auto sac" to toggle auto-sacrifice, "auto con" to toggle auto-consume)',

@@ -1,6 +1,12 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { NetworkManager, type DisconnectedDetail } from '../net/NetworkManager.js';
-import type { SyncPayload, KickedPayload, CombatUpdatePayload, NoticePayload } from '../../server/game-gateway/types.js';
+import type {
+  SyncPayload,
+  KickedPayload,
+  CombatUpdatePayload,
+  NoticePayload,
+  ChatPayload,
+} from '../../server/game-gateway/types.js';
 import type { PlayerSnapshot, MinimapCell, RoomInfo, WorldMapArea } from '../../shared/types.js';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
@@ -8,22 +14,25 @@ const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
 // Caps the persistent log so a very long session doesn't grow the array
 // (and the DOM list rendered from it) without bound.
 const MAX_MESSAGES = 200;
+// Same idea for the separate chat panel — see GameState.chatMessages.
+const MAX_CHAT_MESSAGES = 200;
 
 type Screen = 'auth' | 'game';
 
 // A line in the persistent message log, tagged with an optional visual
 // treatment: 'sighting' (a monster/item just noticed — red, extra space
 // above and below), 'milestone' (a kill or level-up — extra space below,
-// to set it apart from the ordinary flow), or 'statusPrompt' (the trailing
+// to set it apart from the ordinary flow), 'statusPrompt' (the trailing
 // "<80hp 100m 100mv>" line the server appends to every message batch — a
-// bit of space above it). `leadsAction` is independent of `variant` (a
-// separate small margin-top, rendered alongside whatever variant class
-// also applies) — set on the first line of a command's own result, so
-// each action's output gets a little breathing room from whatever came
-// before it in the log.
+// bit of space above it), or 'chat' ("say", yellow — see the 'chat'
+// socket event). `leadsAction` is independent of `variant` (a separate
+// small margin-top, rendered alongside whatever variant class also
+// applies) — set on the first line of a command's own result, so each
+// action's output gets a little breathing room from whatever came before
+// it in the log.
 export interface LogEntry {
   text: string;
-  variant?: 'sighting' | 'milestone' | 'statusPrompt';
+  variant?: 'sighting' | 'milestone' | 'statusPrompt' | 'chat';
   leadsAction?: boolean;
 }
 
@@ -39,6 +48,11 @@ interface GameState {
   monsterMessage: string | null;
   itemMessage: string | null;
   messages: LogEntry[];
+  // Separate, append-only feed for the dedicated chat panel — every "say"
+  // (own or anyone else's) also lands here as one line, in addition to its
+  // yellow line in the main log above. Never cleared by "clear" (that only
+  // touches `messages`).
+  chatMessages: string[];
   // Set only by the "worldmap" command's ack; cleared by the modal's own
   // close action. Nothing else in GameState reacts to it.
   worldMapAreas: WorldMapArea[] | null;
@@ -53,6 +67,7 @@ const initialState: GameState = {
   monsterMessage: null,
   itemMessage: null,
   messages: [],
+  chatMessages: [],
   worldMapAreas: null,
 };
 
@@ -60,6 +75,12 @@ function appendEntries(existing: LogEntry[], incoming: LogEntry[]): LogEntry[] {
   if (incoming.length === 0) return existing;
   const combined = [...existing, ...incoming];
   return combined.length > MAX_MESSAGES ? combined.slice(combined.length - MAX_MESSAGES) : combined;
+}
+
+function appendChatMessages(existing: string[], incoming: string[]): string[] {
+  if (incoming.length === 0) return existing;
+  const combined = [...existing, ...incoming];
+  return combined.length > MAX_CHAT_MESSAGES ? combined.slice(combined.length - MAX_CHAT_MESSAGES) : combined;
 }
 
 // The server sends plain strings; a couple of exact, server-owned phrasings
@@ -163,7 +184,8 @@ type Action =
   | { type: 'connectionMessage'; message: string }
   | { type: 'clearMessages' }
   | { type: 'closeWorldMap' }
-  | { type: 'loggedOut'; message?: string };
+  | { type: 'loggedOut'; message?: string }
+  | { type: 'chat'; username: string; message: string };
 
 function reducer(state: GameState, action: Action): GameState {
   switch (action.type) {
@@ -176,6 +198,7 @@ function reducer(state: GameState, action: Action): GameState {
       const line = `Welcome back, ${action.player.username}!`;
       const sighted = withSightings(state, action.monsterMessage ?? null, action.itemMessage ?? null, [line]);
       return {
+        ...state,
         screen: 'game',
         authError: '',
         player: action.player,
@@ -236,6 +259,14 @@ function reducer(state: GameState, action: Action): GameState {
       return { ...state, worldMapAreas: null };
     case 'loggedOut':
       return { ...initialState, authError: action.message ?? '' };
+    case 'chat': {
+      const line = `${action.username} says: '${action.message}'`;
+      return {
+        ...state,
+        messages: appendEntries(state.messages, [{ text: line, variant: 'chat' }]),
+        chatMessages: appendChatMessages(state.chatMessages, [line]),
+      };
+    }
     default:
       return state;
   }
@@ -279,6 +310,11 @@ export function useGameConnection(): UseGameConnection {
       dispatch({ type: 'notice', messages, player, monsterMessage });
     }
 
+    function onChat(e: Event): void {
+      const { username, message } = (e as CustomEvent<ChatPayload>).detail;
+      dispatch({ type: 'chat', username, message });
+    }
+
     function onKicked(e: Event): void {
       const { message } = (e as CustomEvent<KickedPayload>).detail;
       network.disconnectAndReset();
@@ -311,6 +347,7 @@ export function useGameConnection(): UseGameConnection {
     network.addEventListener('sync', onSync);
     network.addEventListener('combatUpdate', onCombatUpdate);
     network.addEventListener('notice', onNotice);
+    network.addEventListener('chat', onChat);
     network.addEventListener('kicked', onKicked);
     network.addEventListener('disconnected', onDisconnected);
     network.addEventListener('reconnect_failed', onReconnectFailed);
@@ -319,6 +356,7 @@ export function useGameConnection(): UseGameConnection {
       network.removeEventListener('sync', onSync);
       network.removeEventListener('combatUpdate', onCombatUpdate);
       network.removeEventListener('notice', onNotice);
+      network.removeEventListener('chat', onChat);
       network.removeEventListener('kicked', onKicked);
       network.removeEventListener('disconnected', onDisconnected);
       network.removeEventListener('reconnect_failed', onReconnectFailed);

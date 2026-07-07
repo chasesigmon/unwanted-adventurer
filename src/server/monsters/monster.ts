@@ -6,6 +6,14 @@ import type { MapName } from '../../shared/constants.js';
 // and another player who happens to be that race.
 export type MonsterKind = 'wild skeleton' | 'wild goblin';
 
+// Every monster kind is classified as one of these — drives which "lesser
+// <class> monster resistance" skill (see players/skills.ts) reduces its
+// attacks, and which flavor of body part it drops (see
+// items/item-definitions.ts's wildGoblinBodyPartSkill). Wild skeletons are
+// undead; wild goblins (and anything else with no supernatural angle) are
+// normal.
+export type MonsterClass = 'undead' | 'normal';
+
 export interface Monster {
   id: string;
   kind: MonsterKind;
@@ -18,9 +26,7 @@ export interface Monster {
   col: number;
   // Awarded to whichever player lands the killing blow.
   expReward: number;
-  // Whether anti-undead mechanics (currently just "lesser undead
-  // resistance", see players/skills.ts) apply to this monster's attacks.
-  undead: boolean;
+  monsterClass: MonsterClass;
   // Same shape as a player's own level/attributes — lets "examine"'s
   // power-comparison message and the attack-damage attribute bonus (see
   // GameGateway.attributeAttackBonus) treat a monster opponent exactly

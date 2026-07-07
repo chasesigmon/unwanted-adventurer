@@ -20,6 +20,11 @@ import type { Race } from '../../shared/constants.js';
 // "1 point of reduction/bonus per 20%" shape (see resistanceReduction)
 // where a percentage translates into a mechanical effect.
 export const LESSER_UNDEAD_MONSTER_RESISTANCE = 'lesser undead monster resistance';
+// Counterpart to the above for "normal"-classified monsters (see
+// monsters/monster.ts's MonsterClass) — a wild goblin, currently the only
+// one. Taught by consuming a wild goblin's body part (see
+// items/item-definitions.ts's wildGoblinBodyPartSkill).
+export const LESSER_NORMAL_MONSTER_RESISTANCE = 'lesser normal monster resistance';
 export const DODGE = 'dodge';
 export const PARRY = 'parry';
 export const DAGGER = 'dagger';
@@ -72,6 +77,10 @@ export function percentBonus(skillPercent: number): number {
 
 export function undeadMonsterDamageReduction(skillLevels: Record<string, number>): number {
   return percentBonus(skillLevels[LESSER_UNDEAD_MONSTER_RESISTANCE] ?? 0);
+}
+
+export function normalMonsterDamageReduction(skillLevels: Record<string, number>): number {
+  return percentBonus(skillLevels[LESSER_NORMAL_MONSTER_RESISTANCE] ?? 0);
 }
 
 export function raceDamageReduction(skillLevels: Record<string, number>, race: Race): number {

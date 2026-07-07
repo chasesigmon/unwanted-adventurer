@@ -40,6 +40,7 @@ export interface GameScreenProps {
   minimap: MinimapCell[];
   room: RoomInfo | null;
   messages: LogEntry[];
+  chatMessages: string[];
   worldMapAreas: WorldMapArea[] | null;
   onCommand: (text: string) => void;
   onCloseWorldMap: () => void;
@@ -69,6 +70,7 @@ export function GameScreen({
   minimap,
   room,
   messages,
+  chatMessages,
   worldMapAreas,
   onCommand,
   onCloseWorldMap,
@@ -76,6 +78,7 @@ export function GameScreen({
   const [command, setCommand] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
+  const chatListRef = useRef<HTMLDivElement>(null);
 
   function handleKeyDown(e: KeyboardEvent<HTMLInputElement>): void {
     if (e.key !== 'Enter') return;
@@ -112,6 +115,14 @@ export function GameScreen({
       el.scrollTop = el.scrollHeight;
     }
   }, [messages]);
+
+  // Same auto-scroll behavior for the separate chat panel.
+  useEffect(() => {
+    const el = chatListRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [chatMessages]);
 
   const xpPercent = player ? Math.min(100, Math.max(0, Math.round((player.exp / player.maxTnl) * 100))) : 0;
 
@@ -214,6 +225,20 @@ export function GameScreen({
             <div className="side-box-content">
               <span className={`auto-toggle${player?.autoSacrifice ? ' auto-toggle--active' : ''}`}>Sacrifice</span>
               <span className={`auto-toggle${player?.autoConsume ? ' auto-toggle--active' : ''}`}>Consume</span>
+            </div>
+          </div>
+          {/* Persistent feed of every "say" (own or anyone else's) — see
+              useGameConnection's 'chat' reducer case. Fills whatever space
+              is left in the column and scrolls internally, auto-pinned to
+              the newest line. */}
+          <div className="side-box" id="chat-box">
+            <div className="side-box-label">Chat</div>
+            <div id="chat-list" ref={chatListRef}>
+              {chatMessages.map((line, i) => (
+                <div className="chat-line" key={i}>
+                  {line}
+                </div>
+              ))}
             </div>
           </div>
         </div>
