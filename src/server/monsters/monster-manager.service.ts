@@ -67,6 +67,7 @@ export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
       id,
       kind: 'skeleton',
       hp: SKELETON_STARTING_HP,
+      maxHp: SKELETON_STARTING_HP,
       mana: Infinity,
       movement: Infinity,
       mapName: SKELETON_HOME_MAP,
@@ -104,6 +105,12 @@ export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
 
   removeMonster(id: string): boolean {
     return this.monsters.delete(id);
+  }
+
+  // Used by the auto-attack loop to re-check a specific target on every
+  // tick, since it only has the id it locked onto when combat started.
+  getMonsterById(id: string): Monster | undefined {
+    return this.monsters.get(id);
   }
 
   getMonsterAt(mapName: MapName, row: number, col: number): Monster | undefined {

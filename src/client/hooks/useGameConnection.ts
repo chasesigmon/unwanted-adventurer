@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { NetworkManager, type DisconnectedDetail } from '../net/NetworkManager.js';
-import type { SyncPayload, KickedPayload } from '../../server/game-gateway/types.js';
+import type { SyncPayload, KickedPayload, CombatStatus, CombatUpdatePayload } from '../../server/game-gateway/types.js';
 import type { PlayerSnapshot, MinimapCell, RoomInfo } from '../../shared/types.js';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
@@ -14,6 +14,7 @@ interface GameState {
   minimap: MinimapCell[];
   room: RoomInfo | null;
   monsterMessage: string | null;
+  combat: CombatStatus | null;
   actionMessage: string;
 }
 
@@ -24,6 +25,7 @@ const initialState: GameState = {
   minimap: [],
   room: null,
   monsterMessage: null,
+  combat: null,
   actionMessage: '',
 };
 
@@ -44,6 +46,14 @@ type Action =
       minimap?: MinimapCell[];
       room?: RoomInfo;
       monsterMessage?: string;
+      combat?: CombatStatus | null;
+    }
+  | {
+      type: 'combatUpdate';
+      message: string;
+      player: PlayerSnapshot;
+      monster?: CombatStatus;
+      monsterMessage?: string;
     }
   | { type: 'connectionMessage'; message: string }
   | { type: 'loggedOut'; message?: string };
@@ -60,6 +70,9 @@ function reducer(state: GameState, action: Action): GameState {
         minimap: action.minimap,
         room: action.room,
         monsterMessage: action.monsterMessage ?? null,
+        // A fresh connection never has a fight already running (the server
+        // clears any auto-attack loop on disconnect), so this always resets.
+        combat: null,
         actionMessage: action.isReconnect
           ? 'Reconnected — position resynced with the server.'
           : `${action.player.username} entered ${action.player.map}.`,
@@ -77,6 +90,20 @@ function reducer(state: GameState, action: Action): GameState {
         // at all" (e.g. rate-limited/invalid-command acks), which must
         // leave the last-known monster state alone instead of clearing it.
         monsterMessage: action.room ? (action.monsterMessage ?? null) : state.monsterMessage,
+        // combat is tri-state: undefined means this ack doesn't pertain to
+        // combat at all (movement, unknown command) so any in-progress
+        // auto-attack loop's status is left alone — it keeps running
+        // server-side and is only ever cleared via a 'combatUpdate' push
+        // or an explicit null here (a killing first hit).
+        combat: action.combat === undefined ? state.combat : action.combat,
+        actionMessage: action.message,
+      };
+    case 'combatUpdate':
+      return {
+        ...state,
+        player: action.player,
+        monsterMessage: action.monsterMessage ?? null,
+        combat: action.monster ?? null,
         actionMessage: action.message,
       };
     case 'connectionMessage':
@@ -118,6 +145,11 @@ export function useGameConnection(): UseGameConnection {
       dispatch({ type: 'sync', player, minimap, room, monsterMessage, isReconnect });
     }
 
+    function onCombatUpdate(e: Event): void {
+      const { message, player, monster, monsterMessage } = (e as CustomEvent<CombatUpdatePayload>).detail;
+      dispatch({ type: 'combatUpdate', message, player, monster, monsterMessage });
+    }
+
     function onKicked(e: Event): void {
       const { message } = (e as CustomEvent<KickedPayload>).detail;
       network.disconnectAndReset();
@@ -151,12 +183,14 @@ export function useGameConnection(): UseGameConnection {
     }
 
     network.addEventListener('sync', onSync);
+    network.addEventListener('combatUpdate', onCombatUpdate);
     network.addEventListener('kicked', onKicked);
     network.addEventListener('disconnected', onDisconnected);
     network.addEventListener('reconnect_failed', onReconnectFailed);
 
     return () => {
       network.removeEventListener('sync', onSync);
+      network.removeEventListener('combatUpdate', onCombatUpdate);
       network.removeEventListener('kicked', onKicked);
       network.removeEventListener('disconnected', onDisconnected);
       network.removeEventListener('reconnect_failed', onReconnectFailed);
@@ -198,6 +232,7 @@ export function useGameConnection(): UseGameConnection {
         minimap: res.minimap ?? undefined,
         room: res.room,
         monsterMessage: res.monsterMessage,
+        combat: res.combat,
       });
     } catch (err) {
       dispatch({

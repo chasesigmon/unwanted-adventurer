@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { PlayerSnapshot, MinimapCell, RoomInfo } from '../../shared/types.js';
+import type { CombatStatus } from '../../server/game-gateway/types.js';
 import { Minimap } from './Minimap.js';
 
 export interface GameScreenProps {
@@ -7,6 +8,7 @@ export interface GameScreenProps {
   minimap: MinimapCell[];
   room: RoomInfo | null;
   monsterMessage: string | null;
+  combat: CombatStatus | null;
   actionMessage: string;
   onCommand: (text: string) => void;
 }
@@ -28,7 +30,7 @@ const MOVE_KEYS: Record<string, string> = {
   ArrowRight: 'd',
 };
 
-export function GameScreen({ player, minimap, room, monsterMessage, actionMessage, onCommand }: GameScreenProps): JSX.Element {
+export function GameScreen({ player, minimap, room, monsterMessage, combat, actionMessage, onCommand }: GameScreenProps): JSX.Element {
   const [command, setCommand] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -97,6 +99,11 @@ export function GameScreen({ player, minimap, room, monsterMessage, actionMessag
           <div id="action-log">
             <div id="action-message">{actionMessage}</div>
             {monsterMessage && <div id="monster-message">{monsterMessage}</div>}
+            {combat && (
+              <div id="combat-status">
+                {combat.monsterName}: {combat.hpPercent}% HP
+              </div>
+            )}
             {room && (
               <>
                 <div id="room-name">{room.name}</div>

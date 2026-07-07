@@ -15,6 +15,7 @@ export function App(): JSX.Element {
       minimap={state.minimap}
       room={state.room}
       monsterMessage={state.monsterMessage}
+      combat={state.combat}
       actionMessage={state.actionMessage}
       onCommand={sendCommand}
     />

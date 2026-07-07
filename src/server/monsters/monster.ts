@@ -6,6 +6,7 @@ export interface Monster {
   id: string;
   kind: MonsterKind;
   hp: number;
+  maxHp: number;
   mana: number;
   movement: number;
   mapName: MapName;

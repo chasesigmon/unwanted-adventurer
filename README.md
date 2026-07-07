@@ -169,20 +169,43 @@ each live monster's id/kind/hp/position for diagnostics.
 
 ### Combat
 
-`attack <mob>` (handled in `GameGateway.handleAttack`) resolves a single
-exchange against a monster in the player's current room:
+`attack <mob>` (`GameGateway.handleAttack`) starts an auto-attack loop
+against a monster in the player's current room.
 `MonsterManagerService.findMonsterByNameAt` does a case-insensitive
 substring match against the monster's kind, so `attack skel` and
 `attack skeleton` both find a skeleton (`"Attack what?"` if no mob name
 is given, `There is no "<query>" here to attack.` if nothing matches).
-The player always swings first for a flat 6 damage
+
+Each exchange (`GameGateway.resolveAttackExchange`) is the same basic
+hit: the player swings first for a flat 6 damage
 (`MonsterManagerService.applyDamage`); if that kills it, the monster is
 removed immediately, the player's `exp` increases by the monster's
-`expReward`, and the ack message includes `"You killed the skeleton!"`.
-If it survives, it swings back for a flat 2 damage, clamped so the
-player's `hp` never goes below 0. There's no separate turn/tick loop —
-everything happens synchronously within the one `attack` command, same
-as movement.
+`expReward`, and the message includes `"You killed the skeleton!"`. If it
+survives, it swings back for a flat 2 damage, clamped so the player's
+`hp` never goes below 0.
+
+The first exchange happens synchronously, in the `attack` command's own
+ack (which also carries a `combat: { monsterName, hpPercent }` status for
+the client to display). If the target survives, `GameGateway` starts a
+per-connection `setInterval` (`ATTACK_INTERVAL_MS`, 4s) that repeats the
+same exchange automatically — `tickCombat` — pushing a `combat:update`
+Socket.io event after every hit (there's no ack to piggyback on, since
+the player isn't sending anything) with the updated message, player
+snapshot, and hp percent, until:
+
+- the monster dies (`ended: true`, monster omitted, kill message),
+- it wanders out of the player's cell before the next tick (skeletons
+  keep wandering during a fight — nothing pauses them), or
+- the player sends any movement command, which calls
+  `GameGateway.interruptCombat` before the move itself is processed.
+
+Re-attacking the same target while already fighting it is a no-op (just
+reports current status, doesn't land a bonus hit or reset the 4s clock);
+attacking a different target cancels the old loop and starts a new one.
+`CommandAck.combat` is tri-state (`CombatStatus` object / explicit `null`
+for "just ended" / omitted for "not applicable, don't touch the client's
+existing display") for the same reason `monsterMessage` is tied to
+`room`'s presence — see `game-gateway/types.ts`.
 
 ## Auth: bcrypt + JWT + Redis session tracking
 

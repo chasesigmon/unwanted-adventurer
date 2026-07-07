@@ -5,6 +5,7 @@ import type {
   CommandAck,
   SyncPayload,
   KickedPayload,
+  CombatUpdatePayload,
 } from '../../server/game-gateway/types.js';
 
 // Note the reversed type-parameter order versus the server's Socket<>: from
@@ -83,6 +84,9 @@ export class NetworkManager extends EventTarget {
     );
     socket.on('session:kicked', (data: KickedPayload) =>
       this.dispatchEvent(new CustomEvent<KickedPayload>('kicked', { detail: data }))
+    );
+    socket.on('combat:update', (data: CombatUpdatePayload) =>
+      this.dispatchEvent(new CustomEvent<CombatUpdatePayload>('combatUpdate', { detail: data }))
     );
     socket.on('disconnect', (reason) =>
       this.dispatchEvent(new CustomEvent<DisconnectedDetail>('disconnected', { detail: { reason } }))

@@ -25,12 +25,19 @@ import { DIRECTION_ALIASES } from '../../shared/directions.js';
 import { commandSchema } from './command.schema.js';
 import type { AppConfig } from '../config/configuration.js';
 import type { Location } from '../game/types.js';
+import type { Monster } from '../monsters/monster.js';
 import type { PlayerSnapshot } from '../../shared/types.js';
-import type { GameServer, GameSocket, CommandAck } from './types.js';
+import type { GameServer, GameSocket, CommandAck, CombatStatus } from './types.js';
 
 const ATTACK_PREFIX = 'attack ';
 const PLAYER_ATTACK_DAMAGE = 6;
 const SKELETON_ATTACK_DAMAGE = 2;
+const ATTACK_INTERVAL_MS = 4000;
+
+interface ActiveCombat {
+  timer: NodeJS.Timeout;
+  targetId: string;
+}
 
 // cors/heartbeat are configured centrally in ws-adapter.ts, not here — this
 // stays a bare gateway so there's exactly one place that owns those options.
@@ -41,6 +48,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
   private readonly commandLimiters = new Map<string, CommandRateLimiter>();
   private readonly commandLimiterOptions: CommandRateLimiterOptions;
+  private readonly activeCombats = new Map<string, ActiveCombat>();
 
   constructor(
     private readonly playersService: PlayersService,
@@ -148,6 +156,104 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return monster ? `A ${monster.kind} is here!` : undefined;
   }
 
+  private hpPercent(monster: Monster): number {
+    return Math.max(0, Math.round((monster.hp / monster.maxHp) * 100));
+  }
+
+  private clearCombat(clientId: string): void {
+    const existing = this.activeCombats.get(clientId);
+    if (existing) {
+      clearInterval(existing.timer);
+      this.activeCombats.delete(clientId);
+    }
+  }
+
+  // Stops an in-progress auto-attack loop (if any) and pushes one final
+  // combat:update so the client clears its combat display — used whenever
+  // something other than a kill ends the fight (moving away; disconnect
+  // doesn't need this since there's no one left to notify).
+  private interruptCombat(client: GameSocket, loc: Location, message: string): void {
+    if (!this.activeCombats.has(client.id)) return;
+    this.clearCombat(client.id);
+    client.emit('combat:update', { message, player: this.snapshotFor(client, loc), ended: true });
+  }
+
+  // The core "basic hit" exchange, shared by the first (synchronous) hit in
+  // handleAttack and every subsequent tick in tickCombat: player swings for
+  // a flat 6 damage; if that doesn't kill it, it swings back for 2.
+  private resolveAttackExchange(client: GameSocket, target: Monster): { message: string; died: boolean } {
+    const { kind, expReward } = target;
+    const { died } = this.monsterManager.applyDamage(target.id, PLAYER_ATTACK_DAMAGE);
+
+    let message = `You hit the ${kind} for ${PLAYER_ATTACK_DAMAGE} damage.`;
+    if (died) {
+      client.data.exp += expReward;
+      message += ` You killed the ${kind}!`;
+    } else {
+      client.data.hp = Math.max(0, client.data.hp - SKELETON_ATTACK_DAMAGE);
+      message += ` The ${kind} hits you for ${SKELETON_ATTACK_DAMAGE} damage.`;
+    }
+    return { message, died };
+  }
+
+  // Fires every ATTACK_INTERVAL_MS while a fight is active for this
+  // connection. Pushed via 'combat:update' rather than a command ack,
+  // since the player isn't sending anything — this is the server acting on
+  // its own timer.
+  private tickCombat(client: GameSocket, targetId: string): void {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      this.clearCombat(client.id);
+      return;
+    }
+
+    const target = this.monsterManager.getMonsterById(targetId);
+    if (!target) {
+      this.clearCombat(client.id);
+      client.emit('combat:update', {
+        message: 'Your target is gone.',
+        player: this.snapshotFor(client, loc),
+        monsterMessage: this.monsterMessageFor(loc),
+        ended: true,
+      });
+      return;
+    }
+
+    if (target.mapName !== loc.mapName || target.row !== loc.row || target.col !== loc.col) {
+      this.clearCombat(client.id);
+      client.emit('combat:update', {
+        message: `The ${target.kind} slips out of reach.`,
+        player: this.snapshotFor(client, loc),
+        monsterMessage: this.monsterMessageFor(loc),
+        ended: true,
+      });
+      return;
+    }
+
+    const { message, died } = this.resolveAttackExchange(client, target);
+    void this.persistStats(username, { hp: client.data.hp, exp: client.data.exp });
+
+    if (died) {
+      this.clearCombat(client.id);
+      client.emit('combat:update', {
+        message,
+        player: this.snapshotFor(client, loc),
+        monsterMessage: this.monsterMessageFor(loc),
+        ended: true,
+      });
+      return;
+    }
+
+    client.emit('combat:update', {
+      message,
+      player: this.snapshotFor(client, loc),
+      monster: { monsterName: target.kind, hpPercent: this.hpPercent(target) },
+      monsterMessage: this.monsterMessageFor(loc),
+      ended: false,
+    });
+  }
+
   // Awaited on disconnect (nothing else to do but wait); fire-and-forget
   // after a move (see handleCommand) so a background DB write never adds
   // latency to the command ack. Called in both places so a hard crash
@@ -176,6 +282,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   async handleDisconnect(client: GameSocket): Promise<void> {
     const { username } = client.data;
     this.commandLimiters.delete(client.id);
+    this.clearCombat(client.id);
     this.activeConnections.clearActiveSocketIfCurrent(username, client.id);
 
     const loc = this.worldManager.getLocation(username);
@@ -239,7 +346,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return ackPayload;
     }
 
-    const fromMap = this.worldManager.getLocation(username)?.mapName ?? 'the world';
+    // Moving — even bumping a wall — means the player is no longer
+    // fighting, so any auto-attack loop for this connection stops here.
+    const preMoveLoc = this.worldManager.getLocation(username);
+    if (preMoveLoc) {
+      this.interruptCombat(client, preMoveLoc, 'You stop fighting and move on.');
+    }
+
+    const fromMap = preMoveLoc?.mapName ?? 'the world';
     const result = await this.worldManager.processCommand(username, direction);
 
     if (!result) {
@@ -278,10 +392,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
-  // A single "attack <mob>" exchange: the player always swings first (6
-  // damage); if that doesn't kill the target, it swings back (2 damage).
-  // Both sides' hp only ever move within this one command — there's no
-  // separate turn/tick loop for combat.
+  // "attack <mob>" starts (or redirects) an auto-attack loop: the player
+  // swings immediately (resolved synchronously, in this ack), and if the
+  // target survives, a timer takes over and repeats the same exchange
+  // every ATTACK_INTERVAL_MS via tickCombat until it dies, wanders out of
+  // reach, or the player moves (interruptCombat).
   private async handleAttack(client: GameSocket, mobQuery: string): Promise<CommandAck> {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
@@ -289,13 +404,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: 'Your session was lost. Please reconnect.' };
     }
 
-    const buildAck = (message: string, ok: boolean): CommandAck => ({
+    const buildAck = (message: string, ok: boolean, combat?: CombatStatus | null): CommandAck => ({
       ok,
       message,
       player: this.snapshotFor(client, loc),
       minimap: this.worldManager.getMinimap(username),
       room: resolveRoom(loc),
       monsterMessage: this.monsterMessageFor(loc),
+      combat,
     });
 
     if (!mobQuery) {
@@ -307,19 +423,31 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return buildAck(`There is no "${mobQuery}" here to attack.`, false);
     }
 
-    const { kind, expReward } = target;
-    const { died } = this.monsterManager.applyDamage(target.id, PLAYER_ATTACK_DAMAGE);
-
-    let message = `You hit the ${kind} for ${PLAYER_ATTACK_DAMAGE} damage.`;
-    if (died) {
-      client.data.exp += expReward;
-      message += ` You killed the ${kind}!`;
-    } else {
-      client.data.hp = Math.max(0, client.data.hp - SKELETON_ATTACK_DAMAGE);
-      message += ` The ${kind} hits you for ${SKELETON_ATTACK_DAMAGE} damage.`;
+    // Already fighting this exact target — report status without landing
+    // an extra hit or resetting the 4-second cadence.
+    const existing = this.activeCombats.get(client.id);
+    if (existing && existing.targetId === target.id) {
+      return buildAck(`You are already attacking the ${target.kind}.`, true, {
+        monsterName: target.kind,
+        hpPercent: this.hpPercent(target),
+      });
     }
+
+    // Redirecting to a new target cancels whatever fight was running.
+    this.clearCombat(client.id);
+
+    const { message, died } = this.resolveAttackExchange(client, target);
     void this.persistStats(username, { hp: client.data.hp, exp: client.data.exp });
 
-    return buildAck(message, true);
+    if (died) {
+      return buildAck(message, true, null);
+    }
+
+    const targetId = target.id;
+    const timer = setInterval(() => this.tickCombat(client, targetId), ATTACK_INTERVAL_MS);
+    timer.unref();
+    this.activeCombats.set(client.id, { timer, targetId });
+
+    return buildAck(message, true, { monsterName: target.kind, hpPercent: this.hpPercent(target) });
   }
 }
