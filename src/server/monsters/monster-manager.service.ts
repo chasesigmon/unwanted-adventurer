@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 
 import { getMap } from '../game/maps.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
-import { LESSER_UNDEAD_RESISTANCE, BONE_FINGER_DAGGER_STRIKE } from '../players/skills.js';
+import { skillForItemName } from '../items/item-definitions.js';
 import type { AppConfig } from '../config/configuration.js';
 import type { MapName } from '../../shared/constants.js';
 import type { ItemSkillReward } from '../items/dropped-item.js';
@@ -14,9 +14,7 @@ const SKELETON_STARTING_HP = 20;
 const SKELETON_EXP_REWARD = 10;
 const SKELETON_HOME_MAP: MapName = 'Labyrinth';
 const SKELETON_BODY_PARTS = ['leg', 'arm', 'hand', 'skull', 'rib'];
-const BODY_PART_SKILL_CHANCE = 0.2;
 const BONE_DAGGER_DROP_CHANCE = 0.2;
-const BONE_DAGGER_SKILL_CHANCE = 0.05;
 
 export interface DeathDrop {
   name: string;
@@ -189,21 +187,22 @@ export class MonsterManagerService implements OnModuleInit, OnModuleDestroy {
   // What a monster kind leaves behind on death — always empty for kinds
   // without a loot table (only skeletons have one right now, kept keyed
   // by kind rather than the `undead` flag since future undead kinds could
-  // have a different pool, or none). Skeletons always drop a body part
-  // (20% chance of teaching "lesser undead resistance" when consumed),
-  // plus a separate BONE_DAGGER_DROP_CHANCE roll for a bone dagger (5%
-  // chance of teaching "bone finger dagger strike" instead) — so a single
-  // kill can yield zero, one, or two items, each with its own skill odds.
+  // have a different pool, or none). Skeletons always drop a body part,
+  // plus a separate BONE_DAGGER_DROP_CHANCE roll for a bone dagger, so a
+  // single kill can yield zero, one, or two items. Each item's skill
+  // reward/chance comes from items/item-definitions.ts — the same lookup
+  // GameGateway.handleDrop uses, so an item's properties don't depend on
+  // which of those two paths put it on the ground.
   getDeathDrops(kind: MonsterKind): DeathDrop[] {
     if (kind !== 'skeleton') return [];
 
     const drops: DeathDrop[] = [];
     const partName = SKELETON_BODY_PARTS[Math.floor(Math.random() * SKELETON_BODY_PARTS.length)];
     if (partName) {
-      drops.push({ name: partName, skill: { reward: LESSER_UNDEAD_RESISTANCE, chance: BODY_PART_SKILL_CHANCE } });
+      drops.push({ name: partName, skill: skillForItemName(partName) });
     }
     if (Math.random() < BONE_DAGGER_DROP_CHANCE) {
-      drops.push({ name: 'bone dagger', skill: { reward: BONE_FINGER_DAGGER_STRIKE, chance: BONE_DAGGER_SKILL_CHANCE } });
+      drops.push({ name: 'bone dagger', skill: skillForItemName('bone dagger') });
     }
     return drops;
   }

@@ -14,6 +14,7 @@ import { PlayersService } from '../players/players.service.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
 import { MonsterManagerService } from '../monsters/monster-manager.service.js';
 import { ItemManagerService } from '../items/item-manager.service.js';
+import { skillForItemName } from '../items/item-definitions.js';
 import { AuthService } from '../auth/auth.service.js';
 import { SessionStoreService } from '../auth/session-store.service.js';
 import { ActiveConnectionsService } from '../auth/active-connections.service.js';
@@ -49,6 +50,16 @@ const ATTACK_VERB_MIN_LENGTH = 2;
 // "inventory" can be partially typed too ("inv", "invent", ...), but as a
 // bare command (it takes no argument) — same minimum-length reasoning.
 const INVENTORY_MIN_LENGTH = 2;
+
+// "scan" and "score" share the 2-letter prefix "sc", so a length-2 minimum
+// (like inventory's) would make "sc" ambiguous between them. Requiring 3
+// resolves that ("sca"/"scan" only ever prefixes scan, "sco"/"scor"/"score"
+// only ever prefixes score) while still leaving bare "s" reserved for south.
+const SCAN_SCORE_MIN_LENGTH = 3;
+
+function matchesPartial(text: string, word: string, minLength: number): boolean {
+  return text.length >= minLength && word.startsWith(text);
+}
 
 interface ActiveCombat {
   timer: NodeJS.Timeout;
@@ -431,8 +442,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return this.handleGrab(client, rest);
     }
 
+    if (verb === 'drop') {
+      return this.handleDrop(client, rest);
+    }
+
     // Bare command, no argument — "inv", "inven", "inventory", ...
-    if (text.length >= INVENTORY_MIN_LENGTH && 'inventory'.startsWith(text)) {
+    if (matchesPartial(text, 'inventory', INVENTORY_MIN_LENGTH)) {
       return this.handleInventory(client);
     }
 
@@ -448,8 +463,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return this.handleMap(client);
     }
 
-    if (text === 'scan') {
+    // "sc"/"s" alone stay ambiguous/reserved (south) — 3+ chars needed to
+    // disambiguate "sca"/"scan" from "sco"/"score".
+    if (matchesPartial(text, 'scan', SCAN_SCORE_MIN_LENGTH)) {
       return this.handleScan(client);
+    }
+
+    if (matchesPartial(text, 'score', SCAN_SCORE_MIN_LENGTH)) {
+      return this.handleScore(client);
     }
 
     if (text === 'commands') {
@@ -674,12 +695,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
-  // "consume <item>" — partial, case-insensitive match against a dropped
-  // item's name in the player's current room. Always removes the item once
-  // found, regardless of outcome. If the item teaches a skill the player
-  // doesn't already have, there's a per-item chance of learning it (e.g.
-  // 20% for a body part's "lesser undead resistance", 5% for a bone
-  // dagger's "bone finger dagger strike" — see DroppedItem.skill).
+  // "consume <item>" — partial, case-insensitive match, checked first
+  // against a dropped item in the player's current room, then (if nothing's
+  // on the ground) against the player's own inventory — matching the "if
+  // the item is not located on the ground" fallback. Messaging is
+  // identical either way; only the source of the item's skill info
+  // differs (DroppedItem.skill on the ground vs. a fresh lookup via
+  // item-definitions.ts for an inventory item, which only stores a bare
+  // name). Always removes the item once found, regardless of outcome. If
+  // the item teaches a skill the player doesn't already have, there's a
+  // per-item chance of learning it (e.g. 20% for a body part's "lesser
+  // undead resistance", 5% for a bone dagger's "bone finger dagger
+  // strike").
   private async handleConsume(client: GameSocket, itemQuery: string): Promise<CommandAck> {
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
@@ -701,30 +728,51 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return buildAck(['Consume what?'], false);
     }
 
-    const item = this.itemManager.findItemByNameAt(loc.mapName, loc.row, loc.col, itemQuery);
-    if (!item) {
-      return buildAck([`There is no "${itemQuery}" here to consume.`], false);
+    let name: string;
+    let skill: ReturnType<typeof skillForItemName>;
+
+    const groundItem = this.itemManager.findItemByNameAt(loc.mapName, loc.row, loc.col, itemQuery);
+    if (groundItem) {
+      this.itemManager.removeItem(groundItem.id);
+      name = groundItem.name;
+      skill = groundItem.skill;
+    } else {
+      const needle = itemQuery.toLowerCase();
+      const invName = client.data.inventory.find((n) => n.toLowerCase().includes(needle));
+      if (!invName) {
+        return buildAck([`There is no "${itemQuery}" here or in your inventory to consume.`], false);
+      }
+      const index = client.data.inventory.indexOf(invName);
+      client.data.inventory = [...client.data.inventory.slice(0, index), ...client.data.inventory.slice(index + 1)];
+      name = invName;
+      skill = skillForItemName(invName);
     }
 
-    this.itemManager.removeItem(item.id);
-
-    if (!item.skill) {
-      return buildAck([`You consume the ${item.name}.`], true);
+    if (!skill) {
+      void this.persistStats(username, {
+        hp: client.data.hp,
+        exp: client.data.exp,
+        level: client.data.level,
+        skills: client.data.skills,
+        inventory: client.data.inventory,
+        consumeExp: client.data.consumeExp,
+      });
+      return buildAck([`You consume the ${name}.`], true);
     }
 
     // Consuming a body part always counts toward consumeExp, regardless of
     // whether the skill roll below actually succeeds.
     client.data.consumeExp += 1;
 
-    const { reward, chance } = item.skill;
+    const { reward, chance } = skill;
     let messages: string[];
     if (client.data.skills.includes(reward)) {
-      messages = [`You consume the ${item.name}, but you already know this secret.`];
+      messages = [`You consume the ${name}, but you already know this secret.`];
     } else if (Math.random() >= chance) {
-      messages = [`You consume the ${item.name}, but feel nothing happen.`];
+      messages = [`You consume the ${name}, but feel nothing happen.`];
     } else {
       client.data.skills = [...client.data.skills, reward];
-      messages = [`You consume the ${item.name}.`, `You have gained ${reward}!`];
+      messages = [`You consume the ${name}.`, `You have gained ${reward}!`];
     }
 
     void this.persistStats(username, {
@@ -779,6 +827,55 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     });
 
     return buildAck([`You pick up the ${item.name}.`], true);
+  }
+
+  // "drop <item>" — the inverse of grab: partial, case-insensitive match
+  // against the player's inventory (not the ground), removes it from
+  // inventory and places it on the ground in the player's current room.
+  // Looks the name back up in item-definitions.ts so a re-dropped item
+  // regains its original skill-teaching properties instead of becoming an
+  // inert copy — inventory only stores bare names, no metadata.
+  private async handleDrop(client: GameSocket, itemQuery: string): Promise<CommandAck> {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(loc),
+      itemMessage: this.itemMessageFor(loc),
+    });
+
+    if (!itemQuery) {
+      return buildAck(['Drop what?'], false);
+    }
+
+    const needle = itemQuery.toLowerCase();
+    const itemName = client.data.inventory.find((name) => name.toLowerCase().includes(needle));
+    if (!itemName) {
+      return buildAck([`You aren't carrying a "${itemQuery}".`], false);
+    }
+
+    const index = client.data.inventory.indexOf(itemName);
+    client.data.inventory = [...client.data.inventory.slice(0, index), ...client.data.inventory.slice(index + 1)];
+    this.itemManager.dropItem(itemName, loc.mapName, loc.row, loc.col, skillForItemName(itemName));
+
+    void this.persistStats(username, {
+      hp: client.data.hp,
+      exp: client.data.exp,
+      level: client.data.level,
+      skills: client.data.skills,
+      inventory: client.data.inventory,
+      consumeExp: client.data.consumeExp,
+    });
+
+    return buildAck([`You drop the ${itemName}.`], true);
   }
 
   // Purely informational — no state change, so unlike every other handler
@@ -876,6 +973,31 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
+  // "score" — a text rendering of the same stats the Score box already
+  // shows on screen (race/level/hp/mana/movement/exp/consumeExp), for
+  // players who'd rather read it as a log line. Purely informational, same
+  // as skills/inventory/map.
+  private handleScore(client: GameSocket): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+
+    const messages = [
+      `${username} — ${client.data.race}, level ${client.data.level}`,
+      `HP: ${client.data.hp}  MP: ${client.data.mana}  MV: ${client.data.movement}`,
+      `XP: ${client.data.exp}/${maxTnlForLevel(client.data.level)}  CXP: ${client.data.consumeExp}`,
+    ];
+
+    return {
+      ok: true,
+      messages,
+      player: loc ? this.snapshotFor(client, loc) : undefined,
+      minimap: this.worldManager.getMinimap(username),
+      room: loc ? resolveRoom(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(loc) : undefined,
+    };
+  }
+
   // "worldmap" — a coarse overview of every area and what it connects to
   // (no per-room detail). The client opens a modal for this rather than
   // logging it as a message line — see CommandAck.worldMap.
@@ -923,12 +1045,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       'u, d - move up or down (not available yet)',
       'attack/kill <mob> - attack a monster in your room',
       'flee - break off a fight and flee in a random direction',
-      'consume <item> - eat a dropped item for a chance at a skill',
+      'consume <item> - eat an item (on the ground, or in your inventory) for a chance at a skill',
       'grab/get <item> - pick up a dropped item into your inventory',
+      'drop <item> - drop an item from your inventory onto the ground',
       'inventory - show what you are carrying',
       'skills - show your learned skills',
       'map - show this area\'s full layout',
       'scan - check the 4 adjacent rooms for monsters',
+      'score - show your character\'s stats',
       'worldmap - show an overview of the whole world',
       'clear - clear the message log',
       'logout/quit - log out',

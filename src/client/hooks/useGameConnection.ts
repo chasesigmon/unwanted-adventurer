@@ -59,7 +59,7 @@ function appendEntries(existing: LogEntry[], incoming: LogEntry[]): LogEntry[] {
 // get tagged for the "milestone" spacing the moment they arrive, so
 // GameScreen never has to guess from the raw text at render time.
 function classifyServerLine(text: string): LogEntry['variant'] {
-  if (text.startsWith('You killed ') || text.startsWith('You leveled up!')) {
+  if (text.startsWith('You killed ') || text.startsWith('You leveled up!') || text.includes('hits you for')) {
     return 'milestone';
   }
   return undefined;
@@ -73,9 +73,10 @@ function toEntries(lines: string[]): LogEntry[] {
 // one-at-a-time message log as everything else, instead of a separate
 // fixed banner — but only when the value is genuinely new (different from
 // what was last seen), so standing in the same room across several
-// actions doesn't reprint the same sighting on every single one. Only the
-// monster sighting gets the 'sighting' variant — the user only asked for
-// "<mob> is here" to stand out, not the item message.
+// actions doesn't reprint the same sighting on every single one. The
+// monster sighting gets the 'sighting' variant (red, extra space both
+// sides); the item sighting gets 'milestone' (just extra space below) —
+// enough breathing room to set it apart without the same alarm color.
 function withSightings(
   state: GameState,
   newMonsterMessage: string | null,
@@ -87,7 +88,7 @@ function withSightings(
     sightings.push({ text: newMonsterMessage, variant: 'sighting' });
   }
   if (newItemMessage && newItemMessage !== state.itemMessage) {
-    sightings.push({ text: newItemMessage });
+    sightings.push({ text: newItemMessage, variant: 'milestone' });
   }
   return {
     messages: appendEntries(state.messages, [...toEntries(ownMessages), ...sightings]),

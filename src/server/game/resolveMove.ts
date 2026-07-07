@@ -35,15 +35,17 @@ export function resolveMove(location: Location, direction: Direction): MoveResul
   return { ok: true, transitioned: false, mapName: location.mapName, row: nextRow, col: nextCol };
 }
 
-// 4x4 view around the location, for the minimap. There's no exact center
-// cell on an even-sized grid, so the player sits one cell in from the
-// top-left of the view (1 cell of context behind/left, 2 ahead/right on
-// each axis) rather than dead center.
+// 4 rows x 5 columns around the location, for the minimap. Rows have no
+// exact center on an even count (4), so the player sits one cell in from
+// the top of the view (1 row of context behind, 2 ahead) rather than dead
+// center — unchanged from the previous 4x4 layout. Columns have an odd
+// count (5) now, so those genuinely center on the player (2 cells of
+// context on each side).
 export function resolveMinimap(location: Location): MinimapCell[] {
   const map = getMap(location.mapName);
   const cells: MinimapCell[] = [];
   for (let dr = -1; dr <= 2; dr++) {
-    for (let dc = -1; dc <= 2; dc++) {
+    for (let dc = -2; dc <= 2; dc++) {
       const row = location.row + dr;
       const col = location.col + dc;
       const self = dr === 0 && dc === 0;
