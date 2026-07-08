@@ -5,7 +5,8 @@
 // back at Great Plains' top-middle).
 //
 // Requires `npm run dev` running inside game2d/ (backend on :3001) and
-// the same mongo/redis containers the root project uses. Run with
+// the game2d-postgres/redis containers (docker compose up -d
+// game2d-postgres redis, from the repo root). Run with
 // `node tests/verify-game2d-worlds.mjs` from the repo root.
 import { io } from 'socket.io-client';
 import { execSync } from 'child_process';
@@ -67,8 +68,9 @@ function move(socket, direction) {
   });
 }
 
-function mongoEval(script) {
-  return execSync(`docker exec text-arena-mongo mongosh game2d --quiet --eval '${script}'`).toString().trim();
+function teleport(username, map, row, col) {
+  const sql = `UPDATE players SET map='${map}', "row"=${row}, col=${col} WHERE username='${username}';`;
+  return execSync(`docker exec game2d-postgres psql -U game2d -d game2d -c "${sql}"`).toString().trim();
 }
 
 async function main() {
@@ -94,7 +96,7 @@ async function main() {
     socket.close();
     await sleep(300);
 
-    // Re-login (fresh token) and confirm the race/position persisted in Mongo.
+    // Re-login (fresh token) and confirm the race/position persisted in Postgres.
     const token2 = await loginOnly(username);
     const { socket: socket2, sync: sync2 } = await connectSocket(token2);
     assert(sync2.player.race === 'skeleton', 'race persisted across a fresh login');
@@ -112,7 +114,7 @@ async function main() {
     await sleep(300);
 
     // Teleport directly to the Great Plains door tile (row 0, col 10).
-    mongoEval(`db.players.updateOne({username:"${username}"}, {\$set:{map:"Great Plains", row:0, col:10}})`);
+    teleport(username, 'Great Plains', 0, 10);
     const { socket: socket2, sync } = await connectSocket(token);
     assert(sync.player.map === 'Great Plains' && sync.player.row === 0 && sync.player.col === 10, 'teleported to the Great Plains door tile');
 
@@ -139,7 +141,7 @@ async function main() {
     socket.close();
     await sleep(300);
 
-    mongoEval(`db.players.updateOne({username:"${username}"}, {\$set:{map:"Labyrinth", row:0, col:0}})`);
+    teleport(username, 'Labyrinth', 0, 0);
     const { socket: socket2, sync } = await connectSocket(token);
     assert(sync.player.row === 0 && sync.player.col === 0, 'teleported to the Labyrinth\'s corner');
 

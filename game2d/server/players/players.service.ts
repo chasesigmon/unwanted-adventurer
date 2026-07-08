@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import type { Model } from 'mongoose';
-import { Player, type PlayerDocument } from './player.schema.js';
+import { InjectRepository } from '@nestjs/typeorm';
+import type { Repository } from 'typeorm';
+import { Player } from './player.entity.js';
 import type { MapName, Race } from '../../shared/constants.js';
 
 export interface NewPlayerInput {
@@ -21,25 +21,29 @@ export interface PlayerPosition {
 
 @Injectable()
 export class PlayersService {
-  constructor(@InjectModel(Player.name) private readonly playerModel: Model<Player>) {}
+  constructor(@InjectRepository(Player) private readonly playersRepo: Repository<Player>) {}
 
-  findByUsernameCaseInsensitive(username: string): Promise<PlayerDocument | null> {
-    return this.playerModel.findOne({ username: new RegExp(`^${username}$`, 'i') });
+  findByUsernameCaseInsensitive(username: string): Promise<Player | null> {
+    return this.playersRepo
+      .createQueryBuilder('player')
+      .where('lower(player.username) = lower(:username)', { username })
+      .getOne();
   }
 
-  findByUsername(username: string): Promise<PlayerDocument | null> {
-    return this.playerModel.findOne({ username });
+  findByUsername(username: string): Promise<Player | null> {
+    return this.playersRepo.findOneBy({ username });
   }
 
-  async create(input: NewPlayerInput): Promise<PlayerDocument> {
-    return this.playerModel.create({ ...input, lastLogin: new Date() });
+  async create(input: NewPlayerInput): Promise<Player> {
+    const player = this.playersRepo.create({ ...input, lastLogin: new Date() });
+    return this.playersRepo.save(player);
   }
 
   async touchLastLogin(username: string): Promise<void> {
-    await this.playerModel.updateOne({ username }, { $set: { lastLogin: new Date() } });
+    await this.playersRepo.update({ username }, { lastLogin: new Date() });
   }
 
   async updatePosition(username: string, position: PlayerPosition): Promise<void> {
-    await this.playerModel.updateOne({ username }, { $set: position });
+    await this.playersRepo.update({ username }, position);
   }
 }

@@ -1,0 +1,20 @@
+{
+  "image": "goblin-spritesheet.png",
+  "frameWidth": 110,
+  "frameHeight": 140,
+  "framesPerRow": 4,
+  "rows": [
+    {
+      "name": "down",
+      "row": 0
+    },
+    {
+      "name": "up",
+      "row": 1
+    },
+    {
+      "name": "side",
+      "row": 2
+    }
+  ]
+}

@@ -1,18 +1,26 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { MongooseModule } from '@nestjs/mongoose';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { Player } from '../players/player.entity.js';
 import type { AppConfig } from '../config/configuration.js';
 
 @Module({
   imports: [
-    MongooseModule.forRootAsync({
+    TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService<AppConfig, true>) => ({
-        uri: configService.get('mongoUri', { infer: true }),
-        serverSelectionTimeoutMS: 2500,
-        // Fail fast rather than retry-looping — make sure Mongo is up
-        // (docker compose up -d mongo redis, from the repo root) before
-        // starting this server.
+        type: 'postgres' as const,
+        url: configService.get('postgresUrl', { infer: true }),
+        entities: [Player],
+        // The table itself is created by docker/postgres/init-postgres.sql,
+        // not by TypeORM — a traditional migration-style schema instead of
+        // Mongoose-style auto-sync, since joined tables (inventory, guilds,
+        // ...) are expected to be added by hand later.
+        synchronize: false,
+        connectTimeoutMS: 2500,
+        // Fail fast rather than retry-looping — make sure Postgres is up
+        // (docker compose up -d game2d-postgres redis, from the repo root)
+        // before starting this server.
         retryAttempts: 0,
       }),
       inject: [ConfigService],

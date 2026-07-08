@@ -1,6 +1,6 @@
 export interface AppConfig {
   port: number;
-  mongoUri: string;
+  postgresUrl: string;
   clientOrigin: string;
   redisUrl: string;
 
@@ -32,7 +32,7 @@ export default (): AppConfig => {
 
   return {
     port: Number(process.env.PORT) || 3001,
-    mongoUri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/game2d',
+    postgresUrl: process.env.POSTGRES_URL || 'postgresql://game2d:game2d@127.0.0.1:5432/game2d',
     clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5175',
     redisUrl: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
 

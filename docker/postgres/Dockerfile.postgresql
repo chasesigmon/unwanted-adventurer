@@ -1,0 +1,4 @@
+FROM postgres:16-alpine
+
+# Seeds the "game2d" database's players table on first container start.
+COPY init-postgres.sql /docker-entrypoint-initdb.d/init-postgres.sql
