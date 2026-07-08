@@ -1,0 +1,19 @@
+{
+  "name": "game2d",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone PhaserJS tech demo: a goblin roaming a 20x20 grass world. Client-only — no backend/auth, fully separate from the root project's own dev/build scripts.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "phaser": "^3.80.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "vite": "^5.3.5"
+  }
+}
