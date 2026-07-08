@@ -166,6 +166,15 @@ export interface SocketData {
   // range — and whether monsterMessageFor/itemMessageFor report anything
   // at all — depends on which of these three states the player is in.
   restState: 'awake' | 'resting' | 'sleeping';
+  // Slime-only ("mimic"/"revert" — see players/skills.ts). Which race or
+  // monster kind a slime is currently disguised as, defaulting to (and
+  // only ever meaningful when equal to) 'slime' for every other race —
+  // see items/item-definitions.ts's allowedSlotsForRace.
+  form: string;
+  // Slime-only — every unique race/monster-kind name ever consumed (see
+  // items/item-definitions.ts's bodyPartSourceName), i.e. what "mimic"
+  // (bare) lists and what "mimic <name>" can match against.
+  mimicForms: string[];
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

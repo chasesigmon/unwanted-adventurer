@@ -1,6 +1,6 @@
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 import { getMap } from '../game/maps.js';
-import { startingSkillsForRace, STARTING_SKILL_PERCENT } from './skills.js';
+import { startingSkillsForRace, startingSkillPercentFor } from './skills.js';
 import type { MapName, Race } from '../../shared/constants.js';
 
 const DUMMY_LEVEL = 1;
@@ -11,7 +11,7 @@ const DUMMY_MAX_HP = 100;
 // GameGateway.handleConnection) — every dummy gets its race's baseline
 // skills for consistent combat math against it.
 function startingSkillLevelsFor(race: Race): Record<string, number> {
-  return Object.fromEntries(startingSkillsForRace(race).map((skill) => [skill, STARTING_SKILL_PERCENT]));
+  return Object.fromEntries(startingSkillsForRace(race).map((skill) => [skill, startingSkillPercentFor(skill)]));
 }
 
 // Slime can't wield a weapon at all (see item-definitions.ts's
@@ -64,19 +64,16 @@ export class DummyPlayerService implements OnModuleInit {
     }
   }
 
-  private randomCellIn(mapName: MapName): { row: number; col: number } {
+  // A fixed spot per map (top-middle) rather than a random cell — makes a
+  // dummy's location predictable for anyone (a player or a test script)
+  // hunting for one, and stable across server restarts.
+  private fixedSpawnPointIn(mapName: MapName): { row: number; col: number } {
     const map = getMap(mapName);
-    let row: number;
-    let col: number;
-    do {
-      row = Math.floor(Math.random() * map.rows);
-      col = Math.floor(Math.random() * map.cols);
-    } while (map.getExitAt(row, col));
-    return { row, col };
+    return { row: 0, col: Math.floor(map.cols / 2) };
   }
 
   private spawn(config: { username: string; race: Race; homeMap: MapName }): void {
-    const { row, col } = this.randomCellIn(config.homeMap);
+    const { row, col } = this.fixedSpawnPointIn(config.homeMap);
     this.dummies.set(`dummy-${config.username}`, {
       id: `dummy-${config.username}`,
       username: config.username,

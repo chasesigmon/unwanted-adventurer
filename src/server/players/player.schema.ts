@@ -116,6 +116,20 @@ export class Player {
   @Prop({ default: false })
   autoConsume!: boolean;
 
+  // Slime-only ("mimic"/"revert" — see players/skills.ts's MIMIC/REVERT).
+  // Which race or monster kind (e.g. "goblin", "wild skeleton") a slime is
+  // currently disguised as, governing equipment-slot eligibility only (see
+  // items/item-definitions.ts's allowedSlotsForRace) — never changed for
+  // any other race. Persists across sessions until "revert".
+  @Prop({ default: 'slime' })
+  form!: string;
+
+  // Slime-only — every unique race/monster-kind name a slime has ever
+  // consumed a body part from (see items/item-definitions.ts's
+  // bodyPartSourceName), and so can mimic the form of. Never shrinks.
+  @Prop({ type: [String], default: [] })
+  mimicForms!: string[];
+
   @Prop({ default: Date.now })
   lastLogin!: Date;
 }

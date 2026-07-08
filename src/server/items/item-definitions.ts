@@ -23,6 +23,10 @@ import type { ItemSkillReward } from './dropped-item.js';
 // second, redundant skill from consuming one pointless.
 const BODY_PART_SKILL: ItemSkillReward = { reward: LESSER_UNDEAD_MONSTER_RESISTANCE, chance: 0.2 };
 
+// Bare "leg"/"arm"/etc — no monster/race ever drops these anymore (every
+// current drop is named "<source> <part>", see MONSTER_BODY_PART_SOURCES/
+// raceBodyPartSkill below), but kept as an inert fallback for any item
+// already sitting in an existing inventory from before that was true.
 const ITEM_DEFINITIONS: Record<string, ItemSkillReward> = {
   leg: BODY_PART_SKILL,
   arm: BODY_PART_SKILL,
@@ -31,21 +35,23 @@ const ITEM_DEFINITIONS: Record<string, ItemSkillReward> = {
   rib: BODY_PART_SKILL,
 };
 
-// A wild goblin (a "normal"-classified monster, see monsters/monster.ts's
-// MonsterClass) drops its body parts named "wild goblin <part>" rather
-// than the bare names above — a bare "leg" always means undead resistance
-// via ITEM_DEFINITIONS, so a differently-classified monster's body part
-// needs its own name to teach a different skill (see
-// wildGoblinBodyPartSkill below), the same reasoning as the player-race
-// "<race> <part>" convention (see raceBodyPartSkill).
-const WILD_GOBLIN_BODY_PART_SKILL: ItemSkillReward = { reward: LESSER_NORMAL_MONSTER_RESISTANCE, chance: 0.1 };
-const WILD_GOBLIN_BODY_PART_PREFIX = 'wild goblin';
+// A monster's body part is named "<monster kind> <part>" (e.g. "wild
+// goblin leg", "wild skeleton arm") — every monster kind drops its own
+// prefix so the source is always recoverable from the item name alone
+// (see bodyPartSourceName), the same reasoning as the player-race
+// "<race> <part>" convention (see raceBodyPartSkill). Keyed by monster
+// kind here rather than listed item-by-item, since it's every
+// MonsterKind x body-part combination.
+const MONSTER_BODY_PART_SOURCES: Record<string, ItemSkillReward> = {
+  'wild skeleton': BODY_PART_SKILL,
+  'wild goblin': { reward: LESSER_NORMAL_MONSTER_RESISTANCE, chance: 0.1 },
+};
 
 // The canonical "these are body parts" list — used by GameGateway
 // .resolveAttackExchange/.handlePlayerLikeDeath to route death drops: body
 // parts always land loose on the ground, while anything else (e.g. "bone
 // dagger") goes into a corpse container instead. Also the suffix checked
-// for a player-corpse body part's "<race> <part>" name (see isBodyPart).
+// for a "<source> <part>" name (see isBodyPart).
 const BODY_PARTS = ['leg', 'arm', 'hand', 'skull', 'rib'];
 
 // A player corpse's dropped body part (see GameGateway.handlePlayerLikeDeath)
@@ -67,26 +73,39 @@ export function isBodyPart(name: string): boolean {
 // inventory needing to store anything beyond the bare name. Recognized
 // dynamically here rather than listed item-by-item, since it's every
 // Race x body-part combination.
-function raceBodyPartSkill(name: string): ItemSkillReward | undefined {
+function raceBodyPartSource(name: string): { source: string; skill: ItemSkillReward } | undefined {
   const lower = name.toLowerCase();
   const spaceIdx = lower.lastIndexOf(' ');
   if (spaceIdx === -1) return undefined;
   const racePart = lower.slice(0, spaceIdx);
   const bodyPart = lower.slice(spaceIdx + 1);
   if (!BODY_PARTS.includes(bodyPart) || !ALL_RACES.includes(racePart as Race)) return undefined;
-  return { reward: lesserRaceResistanceName(racePart as Race), chance: 0.1 };
+  return { source: racePart, skill: { reward: lesserRaceResistanceName(racePart as Race), chance: 0.1 } };
 }
 
-// "wild goblin leg"/"wild goblin arm"/etc — see WILD_GOBLIN_BODY_PART_SKILL.
-function wildGoblinBodyPartSkill(name: string): ItemSkillReward | undefined {
+// "wild goblin leg"/"wild skeleton arm"/etc — see MONSTER_BODY_PART_SOURCES.
+function monsterBodyPartSource(name: string): { source: string; skill: ItemSkillReward } | undefined {
   const lower = name.toLowerCase();
-  if (!lower.startsWith(`${WILD_GOBLIN_BODY_PART_PREFIX} `)) return undefined;
-  const bodyPart = lower.slice(WILD_GOBLIN_BODY_PART_PREFIX.length + 1);
-  return BODY_PARTS.includes(bodyPart) ? WILD_GOBLIN_BODY_PART_SKILL : undefined;
+  for (const [source, skill] of Object.entries(MONSTER_BODY_PART_SOURCES)) {
+    if (lower.startsWith(`${source} `) && BODY_PARTS.includes(lower.slice(source.length + 1))) {
+      return { source, skill };
+    }
+  }
+  return undefined;
 }
 
 export function skillForItemName(name: string): ItemSkillReward | undefined {
-  return ITEM_DEFINITIONS[name.toLowerCase()] ?? raceBodyPartSkill(name) ?? wildGoblinBodyPartSkill(name);
+  return ITEM_DEFINITIONS[name.toLowerCase()] ?? monsterBodyPartSource(name)?.skill ?? raceBodyPartSource(name)?.skill;
+}
+
+// The race or monster kind a body part came from (e.g. "wild skeleton",
+// "wild goblin", "goblin", "hobgoblin") — undefined for a non-body-part
+// item or a legacy bare body part with no recoverable source. This is
+// what a slime's "mimic" collection tracks (see GameGateway
+// .consumeBodyPart/handleMimic): consuming a body part with a source adds
+// that source to the slime's permanent mimicForms list.
+export function bodyPartSourceName(name: string): string | undefined {
+  return monsterBodyPartSource(name)?.source ?? raceBodyPartSource(name)?.source;
 }
 
 // Every slot a player can equip something into. Body parts come in pairs
@@ -96,18 +115,20 @@ export function skillForItemName(name: string): ItemSkillReward | undefined {
 // necklaces/earrings have somewhere to go without another schema change.
 export type EquipmentSlot =
   | 'head'
+  | 'mask'
   | 'leftEar'
   | 'rightEar'
   | 'torso'
-  | 'leftForearm'
-  | 'rightForearm'
+  | 'leftArm'
+  | 'rightArm'
+  | 'gauntlets'
   | 'shield'
   | 'weapon'
   | 'leftRing'
   | 'rightRing'
   | 'necklace'
-  | 'leftShin'
-  | 'rightShin'
+  | 'leftLeg'
+  | 'rightLeg'
   | 'boots';
 
 // Broad item family — currently only used for the "weapon" case (which
@@ -140,9 +161,18 @@ const BONE_SHIELD_EQUIPMENT: EquipmentDefinition = {
   category: 'armor',
 };
 
+// A mask's only effect is covering the wearer's face — see GameGateway's
+// town-entry gate (requires one, plus every other slot filled, to cross
+// into Floro/Kortho).
+const BONE_MASK_EQUIPMENT: EquipmentDefinition = {
+  slot: 'mask',
+  category: 'armor',
+};
+
 const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
   'bone dagger': BONE_DAGGER_EQUIPMENT,
   'bone shield': BONE_SHIELD_EQUIPMENT,
+  'bone mask': BONE_MASK_EQUIPMENT,
 };
 
 export function equipmentForItemName(name: string): EquipmentDefinition | undefined {
@@ -165,6 +195,7 @@ const ITEM_KINDS: Record<string, ItemKind> = {
   rib: 'item',
   'bone dagger': 'item',
   'bone shield': 'item',
+  'bone mask': 'item',
 };
 
 export function itemKindFor(name: string): ItemKind | undefined {
@@ -185,24 +216,18 @@ const ITEM_DESCRIPTIONS: Record<string, string> = {
     'A crude dagger carved from bone and sharpened along one edge. Wielding it lets you stab rather than merely hit.',
   'bone shield':
     'A wide shield lashed together from bone plates. Wearing it gives you a chance to block an incoming attack outright.',
+  'bone mask':
+    'A grinning mask carved from bone, covering the face. Wearing one — along with a full suit of equipment — is enough to slip past a town\'s guards.',
 };
 
 export function itemDescriptionFor(name: string): string | undefined {
   const lower = name.toLowerCase();
   if (ITEM_DESCRIPTIONS[lower]) return ITEM_DESCRIPTIONS[lower];
-  if (lower.startsWith(`${WILD_GOBLIN_BODY_PART_PREFIX} `)) {
-    const part = lower.slice(WILD_GOBLIN_BODY_PART_PREFIX.length + 1);
-    if (BODY_PARTS.includes(part)) {
-      return `A ${part} bone, unmistakably wild goblin in origin.`;
-    }
-  }
-  const spaceIdx = lower.lastIndexOf(' ');
-  if (spaceIdx !== -1) {
-    const race = lower.slice(0, spaceIdx);
+  const source = bodyPartSourceName(lower);
+  if (source) {
+    const spaceIdx = lower.lastIndexOf(' ');
     const part = lower.slice(spaceIdx + 1);
-    if (ALL_RACES.includes(race as Race) && BODY_PARTS.includes(part)) {
-      return `A ${part} bone, unmistakably ${race} in origin.`;
-    }
+    return `A ${part} bone, unmistakably ${source} in origin.`;
   }
   return undefined;
 }
@@ -212,45 +237,56 @@ export function itemDescriptionFor(name: string): string | undefined {
 // declared in).
 export const EQUIPMENT_SLOT_ORDER: EquipmentSlot[] = [
   'head',
+  'mask',
   'leftEar',
   'rightEar',
   'torso',
-  'leftForearm',
-  'rightForearm',
+  'leftArm',
+  'rightArm',
+  'gauntlets',
   'shield',
   'weapon',
   'leftRing',
   'rightRing',
   'necklace',
-  'leftShin',
-  'rightShin',
+  'leftLeg',
+  'rightLeg',
   'boots',
 ];
 
 export const EQUIPMENT_SLOT_LABELS: Record<EquipmentSlot, string> = {
   head: 'Head',
+  mask: 'Mask',
   leftEar: 'Left Ear',
   rightEar: 'Right Ear',
   torso: 'Torso',
-  leftForearm: 'Left Forearm',
-  rightForearm: 'Right Forearm',
+  leftArm: 'Left Arm',
+  rightArm: 'Right Arm',
+  gauntlets: 'Gauntlets',
   shield: 'Shield',
   weapon: 'Weapon',
   leftRing: 'Left Ring',
   rightRing: 'Right Ring',
   necklace: 'Necklace',
-  leftShin: 'Left Shin',
-  rightShin: 'Right Shin',
+  leftLeg: 'Left Leg',
+  rightLeg: 'Right Leg',
   boots: 'Boots',
 };
 
-// Slimes have no limbs, ears, fingers, or shape to speak of — a helmet
-// and a torso wrap are the only things that make sense on one, plus a
-// shield and a weapon (the theory being it wraps a tentacle around each
-// one to wear/wield it). Every other slot is still off limits. Every
-// other race can use the full slot list. See
+// Slimes have no limbs, ears, fingers, or shape to speak of — a helmet, a
+// mask, a torso wrap, a shield, and a weapon are the only things that make
+// sense on one (the theory for the shield/weapon being it wraps a
+// tentacle around each one to wear/wield it). Every other slot is still
+// off limits normally — but a slime that has mimicked another form (see
+// players/skills.ts's MIMIC/GameGateway's handleMimic) can wear that
+// form's full slot list instead, since "form" governs equipment
+// eligibility while `race` itself never changes. `form` is only ever
+// meaningful for a slime; every other race ignores it. See
 // GameGateway.handleEquip/handleEquipmentView/handleExamine.
-export function allowedSlotsForRace(race: Race): EquipmentSlot[] {
-  if (race === 'slime') return ['head', 'torso', 'shield', 'weapon'];
+export function allowedSlotsForRace(race: Race, form?: string): EquipmentSlot[] {
+  if (race === 'slime') {
+    if (form && form !== 'slime') return EQUIPMENT_SLOT_ORDER;
+    return ['head', 'mask', 'torso', 'shield', 'weapon'];
+  }
   return EQUIPMENT_SLOT_ORDER;
 }

@@ -26,6 +26,7 @@ import {
   itemDescriptionFor,
   isBodyPart,
   randomBodyPartName,
+  bodyPartSourceName,
   EQUIPMENT_SLOT_ORDER,
   EQUIPMENT_SLOT_LABELS,
   allowedSlotsForRace,
@@ -53,12 +54,16 @@ import {
   SHIELD_BLOCK,
   SECOND_ATTACK,
   ENHANCED_DAMAGE,
+  MIMIC,
+  REVERT,
   lesserRaceResistanceName,
   BODY_PART_SKILL_STARTING_PERCENT,
   BODY_PART_SKILL_GROWTH_CHANCE,
   startingSkillsForRace,
+  startingSkillPercentFor,
   activeSkillFor,
   ACTIVE_SKILL_VERB,
+  extraAttackSkillsFor,
   STARTING_SKILL_PERCENT,
   SKILL_GROWTH_CHANCE,
   MAX_SKILL_PERCENT,
@@ -70,7 +75,7 @@ import {
   enhancedDamageBonus,
 } from '../players/skills.js';
 import { findHelpTopic } from '../help/help-topics.js';
-import { STARTING_MAP } from '../../shared/constants.js';
+import { STARTING_MAP, TOWN_MAPS, RACE_CLASSIFICATION } from '../../shared/constants.js';
 import type { MapName, Race } from '../../shared/constants.js';
 import type { MonsterClass } from '../monsters/monster.js';
 import { DIRECTION_ALIASES, DIRECTION_DELTAS } from '../../shared/directions.js';
@@ -137,10 +142,25 @@ const MAX_STAT = 100;
 // every race — see grantExp.
 const LEVEL_UP_STAT_BONUS = 10;
 
+// A goblin caps out at this level — once there, killing anything grants no
+// further exp at all (see grantExp); the only way to keep growing is to
+// consume body parts and evolve into a Hobgoblin.
+const GOBLIN_MAX_LEVEL = 10;
+// Reaching this level grants a goblin (and only a goblin) "second attack"
+// — see maybeGrantGoblinSecondAttack.
+const GOBLIN_SECOND_ATTACK_LEVEL = 5;
+
 // "goblin evolves into Hobgoblin" — see maybeEvolveToHobgoblin.
 const HOBGOBLIN_EVOLUTION_CXP = 100;
 const HOBGOBLIN_ATTRIBUTE_BONUS = 10;
 const HOBGOBLIN_STAT_BONUS = 100;
+
+// Exactly what a "monster" needs equipped to pass a town's guards (see
+// canEnterTown) — a fixed, deliberately narrower list than every slot
+// that exists (items/item-definitions.ts's EQUIPMENT_SLOT_ORDER), per the
+// request: mask, armor (the "torso" slot), both arms, gauntlets, both
+// legs, and boots.
+const TOWN_ENTRY_REQUIRED_SLOTS: EquipmentSlot[] = ['mask', 'torso', 'leftArm', 'rightArm', 'gauntlets', 'leftLeg', 'rightLeg', 'boots'];
 
 // Per-step movement-point cost, based on the *departure* room's
 // GameMap.setting — "inside" (Labyrinth, stone) is cheaper to move
@@ -256,6 +276,17 @@ const SLAP_MIN_LENGTH = 3;
 const STAT_TICK_MIN_MS = 30_000;
 const STAT_TICK_MAX_MS = 40_000;
 
+// A single, world-wide clock — every global stat tick (see
+// globalStatTick) advances it by one hour, wrapping at 24; every
+// connected player sees the exact same hour (see handleTime), same
+// reasoning as the shared tick itself. In-memory only, like the rest of
+// the world's transient state (monsters, corpses, etc.) — resets to
+// midnight on server restart. 6:00-17:59 counts as day, everything else
+// as night.
+const DAY_START_HOUR = 6;
+const DAY_END_HOUR = 18;
+const HOURS_PER_DAY = 24;
+
 // Heal percentage range per restState, applied identically to
 // hp/mana/movement each tick (one random roll shared across all three).
 const HEAL_PERCENT_RANGE: Record<GameSocket['data']['restState'], [number, number]> = {
@@ -298,6 +329,15 @@ function avoidChance(
 // supplies (see weaponAttackFor); every current attackVerb is regular.
 function thirdPersonVerb(verb: string): string {
   return verb.endsWith('s') ? verb : `${verb}s`;
+}
+
+// "Your second attack triggers!" / "Your third attack triggers!" — one
+// per *extra* swing beyond the first (see rollExtraAttack's swingCount),
+// named after whichever skill actually procced it — second attack and
+// third attack are independent (see players/skills.ts's
+// extraAttackSkillsFor), so both can appear in the same tick.
+function extraSwingMessage(skillName: string): string {
+  return `Your ${skillName} triggers!`;
 }
 
 interface ActiveCombat {
@@ -443,6 +483,9 @@ export class GameGateway
   // scheduleGlobalStatTick — so every player is on the same tick, rather
   // than each running their own independent randomized cycle.
   private globalStatTickTimer?: NodeJS.Timeout;
+  // The world clock (see DAY_START_HOUR/DAY_END_HOUR) — advances by one
+  // hour every global stat tick (see globalStatTick), shared by everyone.
+  private worldHour = 0;
 
   constructor(
     private readonly playersService: PlayersService,
@@ -557,15 +600,22 @@ export class GameGateway
     // progress already made.
     for (const skill of startingSkillsForRace(client.data.race)) {
       if (client.data.skillLevels[skill] === undefined) {
-        client.data.skillLevels[skill] = STARTING_SKILL_PERCENT;
+        client.data.skillLevels[skill] = startingSkillPercentFor(skill);
       }
     }
+    // A goblin already at or past the level-5 threshold (e.g. an existing
+    // account from before this shipped) gets "second attack" backfilled
+    // here too — see maybeGrantGoblinSecondAttack.
+    this.maybeGrantGoblinSecondAttack(client);
     client.data.inventory = doc?.inventory ?? [];
     client.data.consumeExp = doc?.consumeExp ?? 0;
     client.data.equipment = doc?.equipment ?? {};
     client.data.gold = doc?.gold ?? 0;
     client.data.autoSacrifice = doc?.autoSacrifice ?? false;
     client.data.autoConsume = doc?.autoConsume ?? false;
+    // Slime-only — see SocketData.form/mimicForms.
+    client.data.form = doc?.form ?? 'slime';
+    client.data.mimicForms = doc?.mimicForms ?? [];
     // Never persisted — a fresh connection always starts awake and alive,
     // with no active-skill uses queued.
     client.data.restState = 'awake';
@@ -709,12 +759,35 @@ export class GameGateway
 
   // Every cardinal direction that would actually lead somewhere from loc
   // (in-bounds, whether or not it crosses a map exit) — used by "flee" to
-  // pick a random escape route. Pure and dependency-free like resolveMove
-  // itself, so this is safe to call directly from the gateway even though
-  // the player's authoritative position lives in a world instance that may
-  // be a separate worker_thread: it only reads the static map registry.
-  private fleeableDirections(loc: Location): Direction[] {
-    return ALL_DIRECTIONS.filter((direction) => resolveMove(loc, direction).ok);
+  // pick a random escape route, and by exitsLineFor to report what's
+  // actually choosable. Excludes a direction that would cross into a town
+  // the player can't currently enter (see canEnterTown) — same reasoning
+  // either way: not actually a usable exit right now. Otherwise pure and
+  // dependency-free like resolveMove itself, so this is safe to call
+  // directly from the gateway even though the player's authoritative
+  // position lives in a world instance that may be a separate
+  // worker_thread: it only reads the static map registry (plus the
+  // client's own cached equipment/race, never anyone else's).
+  private fleeableDirections(client: GameSocket, loc: Location): Direction[] {
+    return ALL_DIRECTIONS.filter((direction) => {
+      const preview = resolveMove(loc, direction);
+      if (!preview.ok) return false;
+      if (preview.transitioned && TOWN_MAPS.includes(preview.mapName) && !this.canEnterTown(client)) return false;
+      return true;
+    });
+  }
+
+  // A "monster"-classified race (see shared/constants.ts's
+  // RACE_CLASSIFICATION — currently every playable race) needs this
+  // specific set of slots filled — not every slot that exists — to hide
+  // its nature and cross into a town (see TOWN_MAPS); anyone else passes
+  // through freely. Checked directly against `equipment`, independent of
+  // allowedSlotsForRace — a race that can't equip one of these at all
+  // (a non-mimicking slime, missing leftArm/rightArm/gauntlets/leftLeg/
+  // rightLeg entirely) is simply, naturally, never able to satisfy it.
+  private canEnterTown(client: GameSocket): boolean {
+    if (RACE_CLASSIFICATION[client.data.race] !== 'monster') return true;
+    return TOWN_ENTRY_REQUIRED_SLOTS.every((slot) => !!client.data.equipment[slot]);
   }
 
   // The equipped weapon's contribution to an attack, on top of
@@ -821,18 +894,28 @@ export class GameGateway
     return scaledSkillChance(skill);
   }
 
-  // "second attack" (hobgoblin-only) — a chance, per combat tick, to swing
-  // a second time at the same target (see resolveAttackExchange/
-  // resolveMurderExchange's swing loops). Uses the same scaledSkillChance
-  // shape as shield block. Grows 2% of the time regardless of whether it
-  // actually procced this tick — every tick with the skill is a growth
-  // opportunity, not just a successful proc.
-  private rollSecondAttack(client: GameSocket): { procced: boolean; growthMessage?: string } {
-    const skill = client.data.skillLevels[SECOND_ATTACK];
-    if (skill === undefined) return { procced: false };
-    const procced = Math.random() < scaledSkillChance(skill);
-    const growthMessage = this.maybeGrowSkill(client, SECOND_ATTACK, SKILL_GROWTH_CHANCE);
-    return { procced, growthMessage };
+  // "second attack" (goblin, from level 5) / "third attack" (hobgoblin) —
+  // each is rolled independently, per combat tick, for a chance to add one
+  // *extra* swing at the same target (see resolveAttackExchange/
+  // resolveMurderExchange's swing loops, and extraAttackSkillsFor for
+  // which skills apply — neither is an upgrade of the other, so a
+  // character with both can gain 0, 1, or 2 bonus swings in the same
+  // tick). Uses the same scaledSkillChance shape as shield block. Each
+  // grows 2% of the time regardless of whether it actually procced this
+  // tick — every tick with the skill is a growth opportunity, not just a
+  // successful proc.
+  private rollExtraAttack(client: GameSocket): { swingCount: number; extraSwingSkills: string[]; growthMessages: string[] } {
+    const growthMessages: string[] = [];
+    const proccedSkills: string[] = [];
+    for (const skill of extraAttackSkillsFor(client.data.skillLevels)) {
+      const learnedPercent = client.data.skillLevels[skill] ?? 0;
+      if (Math.random() < scaledSkillChance(learnedPercent)) {
+        proccedSkills.push(skill);
+      }
+      const growthMessage = this.maybeGrowSkill(client, skill, SKILL_GROWTH_CHANCE);
+      if (growthMessage) growthMessages.push(growthMessage);
+    }
+    return { swingCount: 1 + proccedSkills.length, extraSwingSkills: proccedSkills, growthMessages };
   }
 
   // Grows a skill by 1 percentage point with the given chance — only if
@@ -968,10 +1051,10 @@ export class GameGateway
   }
 
   // The core "basic hit" exchange, shared by the first (synchronous) hit in
-  // handleAttack and every subsequent tick in tickCombat: "second attack"
-  // (hobgoblin-only, see rollSecondAttack) may turn this into two swings
-  // instead of one, each independently subject to the monster's flat
-  // MONSTER_DODGE_CHANCE (see performSwing). Any queued kick/slap (see
+  // handleAttack and every subsequent tick in tickCombat: "second attack"/
+  // "third attack" (see rollExtraAttack) may turn this into two or three
+  // swings instead of one, each independently subject to the monster's
+  // flat MONSTER_DODGE_CHANCE (see performSwing). Any queued kick/slap (see
   // processQueuedActiveSkill) fires next as a further damage instance if
   // the monster is still alive. If the monster survives all of that, it
   // swings back — the player may dodge or parry it entirely (see
@@ -989,11 +1072,10 @@ export class GameGateway
     let died = false;
 
     const attributeBonus = this.attributeAttackBonus(client, target);
-    const { procced: secondAttackProcced, growthMessage: secondAttackGrowth } = this.rollSecondAttack(client);
-    const swingCount = secondAttackProcced ? 2 : 1;
+    const { swingCount, extraSwingSkills, growthMessages: extraAttackGrowthMessages } = this.rollExtraAttack(client);
 
     for (let swing = 0; swing < swingCount && !died; swing++) {
-      if (swing === 1) messages.push('Your second attack triggers!');
+      if (swing >= 1) messages.push(extraSwingMessage(extraSwingSkills[swing - 1] ?? ''));
       const result = this.performSwing(
         client,
         attributeBonus,
@@ -1004,7 +1086,7 @@ export class GameGateway
       messages.push(...result.messages);
       died = result.died;
     }
-    if (secondAttackGrowth) messages.push(secondAttackGrowth);
+    messages.push(...extraAttackGrowthMessages);
 
     if (!died) {
       const activeSkillResult = this.processQueuedActiveSkill(
@@ -1159,6 +1241,8 @@ export class GameGateway
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
       autoConsume: client.data.autoConsume,
+      form: client.data.form,
+      mimicForms: client.data.mimicForms,
     });
 
     client.emit('combat:update', {
@@ -1203,11 +1287,10 @@ export class GameGateway
     let died = false;
 
     const attackerAttributeBonus = this.attributeAttackBonus(client, targetData);
-    const { procced: secondAttackProcced, growthMessage: secondAttackGrowth } = this.rollSecondAttack(client);
-    const swingCount = secondAttackProcced ? 2 : 1;
+    const { swingCount, extraSwingSkills, growthMessages: extraAttackGrowthMessages } = this.rollExtraAttack(client);
 
     for (let swing = 0; swing < swingCount && !died; swing++) {
-      if (swing === 1) messages.push('Your second attack triggers!');
+      if (swing >= 1) messages.push(extraSwingMessage(extraSwingSkills[swing - 1] ?? ''));
 
       const dodged = Math.random() < this.computeDodgeChance(targetData, client.data);
       const parried = !dodged && Math.random() < this.computeParryChance(targetData, client.data);
@@ -1251,7 +1334,7 @@ export class GameGateway
       const enhancedGrowth = this.maybeGrowSkill(client, ENHANCED_DAMAGE, SKILL_GROWTH_CHANCE);
       if (enhancedGrowth) messages.push(enhancedGrowth);
     }
-    if (secondAttackGrowth) messages.push(secondAttackGrowth);
+    messages.push(...extraAttackGrowthMessages);
 
     if (!died) {
       const activeSkillResult = this.processQueuedActiveSkill(client, applyDamageToTarget, targetData.username, (verb) => {
@@ -1418,6 +1501,8 @@ export class GameGateway
       gold: socket.data.gold,
       autoSacrifice: socket.data.autoSacrifice,
       autoConsume: socket.data.autoConsume,
+      form: socket.data.form,
+      mimicForms: socket.data.mimicForms,
     });
 
     socket.emit('notice', {
@@ -1501,6 +1586,8 @@ export class GameGateway
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
       autoConsume: client.data.autoConsume,
+      form: client.data.form,
+      mimicForms: client.data.mimicForms,
     });
 
     client.emit('combat:update', {
@@ -1561,6 +1648,16 @@ export class GameGateway
       } else {
         client.data.skillLevels = { ...client.data.skillLevels, [reward]: BODY_PART_SKILL_STARTING_PERCENT };
         messages.push(`You ${verb}.`, `You have gained ${reward} (${BODY_PART_SKILL_STARTING_PERCENT}%)!`);
+      }
+    }
+    // Slime-only — every unique source (race/monster kind) consumed goes
+    // permanently into mimicForms, regardless of the resistance-skill roll
+    // above, so "mimic" has one more form to offer (see handleMimic).
+    if (client.data.race === 'slime') {
+      const source = bodyPartSourceName(name);
+      if (source && !client.data.mimicForms.includes(source)) {
+        client.data.mimicForms = [...client.data.mimicForms, source];
+        messages.push(`You sense you could now take on the form of a ${source}.`);
       }
     }
     messages.push(...this.maybeEvolveToHobgoblin(client));
@@ -1624,14 +1721,28 @@ export class GameGateway
 
   // Applies an exp gain (from a monster kill or a murder) and any level-ups
   // it triggers — shared by resolveAttackExchange and resolveMurderExchange
-  // so the two don't drift on level-up messaging/effects. Always returns at
-  // least the white "**You gain N experience!**" line (see GameScreen's
-  // HIGHLIGHT_PATTERN), plus a level-up line and full stat restore for each
-  // level actually gained.
+  // so the two don't drift on level-up messaging/effects. A goblin already
+  // at GOBLIN_MAX_LEVEL gets no exp at all — evolving into a Hobgoblin (see
+  // maybeEvolveToHobgoblin) is the only way to keep growing past it, so
+  // this returns early with just that explanation. Otherwise always
+  // returns at least the white "**You gain N experience!**" line (see
+  // GameScreen's HIGHLIGHT_PATTERN), plus a level-up line and full stat
+  // restore for each level actually gained (capped at GOBLIN_MAX_LEVEL for
+  // a goblin, discarding any exp beyond what that last level needed).
   private grantExp(client: GameSocket, expGained: number): string[] {
+    if (client.data.race === 'goblin' && client.data.level >= GOBLIN_MAX_LEVEL) {
+      return [
+        `**A goblin cannot progress past level ${GOBLIN_MAX_LEVEL} — consume body parts and evolve into a Hobgoblin to grow further.**`,
+      ];
+    }
+
     const messages = [`**You gain ${expGained} experience!**`];
     const before = client.data.level;
-    const { level, exp } = applyExpGain({ level: client.data.level, exp: client.data.exp }, expGained);
+    let { level, exp } = applyExpGain({ level: client.data.level, exp: client.data.exp }, expGained);
+    if (client.data.race === 'goblin' && level > GOBLIN_MAX_LEVEL) {
+      level = GOBLIN_MAX_LEVEL;
+      exp = 0;
+    }
     client.data.level = level;
     client.data.exp = exp;
     if (level > before) {
@@ -1657,8 +1768,28 @@ export class GameGateway
       messages.push(
         `You leveled up! You are now level ${level}! Your health, mana, and movement caps have each increased by ${LEVEL_UP_STAT_BONUS}, you've been fully restored, and your attributes have increased.`
       );
+      if (client.data.race === 'goblin' && level >= GOBLIN_MAX_LEVEL) {
+        messages.push(
+          `**You have reached the maximum level for a goblin! Consume body parts and evolve into a Hobgoblin to grow further.**`
+        );
+      }
+      const secondAttackMessage = this.maybeGrantGoblinSecondAttack(client);
+      if (secondAttackMessage) messages.push(secondAttackMessage);
     }
     return messages;
+  }
+
+  // "second attack" is goblin-exclusive and level-gated (unlike every
+  // other starting skill, see players/skills.ts's startingSkillsForRace) —
+  // granted the moment a goblin reaches GOBLIN_SECOND_ATTACK_LEVEL,
+  // whether that's from a single big jump or one level at a time. Also
+  // called from handleConnection so an existing account that was already
+  // level 5+ before this shipped gets backfilled on reconnect.
+  private maybeGrantGoblinSecondAttack(client: GameSocket): string | undefined {
+    if (client.data.race !== 'goblin' || client.data.level < GOBLIN_SECOND_ATTACK_LEVEL) return undefined;
+    if (client.data.skillLevels[SECOND_ATTACK] !== undefined) return undefined;
+    client.data.skillLevels = { ...client.data.skillLevels, [SECOND_ATTACK]: STARTING_SKILL_PERCENT };
+    return `**You have learned second attack (${STARTING_SKILL_PERCENT}%)!**`;
   }
 
   // Awaited on disconnect (nothing else to do but wait); fire-and-forget
@@ -1702,6 +1833,8 @@ export class GameGateway
       gold: number;
       autoSacrifice: boolean;
       autoConsume: boolean;
+      form?: string;
+      mimicForms?: string[];
     }
   ): Promise<void> {
     try {
@@ -1746,6 +1879,8 @@ export class GameGateway
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
       autoConsume: client.data.autoConsume,
+      form: client.data.form,
+      mimicForms: client.data.mimicForms,
     });
   }
 
@@ -1763,10 +1898,10 @@ export class GameGateway
   // this tile" rule, so a map-to-map exit direction (e.g. "south" out of
   // the Labyrinth) is included exactly when it's actually crossable, same
   // as ordinary movement would treat it.
-  private exitsLineFor(username: string): string {
-    const loc = this.worldManager.getLocation(username);
+  private exitsLineFor(client: GameSocket): string {
+    const loc = this.worldManager.getLocation(client.data.username);
     if (!loc) return 'Exits: none.';
-    const labels = this.fleeableDirections(loc).map((d) => d.charAt(0).toUpperCase() + d.slice(1));
+    const labels = this.fleeableDirections(client, loc).map((d) => d.charAt(0).toUpperCase() + d.slice(1));
     return labels.length > 0 ? `Exits: ${labels.join(', ')}.` : 'Exits: none.';
   }
 
@@ -1776,7 +1911,7 @@ export class GameGateway
   // defaults to leaving it out.
   private withStatusPrompt(client: GameSocket, messages: string[], includeExits = false): string[] {
     const lines = [...messages, this.statusPromptFor(client)];
-    if (includeExits) lines.push(this.exitsLineFor(client.data.username));
+    if (includeExits) lines.push(this.exitsLineFor(client));
     return lines;
   }
 
@@ -1865,6 +2000,18 @@ export class GameGateway
     // "sla"/"slap" — slime's equivalent of kick.
     if (matchesPartial(text, 'slap', SLAP_MIN_LENGTH)) {
       return this.handleActiveSkillCommand(client, SLAP, 'slap');
+    }
+
+    // "mimic" (bare) lists consumed forms; "mimic <name>" (partial match)
+    // takes one on. No partials on the verb itself — slime-only, innate,
+    // never fails (see handleMimic).
+    if (verb === 'mimic') {
+      return this.handleMimic(client, rest);
+    }
+
+    // "revert" — slime-only, innate, never fails (see handleRevert).
+    if (text === 'revert') {
+      return this.handleRevert(client);
     }
 
     if (matchesPartial(verb, 'consume', CONSUME_MIN_LENGTH)) {
@@ -2021,6 +2168,11 @@ export class GameGateway
       return this.handleCommands(client);
     }
 
+    // "time" — no partials requested, literal only.
+    if (text === 'time') {
+      return this.handleTime(client);
+    }
+
     // Reserved for future vertical movement — no map has a floor/z axis
     // yet, so these are always valid syntax but never actually move you.
     if (text === 'u' || text === 'd') {
@@ -2061,6 +2213,27 @@ export class GameGateway
 
     const fromLoc = this.worldManager.getLocation(username);
     const fromMap = fromLoc?.mapName ?? 'the world';
+
+    // Town-entry gate — previewed against the same pure resolveMove the
+    // actual move (below) will use, without mutating anything, so a
+    // blocked crossing never even reaches worldManager.processCommand.
+    if (fromLoc) {
+      const preview = resolveMove(fromLoc, direction);
+      if (preview.ok && preview.transitioned && TOWN_MAPS.includes(preview.mapName) && !this.canEnterTown(client)) {
+        return {
+          ok: false,
+          messages: [
+            `The guards of ${preview.mapName} bar your way — a monster needs a mask and a full suit of equipment to hide its nature before it may enter.`,
+          ],
+          player: this.snapshotFor(client, fromLoc),
+          minimap: this.worldManager.getMinimap(username),
+          room: resolveRoom(fromLoc),
+          monsterMessage: this.monsterMessageFor(client, fromLoc),
+          itemMessage: this.itemMessageFor(client, fromLoc),
+        };
+      }
+    }
+
     const result = await this.worldManager.processCommand(username, direction);
 
     if (!result) {
@@ -2112,6 +2285,8 @@ export class GameGateway
         gold: client.data.gold,
         autoSacrifice: client.data.autoSacrifice,
         autoConsume: client.data.autoConsume,
+        form: client.data.form,
+        mimicForms: client.data.mimicForms,
       });
     }
 
@@ -2201,6 +2376,8 @@ export class GameGateway
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
       autoConsume: client.data.autoConsume,
+      form: client.data.form,
+      mimicForms: client.data.mimicForms,
     });
 
     if (died) {
@@ -2292,6 +2469,8 @@ export class GameGateway
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
       autoConsume: client.data.autoConsume,
+      form: client.data.form,
+      mimicForms: client.data.mimicForms,
     });
 
     if (died) {
@@ -2331,7 +2510,7 @@ export class GameGateway
     this.clearCombat(client.id);
     this.clearMurder(client.id);
 
-    const options = this.fleeableDirections(loc);
+    const options = this.fleeableDirections(client, loc);
     const direction = options[Math.floor(Math.random() * options.length)];
     if (!direction) {
       // No adjacent cell to flee into (boxed in on every side) — the fight
@@ -2381,6 +2560,8 @@ export class GameGateway
         gold: client.data.gold,
         autoSacrifice: client.data.autoSacrifice,
         autoConsume: client.data.autoConsume,
+        form: client.data.form,
+        mimicForms: client.data.mimicForms,
       });
     }
 
@@ -2437,6 +2618,106 @@ export class GameGateway
 
     client.data.queuedActiveSkillUses += 1;
     return buildAck([`You ready a ${verb}.`], true);
+  }
+
+  // "mimic" (bare) lists every unique race/monster-kind name currently in
+  // mimicForms (see consumeBodyPart/bodyPartSourceName); "mimic <name>"
+  // (partial, case-insensitive) takes on that form. Slime-only — MIMIC is
+  // granted at MAX_SKILL_PERCENT (see startingSkillPercentFor), so unlike
+  // handleActiveSkillCommand's skill-presence check this never fails once
+  // race/argument/collection membership are satisfied. Changing form only
+  // affects which equipment slots are eligible (see items/
+  // item-definitions.ts's allowedSlotsForRace) — nothing already equipped
+  // is disturbed, and no other stat changes.
+  private handleMimic(client: GameSocket, nameQuery: string): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
+    });
+
+    if (client.data.race !== 'slime') {
+      return buildAck(["Only a slime can mimic another form."], false);
+    }
+
+    if (!nameQuery) {
+      if (client.data.mimicForms.length === 0) {
+        return buildAck(['You have not consumed any form you could mimic yet.'], true);
+      }
+      return buildAck([`You can mimic: ${client.data.mimicForms.join(', ')}.`], true);
+    }
+
+    const needle = nameQuery.toLowerCase();
+    const match = client.data.mimicForms.find((form) => form.toLowerCase().includes(needle));
+    if (!match) {
+      return buildAck([`You have not consumed a "${nameQuery}" form to mimic.`], false);
+    }
+
+    client.data.form = match;
+    this.persistAfterInventoryChange(client);
+    return buildAck([`You twist and reshape yourself into the form of a ${match}!`], true);
+  }
+
+  // "revert" — slime-only, innate, never fails. Restores plain slime form
+  // and, per the request, unequips anything sitting in a slot only the
+  // mimicked form could use (i.e. not in slime's own base slot list),
+  // returning each such item to inventory rather than discarding it.
+  private handleRevert(client: GameSocket): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (!loc) {
+      return { ok: false, messages: ['Your session was lost. Please reconnect.'] };
+    }
+
+    const buildAck = (messages: string[], ok: boolean): CommandAck => ({
+      ok,
+      messages,
+      player: this.snapshotFor(client, loc),
+      minimap: this.worldManager.getMinimap(username),
+      room: resolveRoom(loc),
+      monsterMessage: this.monsterMessageFor(client, loc),
+      itemMessage: this.itemMessageFor(client, loc),
+    });
+
+    if (client.data.race !== 'slime') {
+      return buildAck(["Only a slime can revert."], false);
+    }
+
+    if (client.data.form === 'slime') {
+      return buildAck(["You are already in your slime form."], true);
+    }
+
+    const slimeSlots = allowedSlotsForRace('slime');
+    const returnedItems: string[] = [];
+    const remainingEquipment: Record<string, string> = {};
+    for (const [slot, itemName] of Object.entries(client.data.equipment)) {
+      if (slimeSlots.includes(slot as EquipmentSlot)) {
+        remainingEquipment[slot] = itemName;
+      } else {
+        returnedItems.push(itemName);
+      }
+    }
+    client.data.equipment = remainingEquipment;
+    client.data.inventory = [...client.data.inventory, ...returnedItems];
+    client.data.form = 'slime';
+
+    this.persistAfterInventoryChange(client);
+
+    const messages = ['You collapse back into your plain slime form.'];
+    if (returnedItems.length > 0) {
+      messages.push(`Unable to hold onto them in this form, ${returnedItems.join(', ')} return${returnedItems.length === 1 ? 's' : ''} to your inventory.`);
+    }
+    return buildAck(messages, true);
   }
 
   // "consume <item>" — partial, case-insensitive match, checked first
@@ -2515,6 +2796,8 @@ export class GameGateway
         gold: client.data.gold,
         autoSacrifice: client.data.autoSacrifice,
         autoConsume: client.data.autoConsume,
+        form: client.data.form,
+        mimicForms: client.data.mimicForms,
       });
       return buildAck([`You consume the ${name}.`], true);
     }
@@ -2543,6 +2826,8 @@ export class GameGateway
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
       autoConsume: client.data.autoConsume,
+      form: client.data.form,
+      mimicForms: client.data.mimicForms,
     });
 
     return buildAck(messages, true);
@@ -2571,6 +2856,8 @@ export class GameGateway
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
       autoConsume: client.data.autoConsume,
+      form: client.data.form,
+      mimicForms: client.data.mimicForms,
     });
   }
 
@@ -2718,6 +3005,8 @@ export class GameGateway
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
       autoConsume: client.data.autoConsume,
+      form: client.data.form,
+      mimicForms: client.data.mimicForms,
     });
 
     return buildAck([corpse ? `You put the ${itemName} into the corpse.` : `You drop the ${itemName}.`], true);
@@ -2809,7 +3098,7 @@ export class GameGateway
     if (!definition) {
       return buildAck([`You can't equip the ${itemName}.`], false);
     }
-    if (!allowedSlotsForRace(client.data.race).includes(definition.slot)) {
+    if (!allowedSlotsForRace(client.data.race, client.data.form).includes(definition.slot)) {
       return buildAck([`You can't equip the ${itemName} as a ${client.data.race}.`], false);
     }
 
@@ -2845,6 +3134,8 @@ export class GameGateway
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
       autoConsume: client.data.autoConsume,
+      form: client.data.form,
+      mimicForms: client.data.mimicForms,
     });
 
     const messages = previousItem
@@ -2911,6 +3202,8 @@ export class GameGateway
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
       autoConsume: client.data.autoConsume,
+      form: client.data.form,
+      mimicForms: client.data.mimicForms,
     });
 
     return buildAck([`You unequip the ${itemName}.`], true);
@@ -2923,7 +3216,7 @@ export class GameGateway
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
 
-    const messages = equipmentLines('Your equipment:', client.data.equipment, allowedSlotsForRace(client.data.race));
+    const messages = equipmentLines('Your equipment:', client.data.equipment, allowedSlotsForRace(client.data.race, client.data.form));
 
     return {
       ok: true,
@@ -3167,6 +3460,11 @@ export class GameGateway
       `CXP: ${client.data.consumeExp}`,
       `GOLD: ${client.data.gold}`,
     ];
+    // Only meaningful for a slime (see MIMIC/REVERT) — everyone else's
+    // form is always just their own race, so there's nothing to show.
+    if (client.data.race === 'slime') {
+      messages.push(`Form: ${client.data.form}`);
+    }
 
     return {
       ok: true,
@@ -3357,11 +3655,12 @@ export class GameGateway
     const playerLike = this.findPlayerLikeAt(client, loc.worldId, loc.mapName, loc.row, loc.col, query);
     if (playerLike) {
       const other = playerLike.kind === 'real' ? playerLike.socket.data : playerLike.dummy;
+      const otherForm = 'form' in other ? other.form : undefined;
       return buildAck(
         [
           `${other.username} is a level ${other.level} ${other.race}.`,
           powerComparisonMessage(client.data.level, other.level, other.username),
-          ...equipmentLines(`${other.username}'s equipment:`, other.equipment, allowedSlotsForRace(other.race)),
+          ...equipmentLines(`${other.username}'s equipment:`, other.equipment, allowedSlotsForRace(other.race, otherForm)),
         ],
         true
       );
@@ -3443,6 +3742,8 @@ export class GameGateway
       gold: client.data.gold,
       autoSacrifice: client.data.autoSacrifice,
       autoConsume: client.data.autoConsume,
+      form: client.data.form,
+      mimicForms: client.data.mimicForms,
     });
 
     return buildAck(
@@ -3506,6 +3807,8 @@ export class GameGateway
         gold: client.data.gold,
         autoSacrifice: client.data.autoSacrifice,
         autoConsume: client.data.autoConsume,
+        form: client.data.form,
+        mimicForms: client.data.mimicForms,
       });
     };
 
@@ -3731,10 +4034,33 @@ export class GameGateway
   }
 
   private globalStatTick(): void {
+    this.worldHour = (this.worldHour + 1) % HOURS_PER_DAY;
     for (const client of this.server.sockets.sockets.values()) {
       this.applyStatTick(client);
     }
     this.scheduleGlobalStatTick();
+  }
+
+  private isDaytime(): boolean {
+    return this.worldHour >= DAY_START_HOUR && this.worldHour < DAY_END_HOUR;
+  }
+
+  // "time" — the same world clock every player sees (see worldHour),
+  // purely informational like skills/inventory/map.
+  private handleTime(client: GameSocket): CommandAck {
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    const period = this.isDaytime() ? 'day' : 'night';
+
+    return {
+      ok: true,
+      messages: [`The time is ${this.worldHour} (${period}).`],
+      player: loc ? this.snapshotFor(client, loc) : undefined,
+      minimap: this.worldManager.getMinimap(username),
+      room: loc ? resolveRoom(loc) : undefined,
+      monsterMessage: loc ? this.monsterMessageFor(client, loc) : undefined,
+      itemMessage: loc ? this.itemMessageFor(client, loc) : undefined,
+    };
   }
 
   // The actual per-player heal effect of a single global tick — still
@@ -3788,6 +4114,8 @@ export class GameGateway
         gold: client.data.gold,
         autoSacrifice: client.data.autoSacrifice,
         autoConsume: client.data.autoConsume,
+        form: client.data.form,
+        mimicForms: client.data.mimicForms,
       });
 
       const lead =
@@ -3870,6 +4198,9 @@ export class GameGateway
       'flee - break off a fight and flee in a random direction',
       'kick/kic - queue a kick (2 damage) into your current fight (dagger/kick races only)',
       'slap - slime\'s equivalent of kick',
+      'mimic - list the forms (races/monsters) you have consumed and can mimic (slime only)',
+      'mimic <name> - take on that form\'s equipment-slot eligibility (slime only)',
+      'revert - return to your plain slime form (slime only)',
       'consume <item> - eat an item (on the ground, or in your inventory) for a chance at a skill',
       'grab/get <item> - pick up a dropped item into your inventory',
       'grab/get <item> from <corpse> - take an item out of a corpse (e.g. "get leg from corpse", "get leg from 2.cor")',
@@ -3898,6 +4229,7 @@ export class GameGateway
       'rest/sit - sit down to rest, recovering hp/mana/movement a bit faster than standing around',
       'wake/stand - get up from sleeping or resting',
       'worldmap - show an overview of the whole world',
+      'time - show the current hour and whether it is day or night',
       'clear - clear the message log',
       'logout/quit - log out',
       'commands - show this list',

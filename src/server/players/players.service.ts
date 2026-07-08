@@ -49,6 +49,11 @@ export interface PlayerStats {
   gold: number;
   autoSacrifice: boolean;
   autoConsume: boolean;
+  // Slime-only ("mimic"/"revert") — optional since most stat updates never
+  // touch either, and omitting a key here means $set simply leaves the
+  // stored value alone rather than overwriting it with undefined.
+  form?: string;
+  mimicForms?: string[];
 }
 
 @Injectable()
