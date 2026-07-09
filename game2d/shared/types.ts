@@ -15,6 +15,13 @@ export interface PlayerSnapshot {
   maxMana: number;
   movement: number;
   maxMovement: number;
+  strength: number;
+  intelligence: number;
+  wisdom: number;
+  dexterity: number;
+  constitution: number;
+  skills: Record<string, number>;
+  inventory: string[];
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
@@ -45,18 +52,32 @@ export interface MonsterSnapshot {
   maxHp: number;
 }
 
+// Left behind when a monster or a real player dies (not the training
+// dummy — it just resets, there's no "kill" to leave remains from). A
+// single lootable body-part item; clicking it adds itemLabel to the
+// looter's inventory and removes the corpse.
+export interface CorpseSnapshot {
+  id: string;
+  kind: Race | MonsterKind;
+  itemLabel: string;
+  map: MapName;
+  row: number;
+  col: number;
+}
+
 export interface SyncPayload {
   player: PlayerSnapshot;
 }
 
 // Broadcast to everyone in a map's room whenever anyone joins, moves
 // within it, or leaves — the client's only source of truth for rendering
-// other players/NPCs/monsters (and thus for knowing which tiles are
-// occupied).
+// other players/NPCs/monsters/corpses (and thus for knowing which tiles
+// are occupied).
 export interface MapStatePayload {
   players: PlayerSnapshot[];
   npcs: NpcSnapshot[];
   monsters: MonsterSnapshot[];
+  corpses: CorpseSnapshot[];
 }
 
 // Broadcast to a map's room whenever a punch actually lands on a target
@@ -101,6 +122,12 @@ export interface PunchPayload {
   direction: Direction;
 }
 
+export interface LootAck {
+  ok: boolean;
+  inventory?: string[];
+  message?: string;
+}
+
 export interface ServerToClientEvents {
   sync: (data: SyncPayload) => void;
   'session:kicked': (data: KickedPayload) => void;
@@ -116,6 +143,7 @@ export interface ClientToServerEvents {
   // applied and a 'combat' event is broadcast — no separate "attack"
   // event needed, the direction alone is enough.
   punch: (direction: Direction) => void;
+  loot: (corpseId: string, ack: (res: LootAck) => void) => void;
 }
 
 export type InterServerEvents = Record<string, never>;
@@ -140,6 +168,7 @@ export interface SocketData {
   movement: number;
   maxMovement: number;
   skills: Record<string, number>;
+  inventory: string[];
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

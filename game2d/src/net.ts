@@ -8,6 +8,7 @@ import type {
   MapStatePayload,
   PunchPayload,
   CombatEventPayload,
+  LootAck,
 } from '../shared/types.js';
 import type { Direction } from '../shared/constants.js';
 
@@ -103,5 +104,18 @@ export class NetworkManager extends EventTarget {
   // No ack — purely cosmetic, so there's nothing worth waiting on.
   punch(direction: Direction): void {
     this.socket?.emit('punch', direction);
+  }
+
+  loot(corpseId: string): Promise<LootAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('loot', corpseId, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
   }
 }

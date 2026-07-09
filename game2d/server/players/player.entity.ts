@@ -78,6 +78,11 @@ export class Player {
   @Column({ type: 'jsonb', default: () => `'{"punch": 1}'` })
   skills!: Record<string, number>;
 
+  // Item labels looted from corpses (see server/worlds/corpses.service.ts) —
+  // plain strings, no item definitions/stacking yet.
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  inventory!: string[];
+
   @Column({ name: 'last_login', type: 'timestamptz', default: () => 'now()' })
   lastLogin!: Date;
 

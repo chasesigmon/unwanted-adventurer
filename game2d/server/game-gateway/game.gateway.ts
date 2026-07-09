@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { PlayersService } from '../players/players.service.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
 import { MonsterManagerService } from '../monsters/monster-manager.service.js';
+import { CorpseManagerService } from '../worlds/corpse-manager.service.js';
 import { MONSTER_SPECIES } from '../monsters/monster.js';
 import { NPCS } from '../worlds/npcs.js';
 import { AuthService } from '../auth/auth.service.js';
@@ -70,6 +71,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     private readonly playersService: PlayersService,
     private readonly worldManager: WorldManagerService,
     private readonly monsterManager: MonsterManagerService,
+    private readonly corpseManager: CorpseManagerService,
     private readonly authService: AuthService,
     private readonly sessionStore: SessionStoreService,
     private readonly activeConnections: ActiveConnectionsService,
@@ -146,6 +148,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxMana: client.data.maxMana,
       movement: client.data.movement,
       maxMovement: client.data.maxMovement,
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
+      skills: client.data.skills,
+      inventory: client.data.inventory,
     };
   }
 
@@ -190,6 +199,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         level: client.data.level,
         exp: client.data.exp,
         skills: client.data.skills,
+        inventory: client.data.inventory,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -238,6 +248,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       dexterity: client.data.dexterity,
       constitution: client.data.constitution,
     });
+
+    // A level-up changes attributes/max-vitals beyond what the 'combat'
+    // event's attacker* fields carry — a fresh, fully authoritative sync
+    // keeps the character sheet (and everything else) correct without
+    // waiting for a reconnect.
+    if (levelsGained > 0) {
+      client.emit('sync', { player: this.snapshotFor(client) });
+    }
     return levelsGained > 0;
   }
 
@@ -283,6 +301,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.movement = doc?.movement ?? STARTING_VITAL;
     client.data.maxMovement = doc?.maxMovement ?? STARTING_VITAL;
     client.data.skills = doc?.skills ?? { [PUNCH_SKILL]: STARTING_SKILL_PERCENT };
+    client.data.inventory = doc?.inventory ?? [];
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
@@ -303,6 +322,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       dexterity: client.data.dexterity,
       constitution: client.data.constitution,
       skills: client.data.skills,
+      inventory: client.data.inventory,
     });
     void client.join(client.data.map);
 
@@ -424,6 +444,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (died) {
       expGained = expGainFor(monster.expReward, client.data.level, monster.level);
       leveledUp = this.grantExp(client, expGained);
+      this.corpseManager.spawn(monster.kind, monster.mapName, monster.row, monster.col);
     }
     this.growPunchSkill(client);
     void this.persistStats(client);
@@ -507,6 +528,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (died) {
       expGained = expGainFor(PLAYER_KILL_EXP_REWARD, client.data.level, targetClient.data.level);
       leveledUp = this.grantExp(client, expGained);
+      this.corpseManager.spawn(targetClient.data.race, targetClient.data.map, targetClient.data.row, targetClient.data.col);
 
       const previousMap = targetClient.data.map;
       const startingMap = getMap(STARTING_MAP);
@@ -571,5 +593,39 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       attackerMaxHp: client.data.maxHp,
       ...rest,
     });
+  }
+
+  // Looting just requires being at or next to the corpse (same tile or
+  // one step away in any direction, diagonals included) — corpses don't
+  // block movement, so "walk up and click it" is the common case, but a
+  // player standing adjacent can also reach for it.
+  @SubscribeMessage('loot')
+  handleLoot(
+    @ConnectedSocket() client: GameSocket,
+    @MessageBody() corpseId: unknown
+  ): { ok: boolean; inventory?: string[]; message?: string } {
+    if (typeof corpseId !== 'string') {
+      return { ok: false, message: 'Invalid corpse.' };
+    }
+
+    const corpse = this.corpseManager.get(corpseId);
+    if (!corpse || corpse.map !== client.data.map) {
+      return { ok: false, message: "That's already gone." };
+    }
+
+    const withinReach =
+      Math.abs(corpse.row - client.data.row) <= 1 && Math.abs(corpse.col - client.data.col) <= 1;
+    if (!withinReach) {
+      return { ok: false, message: "You're too far away to reach that." };
+    }
+
+    this.corpseManager.remove(corpseId);
+    client.data.inventory = [...client.data.inventory, corpse.itemLabel];
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    void this.persistStats(client);
+
+    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+
+    return { ok: true, inventory: client.data.inventory };
   }
 }

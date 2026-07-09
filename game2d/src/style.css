@@ -139,30 +139,79 @@ body {
   position: relative;
 }
 
+#game-container {
+  width: 100%;
+  height: 100%;
+}
+
 #game-container canvas {
   display: block;
   image-rendering: pixelated;
-  box-shadow: 0 0 0 1px #333;
+}
+
+/* ---------- Shared floating-panel chrome (status bar / combat log) ---------- */
+
+.panel {
+  position: absolute;
+  background: rgba(10, 10, 16, 0.75);
+  border: 1px solid #444;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.panel-toggle {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  line-height: 1;
+  background: transparent;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  pointer-events: auto;
+}
+
+.panel-toggle:hover {
+  color: #eee;
+}
+
+.panel.collapsed .panel-body {
+  display: none;
+}
+
+.panel.collapsed {
+  padding: 4px 20px 4px 8px;
+}
+
+/* #status-content also sets `display: flex` via its own ID selector,
+   which otherwise outranks the class-based rule above (an ID beats any
+   number of classes) — same specificity fix already used for
+   #auth-race-label. Without this, "collapsing" toggled the class/icon
+   but the content never actually hid. */
+#status-bar.collapsed #status-content {
+  display: none;
 }
 
 /* ---------- Status bar (level/hp/mana/mv/exp) ---------- */
 
 #status-bar {
-  position: absolute;
   top: 12px;
   left: 12px;
-  display: flex;
-  gap: 12px;
-  background: rgba(10, 10, 16, 0.75);
-  border: 1px solid #444;
-  border-radius: 4px;
   padding: 6px 10px;
-  font-size: 12px;
-  color: #ddd;
-  pointer-events: none;
+  padding-right: 22px;
 }
 
-#status-bar span {
+#status-content {
+  display: flex;
+  gap: 12px;
+  color: #ddd;
+}
+
+#status-content span {
   white-space: nowrap;
 }
 
@@ -184,21 +233,20 @@ body {
 
 /* ---------- Combat log ---------- */
 
-#combat-log {
-  position: absolute;
+#log-panel {
   bottom: 12px;
   left: 12px;
+  padding: 6px 10px;
+  padding-right: 22px;
   width: min(420px, 40vw);
+}
+
+#combat-log {
+  min-height: 80px;
   max-height: 160px;
   overflow-y: auto;
-  background: rgba(10, 10, 16, 0.75);
-  border: 1px solid #444;
-  border-radius: 4px;
-  padding: 6px 10px;
-  font-size: 12px;
   line-height: 1.5;
   color: #ccc;
-  pointer-events: none;
 }
 
 #combat-log .log-line {
@@ -212,4 +260,168 @@ body {
 
 #combat-log .log-line.death {
   color: #ff6b6b;
+}
+
+/* ---------- Corner buttons (character sheet / inventory) ---------- */
+
+#corner-buttons {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.corner-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  background: rgba(10, 10, 16, 0.75);
+  border: 1px solid #444;
+  color: #eee;
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.corner-btn:hover {
+  background: rgba(30, 30, 42, 0.9);
+  border-color: #666;
+}
+
+/* ---------- Modals (character sheet / inventory) ---------- */
+
+.modal {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.modal:not([hidden]) {
+  display: flex;
+}
+
+.modal-box {
+  position: relative;
+  background: #16161f;
+  border: 2px solid #444;
+  border-radius: 8px;
+  padding: 24px 28px;
+  width: min(360px, 85vw);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.modal-box h2 {
+  margin: 0 0 14px 0;
+  color: #f0c040;
+  font-size: 18px;
+}
+
+.modal-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: transparent;
+  border: none;
+  color: #999;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  color: #eee;
+}
+
+.modal-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  font-size: 13px;
+}
+
+.modal-stats .stat-label {
+  color: #999;
+}
+
+.modal-stats .stat-value {
+  color: #eee;
+  text-align: right;
+}
+
+.inventory-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inventory-list li {
+  background: #1e1e2a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 6px 10px;
+}
+
+.inventory-empty {
+  color: #777;
+  font-style: italic;
+}
+
+/* ---------- Autopilot prompt bar ---------- */
+
+#autopilot-bar {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(10, 10, 16, 0.92);
+  border: 1px solid #555;
+  border-radius: 6px;
+  padding: 10px 14px;
+  width: min(520px, 80vw);
+}
+
+.autopilot-label {
+  color: #f0c040;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+#autopilot-input {
+  flex: 1;
+  background: #0d0d13;
+  border: 1px solid #555;
+  color: #eee;
+  padding: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  border-radius: 4px;
+}
+
+#autopilot-status {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(10, 10, 16, 0.75);
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #f0c040;
+  pointer-events: none;
 }

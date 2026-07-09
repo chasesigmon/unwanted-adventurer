@@ -58,6 +58,27 @@ export function preloadCharacterSprites(scene: Phaser.Scene): void {
   }
 }
 
+// A corpse's lootable body-part icon reuses the sheet itself rather than
+// needing a separate asset: a small crop of the down-facing idle frame's
+// head/ears region (every generator draws the head in the same y-range,
+// see game2d/assets' generator scripts), registered once as a named
+// sub-frame of the existing texture.
+const BODY_PART_FRAME_HEIGHT = 70;
+
+export function bodyPartFrameKey(kind: SpriteKind): string {
+  return `${TEXTURE_KEYS[kind]}-bodypart`;
+}
+
+export function defineBodyPartFrames(scene: Phaser.Scene): void {
+  for (const kind of Object.keys(SHEET_PATHS) as SpriteKind[]) {
+    const texture = scene.textures.get(TEXTURE_KEYS[kind]);
+    const frameKey = bodyPartFrameKey(kind);
+    if (!texture.has(frameKey)) {
+      texture.add(frameKey, 0, 0, 0, FRAME_WIDTH, BODY_PART_FRAME_HEIGHT);
+    }
+  }
+}
+
 export function createCharacterAnims(scene: Phaser.Scene): void {
   for (const kind of Object.keys(SHEET_PATHS) as SpriteKind[]) {
     const textureKey = TEXTURE_KEYS[kind];

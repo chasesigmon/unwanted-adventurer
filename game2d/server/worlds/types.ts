@@ -22,6 +22,7 @@ export interface PlayerState extends Location, Attributes {
   movement: number;
   maxMovement: number;
   skills: Record<string, number>;
+  inventory: string[];
 }
 
 export type MoveResult =
