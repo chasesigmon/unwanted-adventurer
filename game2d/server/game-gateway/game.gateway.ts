@@ -22,6 +22,7 @@ import { getMap } from '../../shared/maps.js';
 import { STARTING_MAP, DIRECTIONS } from '../../shared/constants.js';
 import type { AppConfig } from '../config/configuration.js';
 import type { PlayerSnapshot, GameServer, GameSocket } from '../../shared/types.js';
+import type { Direction } from '../../shared/constants.js';
 
 const directionSchema = z.enum(DIRECTIONS);
 
@@ -131,13 +132,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.row = doc?.row ?? Math.floor(startingMap.rows / 2);
     client.data.col = doc?.col ?? Math.floor(startingMap.cols / 2);
 
-    this.worldManager.addPlayer(username, client.data.map, client.data.row, client.data.col);
+    this.worldManager.addPlayer(username, client.data.race, client.data.map, client.data.row, client.data.col);
+    void client.join(client.data.map);
 
     client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
   }
 
   async handleDisconnect(client: GameSocket): Promise<void> {
-    const { username } = client.data;
+    const { username, map } = client.data;
     this.commandLimiters.delete(client.id);
     this.activeConnections.clearActiveSocketIfCurrent(username, client.id);
 
@@ -145,6 +148,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       await this.persistPosition(client);
     }
     this.worldManager.removePlayer(username);
+
+    if (map) {
+      this.server.to(map).emit('map:state', this.worldManager.getMapState(map));
+    }
   }
 
   @SubscribeMessage('move')
@@ -172,13 +179,36 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, player: this.snapshotFor(client), message: "You can't go that way." };
     }
 
+    const previousMap = client.data.map;
     client.data.map = result.mapName;
     client.data.row = result.row;
     client.data.col = result.col;
 
     void this.persistPosition(client);
 
+    if (result.transitioned) {
+      void client.leave(previousMap);
+      void client.join(result.mapName);
+      this.server.to(previousMap).emit('map:state', this.worldManager.getMapState(previousMap));
+    }
+    this.server.to(result.mapName).emit('map:state', this.worldManager.getMapState(result.mapName));
+
     const message = result.transitioned ? `You enter ${result.mapName}.` : undefined;
     return { ok: true, player: this.snapshotFor(client), message };
+  }
+
+  // Fire-and-forget — a right-click punch is purely cosmetic (no combat/
+  // damage system exists in this project), just broadcast to whoever else
+  // is looking at the same map so it's visible to them too.
+  @SubscribeMessage('punch')
+  handlePunch(@ConnectedSocket() client: GameSocket, @MessageBody() rawDirection: unknown): void {
+    const limiter = this.commandLimiters.get(client.id);
+    if (limiter && !limiter.tryConsume()) return;
+
+    const parsed = directionSchema.safeParse(rawDirection);
+    if (!parsed.success) return;
+
+    const direction: Direction = parsed.data;
+    this.server.to(client.data.map).emit('punch', { username: client.data.username, direction });
   }
 }

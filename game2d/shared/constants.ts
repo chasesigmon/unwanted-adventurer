@@ -1,7 +1,8 @@
 // The only two playable races — the sprites this project actually draws
-// (see src/goblinSprite.ts/skeletonSprite.ts). Kept separate from the text
-// game's much longer race list (src/shared/constants.ts there) since this
-// project has nothing to do with that one.
+// (see assets/goblin-spritesheet.png, assets/skeleton-spritesheet.png).
+// Kept separate from the text game's much longer race list
+// (src/shared/constants.ts there) since this project has nothing to do
+// with that one.
 export const RACES = ['goblin', 'skeleton'] as const;
 export type Race = (typeof RACES)[number];
 

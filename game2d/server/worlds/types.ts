@@ -1,9 +1,13 @@
-import type { MapName } from '../../shared/constants.js';
+import type { MapName, Race } from '../../shared/constants.js';
 
 export interface Location {
   mapName: MapName;
   row: number;
   col: number;
+}
+
+export interface PlayerState extends Location {
+  race: Race;
 }
 
 export type MoveResult =

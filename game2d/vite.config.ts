@@ -11,6 +11,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   root: __dirname,
   envDir: __dirname,
+  // Character/floor/door PNGs live in game2d/assets/ (not the Vite-
+  // conventional "public/") — served as-is at the site root in both dev
+  // and build (vite copies publicDir's contents into build.outDir).
+  publicDir: path.resolve(__dirname, 'assets'),
   server: {
     port: 5175,
   },

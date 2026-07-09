@@ -3,11 +3,18 @@ import { NetworkManager } from './net.js';
 import { createGrassTexture, TILE_SIZE } from './grassTexture.js';
 import { createStoneTexture } from './stoneTexture.js';
 import { createDoorTexture } from './doorSprite.js';
-import { createGoblinSprites, GOBLIN_TEXTURES, GOBLIN_ANIMS } from './goblinSprite.js';
-import { createSkeletonSprites, SKELETON_TEXTURES, SKELETON_ANIMS } from './skeletonSprite.js';
+import {
+  preloadCharacterSprites,
+  createCharacterAnims,
+  textureKeyFor,
+  idleFrameFor,
+  walkAnimKey,
+  punchAnimKey,
+  type FacingGroup,
+} from './characterSprites.js';
 import { getMap } from '../shared/maps.js';
 import type { MapName, Race, Direction } from '../shared/constants.js';
-import type { PlayerSnapshot, SyncPayload, KickedPayload } from '../shared/types.js';
+import type { PlayerSnapshot, SyncPayload, KickedPayload, MapStatePayload, PunchPayload } from '../shared/types.js';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL as string | undefined) || 'http://localhost:3001';
 const CHAR_SCALE = 0.55;
@@ -72,16 +79,24 @@ async function handleAuthSubmit(): Promise<void> {
 
 // ---------- Game ----------
 
-type Facing = 'down' | 'up' | 'left' | 'right';
+// Facing IS the sheet's own row now — down/up/left/right are each real,
+// fully distinct frames (see characterSprites.ts), not a 3-row sheet with
+// a flipped "side" shared between left and right.
+type Facing = FacingGroup;
 
-interface DirectionalSprites {
-  textures: Record<'down' | 'up' | 'side', string>;
-  anims: Record<'down' | 'up' | 'side', string>;
+function facingForDirection(direction: Direction): Facing {
+  if (direction === 'north') return 'up';
+  if (direction === 'south') return 'down';
+  return direction === 'west' ? 'left' : 'right';
 }
 
-function spritesFor(race: Race): DirectionalSprites {
-  return race === 'goblin' ? { textures: GOBLIN_TEXTURES, anims: GOBLIN_ANIMS } : { textures: SKELETON_TEXTURES, anims: SKELETON_ANIMS };
+function directionForFacing(facing: Facing): Direction {
+  if (facing === 'up') return 'north';
+  if (facing === 'down') return 'south';
+  return facing === 'left' ? 'west' : 'east';
 }
+
+let gameInstance: Phaser.Game | null = null;
 
 class WorldScene extends Phaser.Scene {
   private network!: NetworkManager;
@@ -91,10 +106,21 @@ class WorldScene extends Phaser.Scene {
   private race: Race = 'goblin';
   private facing: Facing = 'down';
   private currentMap: MapName = 'Great Plains';
+  private row = 0;
+  private col = 0;
+  private myUsername = '';
   private isMoving = false;
+  private isPunching = false;
   private lastMoveAt = 0;
   private moveKeys!: { w: Phaser.Input.Keyboard.Key; a: Phaser.Input.Keyboard.Key; s: Phaser.Input.Keyboard.Key; d: Phaser.Input.Keyboard.Key };
   private cursorKeys!: Phaser.Types.Input.Keyboard.CursorKeys;
+
+  // Other connected players and static NPCs sharing the current map —
+  // collision itself is enforced server-side; these sprites are just the
+  // client's view of who else is standing where (and what right-click can
+  // target for a punch).
+  private otherPlayers = new Map<string, Phaser.GameObjects.Sprite>();
+  private npcSprites = new Map<string, Phaser.GameObjects.Sprite>();
 
   constructor() {
     super('world');
@@ -108,14 +134,14 @@ class WorldScene extends Phaser.Scene {
     createGrassTexture(this, 'grass');
     createStoneTexture(this, 'stone');
     createDoorTexture(this, 'door');
-    createGoblinSprites(this);
-    createSkeletonSprites(this);
+    preloadCharacterSprites(this);
   }
 
   create(): void {
-    this.floorTile = this.add.tileSprite(0, 0, TILE_SIZE, TILE_SIZE, 'grass').setOrigin(0, 0);
+    createCharacterAnims(this);
+
     this.doorSprite = this.add.sprite(0, 0, 'door').setVisible(false);
-    this.player = this.add.sprite(0, 0, GOBLIN_TEXTURES.down, 0).setScale(CHAR_SCALE);
+    this.player = this.add.sprite(0, 0, textureKeyFor('goblin'), idleFrameFor('goblin', 'down')).setScale(CHAR_SCALE);
 
     const keyboard = this.input.keyboard!;
     this.moveKeys = {
@@ -126,7 +152,14 @@ class WorldScene extends Phaser.Scene {
     };
     this.cursorKeys = keyboard.createCursorKeys();
 
+    this.input.mouse?.disableContextMenu();
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (pointer.rightButtonDown()) this.handleRightClick(pointer);
+    });
+
     this.network.addEventListener('sync', ((e: CustomEvent<SyncPayload>) => this.applySync(e.detail.player)) as EventListener);
+    this.network.addEventListener('map:state', ((e: CustomEvent<MapStatePayload>) => this.applyMapState(e.detail)) as EventListener);
+    this.network.addEventListener('punch', ((e: CustomEvent<PunchPayload>) => this.applyRemotePunch(e.detail)) as EventListener);
     this.network.addEventListener('kicked', ((e: CustomEvent<KickedPayload>) => {
       alert(e.detail.message);
       window.location.reload();
@@ -134,7 +167,7 @@ class WorldScene extends Phaser.Scene {
   }
 
   update(): void {
-    if (this.isMoving) return;
+    if (this.isMoving || this.isPunching) return;
     const now = Date.now();
     if (now - this.lastMoveAt < MOVE_COOLDOWN_MS) return;
 
@@ -153,17 +186,9 @@ class WorldScene extends Phaser.Scene {
     return { x: col * TILE_SIZE + TILE_SIZE / 2, y: row * TILE_SIZE + TILE_SIZE / 2 };
   }
 
-  private idleTextureKey(): string {
-    const { textures } = spritesFor(this.race);
-    if (this.facing === 'up') return textures.up;
-    if (this.facing === 'left' || this.facing === 'right') return textures.side;
-    return textures.down;
-  }
-
   private setIdle(): void {
     this.player.anims.stop();
-    this.player.setFlipX(this.facing === 'right');
-    this.player.setTexture(this.idleTextureKey(), 0);
+    this.player.setTexture(textureKeyFor(this.race), idleFrameFor(this.race, this.facing));
   }
 
   // Resizes the game to the new map's pixel footprint and swaps its floor
@@ -177,7 +202,19 @@ class WorldScene extends Phaser.Scene {
     const pixelHeight = def.rows * TILE_SIZE;
 
     this.scale.resize(pixelWidth, pixelHeight);
-    this.floorTile.setTexture(mapName === 'Labyrinth' ? 'stone' : 'grass').setSize(pixelWidth, pixelHeight);
+    this.scale.refresh();
+
+    // Recreated from scratch (rather than reusing setSize() on the
+    // existing tile sprite) — on the very first map load, resizing an
+    // existing TileSprite from its initial placeholder size didn't
+    // reliably take effect (the floor stayed tiny, top-left corner only,
+    // until a later map transition happened to fix it). Building a fresh
+    // one at the correct size from the start sidesteps that entirely.
+    this.floorTile?.destroy();
+    this.floorTile = this.add
+      .tileSprite(0, 0, pixelWidth, pixelHeight, mapName === 'Labyrinth' ? 'stone' : 'grass')
+      .setOrigin(0, 0)
+      .setDepth(-1);
 
     const door = def.exits[0];
     if (door) {
@@ -186,23 +223,77 @@ class WorldScene extends Phaser.Scene {
     } else {
       this.doorSprite.setVisible(false);
     }
+
+    // Other entities belong to whichever map we just left — clear them
+    // out immediately rather than waiting for the next map:state.
+    for (const sprite of this.otherPlayers.values()) sprite.destroy();
+    this.otherPlayers.clear();
+    for (const sprite of this.npcSprites.values()) sprite.destroy();
+    this.npcSprites.clear();
   }
 
   private applySync(player: PlayerSnapshot): void {
+    this.myUsername = player.username;
     this.race = player.race;
+    this.row = player.row;
+    this.col = player.col;
     this.renderMap(player.map);
     const pos = this.tilePosition(player.row, player.col);
     this.player.setPosition(pos.x, pos.y);
     this.setIdle();
   }
 
-  private attemptMove(direction: Direction): void {
-    this.facing = direction === 'west' ? 'left' : direction === 'east' ? 'right' : direction === 'north' ? 'up' : 'down';
+  private applyMapState(state: MapStatePayload): void {
+    // We don't know our own (server-canonical, exact-case) username until
+    // the 'sync' event sets it — without this guard, a map:state that
+    // somehow arrived first would fail to filter "us" out of the roster
+    // and spawn a permanent, never-updated ghost duplicate of our own
+    // sprite (always facing its default down/idle pose, since only real
+    // *other* players get their facing driven by remote punches).
+    if (!this.myUsername) return;
 
-    const { anims } = spritesFor(this.race);
-    const animKey = this.facing === 'up' ? anims.up : this.facing === 'left' || this.facing === 'right' ? anims.side : anims.down;
-    this.player.setFlipX(this.facing === 'right');
-    this.player.play(animKey, true);
+    const seen = new Set<string>();
+    for (const p of state.players) {
+      if (p.username === this.myUsername) continue;
+      seen.add(p.username);
+
+      let sprite = this.otherPlayers.get(p.username);
+      if (!sprite) {
+        const pos = this.tilePosition(p.row, p.col);
+        sprite = this.add.sprite(pos.x, pos.y, textureKeyFor(p.race), idleFrameFor(p.race, 'down')).setScale(CHAR_SCALE);
+        this.otherPlayers.set(p.username, sprite);
+      }
+      sprite.setData('race', p.race);
+      sprite.setData('row', p.row);
+      sprite.setData('col', p.col);
+      if (!sprite.getData('isPunching')) {
+        const pos = this.tilePosition(p.row, p.col);
+        sprite.setPosition(pos.x, pos.y);
+      }
+    }
+    for (const [username, sprite] of this.otherPlayers) {
+      if (!seen.has(username)) {
+        sprite.destroy();
+        this.otherPlayers.delete(username);
+      }
+    }
+
+    for (const npc of state.npcs) {
+      let sprite = this.npcSprites.get(npc.id);
+      const pos = this.tilePosition(npc.row, npc.col);
+      if (!sprite) {
+        sprite = this.add.sprite(pos.x, pos.y, textureKeyFor(npc.race), idleFrameFor(npc.race, 'down')).setScale(CHAR_SCALE);
+        this.npcSprites.set(npc.id, sprite);
+      }
+      sprite.setData('race', npc.race);
+      sprite.setData('row', npc.row);
+      sprite.setData('col', npc.col);
+    }
+  }
+
+  private attemptMove(direction: Direction): void {
+    this.facing = facingForDirection(direction);
+    this.player.play(walkAnimKey(this.race, this.facing), true);
     this.isMoving = true;
 
     this.network
@@ -213,6 +304,9 @@ class WorldScene extends Phaser.Scene {
           this.setIdle();
           return;
         }
+
+        this.row = ack.player.row;
+        this.col = ack.player.col;
 
         if (ack.player.map !== this.currentMap) {
           // A map transition is a load, not a walk — snap straight to the
@@ -243,9 +337,63 @@ class WorldScene extends Phaser.Scene {
         this.setIdle();
       });
   }
+
+  // Right-click on another player or the training dummy: throw a punch in
+  // whichever direction the player is CURRENTLY facing (from the last
+  // WASD/arrow press) — the click just has to land on a target, it
+  // doesn't re-aim the punch toward it. Purely cosmetic (no combat/damage
+  // system exists here) — see game.gateway.ts's handlePunch, which just
+  // rebroadcasts it to the map.
+  private handleRightClick(pointer: Phaser.Input.Pointer): void {
+    if (this.isMoving || this.isPunching) return;
+    if (!this.findEntityAt(pointer.worldX, pointer.worldY)) return;
+
+    this.performPunch(directionForFacing(this.facing));
+  }
+
+  private findEntityAt(x: number, y: number): boolean {
+    for (const sprite of [...this.otherPlayers.values(), ...this.npcSprites.values()]) {
+      if (sprite.getBounds().contains(x, y)) return true;
+    }
+    return false;
+  }
+
+  private performPunch(direction: Direction): void {
+    this.facing = facingForDirection(direction);
+    const animKey = punchAnimKey(this.race, this.facing);
+
+    this.isPunching = true;
+    this.player.play(animKey, true);
+    this.player.once(`animationcomplete-${animKey}`, () => {
+      this.isPunching = false;
+      this.setIdle();
+    });
+
+    this.network.punch(direction);
+  }
+
+  private applyRemotePunch({ username, direction }: PunchPayload): void {
+    const sprite = this.otherPlayers.get(username);
+    if (!sprite) return;
+
+    const race = sprite.getData('race') as Race;
+    const facing = facingForDirection(direction);
+    const animKey = punchAnimKey(race, facing);
+
+    sprite.setData('isPunching', true);
+    sprite.play(animKey, true);
+    sprite.once(`animationcomplete-${animKey}`, () => {
+      sprite.setData('isPunching', false);
+      sprite.setTexture(textureKeyFor(race), idleFrameFor(race, 'down'));
+    });
+  }
 }
 
 function startGame(): void {
+  // Guards against a double game.new instance (e.g. a double form submit)
+  // creating two overlapping Phaser canvases on top of each other.
+  if (gameInstance) return;
+
   authScreen.hidden = true;
   gameRoot.hidden = false;
 
@@ -258,6 +406,7 @@ function startGame(): void {
     pixelArt: true,
     backgroundColor: '#14181a',
   });
+  gameInstance = game;
 
   game.scene.add('world', WorldScene, true, { network });
 

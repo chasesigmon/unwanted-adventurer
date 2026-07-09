@@ -1,5 +1,13 @@
 import { io, type Socket } from 'socket.io-client';
-import type { ServerToClientEvents, ClientToServerEvents, SyncPayload, MoveAck, KickedPayload } from '../shared/types.js';
+import type {
+  ServerToClientEvents,
+  ClientToServerEvents,
+  SyncPayload,
+  MoveAck,
+  KickedPayload,
+  MapStatePayload,
+  PunchPayload,
+} from '../shared/types.js';
 import type { Direction } from '../shared/constants.js';
 
 type GameClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -59,6 +67,10 @@ export class NetworkManager extends EventTarget {
     socket.on('session:kicked', (data: KickedPayload) =>
       this.dispatchEvent(new CustomEvent<KickedPayload>('kicked', { detail: data }))
     );
+    socket.on('map:state', (data: MapStatePayload) =>
+      this.dispatchEvent(new CustomEvent<MapStatePayload>('map:state', { detail: data }))
+    );
+    socket.on('punch', (data: PunchPayload) => this.dispatchEvent(new CustomEvent<PunchPayload>('punch', { detail: data })));
     socket.on('disconnect', (reason) => this.dispatchEvent(new CustomEvent('disconnected', { detail: { reason } })));
     socket.on('connect_error', (err) =>
       this.dispatchEvent(new CustomEvent('connect_error', { detail: { message: err.message } }))
@@ -82,5 +94,10 @@ export class NetworkManager extends EventTarget {
         else reject(new Error('No response from server.'));
       });
     });
+  }
+
+  // No ack — purely cosmetic, so there's nothing worth waiting on.
+  punch(direction: Direction): void {
+    this.socket?.emit('punch', direction);
   }
 }
