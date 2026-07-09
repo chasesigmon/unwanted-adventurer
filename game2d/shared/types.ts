@@ -1,5 +1,5 @@
 import type { Server, Socket } from 'socket.io';
-import type { MapName, Race, Direction } from './constants.js';
+import type { MapName, Race, Direction, MonsterKind } from './constants.js';
 
 export interface PlayerSnapshot {
   username: string;
@@ -7,16 +7,42 @@ export interface PlayerSnapshot {
   map: MapName;
   row: number;
   col: number;
+  level: number;
+  exp: number;
+  hp: number;
+  maxHp: number;
+  mana: number;
+  maxMana: number;
+  movement: number;
+  maxMovement: number;
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
-// Great Plains today; same shape a wandering NPC could reuse later.
+// Great Plains today; same shape a wandering NPC could reuse later. Has
+// the same stats as a real player (see combat/formulas.ts's starting
+// values) since it's a real target for the punch/combat system too.
 export interface NpcSnapshot {
   id: string;
   race: Race;
   map: MapName;
   row: number;
   col: number;
+  level: number;
+  hp: number;
+  maxHp: number;
+}
+
+// A wild monster — wanders on its own, has no account/login, and is a
+// valid punch/combat target like an NPC or another player.
+export interface MonsterSnapshot {
+  id: string;
+  kind: MonsterKind;
+  map: MapName;
+  row: number;
+  col: number;
+  level: number;
+  hp: number;
+  maxHp: number;
 }
 
 export interface SyncPayload {
@@ -25,10 +51,35 @@ export interface SyncPayload {
 
 // Broadcast to everyone in a map's room whenever anyone joins, moves
 // within it, or leaves — the client's only source of truth for rendering
-// other players/NPCs (and thus for knowing which tiles are occupied).
+// other players/NPCs/monsters (and thus for knowing which tiles are
+// occupied).
 export interface MapStatePayload {
   players: PlayerSnapshot[];
   npcs: NpcSnapshot[];
+  monsters: MonsterSnapshot[];
+}
+
+// Broadcast to a map's room whenever a punch actually lands on a target
+// (an NPC/monster/other player standing exactly one tile ahead, in the
+// direction thrown) — carries enough to update everyone's view of the
+// fight (health bars, a combat log line) without waiting for the next
+// map:state.
+export interface CombatEventPayload {
+  attacker: string;
+  attackerLevel: number;
+  attackerExp: number;
+  attackerHp: number;
+  attackerMaxHp: number;
+  targetKind: 'player' | 'npc' | 'monster';
+  target: string;
+  targetLabel: string;
+  damage: number;
+  targetHp: number;
+  targetMaxHp: number;
+  targetDied: boolean;
+  expGained?: number;
+  leveledUp?: boolean;
+  message: string;
 }
 
 export interface MoveAck {
@@ -55,10 +106,15 @@ export interface ServerToClientEvents {
   'session:kicked': (data: KickedPayload) => void;
   'map:state': (data: MapStatePayload) => void;
   punch: (data: PunchPayload) => void;
+  combat: (data: CombatEventPayload) => void;
 }
 
 export interface ClientToServerEvents {
   move: (direction: Direction, ack: (res: MoveAck) => void) => void;
+  // Also resolves combat server-side: if a punch in this direction lands
+  // on an NPC/monster/player standing exactly one tile ahead, damage is
+  // applied and a 'combat' event is broadcast — no separate "attack"
+  // event needed, the direction alone is enough.
   punch: (direction: Direction) => void;
 }
 
@@ -70,6 +126,20 @@ export interface SocketData {
   map: MapName;
   row: number;
   col: number;
+  level: number;
+  exp: number;
+  strength: number;
+  intelligence: number;
+  wisdom: number;
+  dexterity: number;
+  constitution: number;
+  hp: number;
+  maxHp: number;
+  mana: number;
+  maxMana: number;
+  movement: number;
+  maxMovement: number;
+  skills: Record<string, number>;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

@@ -1,4 +1,5 @@
 import type { MapName, Race } from '../../shared/constants.js';
+import type { Attributes } from '../combat/formulas.js';
 
 export interface Location {
   mapName: MapName;
@@ -6,8 +7,21 @@ export interface Location {
   col: number;
 }
 
-export interface PlayerState extends Location {
+// Everything WorldManagerService needs to know about a connected player
+// besides their raw position — race for rendering, and the combat stats
+// (attributes/level/hp/skills) needed to resolve a contact punch against
+// them without a separate lookup.
+export interface PlayerState extends Location, Attributes {
   race: Race;
+  level: number;
+  exp: number;
+  hp: number;
+  maxHp: number;
+  mana: number;
+  maxMana: number;
+  movement: number;
+  maxMovement: number;
+  skills: Record<string, number>;
 }
 
 export type MoveResult =

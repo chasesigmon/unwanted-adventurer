@@ -7,6 +7,7 @@ import type {
   KickedPayload,
   MapStatePayload,
   PunchPayload,
+  CombatEventPayload,
 } from '../shared/types.js';
 import type { Direction } from '../shared/constants.js';
 
@@ -71,6 +72,9 @@ export class NetworkManager extends EventTarget {
       this.dispatchEvent(new CustomEvent<MapStatePayload>('map:state', { detail: data }))
     );
     socket.on('punch', (data: PunchPayload) => this.dispatchEvent(new CustomEvent<PunchPayload>('punch', { detail: data })));
+    socket.on('combat', (data: CombatEventPayload) =>
+      this.dispatchEvent(new CustomEvent<CombatEventPayload>('combat', { detail: data }))
+    );
     socket.on('disconnect', (reason) => this.dispatchEvent(new CustomEvent('disconnected', { detail: { reason } })));
     socket.on('connect_error', (err) =>
       this.dispatchEvent(new CustomEvent('connect_error', { detail: { message: err.message } }))

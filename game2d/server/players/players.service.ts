@@ -19,6 +19,23 @@ export interface PlayerPosition {
   col: number;
 }
 
+export interface PlayerStatsUpdate {
+  hp?: number;
+  maxHp?: number;
+  mana?: number;
+  maxMana?: number;
+  movement?: number;
+  maxMovement?: number;
+  strength?: number;
+  intelligence?: number;
+  wisdom?: number;
+  dexterity?: number;
+  constitution?: number;
+  level?: number;
+  exp?: number;
+  skills?: Record<string, number>;
+}
+
 @Injectable()
 export class PlayersService {
   constructor(@InjectRepository(Player) private readonly playersRepo: Repository<Player>) {}
@@ -45,5 +62,12 @@ export class PlayersService {
 
   async updatePosition(username: string, position: PlayerPosition): Promise<void> {
     await this.playersRepo.update({ username }, position);
+  }
+
+  // Attributes/vitals/level/exp/skills, persisted after combat (damage
+  // taken, exp gained, a level-up, skill growth). Position is intentionally
+  // separate (updatePosition) since it's written far more often.
+  async updateStats(username: string, updates: PlayerStatsUpdate): Promise<void> {
+    await this.playersRepo.update({ username }, updates);
   }
 }

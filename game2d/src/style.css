@@ -136,10 +136,80 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
 }
 
 #game-container canvas {
   display: block;
   image-rendering: pixelated;
   box-shadow: 0 0 0 1px #333;
+}
+
+/* ---------- Status bar (level/hp/mana/mv/exp) ---------- */
+
+#status-bar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  gap: 12px;
+  background: rgba(10, 10, 16, 0.75);
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #ddd;
+  pointer-events: none;
+}
+
+#status-bar span {
+  white-space: nowrap;
+}
+
+#status-hp {
+  color: #6bd46b;
+}
+
+#status-mana {
+  color: #6b9fd4;
+}
+
+#status-mv {
+  color: #d4c26b;
+}
+
+#status-exp {
+  color: #c9a2e6;
+}
+
+/* ---------- Combat log ---------- */
+
+#combat-log {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  width: min(420px, 40vw);
+  max-height: 160px;
+  overflow-y: auto;
+  background: rgba(10, 10, 16, 0.75);
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #ccc;
+  pointer-events: none;
+}
+
+#combat-log .log-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+#combat-log .log-line.level-up {
+  color: #f0c040;
+}
+
+#combat-log .log-line.death {
+  color: #ff6b6b;
 }

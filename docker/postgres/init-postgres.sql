@@ -1,9 +1,11 @@
--- game2d's players table. Deliberately minimal (username, password hash,
--- race) plus the position fields the game gateway needs to place a
--- character back where it left off — no stats/skills/equipment/inventory,
--- none of that exists in this project. A real relational schema (not just
--- Mongo-style documents) since game2d expects to grow joined tables later
--- (e.g. inventory, guilds).
+-- game2d's players table. Position fields place a character back where
+-- it left off; attribute/vital/level/skill fields back the combat system
+-- (see game2d/server/combat/formulas.ts) — mirroring the text game's own
+-- player.schema.ts conventions (starting attributes of 1, starting
+-- hp/mana/movement of 100, a percent-learned skills map) even though this
+-- project's combat is much smaller (one skill, no equipment). A real
+-- relational schema (not just Mongo-style documents) since game2d expects
+-- to grow joined tables later (e.g. inventory, guilds).
 CREATE TABLE IF NOT EXISTS players (
   id SERIAL PRIMARY KEY,
   username VARCHAR(16) NOT NULL UNIQUE,
@@ -12,6 +14,20 @@ CREATE TABLE IF NOT EXISTS players (
   map VARCHAR(32) NOT NULL DEFAULT 'Great Plains' CHECK (map IN ('Great Plains', 'Labyrinth')),
   "row" INTEGER NOT NULL,
   col INTEGER NOT NULL,
+  strength INTEGER NOT NULL DEFAULT 1,
+  intelligence INTEGER NOT NULL DEFAULT 1,
+  wisdom INTEGER NOT NULL DEFAULT 1,
+  dexterity INTEGER NOT NULL DEFAULT 1,
+  constitution INTEGER NOT NULL DEFAULT 1,
+  hp INTEGER NOT NULL DEFAULT 100,
+  max_hp INTEGER NOT NULL DEFAULT 100,
+  mana INTEGER NOT NULL DEFAULT 100,
+  max_mana INTEGER NOT NULL DEFAULT 100,
+  movement INTEGER NOT NULL DEFAULT 100,
+  max_movement INTEGER NOT NULL DEFAULT 100,
+  level INTEGER NOT NULL DEFAULT 1,
+  exp INTEGER NOT NULL DEFAULT 0,
+  skills JSONB NOT NULL DEFAULT '{"punch": 1}',
   last_login TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

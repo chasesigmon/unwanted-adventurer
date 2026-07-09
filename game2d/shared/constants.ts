@@ -13,3 +13,10 @@ export const STARTING_MAP: MapName = 'Great Plains';
 
 export const DIRECTIONS = ['north', 'south', 'east', 'west'] as const;
 export type Direction = (typeof DIRECTIONS)[number];
+
+// Wild monsters — deliberately named "wild goblin"/"wild skeleton" (not
+// bare "goblin"/"skeleton") so they're never confused with the
+// player-choosable races above, same disambiguation the text game's own
+// monster kinds use.
+export const MONSTER_KINDS = ['wild goblin', 'wild skeleton'] as const;
+export type MonsterKind = (typeof MONSTER_KINDS)[number];
