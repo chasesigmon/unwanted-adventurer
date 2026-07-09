@@ -14,16 +14,22 @@ export interface Monster extends CombatantStats {
   hp: number;
   maxHp: number;
   expReward: number;
+  // Rolled once at spawn time (see MonsterSpecies.carriedItemChance) —
+  // an extra item its corpse drops alongside the usual body part.
+  carriedItem?: string;
 }
 
 export interface MonsterSpecies {
   kind: MonsterKind;
   homeMap: MapName;
-  // How many of this species should exist at once — 0 means "a real,
-  // combat-capable monster kind, just not actively spawned anywhere yet".
+  // How many of this species should exist at once.
   maxCount: number;
   startingHp: number;
   expReward: number;
+  carriedItemLabel?: string;
+  // 0-1 chance, rolled once per spawned instance, that it carries
+  // carriedItemLabel (dropped alongside its body part on death).
+  carriedItemChance?: number;
 }
 
 // Every wild monster starts at level 1 with every attribute at 1 — so a
@@ -33,6 +39,14 @@ export const MONSTER_LEVEL = 1;
 export const MONSTER_BASE_ATTRIBUTE = 1;
 
 export const MONSTER_SPECIES: MonsterSpecies[] = [
-  { kind: 'wild goblin', homeMap: 'Great Plains', maxCount: 5, startingHp: 15, expReward: WILD_GOBLIN_EXP_REWARD },
-  { kind: 'wild skeleton', homeMap: 'Labyrinth', maxCount: 0, startingHp: 20, expReward: WILD_SKELETON_EXP_REWARD },
+  { kind: 'wild goblin', homeMap: 'Great Plains', maxCount: 15, startingHp: 15, expReward: WILD_GOBLIN_EXP_REWARD },
+  {
+    kind: 'wild skeleton',
+    homeMap: 'Labyrinth',
+    maxCount: 10,
+    startingHp: 20,
+    expReward: WILD_SKELETON_EXP_REWARD,
+    carriedItemLabel: 'bone dagger',
+    carriedItemChance: 0.3,
+  },
 ];

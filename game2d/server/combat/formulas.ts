@@ -53,9 +53,39 @@ export function skillBonus(skillPercent: number): number {
   return Math.floor(skillPercent / 20);
 }
 
-export function punchDamage(attacker: CombatantStats, defender: CombatantStats, punchSkillPercent: number): number {
-  return baseDamage(attacker.strength, attacker.level) + attributeBonus(attacker, defender) + skillBonus(punchSkillPercent);
+export function punchDamage(
+  attacker: CombatantStats,
+  defender: CombatantStats,
+  punchSkillPercent: number,
+  weaponBonus = 0
+): number {
+  return baseDamage(attacker.strength, attacker.level) + attributeBonus(attacker, defender) + skillBonus(punchSkillPercent) + weaponBonus;
 }
+
+// --- Equipment (one slot: weapon) ---
+
+// Which equipment slot an item goes into, if any — items not listed here
+// aren't equippable at all, just consumable body parts (see
+// CONSUME_EXP_PER_ITEM below).
+export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, string> = {
+  'bone dagger': 'weapon',
+};
+
+// Flat damage bonus while a given item is equipped in its slot.
+export const WEAPON_DAMAGE_BONUS: Record<string, number> = {
+  'bone dagger': 3,
+};
+
+export function weaponBonusFor(equipment: Record<string, string>): number {
+  const weapon = equipment.weapon;
+  return weapon ? (WEAPON_DAMAGE_BONUS[weapon] ?? 0) : 0;
+}
+
+// --- Consuming body parts (mirrors the text game's separate
+// consumeExp counter — tracked here but, unlike the text game's Hobgoblin
+// evolution, doesn't drive any further mechanic yet in this project) ---
+
+export const CONSUME_EXP_PER_ITEM = 5;
 
 // --- Leveling — identical shape to the text game's leveling.ts ---
 

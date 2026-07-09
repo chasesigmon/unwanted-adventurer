@@ -22,7 +22,7 @@ export interface MapDefinition {
   exits: MapExit[];
 }
 
-const GREAT_PLAINS_SIZE = 20;
+const GREAT_PLAINS_SIZE = 100;
 const LABYRINTH_SIZE = 20;
 // "Very top middle" / "south middle" — floor(size / 2), the same
 // even-width convention the text game's own map exits use.

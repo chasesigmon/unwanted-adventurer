@@ -3,10 +3,12 @@ import { Injectable } from '@nestjs/common';
 import type { MapName, Race, MonsterKind } from '../../shared/constants.js';
 import type { CorpseSnapshot } from '../../shared/types.js';
 
-// One lootable body-part item per corpse, named after whatever died —
-// reusing the character's own vocabulary (ears read as goblin-ish, bones
-// as skeleton-ish) rather than inventing a whole item-definition system
-// for a single drop type.
+// The body-part item every corpse always includes, named after whatever
+// died — reusing the character's own vocabulary (ears read as
+// goblin-ish, bones as skeleton-ish) rather than inventing a whole
+// item-definition system for a single guaranteed drop type. A corpse can
+// carry additional items too (e.g. a wild skeleton's bone dagger) — see
+// game.gateway.ts's death handling, which builds the full items list.
 const BODY_PART_LABEL: Record<Race | MonsterKind, string> = {
   goblin: 'goblin ear',
   skeleton: 'skeleton bone',
@@ -25,11 +27,11 @@ export function bodyPartLabelFor(kind: Race | MonsterKind): string {
 export class CorpseManagerService {
   private corpses = new Map<string, CorpseSnapshot>();
 
-  spawn(kind: Race | MonsterKind, mapName: MapName, row: number, col: number): CorpseSnapshot {
+  spawn(kind: Race | MonsterKind, items: string[], mapName: MapName, row: number, col: number): CorpseSnapshot {
     const corpse: CorpseSnapshot = {
       id: randomUUID(),
       kind,
-      itemLabel: bodyPartLabelFor(kind),
+      items,
       map: mapName,
       row,
       col,

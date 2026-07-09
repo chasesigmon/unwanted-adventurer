@@ -22,6 +22,8 @@ export interface PlayerSnapshot {
   constitution: number;
   skills: Record<string, number>;
   inventory: string[];
+  equipment: Record<string, string>;
+  consumeExp: number;
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
@@ -53,13 +55,14 @@ export interface MonsterSnapshot {
 }
 
 // Left behind when a monster or a real player dies (not the training
-// dummy — it just resets, there's no "kill" to leave remains from). A
-// single lootable body-part item; clicking it adds itemLabel to the
-// looter's inventory and removes the corpse.
+// dummy — it just resets, there's no "kill" to leave remains from).
+// Usually just a body part, but some monsters (a wild skeleton with a
+// carried weapon) can drop more than one item; looting takes everything
+// at once and removes the corpse.
 export interface CorpseSnapshot {
   id: string;
   kind: Race | MonsterKind;
-  itemLabel: string;
+  items: string[];
   map: MapName;
   row: number;
   col: number;
@@ -128,6 +131,15 @@ export interface LootAck {
   message?: string;
 }
 
+export interface UseItemAck {
+  ok: boolean;
+  action?: 'consumed' | 'equipped';
+  inventory?: string[];
+  equipment?: Record<string, string>;
+  consumeExp?: number;
+  message?: string;
+}
+
 export interface ServerToClientEvents {
   sync: (data: SyncPayload) => void;
   'session:kicked': (data: KickedPayload) => void;
@@ -144,6 +156,11 @@ export interface ClientToServerEvents {
   // event needed, the direction alone is enough.
   punch: (direction: Direction) => void;
   loot: (corpseId: string, ack: (res: LootAck) => void) => void;
+  // Clicking an inventory item: the server decides consume vs. equip
+  // based on the item itself (see combat/formulas.ts's
+  // EQUIPMENT_SLOT_FOR_ITEM) so the client never has to know which items
+  // are equippable.
+  useItem: (itemIndex: number, ack: (res: UseItemAck) => void) => void;
 }
 
 export type InterServerEvents = Record<string, never>;
@@ -169,6 +186,8 @@ export interface SocketData {
   maxMovement: number;
   skills: Record<string, number>;
   inventory: string[];
+  equipment: Record<string, string>;
+  consumeExp: number;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

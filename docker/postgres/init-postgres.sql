@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS players (
   exp INTEGER NOT NULL DEFAULT 0,
   skills JSONB NOT NULL DEFAULT '{"punch": 1}',
   inventory JSONB NOT NULL DEFAULT '[]',
+  equipment JSONB NOT NULL DEFAULT '{}',
+  consume_exp INTEGER NOT NULL DEFAULT 0,
   last_login TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

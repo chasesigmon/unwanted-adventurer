@@ -52,9 +52,32 @@ export class MonsterManagerService {
     return !this.isPlayerAt(mapName, row, col);
   }
 
+  // Only enforced for INITIAL spawn placement (not wandering) — a deliberate
+  // "don't all clump together at spawn" spacing, generous enough to matter
+  // on a 100x100 map without making a small 20x20 one (or a
+  // heavily-populated one) impossible to satisfy.
+  private static readonly MIN_SPAWN_SPACING = 8;
+
+  private isFarEnoughFromOthers(mapName: MapName, row: number, col: number): boolean {
+    for (const m of this.monsters.values()) {
+      if (m.mapName !== mapName) continue;
+      if (Math.abs(m.row - row) < MonsterManagerService.MIN_SPAWN_SPACING && Math.abs(m.col - col) < MonsterManagerService.MIN_SPAWN_SPACING) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private randomFreeTile(mapName: MapName): { row: number; col: number } | null {
     const map = getMap(mapName);
-    for (let attempt = 0; attempt < 40; attempt++) {
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const row = Math.floor(Math.random() * map.rows);
+      const col = Math.floor(Math.random() * map.cols);
+      if (this.isFree(mapName, row, col) && this.isFarEnoughFromOthers(mapName, row, col)) return { row, col };
+    }
+    // The map's too crowded to satisfy the spacing preference within
+    // budget — fall back to just finding anywhere free at all.
+    for (let attempt = 0; attempt < 60; attempt++) {
       const row = Math.floor(Math.random() * map.rows);
       const col = Math.floor(Math.random() * map.cols);
       if (this.isFree(mapName, row, col)) return { row, col };
@@ -65,6 +88,11 @@ export class MonsterManagerService {
   private spawnOne(species: MonsterSpecies): void {
     const tile = this.randomFreeTile(species.homeMap);
     if (!tile) return;
+
+    const carriedItem =
+      species.carriedItemLabel && species.carriedItemChance && Math.random() < species.carriedItemChance
+        ? species.carriedItemLabel
+        : undefined;
 
     const monster: Monster = {
       id: randomUUID(),
@@ -81,6 +109,7 @@ export class MonsterManagerService {
       wisdom: MONSTER_BASE_ATTRIBUTE,
       dexterity: MONSTER_BASE_ATTRIBUTE,
       constitution: MONSTER_BASE_ATTRIBUTE,
+      carriedItem,
     };
     this.monsters.set(monster.id, monster);
   }

@@ -378,31 +378,25 @@ body {
   font-style: italic;
 }
 
-/* ---------- Autopilot prompt bar ---------- */
-
-#autopilot-bar {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(10, 10, 16, 0.92);
-  border: 1px solid #555;
-  border-radius: 6px;
-  padding: 10px 14px;
-  width: min(520px, 80vw);
+.inventory-item {
+  cursor: pointer;
 }
 
-.autopilot-label {
+.inventory-item:hover {
+  border-color: #f0c040;
+}
+
+/* ---------- Autopilot prompt modal ---------- */
+
+.autopilot-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   color: #f0c040;
   font-size: 13px;
-  white-space: nowrap;
 }
 
 #autopilot-input {
-  flex: 1;
   background: #0d0d13;
   border: 1px solid #555;
   color: #eee;

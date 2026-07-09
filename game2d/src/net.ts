@@ -9,6 +9,7 @@ import type {
   PunchPayload,
   CombatEventPayload,
   LootAck,
+  UseItemAck,
 } from '../shared/types.js';
 import type { Direction } from '../shared/constants.js';
 
@@ -113,6 +114,19 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('loot', corpseId, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  useItem(itemIndex: number): Promise<UseItemAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('useItem', itemIndex, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

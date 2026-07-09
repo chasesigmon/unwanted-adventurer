@@ -83,6 +83,17 @@ export class Player {
   @Column({ type: 'jsonb', default: () => "'[]'" })
   inventory!: string[];
 
+  // Slot name -> equipped item label. Just "weapon" today.
+  @Column({ type: 'jsonb', default: () => "'{}'" })
+  equipment!: Record<string, string>;
+
+  // A separate counter from `exp` — incremented by consuming body parts
+  // from the inventory (see combat/formulas.ts's CONSUME_EXP_PER_ITEM),
+  // mirroring the text game's own consumeExp field. Doesn't drive any
+  // further mechanic in this project yet (no evolution system here).
+  @Column({ name: 'consume_exp', type: 'int', default: 0 })
+  consumeExp!: number;
+
   @Column({ name: 'last_login', type: 'timestamptz', default: () => 'now()' })
   lastLogin!: Date;
 

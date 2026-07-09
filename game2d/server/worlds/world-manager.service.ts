@@ -125,6 +125,8 @@ export class WorldManagerService {
         constitution: state.constitution,
         skills: state.skills,
         inventory: state.inventory,
+        equipment: state.equipment,
+        consumeExp: state.consumeExp,
       });
     }
 

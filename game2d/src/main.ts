@@ -96,26 +96,27 @@ function logCombatMessage(message: string, kind?: 'level-up' | 'death'): void {
 
 const charSheetBtn = document.getElementById('char-sheet-btn') as HTMLButtonElement;
 const inventoryBtn = document.getElementById('inventory-btn') as HTMLButtonElement;
+const autopilotBtn = document.getElementById('autopilot-btn') as HTMLButtonElement;
 const charSheetModal = document.getElementById('char-sheet-modal') as HTMLDivElement;
 const charSheetUsername = document.getElementById('char-sheet-username') as HTMLHeadingElement;
 const charSheetBody = document.getElementById('char-sheet-body') as HTMLDivElement;
 const inventoryModal = document.getElementById('inventory-modal') as HTMLDivElement;
 const inventoryList = document.getElementById('inventory-list') as HTMLUListElement;
-
-const autopilotBar = document.getElementById('autopilot-bar') as HTMLDivElement;
+const autopilotModal = document.getElementById('autopilot-modal') as HTMLDivElement;
 const autopilotInput = document.getElementById('autopilot-input') as HTMLInputElement;
 const autopilotStatusEl = document.getElementById('autopilot-status') as HTMLDivElement;
+
+const ALL_MODALS = [charSheetModal, inventoryModal, autopilotModal];
 
 // The single source of truth for "my own" stats — updated on 'sync' and
 // on any 'combat'/'loot' outcome that affects me, and read by the status
 // bar and both modals. WorldScene owns game logic (position, facing,
 // sprites); this is purely the display-side profile.
 let myProfile: PlayerSnapshot | null = null;
-let autopilotBarOpen = false;
 let inputCaptured = false;
 
 function updateInputCaptured(): void {
-  inputCaptured = !charSheetModal.hidden || !inventoryModal.hidden || autopilotBarOpen;
+  inputCaptured = ALL_MODALS.some((m) => !m.hidden);
 }
 
 function updateStatusBar(): void {
@@ -144,10 +145,12 @@ function renderCharSheet(): void {
     ['Wisdom', myProfile.wisdom],
     ['Dexterity', myProfile.dexterity],
     ['Constitution', myProfile.constitution],
+    ['Consumed Exp', myProfile.consumeExp],
   ];
   for (const [skillName, percent] of Object.entries(myProfile.skills)) {
     rows.push([`Skill: ${skillName}`, `${percent}%`]);
   }
+  rows.push(['Weapon', myProfile.equipment.weapon ?? '(none)']);
 
   for (const [label, value] of rows) {
     const labelEl = document.createElement('div');
@@ -171,11 +174,41 @@ function renderInventory(): void {
     inventoryList.appendChild(li);
     return;
   }
-  for (const item of items) {
+  items.forEach((item, index) => {
     const li = document.createElement('li');
     li.textContent = item;
+    li.className = 'inventory-item';
+    li.title = 'Click to use';
+    li.addEventListener('click', () => useInventoryItem(index));
     inventoryList.appendChild(li);
-  }
+  });
+}
+
+// Clicking an inventory item asks the server to decide consume-vs-equip
+// (see game.gateway.ts's useItem handler) — the client has no copy of
+// that logic, it just reflects whatever the server did.
+function useInventoryItem(index: number): void {
+  network
+    .useItem(index)
+    .then((ack) => {
+      if (!ack.ok) {
+        if (ack.message) logCombatMessage(ack.message);
+        return;
+      }
+      if (myProfile) {
+        myProfile = {
+          ...myProfile,
+          inventory: ack.inventory ?? myProfile.inventory,
+          equipment: ack.equipment ?? myProfile.equipment,
+          consumeExp: ack.consumeExp ?? myProfile.consumeExp,
+        };
+        refreshOpenModals();
+      }
+      logCombatMessage(ack.action === 'equipped' ? 'You equip it.' : 'You consume it.');
+    })
+    .catch(() => {
+      /* nothing to show */
+    });
 }
 
 function refreshOpenModals(): void {
@@ -183,12 +216,23 @@ function refreshOpenModals(): void {
   if (!inventoryModal.hidden) renderInventory();
 }
 
+// Hides a modal without any side effects beyond that — used both by the
+// "close everything else before opening this one" path and by the
+// autopilot-specific dismissal path below (which additionally stops any
+// active hunt).
+function hideModal(modal: HTMLDivElement): void {
+  modal.hidden = true;
+  if (modal === autopilotModal) autopilotInput.blur();
+}
+
 function closeAllModals(): void {
-  charSheetModal.hidden = true;
-  inventoryModal.hidden = true;
+  for (const modal of ALL_MODALS) hideModal(modal);
   updateInputCaptured();
 }
 
+// Char sheet / inventory: plain toggle, closing any OTHER open modal
+// first. Deliberately does NOT touch autopilot tracking — opening your
+// inventory mid-hunt shouldn't cancel it.
 function toggleModal(modal: HTMLDivElement): void {
   const wasOpen = !modal.hidden;
   closeAllModals();
@@ -202,28 +246,55 @@ function toggleModal(modal: HTMLDivElement): void {
 charSheetBtn.addEventListener('click', () => toggleModal(charSheetModal));
 inventoryBtn.addEventListener('click', () => toggleModal(inventoryModal));
 
-for (const modal of [charSheetModal, inventoryModal]) {
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) closeAllModals();
-  });
-}
-for (const btn of document.querySelectorAll<HTMLButtonElement>('.modal-close')) {
-  btn.addEventListener('click', () => {
-    closeAllModals();
-  });
+// Dismissing the PROMPT modal specifically (X, click-outside, or 'p'
+// again while it's open) both closes it and ends any active hunt — per
+// the explicit request that dismissing it "should close and end
+// tracking". Submitting a command (Enter, below) is a separate path that
+// closes the modal WITHOUT stopping anything, since it's what starts the
+// hunt in the first place.
+function dismissAutopilotModal(): void {
+  hideModal(autopilotModal);
+  updateInputCaptured();
+  activeScene?.stopAutopilot('Autopilot stopped.');
 }
 
-function showAutopilotBar(): void {
-  autopilotBarOpen = true;
-  autopilotBar.hidden = false;
+function openAutopilotModal(): void {
+  closeAllModals();
+  autopilotModal.hidden = false;
   autopilotInput.value = '';
   autopilotInput.focus();
   updateInputCaptured();
 }
-function hideAutopilotBar(): void {
-  autopilotBarOpen = false;
-  autopilotBar.hidden = true;
-  updateInputCaptured();
+
+function toggleAutopilotModal(): void {
+  if (!autopilotModal.hidden) {
+    dismissAutopilotModal();
+    return;
+  }
+  openAutopilotModal();
+}
+autopilotBtn.addEventListener('click', toggleAutopilotModal);
+
+for (const modal of ALL_MODALS) {
+  modal.addEventListener('click', (e) => {
+    if (e.target !== modal) return;
+    if (modal === autopilotModal) {
+      dismissAutopilotModal();
+    } else {
+      hideModal(modal);
+      updateInputCaptured();
+    }
+  });
+}
+for (const btn of document.querySelectorAll<HTMLButtonElement>('.modal-close')) {
+  const modal = btn.closest('.modal') as HTMLDivElement | null;
+  btn.addEventListener('click', () => {
+    if (modal === autopilotModal) {
+      dismissAutopilotModal();
+    } else {
+      closeAllModals();
+    }
+  });
 }
 
 function parseAutopilotPrompt(text: string): MonsterKind | null {
@@ -243,12 +314,19 @@ function parseAutopilotPrompt(text: string): MonsterKind | null {
   return null;
 }
 
+// No stopPropagation here — an earlier version called it unconditionally,
+// which (since focus stayed on this input even after being hidden)
+// silently swallowed EVERY subsequent keystroke, including WASD, before
+// it ever reached Phaser's keyboard manager. The document-level listener
+// below already ignores keys while a modal is open, so blocking
+// propagation here was both redundant and the actual cause of "movement
+// stopped working after using the prompt".
 autopilotInput.addEventListener('keydown', (e) => {
-  e.stopPropagation();
   if (e.key === 'Enter') {
     e.preventDefault();
     const text = autopilotInput.value.trim();
-    hideAutopilotBar();
+    hideModal(autopilotModal);
+    updateInputCaptured();
     if (!text) return;
     const kind = parseAutopilotPrompt(text);
     if (!kind) {
@@ -258,20 +336,15 @@ autopilotInput.addEventListener('keydown', (e) => {
     activeScene?.startAutopilot(kind);
   } else if (e.key === 'Escape') {
     e.preventDefault();
-    hideAutopilotBar();
+    dismissAutopilotModal();
   }
 });
 
 document.addEventListener('keydown', (e) => {
-  if (gameRoot.hidden || autopilotBarOpen) return;
+  if (gameRoot.hidden || inputCaptured) return;
   const target = e.target as HTMLElement;
   if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    showAutopilotBar();
-    return;
-  }
   if (e.key === 'Escape') {
     activeScene?.stopAutopilot('Autopilot stopped.');
     return;
@@ -284,6 +357,9 @@ document.addEventListener('keydown', (e) => {
   } else if (key === 'i') {
     e.preventDefault();
     toggleModal(inventoryModal);
+  } else if (key === 'p') {
+    e.preventDefault();
+    toggleAutopilotModal();
   }
 });
 
@@ -413,6 +489,11 @@ class WorldScene extends Phaser.Scene {
     this.doorSprite = this.add.sprite(0, 0, 'door').setVisible(false);
     this.player = this.add.sprite(0, 0, textureKeyFor('goblin'), idleFrameFor('goblin', 'down')).setScale(CHAR_SCALE);
     this.playerHpBar = this.add.graphics();
+
+    // A 100x100 Great Plains is far too big to fit on screen at once —
+    // the camera follows the player instead, clamped to each map's own
+    // pixel bounds (set per-map in renderMap, since maps differ in size).
+    this.cameras.main.startFollow(this.player, true, 1, 1);
 
     const keyboard = this.input.keyboard!;
     this.moveKeys = {
@@ -619,18 +700,19 @@ class WorldScene extends Phaser.Scene {
     });
   }
 
-  // Resizes the game to the new map's pixel footprint and swaps its floor
-  // texture/door position — both current maps happen to be 20x20, so in
-  // practice this never actually changes the canvas size, but a map of a
-  // different size would just work.
+  // Sets the camera's world bounds to the new map's pixel footprint and
+  // swaps its floor texture/door position. The canvas itself stays fixed
+  // at the browser window's size (see Phaser.Scale.RESIZE in startGame) —
+  // the camera follows the player and is clamped to whichever map's
+  // bounds are set here, so a small 20x20 map and a huge 100x100 one both
+  // just work without the canvas itself changing size.
   private renderMap(mapName: MapName): void {
     this.currentMap = mapName;
     const def = getMap(mapName);
     const pixelWidth = def.cols * TILE_SIZE;
     const pixelHeight = def.rows * TILE_SIZE;
 
-    this.scale.resize(pixelWidth, pixelHeight);
-    this.scale.refresh();
+    this.cameras.main.setBounds(0, 0, pixelWidth, pixelHeight);
 
     // Recreated from scratch (rather than reusing setSize() on the
     // existing tile sprite) — on the very first map load, resizing an
@@ -764,9 +846,16 @@ class WorldScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (inputCaptured || !pointer.leftButtonDown()) return;
-        this.lootCorpse(c.id, c.itemLabel);
+        this.lootCorpse(c.id, c.items);
       });
       this.corpseSprites.set(c.id, sprite);
+
+      // Autopilot picks up after itself: a corpse it just created (from a
+      // kill it just landed) is always within reach, since the punch
+      // contact rule already requires standing adjacent to the target.
+      if (this.autopilotActive && this.isWithinLootReach(c.row, c.col)) {
+        this.lootCorpse(c.id, c.items);
+      }
     }
     for (const [id, sprite] of this.corpseSprites) {
       if (!seenCorpses.has(id)) {
@@ -776,7 +865,11 @@ class WorldScene extends Phaser.Scene {
     }
   }
 
-  private lootCorpse(corpseId: string, itemLabel: string): void {
+  private isWithinLootReach(row: number, col: number): boolean {
+    return Math.abs(row - this.row) <= 1 && Math.abs(col - this.col) <= 1;
+  }
+
+  private lootCorpse(corpseId: string, items: string[]): void {
     this.network
       .loot(corpseId)
       .then((ack) => {
@@ -788,7 +881,7 @@ class WorldScene extends Phaser.Scene {
           myProfile = { ...myProfile, inventory: ack.inventory };
           refreshOpenModals();
         }
-        logCombatMessage(`You pick up the ${itemLabel}.`);
+        logCombatMessage(`You pick up the ${items.join(' and ')}.`);
       })
       .catch(() => {
         /* corpse likely already looted by someone else — nothing to show */
@@ -948,17 +1041,22 @@ function startGame(): void {
   authScreen.hidden = true;
   gameRoot.hidden = false;
 
-  const startingMap = getMap('Great Plains');
+  // RESIZE (rather than the old FIT) keeps the canvas tracking the
+  // container's actual width AND height continuously — FIT preserved the
+  // game's internal aspect ratio (square, from the 20x20 maps) inside a
+  // landscape browser window, so it only ever filled height and
+  // letterboxed the sides. The camera (see WorldScene.create) follows the
+  // player and is clamped per-map, so an oversized viewport just shows
+  // more of the map rather than stretching it.
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game-container',
-    width: startingMap.cols * TILE_SIZE,
-    height: startingMap.rows * TILE_SIZE,
+    width: window.innerWidth,
+    height: window.innerHeight,
     pixelArt: true,
     backgroundColor: '#14181a',
     scale: {
-      mode: Phaser.Scale.FIT,
-      autoCenter: Phaser.Scale.CENTER_BOTH,
+      mode: Phaser.Scale.RESIZE,
     },
   });
   gameInstance = game;

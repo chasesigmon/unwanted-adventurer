@@ -35,6 +35,8 @@ export interface PlayerStatsUpdate {
   exp?: number;
   skills?: Record<string, number>;
   inventory?: string[];
+  equipment?: Record<string, string>;
+  consumeExp?: number;
 }
 
 @Injectable()

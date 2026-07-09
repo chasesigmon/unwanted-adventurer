@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { PlayersService } from '../players/players.service.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
 import { MonsterManagerService } from '../monsters/monster-manager.service.js';
-import { CorpseManagerService } from '../worlds/corpse-manager.service.js';
+import { CorpseManagerService, bodyPartLabelFor } from '../worlds/corpse-manager.service.js';
 import { MONSTER_SPECIES } from '../monsters/monster.js';
 import { NPCS } from '../worlds/npcs.js';
 import { AuthService } from '../auth/auth.service.js';
@@ -41,9 +41,12 @@ import {
   punchDamage,
   expGainFor,
   applyExpGain,
+  weaponBonusFor,
+  EQUIPMENT_SLOT_FOR_ITEM,
+  CONSUME_EXP_PER_ITEM,
 } from '../combat/formulas.js';
 import type { AppConfig } from '../config/configuration.js';
-import type { PlayerSnapshot, GameServer, GameSocket, CombatEventPayload } from '../../shared/types.js';
+import type { PlayerSnapshot, GameServer, GameSocket, CombatEventPayload, UseItemAck } from '../../shared/types.js';
 import type { Direction, MapName } from '../../shared/constants.js';
 
 const directionSchema = z.enum(DIRECTIONS);
@@ -155,6 +158,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       constitution: client.data.constitution,
       skills: client.data.skills,
       inventory: client.data.inventory,
+      equipment: client.data.equipment,
+      consumeExp: client.data.consumeExp,
     };
   }
 
@@ -200,6 +205,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         exp: client.data.exp,
         skills: client.data.skills,
         inventory: client.data.inventory,
+        equipment: client.data.equipment,
+        consumeExp: client.data.consumeExp,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -302,6 +309,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.maxMovement = doc?.maxMovement ?? STARTING_VITAL;
     client.data.skills = doc?.skills ?? { [PUNCH_SKILL]: STARTING_SKILL_PERCENT };
     client.data.inventory = doc?.inventory ?? [];
+    client.data.equipment = doc?.equipment ?? {};
+    client.data.consumeExp = doc?.consumeExp ?? 0;
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
@@ -323,6 +332,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       constitution: client.data.constitution,
       skills: client.data.skills,
       inventory: client.data.inventory,
+      equipment: client.data.equipment,
+      consumeExp: client.data.consumeExp,
     });
     void client.join(client.data.map);
 
@@ -434,7 +445,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!monster) return;
 
     const punchSkillPercent = client.data.skills[PUNCH_SKILL] ?? STARTING_SKILL_PERCENT;
-    const damage = punchDamage(this.attackerStatsFor(client), monster, punchSkillPercent);
+    const weaponBonus = weaponBonusFor(client.data.equipment);
+    const damage = punchDamage(this.attackerStatsFor(client), monster, punchSkillPercent, weaponBonus);
     const result = this.monsterManager.applyDamage(monster.id, damage);
     if (!result) return;
     const { died } = result;
@@ -444,7 +456,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (died) {
       expGained = expGainFor(monster.expReward, client.data.level, monster.level);
       leveledUp = this.grantExp(client, expGained);
-      this.corpseManager.spawn(monster.kind, monster.mapName, monster.row, monster.col);
+      const items = [bodyPartLabelFor(monster.kind), ...(monster.carriedItem ? [monster.carriedItem] : [])];
+      this.corpseManager.spawn(monster.kind, items, monster.mapName, monster.row, monster.col);
     }
     this.growPunchSkill(client);
     void this.persistStats(client);
@@ -484,7 +497,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       constitution: STARTING_ATTRIBUTE,
     };
     const punchSkillPercent = client.data.skills[PUNCH_SKILL] ?? STARTING_SKILL_PERCENT;
-    const damage = punchDamage(this.attackerStatsFor(client), defenderStats, punchSkillPercent);
+    const damage = punchDamage(this.attackerStatsFor(client), defenderStats, punchSkillPercent, weaponBonusFor(client.data.equipment));
     npc.hp = Math.max(0, npc.hp - damage);
     const died = npc.hp <= 0;
 
@@ -518,7 +531,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     const defenderStats = this.attackerStatsFor(targetClient);
     const punchSkillPercent = client.data.skills[PUNCH_SKILL] ?? STARTING_SKILL_PERCENT;
-    const damage = punchDamage(this.attackerStatsFor(client), defenderStats, punchSkillPercent);
+    const damage = punchDamage(this.attackerStatsFor(client), defenderStats, punchSkillPercent, weaponBonusFor(client.data.equipment));
     targetClient.data.hp = Math.max(0, targetClient.data.hp - damage);
     const died = targetClient.data.hp <= 0;
 
@@ -528,7 +541,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (died) {
       expGained = expGainFor(PLAYER_KILL_EXP_REWARD, client.data.level, targetClient.data.level);
       leveledUp = this.grantExp(client, expGained);
-      this.corpseManager.spawn(targetClient.data.race, targetClient.data.map, targetClient.data.row, targetClient.data.col);
+      this.corpseManager.spawn(
+        targetClient.data.race,
+        [bodyPartLabelFor(targetClient.data.race)],
+        targetClient.data.map,
+        targetClient.data.row,
+        targetClient.data.col
+      );
 
       const previousMap = targetClient.data.map;
       const startingMap = getMap(STARTING_MAP);
@@ -620,12 +639,63 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     this.corpseManager.remove(corpseId);
-    client.data.inventory = [...client.data.inventory, corpse.itemLabel];
+    client.data.inventory = [...client.data.inventory, ...corpse.items];
     this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
     void this.persistStats(client);
 
     this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
 
     return { ok: true, inventory: client.data.inventory };
+  }
+
+  // Clicking an inventory item: the server alone decides whether it's
+  // equippable (see combat/formulas.ts's EQUIPMENT_SLOT_FOR_ITEM) or just
+  // a consumable body part. Equipping swaps out whatever was already in
+  // that slot (returning it to inventory, mirroring the text game's own
+  // "unequip the old one first" behavior); consuming removes it for good
+  // and grants a flat CONSUME_EXP_PER_ITEM toward the separate
+  // consumeExp counter.
+  @SubscribeMessage('useItem')
+  handleUseItem(@ConnectedSocket() client: GameSocket, @MessageBody() itemIndex: unknown): UseItemAck {
+    if (typeof itemIndex !== 'number' || !Number.isInteger(itemIndex)) {
+      return { ok: false, message: 'Invalid item.' };
+    }
+
+    const item = client.data.inventory[itemIndex];
+    if (item === undefined) {
+      return { ok: false, message: "You don't have that." };
+    }
+
+    const inventory = [...client.data.inventory];
+    inventory.splice(itemIndex, 1);
+
+    const slot = EQUIPMENT_SLOT_FOR_ITEM[item];
+    let action: 'consumed' | 'equipped';
+    if (slot) {
+      const previous = client.data.equipment[slot];
+      if (previous) inventory.push(previous);
+      client.data.equipment = { ...client.data.equipment, [slot]: item };
+      action = 'equipped';
+    } else {
+      client.data.consumeExp += CONSUME_EXP_PER_ITEM;
+      action = 'consumed';
+    }
+
+    client.data.inventory = inventory;
+    this.worldManager.updateState(client.data.username, {
+      inventory: client.data.inventory,
+      equipment: client.data.equipment,
+      consumeExp: client.data.consumeExp,
+    });
+    void this.persistStats(client);
+    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+
+    return {
+      ok: true,
+      action,
+      inventory: client.data.inventory,
+      equipment: client.data.equipment,
+      consumeExp: client.data.consumeExp,
+    };
   }
 }
