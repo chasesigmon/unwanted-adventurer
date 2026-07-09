@@ -23,11 +23,14 @@ export interface MapDefinition {
 }
 
 const GREAT_PLAINS_SIZE = 100;
-const LABYRINTH_SIZE = 20;
+const LABYRINTH_SIZE = 60;
+const TOWN_SIZE = 50;
 // "Very top middle" / "south middle" — floor(size / 2), the same
 // even-width convention the text game's own map exits use.
 const GREAT_PLAINS_MID_COL = Math.floor(GREAT_PLAINS_SIZE / 2);
+const GREAT_PLAINS_MID_ROW = Math.floor(GREAT_PLAINS_SIZE / 2);
 const LABYRINTH_MID_COL = Math.floor(LABYRINTH_SIZE / 2);
+const TOWN_MID_ROW = Math.floor(TOWN_SIZE / 2);
 
 export const MAPS: Record<MapName, MapDefinition> = {
   'Great Plains': {
@@ -43,6 +46,22 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toRow: LABYRINTH_SIZE - 1,
         toCol: LABYRINTH_MID_COL,
       },
+      {
+        row: GREAT_PLAINS_MID_ROW,
+        col: 0,
+        direction: 'west',
+        toMap: 'Floro',
+        toRow: TOWN_MID_ROW,
+        toCol: TOWN_SIZE - 1,
+      },
+      {
+        row: GREAT_PLAINS_MID_ROW,
+        col: GREAT_PLAINS_SIZE - 1,
+        direction: 'east',
+        toMap: 'Kortho',
+        toRow: TOWN_MID_ROW,
+        toCol: 0,
+      },
     ],
   },
   Labyrinth: {
@@ -57,6 +76,36 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toMap: 'Great Plains',
         toRow: 0,
         toCol: GREAT_PLAINS_MID_COL,
+      },
+    ],
+  },
+  Floro: {
+    name: 'Floro',
+    rows: TOWN_SIZE,
+    cols: TOWN_SIZE,
+    exits: [
+      {
+        row: TOWN_MID_ROW,
+        col: TOWN_SIZE - 1,
+        direction: 'east',
+        toMap: 'Great Plains',
+        toRow: GREAT_PLAINS_MID_ROW,
+        toCol: 0,
+      },
+    ],
+  },
+  Kortho: {
+    name: 'Kortho',
+    rows: TOWN_SIZE,
+    cols: TOWN_SIZE,
+    exits: [
+      {
+        row: TOWN_MID_ROW,
+        col: 0,
+        direction: 'west',
+        toMap: 'Great Plains',
+        toRow: GREAT_PLAINS_MID_ROW,
+        toCol: GREAT_PLAINS_SIZE - 1,
       },
     ],
   },

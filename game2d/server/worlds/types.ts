@@ -1,4 +1,5 @@
 import type { MapName, Race } from '../../shared/constants.js';
+import type { RestState } from '../../shared/types.js';
 import type { Attributes } from '../combat/formulas.js';
 
 export interface Location {
@@ -25,6 +26,7 @@ export interface PlayerState extends Location, Attributes {
   inventory: string[];
   equipment: Record<string, string>;
   consumeExp: number;
+  restState: RestState;
 }
 
 export type MoveResult =

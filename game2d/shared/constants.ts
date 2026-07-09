@@ -6,10 +6,16 @@
 export const RACES = ['goblin', 'skeleton'] as const;
 export type Race = (typeof RACES)[number];
 
-export const MAP_NAMES = ['Great Plains', 'Labyrinth'] as const;
+export const MAP_NAMES = ['Great Plains', 'Labyrinth', 'Floro', 'Kortho'] as const;
 export type MapName = (typeof MAP_NAMES)[number];
 
 export const STARTING_MAP: MapName = 'Great Plains';
+
+// Floro and Kortho are rival towns off the Great Plains's west/east
+// edges — entry is gated (see game.gateway.ts's canEnterTown), same idea
+// as the text game's own town-guard gate, simplified down to this
+// project's single equipment slot: you need a weapon equipped to pass.
+export const TOWN_MAPS: MapName[] = ['Floro', 'Kortho'];
 
 export const DIRECTIONS = ['north', 'south', 'east', 'west'] as const;
 export type Direction = (typeof DIRECTIONS)[number];

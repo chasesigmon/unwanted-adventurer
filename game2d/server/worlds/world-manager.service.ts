@@ -6,6 +6,7 @@ import { CorpseManagerService } from './corpse-manager.service.js';
 import type { MapName, Direction } from '../../shared/constants.js';
 import type { PlayerSnapshot, MapStatePayload } from '../../shared/types.js';
 import type { PlayerState, MoveResult } from './types.js';
+import { isTreeTile } from '../../shared/trees.js';
 
 // A much smaller version of the text game's own WorldManagerService — no
 // per-map capacity sharding or worker_threads, just an in-memory map of
@@ -35,6 +36,16 @@ export class WorldManagerService {
     return this.playerLocation.get(username);
   }
 
+  // Backs the "who"/"where" map-modal tabs — every connected player's
+  // username, current map, and level, regardless of who's asking.
+  getAllPlayers(): Array<{ username: string; map: MapName; level: number }> {
+    return [...this.playerLocation.entries()].map(([username, state]) => ({
+      username,
+      map: state.mapName,
+      level: state.level,
+    }));
+  }
+
   // Applies a combat/leveling update (hp, level, exp-derived stat bumps,
   // skill growth, inventory, ...) to a connected player's cached state —
   // the gateway calls this right after resolving a punch/loot, before
@@ -60,6 +71,8 @@ export class WorldManagerService {
   // can't walk through each other". Corpses are deliberately NOT
   // occupancy-blocking — you can walk onto (and loot) one.
   private isOccupied(mapName: MapName, row: number, col: number, excludeUsername: string): boolean {
+    if (isTreeTile(mapName, row, col)) return true;
+
     const npcHit = NPCS.some((npc) => npc.map === mapName && npc.row === row && npc.col === col);
     if (npcHit) return true;
 
@@ -127,6 +140,7 @@ export class WorldManagerService {
         inventory: state.inventory,
         equipment: state.equipment,
         consumeExp: state.consumeExp,
+        restState: state.restState,
       });
     }
 

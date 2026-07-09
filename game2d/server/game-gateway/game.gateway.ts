@@ -23,11 +23,16 @@ import { ActiveConnectionsService } from '../auth/active-connections.service.js'
 import { SocketConnectionLimiterService } from '../rate-limit/socket-connection-limiter.service.js';
 import { CommandRateLimiter, type CommandRateLimiterOptions } from '../rate-limit/command-rate-limiter.js';
 import { getMap } from '../../shared/maps.js';
+import { resolveMove } from '../worlds/resolveMove.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { STARTING_MAP, DIRECTIONS } from '../../shared/constants.js';
 import {
   type CombatantStats,
   PUNCH_SKILL,
+  DODGE_SKILL,
+  PARRY_SKILL,
+  SHIELD_BLOCK_SKILL,
+  DAGGER_SKILL,
   STARTING_LEVEL,
   STARTING_EXP,
   STARTING_ATTRIBUTE,
@@ -44,13 +49,38 @@ import {
   weaponBonusFor,
   EQUIPMENT_SLOT_FOR_ITEM,
   CONSUME_EXP_PER_ITEM,
+  startingSkills,
+  resistanceGrantForItem,
+  RESISTANCE_SKILL_STARTING_PERCENT,
+  skillGrowthMessage,
+  computeDodgeChance,
+  computeParryChance,
+  computeShieldBlockChance,
 } from '../combat/formulas.js';
 import type { AppConfig } from '../config/configuration.js';
-import type { PlayerSnapshot, GameServer, GameSocket, CombatEventPayload, UseItemAck } from '../../shared/types.js';
+import type { PlayerSnapshot, GameServer, GameSocket, CombatEventPayload, UseItemAck, RestState } from '../../shared/types.js';
+import { TOWN_MAPS } from '../../shared/constants.js';
 import type { Direction, MapName } from '../../shared/constants.js';
 
 const directionSchema = z.enum(DIRECTIONS);
 const MONSTER_TICK_INTERVAL_MS = 3000;
+// Same shape as the text game's own global stat tick — a randomized
+// 30-40s interval (a setTimeout chain, not setInterval, so each firing
+// re-rolls its own next delay) heals hp/mana/movement by one shared
+// random percent of each stat's own max, the percent range depending on
+// restState exactly like the text game's own HEAL_PERCENT_RANGE.
+const STAT_TICK_MIN_MS = 30_000;
+const STAT_TICK_MAX_MS = 40_000;
+const HEAL_PERCENT_RANGE: Record<RestState, [number, number]> = {
+  awake: [2, 5],
+  resting: [4, 7],
+  sleeping: [5, 10],
+};
+const STAT_TICK_FLAVOR: Record<RestState, string> = {
+  awake: 'You catch your breath',
+  resting: 'You rest quietly',
+  sleeping: 'You stir in your sleep',
+};
 // Every map with an actively-spawned monster species — driven off the
 // species table itself so a future maxCount bump doesn't also need a
 // broadcast-list edit here.
@@ -99,10 +129,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     setInterval(() => {
       this.monsterManager.wanderAll();
       this.monsterManager.respawnBelowMax();
-      for (const mapName of ACTIVE_MONSTER_MAPS) {
+      const expiredCorpseMaps = this.corpseManager.removeExpired();
+      const mapsToBroadcast = new Set<MapName>([...ACTIVE_MONSTER_MAPS, ...expiredCorpseMaps]);
+      for (const mapName of mapsToBroadcast) {
         this.server.to(mapName).emit('map:state', this.worldManager.getMapState(mapName));
       }
     }, MONSTER_TICK_INTERVAL_MS);
+
+    this.scheduleStatTick();
 
     server.use(async (socket, next) => {
       const ip = socket.handshake.address;
@@ -136,6 +170,52 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     });
   }
 
+  private scheduleStatTick(): void {
+    const delay = STAT_TICK_MIN_MS + Math.random() * (STAT_TICK_MAX_MS - STAT_TICK_MIN_MS);
+    setTimeout(() => this.globalStatTick(), delay).unref();
+  }
+
+  private globalStatTick(): void {
+    for (const socket of this.server.sockets.sockets.values()) {
+      this.applyStatTick(socket as GameSocket);
+    }
+    this.scheduleStatTick();
+  }
+
+  // One shared random percent (of each stat's own max) heals hp, mana,
+  // and movement together — the percent range depends on restState, same
+  // shape as the text game's own applyStatTick.
+  private applyStatTick(client: GameSocket): void {
+    if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
+
+    const [min, max] = HEAL_PERCENT_RANGE[client.data.restState];
+    const percent = min + Math.random() * (max - min);
+    const healed = (current: number, statMax: number) => Math.min(statMax, current + Math.round((percent / 100) * statMax));
+
+    const hp = healed(client.data.hp, client.data.maxHp);
+    const mana = healed(client.data.mana, client.data.maxMana);
+    const movement = healed(client.data.movement, client.data.maxMovement);
+    if (hp === client.data.hp && mana === client.data.mana && movement === client.data.movement) return;
+
+    client.data.hp = hp;
+    client.data.mana = mana;
+    client.data.movement = movement;
+    this.worldManager.updateState(client.data.username, { hp, mana, movement });
+    void this.persistStats(client);
+    this.systemMessage(
+      client,
+      `${STAT_TICK_FLAVOR[client.data.restState]} and recover some hp/mana/movement.`
+    );
+    client.emit('statTick', {
+      hp: client.data.hp,
+      maxHp: client.data.maxHp,
+      mana: client.data.mana,
+      maxMana: client.data.maxMana,
+      movement: client.data.movement,
+      maxMovement: client.data.maxMovement,
+    });
+  }
+
   private snapshotFor(client: GameSocket): PlayerSnapshot {
     return {
       username: client.data.username,
@@ -160,7 +240,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       inventory: client.data.inventory,
       equipment: client.data.equipment,
       consumeExp: client.data.consumeExp,
+      restState: client.data.restState,
     };
+  }
+
+  // Simplified stand-in for the text game's full 8-slot town-guard
+  // disguise check — this project only has one equipment slot (weapon),
+  // so "properly equipped enough to pass" just means having it filled.
+  private canEnterTown(client: GameSocket): boolean {
+    return Boolean(client.data.equipment.weapon);
   }
 
   private attackerStatsFor(client: GameSocket): CombatantStats {
@@ -266,14 +354,49 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return levelsGained > 0;
   }
 
-  // A small chance per punch thrown (hit or miss doesn't matter here,
-  // there's no miss chance at all in this project) to grow the punch
+  // A small chance per attack/defense (hit or miss doesn't matter here,
+  // there's no miss chance at all in this project) to grow the given
   // skill by 1 point, same shape as the text game's own skill growth.
-  private growPunchSkill(client: GameSocket): void {
-    const current = client.data.skills[PUNCH_SKILL] ?? STARTING_SKILL_PERCENT;
-    if (current >= MAX_SKILL_PERCENT || Math.random() >= SKILL_GROWTH_CHANCE) return;
-    client.data.skills = { ...client.data.skills, [PUNCH_SKILL]: current + 1 };
+  // Returns the notice message if it actually grew.
+  private maybeGrowSkill(client: GameSocket, skill: string): string | undefined {
+    const current = client.data.skills[skill] ?? STARTING_SKILL_PERCENT;
+    if (current >= MAX_SKILL_PERCENT || Math.random() >= SKILL_GROWTH_CHANCE) return undefined;
+    const next = current + 1;
+    client.data.skills = { ...client.data.skills, [skill]: next };
     this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+    return skillGrowthMessage(skill, next);
+  }
+
+  // Which skill an attack's own weapon skill-growth chance targets:
+  // wielding a dagger grows dagger, bare hands grows punch — you can't
+  // possibly get better at punching while wielding a weapon (see the
+  // combat-resolution call sites).
+  private attackGrowthSkill(client: GameSocket): string {
+    const weapon = client.data.equipment.weapon;
+    return weapon && weapon.toLowerCase().includes('dagger') ? DAGGER_SKILL : PUNCH_SKILL;
+  }
+
+  // Dodge/parry are rolled first (either one fully negates the hit);
+  // shield block is only even attempted once both have failed. Growth:
+  // dodge/parry only grow when they actually trigger, shield block grows
+  // on any attempt (wearing a shield) regardless of outcome — same order
+  // and growth rules as the text game's resolveAttackExchange.
+  private resolveDefense(
+    defenderStats: CombatantStats,
+    defenderSkills: Record<string, number>,
+    defenderEquipment: Record<string, string>,
+    attackerStats: CombatantStats
+  ): { avoided: boolean; verb?: string; skill?: string } {
+    const dodged = Math.random() < computeDodgeChance(defenderStats, defenderSkills, attackerStats);
+    const parried = !dodged && Math.random() < computeParryChance(defenderStats, defenderSkills, defenderEquipment, attackerStats);
+    if (dodged || parried) {
+      return { avoided: true, verb: dodged ? 'dodges' : 'parries', skill: dodged ? DODGE_SKILL : PARRY_SKILL };
+    }
+
+    const blockChance = computeShieldBlockChance(defenderSkills, defenderEquipment);
+    const attemptingBlock = blockChance > 0;
+    const blocked = attemptingBlock && Math.random() < blockChance;
+    return { avoided: blocked, verb: blocked ? 'blocks' : undefined, skill: attemptingBlock ? SHIELD_BLOCK_SKILL : undefined };
   }
 
   async handleConnection(client: GameSocket): Promise<void> {
@@ -307,10 +430,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.maxMana = doc?.maxMana ?? STARTING_VITAL;
     client.data.movement = doc?.movement ?? STARTING_VITAL;
     client.data.maxMovement = doc?.maxMovement ?? STARTING_VITAL;
-    client.data.skills = doc?.skills ?? { [PUNCH_SKILL]: STARTING_SKILL_PERCENT };
+    client.data.skills = doc?.skills ?? startingSkills();
     client.data.inventory = doc?.inventory ?? [];
     client.data.equipment = doc?.equipment ?? {};
     client.data.consumeExp = doc?.consumeExp ?? 0;
+    // Never persisted — a fresh connection always starts awake, same as
+    // the text game's own restState.
+    client.data.restState = 'awake';
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
@@ -334,6 +460,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       inventory: client.data.inventory,
       equipment: client.data.equipment,
       consumeExp: client.data.consumeExp,
+      restState: client.data.restState,
     });
     void client.join(client.data.map);
 
@@ -371,7 +498,25 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, player: this.snapshotFor(client), message: 'Unknown direction.' };
     }
 
+    this.wakeIfNeeded(client);
+
     const { username } = client.data;
+
+    // Town-entry gate — previewed with the same pure resolveMove the
+    // actual move uses (no side effects), so an ungated player is turned
+    // away at the gate without ever mutating their cached position.
+    const loc = this.worldManager.getLocation(username);
+    if (loc) {
+      const preview = resolveMove(loc, parsed.data);
+      if (preview.ok && preview.transitioned && TOWN_MAPS.includes(preview.mapName) && !this.canEnterTown(client)) {
+        return {
+          ok: false,
+          player: this.snapshotFor(client),
+          message: `The guards of ${preview.mapName} bar your way — you need a weapon equipped to pass.`,
+        };
+      }
+    }
+
     const result = this.worldManager.processMove(username, parsed.data);
     if (!result) {
       return { ok: false, player: this.snapshotFor(client), message: 'Your session was lost. Please reconnect.' };
@@ -415,6 +560,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!parsed.success) return;
     const direction: Direction = parsed.data;
 
+    this.wakeIfNeeded(client);
+
     this.server.to(client.data.map).emit('punch', { username: client.data.username, direction });
 
     const delta = DIRECTION_DELTAS[direction];
@@ -444,9 +591,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const monster = this.monsterManager.getMonster(monsterId);
     if (!monster) return;
 
-    const punchSkillPercent = client.data.skills[PUNCH_SKILL] ?? STARTING_SKILL_PERCENT;
-    const weaponBonus = weaponBonusFor(client.data.equipment);
-    const damage = punchDamage(this.attackerStatsFor(client), monster, punchSkillPercent, weaponBonus);
+    const attackSkill = this.attackGrowthSkill(client);
+    const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
+    const weaponBonus = weaponBonusFor(client.data.equipment, client.data.skills);
+    const damage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus);
     const result = this.monsterManager.applyDamage(monster.id, damage);
     if (!result) return;
     const { died } = result;
@@ -459,7 +607,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const items = [bodyPartLabelFor(monster.kind), ...(monster.carriedItem ? [monster.carriedItem] : [])];
       this.corpseManager.spawn(monster.kind, items, monster.mapName, monster.row, monster.col);
     }
-    this.growPunchSkill(client);
+    const growthMessages: string[] = [];
+    const attackGrowth = this.maybeGrowSkill(client, attackSkill);
+    if (attackGrowth) growthMessages.push(attackGrowth);
     void this.persistStats(client);
 
     const message = died
@@ -477,17 +627,39 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       expGained,
       leveledUp,
       message,
+      growthMessages,
     });
     this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+  }
+
+  // Anywhere on a map that isn't a wall/exit tile and isn't already
+  // occupied by a player, monster, or another NPC — used to relocate the
+  // training dummy after it "dies" (see resolveNpcHit) instead of just
+  // resetting it in place.
+  private randomFreeTileFor(mapName: MapName): { row: number; col: number } {
+    const map = getMap(mapName);
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const row = Math.floor(Math.random() * map.rows);
+      const col = Math.floor(Math.random() * map.cols);
+      if (map.exits.some((e) => e.row === row && e.col === col)) continue;
+      if (this.worldManager.isPlayerAt(mapName, row, col)) continue;
+      if (this.monsterManager.isOccupied(mapName, row, col)) continue;
+      if (NPCS.some((n) => n.map === mapName && n.row === row && n.col === col)) continue;
+      return { row, col };
+    }
+    return { row: Math.floor(map.rows / 2), col: Math.floor(map.cols / 2) };
   }
 
   private resolveNpcHit(client: GameSocket, npc: (typeof NPCS)[number]): void {
     // The training dummy has the same starting attributes as a brand-new
     // player (see combat/formulas.ts) — it's "a player as well" for
-    // damage-formula purposes. It grants no exp, though: it instantly
-    // resets to full hp on defeat rather than respawning elsewhere, so
-    // treating a "kill" as a real player kill would make it an infinite,
-    // risk-free exp farm — it's a practice target, not a real fight.
+    // damage-formula purposes ("the test player"). It still grants no
+    // exp (treating a "kill" as a real player kill would make it an
+    // infinite, risk-free exp farm — it's a practice target, not a real
+    // fight), but it now leaves an actual (player-kind, so TTL'd) corpse
+    // behind — always carrying a bone dagger — and relocates to a random
+    // free tile on its map at full hp, rather than instantly resetting in
+    // place.
     const defenderStats: CombatantStats = {
       level: npc.level,
       strength: STARTING_ATTRIBUTE,
@@ -496,18 +668,39 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       dexterity: STARTING_ATTRIBUTE,
       constitution: STARTING_ATTRIBUTE,
     };
-    const punchSkillPercent = client.data.skills[PUNCH_SKILL] ?? STARTING_SKILL_PERCENT;
-    const damage = punchDamage(this.attackerStatsFor(client), defenderStats, punchSkillPercent, weaponBonusFor(client.data.equipment));
+    const attackSkill = this.attackGrowthSkill(client);
+    const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
+    const rawDamage = punchDamage(
+      this.attackerStatsFor(client),
+      defenderStats,
+      attackSkillPercent,
+      weaponBonusFor(client.data.equipment, client.data.skills)
+    );
+    // The dummy has no equipment/learned skills of its own to defend with
+    // — it can still dodge (a flat, skill-less roll), but never parries
+    // or shield-blocks (both require gear it doesn't have).
+    const defense = this.resolveDefense(defenderStats, {}, {}, this.attackerStatsFor(client));
+    const damage = defense.avoided ? 0 : rawDamage;
     npc.hp = Math.max(0, npc.hp - damage);
     const died = npc.hp <= 0;
 
-    if (died) npc.hp = npc.maxHp;
-    this.growPunchSkill(client);
+    if (died) {
+      this.corpseManager.spawn(npc.race, [bodyPartLabelFor(npc.race), 'bone dagger'], npc.map, npc.row, npc.col);
+      const tile = this.randomFreeTileFor(npc.map);
+      npc.row = tile.row;
+      npc.col = tile.col;
+      npc.hp = npc.maxHp;
+    }
+    const growthMessages: string[] = [];
+    const attackGrowth = this.maybeGrowSkill(client, attackSkill);
+    if (attackGrowth) growthMessages.push(attackGrowth);
     void this.persistStats(client);
 
-    const message = died
-      ? `${client.data.username} punches the training dummy for ${damage} damage, defeating it! It resets.`
-      : `${client.data.username} punches the training dummy for ${damage} damage.`;
+    const message = defense.avoided
+      ? `${client.data.username} punches the training dummy, but it ${defense.verb} out of the way!`
+      : died
+        ? `${client.data.username} punches the training dummy for ${damage} damage, defeating it! It leaves a corpse and reappears elsewhere.`
+        : `${client.data.username} punches the training dummy for ${damage} damage.`;
 
     this.emitCombat(client, {
       targetKind: 'npc',
@@ -518,6 +711,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       targetMaxHp: npc.maxHp,
       targetDied: died,
       message,
+      growthMessages,
     });
     this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
   }
@@ -530,8 +724,23 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!targetClient) return;
 
     const defenderStats = this.attackerStatsFor(targetClient);
-    const punchSkillPercent = client.data.skills[PUNCH_SKILL] ?? STARTING_SKILL_PERCENT;
-    const damage = punchDamage(this.attackerStatsFor(client), defenderStats, punchSkillPercent, weaponBonusFor(client.data.equipment));
+    const attackSkill = this.attackGrowthSkill(client);
+    const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
+    const rawDamage = punchDamage(
+      this.attackerStatsFor(client),
+      defenderStats,
+      attackSkillPercent,
+      weaponBonusFor(client.data.equipment, client.data.skills)
+    );
+
+    const growthMessages: string[] = [];
+    const defense = this.resolveDefense(defenderStats, targetClient.data.skills, targetClient.data.equipment, this.attackerStatsFor(client));
+    if (defense.skill) {
+      const defenseGrowth = this.maybeGrowSkill(targetClient, defense.skill);
+      if (defenseGrowth) growthMessages.push(defenseGrowth);
+    }
+    const damage = defense.avoided ? 0 : rawDamage;
+
     targetClient.data.hp = Math.max(0, targetClient.data.hp - damage);
     const died = targetClient.data.hp <= 0;
 
@@ -572,14 +781,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.worldManager.updateState(targetUsername, { hp: targetClient.data.hp });
     }
 
-    this.growPunchSkill(client);
+    const attackGrowth = this.maybeGrowSkill(client, attackSkill);
+    if (attackGrowth) growthMessages.push(attackGrowth);
     void this.persistStats(client);
     void this.persistPosition(targetClient);
     void this.persistStats(targetClient);
 
-    const message = died
-      ? `${client.data.username} punches ${targetUsername} for ${damage} damage, defeating them! (+${expGained} exp)`
-      : `${client.data.username} punches ${targetUsername} for ${damage} damage.`;
+    const message = defense.avoided
+      ? `${client.data.username} punches ${targetUsername}, but they ${defense.verb} out of the way!`
+      : died
+        ? `${client.data.username} punches ${targetUsername} for ${damage} damage, defeating them! (+${expGained} exp)`
+        : `${client.data.username} punches ${targetUsername} for ${damage} damage.`;
 
     this.emitCombat(client, {
       targetKind: 'player',
@@ -592,6 +804,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       expGained,
       leveledUp,
       message,
+      growthMessages,
     });
 
     this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
@@ -631,10 +844,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!corpse || corpse.map !== client.data.map) {
       return { ok: false, message: "That's already gone." };
     }
-
-    const withinReach =
-      Math.abs(corpse.row - client.data.row) <= 1 && Math.abs(corpse.col - client.data.col) <= 1;
-    if (!withinReach) {
+    if (!this.isWithinLootReach(client, corpse.row, corpse.col)) {
       return { ok: false, message: "You're too far away to reach that." };
     }
 
@@ -646,6 +856,176 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
 
     return { ok: true, inventory: client.data.inventory };
+  }
+
+  private isWithinLootReach(client: GameSocket, row: number, col: number): boolean {
+    return Math.abs(row - client.data.row) <= 1 && Math.abs(col - client.data.col) <= 1;
+  }
+
+  // The corpse loot modal's "click one item" path — takes a single item
+  // out of a (possibly multi-item) corpse rather than everything at once.
+  @SubscribeMessage('lootItem')
+  handleLootItem(
+    @ConnectedSocket() client: GameSocket,
+    @MessageBody() payload: unknown
+  ): { ok: boolean; inventory?: string[]; message?: string } {
+    if (
+      typeof payload !== 'object' ||
+      payload === null ||
+      typeof (payload as { corpseId?: unknown }).corpseId !== 'string' ||
+      typeof (payload as { itemIndex?: unknown }).itemIndex !== 'number'
+    ) {
+      return { ok: false, message: 'Invalid request.' };
+    }
+    const { corpseId, itemIndex } = payload as { corpseId: string; itemIndex: number };
+
+    const corpse = this.corpseManager.get(corpseId);
+    if (!corpse || corpse.map !== client.data.map) {
+      return { ok: false, message: "That's already gone." };
+    }
+    if (!this.isWithinLootReach(client, corpse.row, corpse.col)) {
+      return { ok: false, message: "You're too far away to reach that." };
+    }
+
+    const item = this.corpseManager.removeItem(corpseId, itemIndex);
+    if (item === undefined) {
+      return { ok: false, message: "That's already gone." };
+    }
+
+    client.data.inventory = [...client.data.inventory, item];
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    void this.persistStats(client);
+
+    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+
+    return { ok: true, inventory: client.data.inventory };
+  }
+
+  // Local (map-scoped) chat — same shape as punch: fire-and-forget,
+  // rebroadcast only to the sender's own map room, so someone in the
+  // Labyrinth or a town never sees Great Plains chat and vice versa. A
+  // message starting with "/" is a command instead (see handleCommand)
+  // and is never broadcast — only the issuer sees its response.
+  @SubscribeMessage('chat')
+  handleChat(@ConnectedSocket() client: GameSocket, @MessageBody() rawMessage: unknown): void {
+    if (typeof rawMessage !== 'string') return;
+    const trimmed = rawMessage.trim();
+    if (!trimmed) return;
+
+    if (trimmed.startsWith('/')) {
+      this.handleCommand(client, trimmed.slice(1));
+      return;
+    }
+
+    const message = trimmed.slice(0, 240);
+    this.server.to(client.data.map).emit('chat', { username: client.data.username, map: client.data.map, message });
+  }
+
+  // A private (sender-only) chat line — reuses the same 'chat' event/log
+  // rather than a whole separate channel, since command responses are
+  // just "a message only you can see".
+  private systemMessage(client: GameSocket, message: string): void {
+    client.emit('chat', { username: 'System', map: client.data.map, message });
+  }
+
+  private static readonly COMMANDS_HELP_TEXT = [
+    'Available commands:',
+    '/commands, /help - show this list',
+    "/sleep - lie down and close your eyes, recovering hp/mana/movement faster until you wake up (moving or attacking wakes you)",
+    '/rest, /sit - sit down to rest, recovering a bit faster than standing around',
+    '/wake, /stand - get up from sleeping or resting',
+  ].join('\n');
+
+  private handleCommand(client: GameSocket, commandText: string): void {
+    const [rawCommand] = commandText.trim().split(/\s+/);
+    const command = (rawCommand ?? '').toLowerCase();
+
+    switch (command) {
+      case 'commands':
+      case 'help':
+        this.systemMessage(client, GameGateway.COMMANDS_HELP_TEXT);
+        break;
+      case 'sleep':
+        this.handleSleepCommand(client);
+        break;
+      case 'rest':
+      case 'sit':
+        this.handleRestCommand(client);
+        break;
+      case 'wake':
+      case 'stand':
+        this.handleWakeCommand(client);
+        break;
+      default:
+        this.systemMessage(client, `Unknown command: /${command}. Try /commands.`);
+    }
+  }
+
+  // Toggles sleeping <-> awake, same messages as the text game. Never
+  // persisted (see handleConnection) — restState always resets to awake
+  // on a fresh connection.
+  private handleSleepCommand(client: GameSocket): void {
+    if (client.data.restState === 'sleeping') {
+      this.setRestState(client, 'awake');
+      this.systemMessage(client, 'You wake up.');
+    } else {
+      this.setRestState(client, 'sleeping');
+      this.systemMessage(client, "You lie down and drift off to sleep. You won't see anything until you wake up.");
+    }
+  }
+
+  // Toggles resting <-> awake ("sit" is just an alias, same as the text
+  // game — there's no separate sit state).
+  private handleRestCommand(client: GameSocket): void {
+    if (client.data.restState === 'resting') {
+      this.setRestState(client, 'awake');
+      this.systemMessage(client, 'You stand up.');
+    } else {
+      this.setRestState(client, 'resting');
+      this.systemMessage(client, 'You sit down to rest.');
+    }
+  }
+
+  // Explicit, direction-agnostic — always forces awake regardless of
+  // prior state.
+  private handleWakeCommand(client: GameSocket): void {
+    const was = client.data.restState;
+    if (was === 'awake') {
+      this.systemMessage(client, 'You are already up and about.');
+      return;
+    }
+    this.setRestState(client, 'awake');
+    this.systemMessage(client, was === 'sleeping' ? 'You wake up.' : 'You stand up.');
+  }
+
+  private setRestState(client: GameSocket, restState: RestState): void {
+    client.data.restState = restState;
+    this.worldManager.updateState(client.data.username, { restState });
+    // The client's own map:state handling filters its own entry out of
+    // the players list (see main.ts's applyMapState) — a targeted 'sync'
+    // is what actually updates the acting client's own myProfile/sleep
+    // overlay, on top of the broadcast every OTHER player in the room
+    // needs to see the sleeper's sprite change.
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+  }
+
+  // Moving or attacking always wakes/stands a player up first (a
+  // deliberate departure from the text game, which only wakes on an
+  // explicit command — but a screen actually blacked out during a live
+  // 2D session needs a way back that isn't "type a slash command blind").
+  private wakeIfNeeded(client: GameSocket): void {
+    if (client.data.restState === 'awake') return;
+    const was = client.data.restState;
+    this.setRestState(client, 'awake');
+    this.systemMessage(client, was === 'sleeping' ? 'You wake up.' : 'You stand up.');
+  }
+
+  // Backs the map modal's "Who" (everyone online) and "Where" (filtered
+  // client-side to the asker's own map) tabs.
+  @SubscribeMessage('who')
+  handleWho(): { players: Array<{ username: string; map: MapName; level: number }> } {
+    return { players: this.worldManager.getAllPlayers() };
   }
 
   // Clicking an inventory item: the server alone decides whether it's
@@ -671,6 +1051,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     const slot = EQUIPMENT_SLOT_FOR_ITEM[item];
     let action: 'consumed' | 'equipped';
+    let resistanceGained: string | undefined;
     if (slot) {
       const previous = client.data.equipment[slot];
       if (previous) inventory.push(previous);
@@ -679,6 +1060,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     } else {
       client.data.consumeExp += CONSUME_EXP_PER_ITEM;
       action = 'consumed';
+
+      // A chance to learn a resistance skill, same as the text game's
+      // BODY_PART_SKILL — which resistance and how likely depends on
+      // which monster the part came from (baked into the item's own
+      // name), and it only ever fires once (a skill you already know
+      // doesn't reroll).
+      const grant = resistanceGrantForItem(item);
+      if (grant && client.data.skills[grant.skill] === undefined && Math.random() < grant.chance) {
+        client.data.skills = { ...client.data.skills, [grant.skill]: RESISTANCE_SKILL_STARTING_PERCENT };
+        resistanceGained = grant.skill;
+      }
     }
 
     client.data.inventory = inventory;
@@ -686,6 +1078,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       inventory: client.data.inventory,
       equipment: client.data.equipment,
       consumeExp: client.data.consumeExp,
+      skills: client.data.skills,
     });
     void this.persistStats(client);
     this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
@@ -696,6 +1089,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       inventory: client.data.inventory,
       equipment: client.data.equipment,
       consumeExp: client.data.consumeExp,
+      skills: client.data.skills,
+      message: resistanceGained ? `You have gained ${resistanceGained} (${RESISTANCE_SKILL_STARTING_PERCENT}%)!` : undefined,
     };
   }
 }

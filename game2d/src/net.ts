@@ -10,6 +10,9 @@ import type {
   CombatEventPayload,
   LootAck,
   UseItemAck,
+  ChatPayload,
+  WhoAck,
+  StatTickPayload,
 } from '../shared/types.js';
 import type { Direction } from '../shared/constants.js';
 
@@ -77,6 +80,10 @@ export class NetworkManager extends EventTarget {
     socket.on('combat', (data: CombatEventPayload) =>
       this.dispatchEvent(new CustomEvent<CombatEventPayload>('combat', { detail: data }))
     );
+    socket.on('chat', (data: ChatPayload) => this.dispatchEvent(new CustomEvent<ChatPayload>('chat', { detail: data })));
+    socket.on('statTick', (data: StatTickPayload) =>
+      this.dispatchEvent(new CustomEvent<StatTickPayload>('statTick', { detail: data }))
+    );
     socket.on('disconnect', (reason) => this.dispatchEvent(new CustomEvent('disconnected', { detail: { reason } })));
     socket.on('connect_error', (err) =>
       this.dispatchEvent(new CustomEvent('connect_error', { detail: { message: err.message } }))
@@ -127,6 +134,37 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('useItem', itemIndex, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  lootItem(corpseId: string, itemIndex: number): Promise<LootAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('lootItem', { corpseId, itemIndex }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // No ack — purely cosmetic, same as punch.
+  chat(message: string): void {
+    this.socket?.emit('chat', message);
+  }
+
+  who(): Promise<WhoAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('who', (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

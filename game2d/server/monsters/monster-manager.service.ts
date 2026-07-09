@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import { getMap } from '../../shared/maps.js';
+import { isTreeTile } from '../../shared/trees.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, type Monster, type MonsterSpecies } from './monster.js';
 import type { MapName } from '../../shared/constants.js';
@@ -46,6 +47,7 @@ export class MonsterManagerService {
     const map = getMap(mapName);
     if (row < 0 || row >= map.rows || col < 0 || col >= map.cols) return false;
     if (map.exits.some((e) => e.row === row && e.col === col)) return false;
+    if (isTreeTile(mapName, row, col)) return false;
     for (const m of this.monsters.values()) {
       if (m.mapName === mapName && m.row === row && m.col === col) return false;
     }

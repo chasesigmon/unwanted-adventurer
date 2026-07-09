@@ -2,7 +2,10 @@ import Phaser from 'phaser';
 import { NetworkManager } from './net.js';
 import { createGrassTexture, TILE_SIZE } from './grassTexture.js';
 import { createStoneTexture } from './stoneTexture.js';
+import { createConcreteTexture } from './concreteTexture.js';
 import { createDoorTexture } from './doorSprite.js';
+import { createTreeSpritesheet, createTreeSwayAnim, TREE_TEXTURE_KEY, TREE_SWAY_ANIM_KEY } from './treeSprite.js';
+import { createDaggerTexture, DAGGER_TEXTURE_KEY } from './daggerSprite.js';
 import {
   preloadCharacterSprites,
   createCharacterAnims,
@@ -15,7 +18,10 @@ import {
   type FacingGroup,
   type SpriteKind,
 } from './characterSprites.js';
-import { getMap } from '../shared/maps.js';
+import { getMap, MAPS } from '../shared/maps.js';
+import { treePositionsFor } from '../shared/trees.js';
+import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS } from '../shared/equipment.js';
+import { RACES, MAP_NAMES } from '../shared/constants.js';
 import type { MapName, Race, Direction, MonsterKind } from '../shared/constants.js';
 import type {
   PlayerSnapshot,
@@ -24,6 +30,9 @@ import type {
   MapStatePayload,
   PunchPayload,
   CombatEventPayload,
+  ChatPayload,
+  WhoEntry,
+  StatTickPayload,
 } from '../shared/types.js';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL as string | undefined) || 'http://localhost:3001';
@@ -67,10 +76,24 @@ const statusHp = document.getElementById('status-hp') as HTMLSpanElement;
 const statusMana = document.getElementById('status-mana') as HTMLSpanElement;
 const statusMv = document.getElementById('status-mv') as HTMLSpanElement;
 const statusExp = document.getElementById('status-exp') as HTMLSpanElement;
+const worldLabel = document.getElementById('world-label') as HTMLDivElement;
+const sleepOverlay = document.getElementById('sleep-overlay') as HTMLDivElement;
+
+function updateWorldLabel(mapName: MapName): void {
+  worldLabel.textContent = mapName;
+}
+
+function updateSleepOverlay(): void {
+  sleepOverlay.hidden = myProfile?.restState !== 'sleeping';
+}
 
 const logPanel = document.getElementById('log-panel') as HTMLDivElement;
 const logToggle = document.getElementById('log-toggle') as HTMLButtonElement;
 const combatLogEl = document.getElementById('combat-log') as HTMLDivElement;
+const chatLogEl = document.getElementById('chat-log') as HTMLDivElement;
+const chatInput = document.getElementById('chat-input') as HTMLInputElement;
+const logTabCombatBtn = document.getElementById('log-tab-combat') as HTMLButtonElement;
+const logTabChatBtn = document.getElementById('log-tab-chat') as HTMLButtonElement;
 
 function setupCollapsible(panel: HTMLElement, toggle: HTMLButtonElement): void {
   toggle.addEventListener('click', () => {
@@ -81,32 +104,105 @@ function setupCollapsible(panel: HTMLElement, toggle: HTMLButtonElement): void {
 setupCollapsible(statusBarPanel, statusToggle);
 setupCollapsible(logPanel, logToggle);
 
-function logCombatMessage(message: string, kind?: 'level-up' | 'death'): void {
+function appendLogLine(container: HTMLDivElement, text: string, kind?: 'level-up' | 'death'): void {
   const line = document.createElement('div');
   line.className = kind ? `log-line ${kind}` : 'log-line';
-  line.textContent = message;
-  combatLogEl.appendChild(line);
-  while (combatLogEl.childElementCount > COMBAT_LOG_MAX_LINES) {
-    combatLogEl.removeChild(combatLogEl.firstChild as ChildNode);
+  line.textContent = text;
+  container.appendChild(line);
+  while (container.childElementCount > COMBAT_LOG_MAX_LINES) {
+    container.removeChild(container.firstChild as ChildNode);
   }
-  combatLogEl.scrollTop = combatLogEl.scrollHeight;
+  container.scrollTop = container.scrollHeight;
 }
+
+function logCombatMessage(message: string, kind?: 'level-up' | 'death'): void {
+  appendLogLine(combatLogEl, message, kind);
+}
+
+function logChatMessage(username: string, message: string): void {
+  appendLogLine(chatLogEl, `${username}: ${message}`);
+}
+
+function switchLogTab(tab: 'combat' | 'chat'): void {
+  logTabCombatBtn.classList.toggle('active', tab === 'combat');
+  logTabChatBtn.classList.toggle('active', tab === 'chat');
+  combatLogEl.hidden = tab !== 'combat';
+  chatLogEl.hidden = tab !== 'chat';
+}
+logTabCombatBtn.addEventListener('click', () => switchLogTab('combat'));
+logTabChatBtn.addEventListener('click', () => switchLogTab('chat'));
+
+// Pressing Enter anywhere (outside a modal/another input) reveals and
+// focuses the chat box — matching the text game's own "press Enter to
+// chat" convention. Typing in it doesn't fight Phaser's global keyboard
+// capture for the same reason the autopilot prompt doesn't (see
+// setKeyCaptureEnabled) — focus/blur toggle it directly since the chat
+// box isn't one of the ALL_MODALS.
+let chatInputFocused = false;
+function openChatInput(): void {
+  chatInput.hidden = false;
+  switchLogTab('chat');
+  chatInput.focus();
+}
+chatInput.addEventListener('focus', () => {
+  chatInputFocused = true;
+  updateInputCaptured();
+});
+chatInput.addEventListener('blur', () => {
+  chatInputFocused = false;
+  updateInputCaptured();
+});
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const text = chatInput.value.trim();
+    chatInput.value = '';
+    if (text) network.chat(text);
+    chatInput.blur();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    chatInput.blur();
+  }
+});
+
+// Clicking anywhere outside the chat box (the game canvas, a corner
+// button, ...) takes focus away from it too, not just sending a message.
+document.addEventListener('mousedown', (e) => {
+  if (chatInputFocused && e.target !== chatInput) chatInput.blur();
+});
 
 // ---------- Character sheet / inventory modals ----------
 
 const charSheetBtn = document.getElementById('char-sheet-btn') as HTMLButtonElement;
 const inventoryBtn = document.getElementById('inventory-btn') as HTMLButtonElement;
 const autopilotBtn = document.getElementById('autopilot-btn') as HTMLButtonElement;
+const skillsBtn = document.getElementById('skills-btn') as HTMLButtonElement;
+const equipmentBtn = document.getElementById('equipment-btn') as HTMLButtonElement;
+const mapBtn = document.getElementById('map-btn') as HTMLButtonElement;
 const charSheetModal = document.getElementById('char-sheet-modal') as HTMLDivElement;
 const charSheetUsername = document.getElementById('char-sheet-username') as HTMLHeadingElement;
 const charSheetBody = document.getElementById('char-sheet-body') as HTMLDivElement;
 const inventoryModal = document.getElementById('inventory-modal') as HTMLDivElement;
 const inventoryList = document.getElementById('inventory-list') as HTMLUListElement;
+const skillsModal = document.getElementById('skills-modal') as HTMLDivElement;
+const skillsBody = document.getElementById('skills-body') as HTMLDivElement;
+const equipmentModal = document.getElementById('equipment-modal') as HTMLDivElement;
+const equipmentBody = document.getElementById('equipment-body') as HTMLDivElement;
+const mapModal = document.getElementById('map-modal') as HTMLDivElement;
+const mapBody = document.getElementById('map-body') as HTMLDivElement;
+const mapTabCurrentBtn = document.getElementById('map-tab-current') as HTMLButtonElement;
+const mapTabWorldBtn = document.getElementById('map-tab-world') as HTMLButtonElement;
+const mapTabWhoBtn = document.getElementById('map-tab-who') as HTMLButtonElement;
+const mapTabWhereBtn = document.getElementById('map-tab-where') as HTMLButtonElement;
+const corpseModal = document.getElementById('corpse-modal') as HTMLDivElement;
+const corpseModalTitle = document.getElementById('corpse-modal-title') as HTMLHeadingElement;
+const corpseItemList = document.getElementById('corpse-item-list') as HTMLUListElement;
+const corpseGrabAllBtn = document.getElementById('corpse-grab-all') as HTMLButtonElement;
 const autopilotModal = document.getElementById('autopilot-modal') as HTMLDivElement;
 const autopilotInput = document.getElementById('autopilot-input') as HTMLInputElement;
 const autopilotStatusEl = document.getElementById('autopilot-status') as HTMLDivElement;
 
-const ALL_MODALS = [charSheetModal, inventoryModal, autopilotModal];
+const ALL_MODALS = [charSheetModal, inventoryModal, skillsModal, equipmentModal, mapModal, corpseModal, autopilotModal];
 
 // The single source of truth for "my own" stats — updated on 'sync' and
 // on any 'combat'/'loot' outcome that affects me, and read by the status
@@ -116,7 +212,15 @@ let myProfile: PlayerSnapshot | null = null;
 let inputCaptured = false;
 
 function updateInputCaptured(): void {
-  inputCaptured = ALL_MODALS.some((m) => !m.hidden);
+  inputCaptured = chatInputFocused || ALL_MODALS.some((m) => !m.hidden);
+  // Phaser's global keyboard manager calls preventDefault() on captured
+  // keys (W/A/S/D, space, arrows, ...) purely based on keycode — it
+  // doesn't check event.target, so it silently ate keystrokes typed into
+  // the autopilot prompt's plain HTML <input> even though that input had
+  // focus. Toggling this off while any modal is open restores normal
+  // typing; turning it back on once every modal is closed restores the
+  // "don't let space/arrows scroll the page" behavior during play.
+  activeScene?.setKeyCaptureEnabled(!inputCaptured);
 }
 
 function updateStatusBar(): void {
@@ -126,6 +230,18 @@ function updateStatusBar(): void {
   statusMana.textContent = `MP ${myProfile.mana}/${myProfile.maxMana}`;
   statusMv.textContent = `MV ${myProfile.movement}/${myProfile.maxMovement}`;
   statusExp.textContent = `EXP ${myProfile.exp}`;
+  updateSleepOverlay();
+}
+
+function appendStatRow(container: HTMLDivElement, label: string, value: string | number): void {
+  const labelEl = document.createElement('div');
+  labelEl.className = 'stat-label';
+  labelEl.textContent = label;
+  const valueEl = document.createElement('div');
+  valueEl.className = 'stat-value';
+  valueEl.textContent = String(value);
+  container.appendChild(labelEl);
+  container.appendChild(valueEl);
 }
 
 function renderCharSheet(): void {
@@ -147,20 +263,22 @@ function renderCharSheet(): void {
     ['Constitution', myProfile.constitution],
     ['Consumed Exp', myProfile.consumeExp],
   ];
-  for (const [skillName, percent] of Object.entries(myProfile.skills)) {
-    rows.push([`Skill: ${skillName}`, `${percent}%`]);
-  }
-  rows.push(['Weapon', myProfile.equipment.weapon ?? '(none)']);
+  for (const [label, value] of rows) appendStatRow(charSheetBody, label, value);
+}
 
-  for (const [label, value] of rows) {
-    const labelEl = document.createElement('div');
-    labelEl.className = 'stat-label';
-    labelEl.textContent = label;
-    const valueEl = document.createElement('div');
-    valueEl.className = 'stat-value';
-    valueEl.textContent = String(value);
-    charSheetBody.appendChild(labelEl);
-    charSheetBody.appendChild(valueEl);
+function renderSkills(): void {
+  if (!myProfile) return;
+  skillsBody.innerHTML = '';
+  for (const [skillName, percent] of Object.entries(myProfile.skills)) {
+    appendStatRow(skillsBody, skillName, `${percent}%`);
+  }
+}
+
+function renderEquipment(): void {
+  if (!myProfile) return;
+  equipmentBody.innerHTML = '';
+  for (const slot of EQUIPMENT_SLOTS) {
+    appendStatRow(equipmentBody, EQUIPMENT_SLOT_LABELS[slot], myProfile.equipment[slot] ?? '(none)');
   }
 }
 
@@ -201,19 +319,104 @@ function useInventoryItem(index: number): void {
           inventory: ack.inventory ?? myProfile.inventory,
           equipment: ack.equipment ?? myProfile.equipment,
           consumeExp: ack.consumeExp ?? myProfile.consumeExp,
+          skills: ack.skills ?? myProfile.skills,
         };
         refreshOpenModals();
+        activeScene?.refreshWeaponSprite();
       }
       logCombatMessage(ack.action === 'equipped' ? 'You equip it.' : 'You consume it.');
+      if (ack.message) logCombatMessage(ack.message, 'level-up');
     })
     .catch(() => {
       /* nothing to show */
     });
 }
 
+// ---------- Player (and training-dummy) corpse loot modal ----------
+// Monster corpses stay grab-everything-on-click (see WorldScene.lootCorpse)
+// — this modal is only for player-kind corpses (see the RACES check at the
+// corpse sprite's pointerdown handler), where the user asked for a choice
+// between "Grab all" and picking items one at a time.
+
+let currentCorpseId: string | null = null;
+let currentCorpseItems: string[] = [];
+
+function renderCorpseModal(): void {
+  corpseItemList.innerHTML = '';
+  if (currentCorpseItems.length === 0) {
+    hideModal(corpseModal);
+    updateInputCaptured();
+    return;
+  }
+  currentCorpseItems.forEach((item, index) => {
+    const li = document.createElement('li');
+    li.textContent = item;
+    li.className = 'inventory-item';
+    li.title = 'Click to grab';
+    li.addEventListener('click', () => grabCorpseItem(index));
+    corpseItemList.appendChild(li);
+  });
+}
+
+function openCorpseModal(corpseId: string, items: string[], kind: string): void {
+  closeAllModals();
+  currentCorpseId = corpseId;
+  currentCorpseItems = [...items];
+  corpseModalTitle.textContent = `${kind} corpse`;
+  corpseModal.hidden = false;
+  updateInputCaptured();
+  renderCorpseModal();
+}
+
+function grabCorpseItem(index: number): void {
+  if (!currentCorpseId) return;
+  network
+    .lootItem(currentCorpseId, index)
+    .then((ack) => {
+      if (!ack.ok) {
+        if (ack.message) logCombatMessage(ack.message);
+        return;
+      }
+      const [item] = currentCorpseItems.splice(index, 1);
+      if (myProfile && ack.inventory) {
+        myProfile = { ...myProfile, inventory: ack.inventory };
+        refreshOpenModals();
+      }
+      if (item) logCombatMessage(`You pick up the ${item}.`);
+      renderCorpseModal();
+    })
+    .catch(() => {
+      /* corpse likely already looted by someone else — nothing to show */
+    });
+}
+
+corpseGrabAllBtn.addEventListener('click', () => {
+  if (!currentCorpseId) return;
+  network
+    .loot(currentCorpseId)
+    .then((ack) => {
+      if (!ack.ok) {
+        if (ack.message) logCombatMessage(ack.message);
+        return;
+      }
+      if (myProfile && ack.inventory) {
+        myProfile = { ...myProfile, inventory: ack.inventory };
+        refreshOpenModals();
+      }
+      logCombatMessage(`You pick up the ${currentCorpseItems.join(' and ')}.`);
+      hideModal(corpseModal);
+      updateInputCaptured();
+    })
+    .catch(() => {
+      /* nothing to show */
+    });
+});
+
 function refreshOpenModals(): void {
   if (!charSheetModal.hidden) renderCharSheet();
   if (!inventoryModal.hidden) renderInventory();
+  if (!skillsModal.hidden) renderSkills();
+  if (!equipmentModal.hidden) renderEquipment();
 }
 
 // Hides a modal without any side effects beyond that — used both by the
@@ -230,9 +433,9 @@ function closeAllModals(): void {
   updateInputCaptured();
 }
 
-// Char sheet / inventory: plain toggle, closing any OTHER open modal
-// first. Deliberately does NOT touch autopilot tracking — opening your
-// inventory mid-hunt shouldn't cancel it.
+// Char sheet / inventory / skills / equipment: plain toggle, closing any
+// OTHER open modal first. Deliberately does NOT touch autopilot tracking
+// — opening your inventory mid-hunt shouldn't cancel it.
 function toggleModal(modal: HTMLDivElement): void {
   const wasOpen = !modal.hidden;
   closeAllModals();
@@ -241,10 +444,114 @@ function toggleModal(modal: HTMLDivElement): void {
   updateInputCaptured();
   if (modal === charSheetModal) renderCharSheet();
   if (modal === inventoryModal) renderInventory();
+  if (modal === skillsModal) renderSkills();
+  if (modal === equipmentModal) renderEquipment();
+  if (modal === mapModal) openMapModal();
 }
 
 charSheetBtn.addEventListener('click', () => toggleModal(charSheetModal));
 inventoryBtn.addEventListener('click', () => toggleModal(inventoryModal));
+skillsBtn.addEventListener('click', () => toggleModal(skillsModal));
+equipmentBtn.addEventListener('click', () => toggleModal(equipmentModal));
+mapBtn.addEventListener('click', () => toggleModal(mapModal));
+
+// ---------- Map modal: Here / World Map / Who / Where ----------
+
+type MapTab = 'current' | 'world' | 'who' | 'where';
+let activeMapTab: MapTab = 'current';
+
+function updateMapTabButtons(): void {
+  mapTabCurrentBtn.classList.toggle('active', activeMapTab === 'current');
+  mapTabWorldBtn.classList.toggle('active', activeMapTab === 'world');
+  mapTabWhoBtn.classList.toggle('active', activeMapTab === 'who');
+  mapTabWhereBtn.classList.toggle('active', activeMapTab === 'where');
+  // "the starting tab should be the name of the World they are in" — the
+  // first tab's label is the player's current map, not a fixed word.
+  mapTabCurrentBtn.textContent = activeScene?.getCurrentMap() ?? 'Here';
+}
+
+function switchMapTab(tab: MapTab): void {
+  activeMapTab = tab;
+  updateMapTabButtons();
+  renderMapTab();
+}
+mapTabCurrentBtn.addEventListener('click', () => switchMapTab('current'));
+mapTabWorldBtn.addEventListener('click', () => switchMapTab('world'));
+mapTabWhoBtn.addEventListener('click', () => switchMapTab('who'));
+mapTabWhereBtn.addEventListener('click', () => switchMapTab('where'));
+
+// Opening the modal always resets back to the "current world" tab.
+function openMapModal(): void {
+  activeMapTab = 'current';
+  updateMapTabButtons();
+  renderMapTab();
+}
+
+function renderConnectionsList(mapName: MapName): HTMLUListElement {
+  const list = document.createElement('ul');
+  list.className = 'map-connections';
+  const def = MAPS[mapName];
+  if (def.exits.length === 0) {
+    const li = document.createElement('li');
+    li.textContent = 'No connections.';
+    list.appendChild(li);
+  }
+  for (const exit of def.exits) {
+    const li = document.createElement('li');
+    li.textContent = `${exit.direction} → ${exit.toMap}`;
+    list.appendChild(li);
+  }
+  return list;
+}
+
+function renderMapTab(): void {
+  mapBody.innerHTML = '';
+  if (activeMapTab === 'current') {
+    const mapName = activeScene?.getCurrentMap() ?? 'Great Plains';
+    mapBody.appendChild(renderConnectionsList(mapName));
+  } else if (activeMapTab === 'world') {
+    for (const name of MAP_NAMES) {
+      const heading = document.createElement('div');
+      heading.className = 'stat-label';
+      heading.textContent = name;
+      mapBody.appendChild(heading);
+      mapBody.appendChild(renderConnectionsList(name));
+    }
+  } else {
+    renderPlayerListTab(activeMapTab);
+  }
+}
+
+function renderPlayerListTab(tab: 'who' | 'where'): void {
+  const loading = document.createElement('div');
+  loading.textContent = 'Loading...';
+  mapBody.appendChild(loading);
+
+  network
+    .who()
+    .then((res) => {
+      if (activeMapTab !== tab) return; // the tab changed while this was in flight
+      const currentMap = activeScene?.getCurrentMap();
+      const players: WhoEntry[] = tab === 'where' ? res.players.filter((p) => p.map === currentMap) : res.players;
+      mapBody.innerHTML = '';
+      const list = document.createElement('ul');
+      list.className = 'map-connections';
+      if (players.length === 0) {
+        const li = document.createElement('li');
+        li.textContent = 'Nobody here.';
+        list.appendChild(li);
+      }
+      for (const p of players) {
+        const li = document.createElement('li');
+        li.textContent = tab === 'who' ? `${p.username} (Lv ${p.level}) — ${p.map}` : `${p.username} (Lv ${p.level})`;
+        list.appendChild(li);
+      }
+      mapBody.appendChild(list);
+    })
+    .catch(() => {
+      loading.textContent = 'Could not load.';
+    });
+}
 
 // Dismissing the PROMPT modal specifically (X, click-outside, or 'p'
 // again while it's open) both closes it and ends any active hunt — per
@@ -341,12 +648,22 @@ autopilotInput.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (gameRoot.hidden || inputCaptured) return;
+  if (gameRoot.hidden) return;
   const target = e.target as HTMLElement;
+  // Only bail out while actually typing somewhere (the autopilot prompt's
+  // input, say) — NOT whenever any modal happens to be open, since that
+  // would also block the very shortcut that's supposed to CLOSE the open
+  // modal (e.g. pressing 'c' again to close the char sheet).
   if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
   if (e.key === 'Escape') {
     activeScene?.stopAutopilot('Autopilot stopped.');
+    return;
+  }
+
+  if (e.key === 'Enter' && !inputCaptured) {
+    e.preventDefault();
+    openChatInput();
     return;
   }
 
@@ -357,6 +674,15 @@ document.addEventListener('keydown', (e) => {
   } else if (key === 'i') {
     e.preventDefault();
     toggleModal(inventoryModal);
+  } else if (key === 'k') {
+    e.preventDefault();
+    toggleModal(skillsModal);
+  } else if (key === 'e') {
+    e.preventDefault();
+    toggleModal(equipmentModal);
+  } else if (key === 'm') {
+    e.preventDefault();
+    toggleModal(mapModal);
   } else if (key === 'p') {
     e.preventDefault();
     toggleAutopilotModal();
@@ -409,6 +735,12 @@ async function handleAuthSubmit(): Promise<void> {
 // a flipped "side" shared between left and right.
 type Facing = FacingGroup;
 
+function floorTextureFor(mapName: MapName): string {
+  if (mapName === 'Labyrinth') return 'stone';
+  if (mapName === 'Floro' || mapName === 'Kortho') return 'concrete';
+  return 'grass';
+}
+
 function facingForDirection(direction: Direction): Facing {
   if (direction === 'north') return 'up';
   if (direction === 'south') return 'down';
@@ -421,15 +753,23 @@ function directionForFacing(facing: Facing): Direction {
   return facing === 'left' ? 'west' : 'east';
 }
 
-function drawHpBar(bar: Phaser.GameObjects.Graphics, hp: number, maxHp: number): void {
-  const ratio = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
+function drawStatBar(bar: Phaser.GameObjects.Graphics, ratio: number, color: number): void {
   bar.clear();
   bar.fillStyle(0x000000, 0.55);
   bar.fillRect(-HP_BAR_WIDTH / 2, 0, HP_BAR_WIDTH, HP_BAR_HEIGHT);
-  const color = ratio > 0.5 ? 0x3ecf5e : ratio > 0.25 ? 0xd9a53c : 0xd9403c;
   bar.fillStyle(color, 1);
   bar.fillRect(-HP_BAR_WIDTH / 2 + 1, 1, Math.max(0, (HP_BAR_WIDTH - 2) * ratio), HP_BAR_HEIGHT - 2);
 }
+
+function drawHpBar(bar: Phaser.GameObjects.Graphics, hp: number, maxHp: number): void {
+  const ratio = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
+  const color = ratio > 0.5 ? 0x3ecf5e : ratio > 0.25 ? 0xd9a53c : 0xd9403c;
+  drawStatBar(bar, ratio, color);
+}
+
+const MANA_BAR_COLOR = 0x4a8fd4;
+const MOVEMENT_BAR_COLOR = 0xd4c24a;
+const BAR_STACK_GAP = 2;
 
 let gameInstance: Phaser.Game | null = null;
 let activeScene: WorldScene | null = null;
@@ -438,8 +778,11 @@ class WorldScene extends Phaser.Scene {
   private network!: NetworkManager;
   private player!: Phaser.GameObjects.Sprite;
   private playerHpBar!: Phaser.GameObjects.Graphics;
+  private playerManaBar!: Phaser.GameObjects.Graphics;
+  private playerMovementBar!: Phaser.GameObjects.Graphics;
+  private playerWeaponSprite!: Phaser.GameObjects.Sprite;
   private floorTile!: Phaser.GameObjects.TileSprite;
-  private doorSprite!: Phaser.GameObjects.Sprite;
+  private doorSprites: Phaser.GameObjects.Sprite[] = [];
   private race: Race = 'goblin';
   private facing: Facing = 'down';
   private currentMap: MapName = 'Great Plains';
@@ -463,9 +806,14 @@ class WorldScene extends Phaser.Scene {
   private npcSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private monsterSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private corpseSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  // Great-Plains-only background dressing — server-enforced collision
+  // (see shared/trees.ts), but no per-row depth sorting against
+  // characters (always drawn behind them; see renderMap).
+  private treeSprites: Phaser.GameObjects.Sprite[] = [];
 
   private autopilotActive = false;
   private autopilotTargetKind: MonsterKind | null = null;
+  private hasRenderedMap = false;
 
   constructor() {
     super('world');
@@ -478,17 +826,23 @@ class WorldScene extends Phaser.Scene {
   preload(): void {
     createGrassTexture(this, 'grass');
     createStoneTexture(this, 'stone');
+    createConcreteTexture(this, 'concrete');
     createDoorTexture(this, 'door');
+    createTreeSpritesheet(this);
+    createDaggerTexture(this);
     preloadCharacterSprites(this);
   }
 
   create(): void {
     createCharacterAnims(this);
     defineBodyPartFrames(this);
+    createTreeSwayAnim(this);
 
-    this.doorSprite = this.add.sprite(0, 0, 'door').setVisible(false);
     this.player = this.add.sprite(0, 0, textureKeyFor('goblin'), idleFrameFor('goblin', 'down')).setScale(CHAR_SCALE);
     this.playerHpBar = this.add.graphics();
+    this.playerManaBar = this.add.graphics();
+    this.playerMovementBar = this.add.graphics();
+    this.playerWeaponSprite = this.add.sprite(0, 0, DAGGER_TEXTURE_KEY).setVisible(false).setDepth(1);
 
     // A 100x100 Great Plains is far too big to fit on screen at once —
     // the camera follows the player instead, clamped to each map's own
@@ -510,10 +864,20 @@ class WorldScene extends Phaser.Scene {
       if (pointer.rightButtonDown()) this.handleRightClick(pointer);
     });
 
+    // A window resize can cross the "map fits in the viewport" threshold
+    // for the SAME map (see applyCameraBounds) — re-apply whenever it does.
+    this.scale.on('resize', () => {
+      if (!this.floorTile) return;
+      const def = getMap(this.currentMap);
+      this.applyCameraBounds(def.cols * TILE_SIZE, def.rows * TILE_SIZE);
+    });
+
     this.network.addEventListener('sync', ((e: CustomEvent<SyncPayload>) => this.applySync(e.detail.player)) as EventListener);
     this.network.addEventListener('map:state', ((e: CustomEvent<MapStatePayload>) => this.applyMapState(e.detail)) as EventListener);
     this.network.addEventListener('punch', ((e: CustomEvent<PunchPayload>) => this.applyRemotePunch(e.detail)) as EventListener);
     this.network.addEventListener('combat', ((e: CustomEvent<CombatEventPayload>) => this.applyCombatEvent(e.detail)) as EventListener);
+    this.network.addEventListener('chat', ((e: CustomEvent<ChatPayload>) => logChatMessage(e.detail.username, e.detail.message)) as EventListener);
+    this.network.addEventListener('statTick', ((e: CustomEvent<StatTickPayload>) => this.applyOwnStats(e.detail)) as EventListener);
     this.network.addEventListener('kicked', ((e: CustomEvent<KickedPayload>) => {
       alert(e.detail.message);
       window.location.reload();
@@ -550,6 +914,30 @@ class WorldScene extends Phaser.Scene {
     if (!direction) return;
     this.lastMoveAt = now;
     this.attemptMove(direction);
+  }
+
+  // See updateInputCaptured's comment — Phaser's global keyboard capture
+  // preventDefaults on keycode alone, ignoring DOM focus, so it has to be
+  // switched off while any HTML modal (with or without a text input) is
+  // open and back on for normal play.
+  setKeyCaptureEnabled(enabled: boolean): void {
+    const manager = this.input.keyboard?.manager;
+    if (manager) manager.preventDefault = enabled;
+  }
+
+  // Read by the map modal's "current world" tab/label — this.currentMap
+  // is only ever updated inside renderMap, so it's always the map that's
+  // ACTUALLY rendered right now, unlike myProfile.map (only refreshed on
+  // 'sync', not on every walked transition).
+  getCurrentMap(): MapName {
+    return this.currentMap;
+  }
+
+  // Called after an equip/unequip so the held-weapon overlay updates
+  // immediately rather than waiting for the next sync/map:state.
+  refreshWeaponSprite(): void {
+    if (!myProfile) return;
+    this.ensureWeaponSprite(this.player, Boolean(myProfile.equipment.weapon), this.facing);
   }
 
   private manualMoveKeyDown(): boolean {
@@ -634,6 +1022,9 @@ class WorldScene extends Phaser.Scene {
 
   private repositionHpBars(): void {
     this.playerHpBar.setPosition(this.player.x, this.player.y + HP_BAR_OFFSET_Y);
+    this.playerManaBar.setPosition(this.player.x, this.player.y + HP_BAR_OFFSET_Y + HP_BAR_HEIGHT + BAR_STACK_GAP);
+    this.playerMovementBar.setPosition(this.player.x, this.player.y + HP_BAR_OFFSET_Y + (HP_BAR_HEIGHT + BAR_STACK_GAP) * 2);
+    this.repositionWeaponSprite(this.playerWeaponSprite, this.player, this.facing);
     for (const sprite of this.otherPlayers.values()) this.repositionBarFor(sprite);
     for (const sprite of this.npcSprites.values()) this.repositionBarFor(sprite);
     for (const sprite of this.monsterSprites.values()) this.repositionBarFor(sprite);
@@ -642,6 +1033,23 @@ class WorldScene extends Phaser.Scene {
   private repositionBarFor(sprite: Phaser.GameObjects.Sprite): void {
     const bar = sprite.getData('hpBar') as Phaser.GameObjects.Graphics | undefined;
     bar?.setPosition(sprite.x, sprite.y + HP_BAR_OFFSET_Y);
+    const weaponSprite = sprite.getData('weaponSprite') as Phaser.GameObjects.Sprite | undefined;
+    if (weaponSprite) this.repositionWeaponSprite(weaponSprite, sprite, (sprite.getData('facing') as Facing) ?? 'down');
+  }
+
+  // Own hp/mana/movement bars are a 3-bar stack (item request: show all
+  // three above the player, not just hp) — other players/NPCs/monsters
+  // keep the single hp-only bar, since NpcSnapshot/MonsterSnapshot don't
+  // carry mana/movement at all.
+  private updateOwnBars(): void {
+    if (!myProfile) return;
+    drawHpBar(this.playerHpBar, myProfile.hp, myProfile.maxHp);
+    drawStatBar(this.playerManaBar, myProfile.maxMana > 0 ? myProfile.mana / myProfile.maxMana : 0, MANA_BAR_COLOR);
+    drawStatBar(
+      this.playerMovementBar,
+      myProfile.maxMovement > 0 ? myProfile.movement / myProfile.maxMovement : 0,
+      MOVEMENT_BAR_COLOR
+    );
   }
 
   private ensureHpBar(sprite: Phaser.GameObjects.Sprite, hp: number, maxHp: number): void {
@@ -653,8 +1061,43 @@ class WorldScene extends Phaser.Scene {
     drawHpBar(bar, hp, maxHp);
   }
 
+  // A fixed offset per facing direction — not aligned to individual
+  // animation frames, just a reasonable "held near the hand" position.
+  private weaponOffsetFor(facing: Facing): { x: number; y: number } {
+    switch (facing) {
+      case 'down':
+        return { x: 10, y: 6 };
+      case 'up':
+        return { x: -10, y: -8 };
+      case 'left':
+        return { x: -13, y: 2 };
+      case 'right':
+        return { x: 13, y: 2 };
+    }
+  }
+
+  private repositionWeaponSprite(weaponSprite: Phaser.GameObjects.Sprite, owner: Phaser.GameObjects.Sprite, facing: Facing): void {
+    const offset = this.weaponOffsetFor(facing);
+    weaponSprite.setPosition(owner.x + offset.x, owner.y + offset.y);
+  }
+
+  // Shows/hides a player's held-weapon overlay based on whether their
+  // weapon slot is filled — called for self on every profile update and
+  // for other players whenever their snapshot arrives.
+  private ensureWeaponSprite(sprite: Phaser.GameObjects.Sprite, hasWeapon: boolean, facing: Facing): void {
+    let weaponSprite = sprite.getData('weaponSprite') as Phaser.GameObjects.Sprite | undefined;
+    if (!weaponSprite) {
+      weaponSprite = this.add.sprite(sprite.x, sprite.y, DAGGER_TEXTURE_KEY).setDepth(1);
+      sprite.setData('weaponSprite', weaponSprite);
+    }
+    sprite.setData('facing', facing);
+    weaponSprite.setVisible(hasWeapon);
+    this.repositionWeaponSprite(weaponSprite, sprite, facing);
+  }
+
   private destroyEntitySprite(sprite: Phaser.GameObjects.Sprite): void {
     (sprite.getData('hpBar') as Phaser.GameObjects.Graphics | undefined)?.destroy();
+    (sprite.getData('weaponSprite') as Phaser.GameObjects.Sprite | undefined)?.destroy();
     sprite.destroy();
   }
 
@@ -685,6 +1128,7 @@ class WorldScene extends Phaser.Scene {
     const dRow = row - prevRow;
     const dCol = col - prevCol;
     const facing: FacingGroup = Math.abs(dRow) >= Math.abs(dCol) ? (dRow < 0 ? 'up' : 'down') : dCol < 0 ? 'left' : 'right';
+    sprite.setData('facing', facing);
     const pos = this.tilePosition(row, col);
 
     sprite.play(walkAnimKey(kind, facing), true);
@@ -704,15 +1148,35 @@ class WorldScene extends Phaser.Scene {
   // swaps its floor texture/door position. The canvas itself stays fixed
   // at the browser window's size (see Phaser.Scale.RESIZE in startGame) —
   // the camera follows the player and is clamped to whichever map's
-  // bounds are set here, so a small 20x20 map and a huge 100x100 one both
-  // just work without the canvas itself changing size.
+  // bounds are set here, so a small map and a huge one both just work
+  // without the canvas itself changing size.
+  // A map smaller than the current viewport (the Labyrinth at typical
+  // window sizes, say) has nowhere to scroll to — followed normally, the
+  // camera would just pin it into a corner instead of centering it. Only
+  // follow the player when the map is actually big enough in that axis to
+  // need scrolling; otherwise stop following and center the camera on the
+  // map itself. Re-applied on window resize too, since resizing the
+  // browser can cross that threshold either way for the same map.
+  private applyCameraBounds(pixelWidth: number, pixelHeight: number): void {
+    const cam = this.cameras.main;
+    cam.setBounds(0, 0, pixelWidth, pixelHeight);
+    const fitsWidth = pixelWidth <= cam.width;
+    const fitsHeight = pixelHeight <= cam.height;
+    if (fitsWidth && fitsHeight) {
+      cam.stopFollow();
+      cam.centerOn(pixelWidth / 2, pixelHeight / 2);
+    } else {
+      cam.startFollow(this.player, true, 1, 1);
+    }
+  }
+
   private renderMap(mapName: MapName): void {
     this.currentMap = mapName;
     const def = getMap(mapName);
     const pixelWidth = def.cols * TILE_SIZE;
     const pixelHeight = def.rows * TILE_SIZE;
 
-    this.cameras.main.setBounds(0, 0, pixelWidth, pixelHeight);
+    this.applyCameraBounds(pixelWidth, pixelHeight);
 
     // Recreated from scratch (rather than reusing setSize() on the
     // existing tile sprite) — on the very first map load, resizing an
@@ -722,17 +1186,19 @@ class WorldScene extends Phaser.Scene {
     // one at the correct size from the start sidesteps that entirely.
     this.floorTile?.destroy();
     this.floorTile = this.add
-      .tileSprite(0, 0, pixelWidth, pixelHeight, mapName === 'Labyrinth' ? 'stone' : 'grass')
+      .tileSprite(0, 0, pixelWidth, pixelHeight, floorTextureFor(mapName))
       .setOrigin(0, 0)
       .setDepth(-1);
 
-    const door = def.exits[0];
-    if (door) {
-      const pos = this.tilePosition(door.row, door.col);
-      this.doorSprite.setPosition(pos.x, pos.y).setVisible(true);
-    } else {
-      this.doorSprite.setVisible(false);
-    }
+    // One door sprite per exit — Great Plains alone now has three
+    // (Labyrinth/Floro/Kortho), so a single reused sprite (the old
+    // approach, from when every map had at most one exit) would only ever
+    // show the first.
+    for (const sprite of this.doorSprites) sprite.destroy();
+    this.doorSprites = def.exits.map((exit) => {
+      const pos = this.tilePosition(exit.row, exit.col);
+      return this.add.sprite(pos.x, pos.y, 'door');
+    });
 
     // Other entities belong to whichever map we just left — clear them
     // out immediately rather than waiting for the next map:state.
@@ -744,6 +1210,21 @@ class WorldScene extends Phaser.Scene {
     this.monsterSprites.clear();
     for (const sprite of this.corpseSprites.values()) sprite.destroy();
     this.corpseSprites.clear();
+
+    // Great-Plains-only, fixed positions from the shared/trees.ts seed —
+    // the server blocks movement onto these same tiles (see
+    // WorldManagerService/MonsterManagerService), so this list must stay
+    // byte-for-byte identical between client and server.
+    for (const sprite of this.treeSprites) sprite.destroy();
+    this.treeSprites = [];
+    if (mapName === 'Great Plains') {
+      for (const { row, col } of treePositionsFor(mapName)) {
+        const pos = this.tilePosition(row, col);
+        const sprite = this.add.sprite(pos.x, pos.y, TREE_TEXTURE_KEY, 0).setOrigin(0.5, 0.85).setDepth(-0.5);
+        sprite.play(TREE_SWAY_ANIM_KEY);
+        this.treeSprites.push(sprite);
+      }
+    }
   }
 
   private applySync(player: PlayerSnapshot): void {
@@ -753,13 +1234,36 @@ class WorldScene extends Phaser.Scene {
     this.col = player.col;
     myProfile = player;
     updateStatusBar();
+    updateWorldLabel(player.map);
     refreshOpenModals();
 
-    this.renderMap(player.map);
+    // 'sync' fires on every level-up, not just map transitions — calling
+    // renderMap unconditionally used to wipe every other-player/NPC/
+    // monster/corpse sprite on ANY sync, which briefly made autopilot see
+    // zero monsters and think it had run out of targets. Only actually
+    // tear down and rebuild the map when the map itself changed.
+    if (!this.hasRenderedMap || player.map !== this.currentMap) {
+      this.renderMap(player.map);
+      this.hasRenderedMap = true;
+    }
     const pos = this.tilePosition(player.row, player.col);
     this.player.setPosition(pos.x, pos.y);
+    // A sync can land mid-punch or mid-move (e.g. a level-up granted by
+    // the very punch that's still animating). setIdle() below calls
+    // anims.stop(), which — unlike letting an animation finish on its own
+    // — never fires its 'animationcomplete' callback, so isPunching would
+    // otherwise be stranded true forever, permanently freezing update()'s
+    // very first `if (this.isMoving || this.isPunching) return;` guard
+    // (the "WASD stopped working" symptom).
+    this.isMoving = false;
+    this.isPunching = false;
     this.setIdle();
     this.ensureHpBar(this.player, player.hp, player.maxHp);
+    this.updateOwnBars();
+    this.ensureWeaponSprite(this.player, Boolean(player.equipment.weapon), this.facing);
+    // Lying down is approximated with a 90-degree rotation of the normal
+    // idle frame — there's no dedicated "sleeping" sprite art yet.
+    this.player.setAngle(player.restState === 'sleeping' ? 90 : 0);
   }
 
   private applyMapState(state: MapStatePayload): void {
@@ -788,6 +1292,8 @@ class WorldScene extends Phaser.Scene {
       }
       sprite.setData('race', p.race);
       this.ensureHpBar(sprite, p.hp, p.maxHp);
+      this.ensureWeaponSprite(sprite, Boolean(p.equipment.weapon), (sprite.getData('facing') as Facing) ?? 'down');
+      sprite.setAngle(p.restState === 'sleeping' ? 90 : 0);
     }
     for (const [username, sprite] of this.otherPlayers) {
       if (!seenPlayers.has(username)) {
@@ -804,6 +1310,14 @@ class WorldScene extends Phaser.Scene {
         sprite.setData('row', npc.row);
         sprite.setData('col', npc.col);
         this.npcSprites.set(npc.id, sprite);
+      } else if (sprite.getData('row') !== npc.row || sprite.getData('col') !== npc.col) {
+        // NPCs are normally static, but the training dummy now relocates
+        // on "death" — that's a respawn teleport, not a walk, so snap
+        // straight to the new tile rather than tweening a walk animation.
+        sprite.setData('row', npc.row);
+        sprite.setData('col', npc.col);
+        const pos = this.tilePosition(npc.row, npc.col);
+        sprite.setPosition(pos.x, pos.y);
       }
       sprite.setData('race', npc.race);
       this.ensureHpBar(sprite, npc.hp, npc.maxHp);
@@ -846,7 +1360,14 @@ class WorldScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (inputCaptured || !pointer.leftButtonDown()) return;
-        this.lootCorpse(c.id, c.items);
+        // Player (and training-dummy) corpses open the loot modal for a
+        // grab-all-or-pick-items choice; monster corpses stay a simple
+        // grab-everything click, same as before.
+        if ((RACES as readonly string[]).includes(c.kind)) {
+          openCorpseModal(c.id, c.items, c.kind);
+        } else {
+          this.lootCorpse(c.id, c.items);
+        }
       });
       this.corpseSprites.set(c.id, sprite);
 
@@ -996,6 +1517,9 @@ class WorldScene extends Phaser.Scene {
     if (event.leveledUp && event.attacker === this.myUsername) {
       logCombatMessage(`${this.myUsername} reaches level ${event.attackerLevel}!`, 'level-up');
     }
+    for (const growthMessage of event.growthMessages ?? []) {
+      logCombatMessage(growthMessage, 'level-up');
+    }
 
     if (event.attacker === this.myUsername) {
       this.applyOwnStats({ level: event.attackerLevel, exp: event.attackerExp, hp: event.attackerHp, maxHp: event.attackerMaxHp });
@@ -1028,6 +1552,7 @@ class WorldScene extends Phaser.Scene {
     if (!myProfile) return;
     myProfile = { ...myProfile, ...updates };
     this.ensureHpBar(this.player, myProfile.hp, myProfile.maxHp);
+    this.updateOwnBars();
     updateStatusBar();
     refreshOpenModals();
   }

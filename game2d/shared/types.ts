@@ -1,6 +1,11 @@
 import type { Server, Socket } from 'socket.io';
 import type { MapName, Race, Direction, MonsterKind } from './constants.js';
 
+// Never persisted across sessions (a fresh connection always starts
+// 'awake') — matches the text game's own restState, which the same
+// heal-percent-per-tick range and sleep/rest/wake commands key off.
+export type RestState = 'awake' | 'resting' | 'sleeping';
+
 export interface PlayerSnapshot {
   username: string;
   race: Race;
@@ -24,6 +29,7 @@ export interface PlayerSnapshot {
   inventory: string[];
   equipment: Record<string, string>;
   consumeExp: number;
+  restState: RestState;
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
@@ -104,6 +110,11 @@ export interface CombatEventPayload {
   expGained?: number;
   leveledUp?: boolean;
   message: string;
+  // Attacker's own weapon-skill growth (punch, or dagger while wielding
+  // one), plus the defender's dodge/parry/shield-block growth when their
+  // avoidance actually triggered/was attempted — each a standalone line
+  // for the combat log, same message shape for every skill.
+  growthMessages?: string[];
 }
 
 export interface MoveAck {
@@ -137,7 +148,40 @@ export interface UseItemAck {
   inventory?: string[];
   equipment?: Record<string, string>;
   consumeExp?: number;
+  skills?: Record<string, number>;
   message?: string;
+}
+
+// Local (map-scoped) chat — broadcast only to the room for `map`, so a
+// player in the Labyrinth never sees a chat line sent from the Great
+// Plains, and vice versa.
+export interface ChatPayload {
+  username: string;
+  map: MapName;
+  message: string;
+}
+
+export interface WhoEntry {
+  username: string;
+  map: MapName;
+  level: number;
+}
+
+export interface WhoAck {
+  players: WhoEntry[];
+}
+
+// A periodic passive-regen tick (see game.gateway.ts's stat-tick timer) —
+// deliberately its own lightweight event rather than reusing 'sync',
+// since 'sync' also forces the client to reset any in-progress move/punch
+// animation, which a purely-passive background regen tick shouldn't do.
+export interface StatTickPayload {
+  hp: number;
+  maxHp: number;
+  mana: number;
+  maxMana: number;
+  movement: number;
+  maxMovement: number;
 }
 
 export interface ServerToClientEvents {
@@ -146,6 +190,8 @@ export interface ServerToClientEvents {
   'map:state': (data: MapStatePayload) => void;
   punch: (data: PunchPayload) => void;
   combat: (data: CombatEventPayload) => void;
+  chat: (data: ChatPayload) => void;
+  statTick: (data: StatTickPayload) => void;
 }
 
 export interface ClientToServerEvents {
@@ -156,11 +202,19 @@ export interface ClientToServerEvents {
   // event needed, the direction alone is enough.
   punch: (direction: Direction) => void;
   loot: (corpseId: string, ack: (res: LootAck) => void) => void;
+  // Grabs a single item out of a corpse by index (the corpse loot modal's
+  // "click one item" path) rather than everything at once — the corpse
+  // itself is removed once its last item is taken.
+  lootItem: (payload: { corpseId: string; itemIndex: number }, ack: (res: LootAck) => void) => void;
   // Clicking an inventory item: the server decides consume vs. equip
   // based on the item itself (see combat/formulas.ts's
   // EQUIPMENT_SLOT_FOR_ITEM) so the client never has to know which items
   // are equippable.
   useItem: (itemIndex: number, ack: (res: UseItemAck) => void) => void;
+  // Fire-and-forget, same as punch — the server trims/validates/length-
+  // caps and rebroadcasts to the sender's own map room only.
+  chat: (message: string) => void;
+  who: (ack: (res: WhoAck) => void) => void;
 }
 
 export type InterServerEvents = Record<string, never>;
@@ -188,6 +242,7 @@ export interface SocketData {
   inventory: string[];
   equipment: Record<string, string>;
   consumeExp: number;
+  restState: RestState;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

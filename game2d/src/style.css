@@ -241,7 +241,42 @@ body {
   width: min(420px, 40vw);
 }
 
-#combat-log {
+.log-view .log-line.level-up {
+  color: #f0c040;
+}
+
+.log-view .log-line.death {
+  color: #ff6b6b;
+}
+
+.log-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.log-tab {
+  background: transparent;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #999;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.log-tab:hover {
+  color: #eee;
+}
+
+.log-tab.active {
+  background: #2a2a3a;
+  border-color: #f0c040;
+  color: #f0c040;
+}
+
+.log-view {
   min-height: 80px;
   max-height: 160px;
   overflow-y: auto;
@@ -249,17 +284,21 @@ body {
   color: #ccc;
 }
 
-#combat-log .log-line {
+.log-view .log-line {
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-#combat-log .log-line.level-up {
-  color: #f0c040;
-}
-
-#combat-log .log-line.death {
-  color: #ff6b6b;
+#chat-input {
+  margin-top: 6px;
+  width: 100%;
+  background: #0d0d13;
+  border: 1px solid #555;
+  color: #eee;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  border-radius: 4px;
 }
 
 /* ---------- Corner buttons (character sheet / inventory) ---------- */
@@ -386,6 +425,76 @@ body {
   border-color: #f0c040;
 }
 
+/* ---------- Map modal (Here / World Map / Who / Where) ---------- */
+
+.map-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.map-tab {
+  background: transparent;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #999;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.map-tab:hover {
+  color: #eee;
+}
+
+.map-tab.active {
+  background: #2a2a3a;
+  border-color: #f0c040;
+  color: #f0c040;
+}
+
+.map-body {
+  font-size: 13px;
+}
+
+.map-connections {
+  list-style: none;
+  margin: 0 0 12px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.map-connections li {
+  background: #1e1e2a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 5px 10px;
+  color: #ccc;
+}
+
+/* ---------- Corpse loot modal ---------- */
+
+#corpse-grab-all {
+  margin-top: 12px;
+  width: 100%;
+  padding: 8px;
+  background: #2a4d3a;
+  border: 1px solid #3f7a56;
+  color: #eee;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  border-radius: 4px;
+}
+
+#corpse-grab-all:hover {
+  background: #386a4c;
+}
+
 /* ---------- Autopilot prompt modal ---------- */
 
 .autopilot-field {
@@ -418,4 +527,44 @@ body {
   font-size: 12px;
   color: #f0c040;
   pointer-events: none;
+}
+
+/* ---------- World label ---------- */
+
+#world-label {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(10, 10, 16, 0.75);
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 14px;
+  font-weight: bold;
+  color: #f0c040;
+  pointer-events: none;
+}
+
+/* ---------- Sleep overlay ---------- */
+
+#sleep-overlay {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+/* Same specificity fix as elsewhere in this file — an unconditional
+   `display: flex` here would outrank the browser's own
+   `[hidden] { display: none }`. */
+#sleep-overlay:not([hidden]) {
+  display: flex;
+}
+
+#sleep-overlay-text {
+  color: #555;
+  font-size: 14px;
+  font-style: italic;
 }

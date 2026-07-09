@@ -1,7 +1,10 @@
 // Pure, dependency-free combat/leveling formulas — mirrors the shape of
 // the text game's own src/server/players/leveling.ts and skills.ts, sized
-// down to this project's much smaller scope (one skill, one attack, no
-// equipment/dodge/parry).
+// down to this project's smaller scope (one active attack — punch — but
+// now with equipment, resistances, and dodge/parry/shield-block ported
+// from the text game).
+import { type EquipmentSlot } from '../../shared/equipment.js';
+export { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, type EquipmentSlot } from '../../shared/equipment.js';
 
 export const STARTING_ATTRIBUTE = 1;
 export const STARTING_VITAL = 100;
@@ -9,9 +12,28 @@ export const STARTING_LEVEL = 1;
 export const STARTING_EXP = 0;
 
 export const PUNCH_SKILL = 'punch';
+// The text game's goblin/skeleton races both fall through to the same
+// generic non-hobgoblin/non-slime skill kit: dodge, parry, shield block,
+// dagger, kick — this project drops kick (no kick action exists here)
+// but keeps the rest, all starting at STARTING_SKILL_PERCENT like punch.
+export const DODGE_SKILL = 'dodge';
+export const PARRY_SKILL = 'parry';
+export const SHIELD_BLOCK_SKILL = 'shield block';
+export const DAGGER_SKILL = 'dagger';
+export const STARTING_SKILLS = [PUNCH_SKILL, DODGE_SKILL, PARRY_SKILL, SHIELD_BLOCK_SKILL, DAGGER_SKILL];
 export const STARTING_SKILL_PERCENT = 1;
 export const MAX_SKILL_PERCENT = 100;
 export const SKILL_GROWTH_CHANCE = 0.02;
+
+export function startingSkills(): Record<string, number> {
+  return Object.fromEntries(STARTING_SKILLS.map((skill) => [skill, STARTING_SKILL_PERCENT]));
+}
+
+// Same message shape for every skill's growth notice — quoted here so
+// every combat-resolution call site formats it identically.
+export function skillGrowthMessage(skill: string, newPercent: number): string {
+  return `Your ${skill} skill has increased to ${newPercent}%!`;
+}
 
 export interface Attributes {
   strength: number;
@@ -62,23 +84,82 @@ export function punchDamage(
   return baseDamage(attacker.strength, attacker.level) + attributeBonus(attacker, defender) + skillBonus(punchSkillPercent) + weaponBonus;
 }
 
-// --- Equipment (one slot: weapon) ---
-
 // Which equipment slot an item goes into, if any — items not listed here
 // aren't equippable at all, just consumable body parts (see
 // CONSUME_EXP_PER_ITEM below).
-export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, string> = {
+export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
   'bone dagger': 'weapon',
 };
 
-// Flat damage bonus while a given item is equipped in its slot.
+// Flat damage bonus while a given item is equipped in its slot — matches
+// the text game's own BONE_DAGGER_EQUIPMENT.attackBonus (+2), not a
+// bigger made-up number.
 export const WEAPON_DAMAGE_BONUS: Record<string, number> = {
-  'bone dagger': 3,
+  'bone dagger': 2,
 };
 
-export function weaponBonusFor(equipment: Record<string, string>): number {
+// Any equipped weapon whose name contains "dagger" also adds
+// skillBonus(dagger skill) on top of its own flat bonus — same shape as
+// the text game's weaponAttackFor (its own dagger-skill percentBonus).
+export function weaponBonusFor(equipment: Record<string, string>, skills: Record<string, number>): number {
   const weapon = equipment.weapon;
-  return weapon ? (WEAPON_DAMAGE_BONUS[weapon] ?? 0) : 0;
+  if (!weapon) return 0;
+  const flat = WEAPON_DAMAGE_BONUS[weapon] ?? 0;
+  const daggerBonus = weapon.toLowerCase().includes('dagger') ? skillBonus(skills[DAGGER_SKILL] ?? 0) : 0;
+  return flat + daggerBonus;
+}
+
+// --- Dodge / parry / shield block (mirrors the text game's own
+// avoidChance/scaledSkillChance shapes exactly) ---
+// Checked in this order against an incoming attack: dodge, then (only if
+// dodge failed) parry, then (only if both failed) shield block. Dodge and
+// parry fully negate the hit; shield block, only attempted once both have
+// failed, also fully negates it once triggered.
+
+const AVOID_BASE_CHANCE = 0.15;
+const AVOID_MAX_CHANCE = 0.75;
+const AVOID_SKILL_WEIGHT = 0.15;
+
+function avoidChance(
+  defenderLevel: number,
+  defenderAttribute: number,
+  defenderSkillPercent: number,
+  attackerLevel: number,
+  attackerAttribute: number
+): number {
+  const levelEdge = (defenderLevel - attackerLevel) * 0.01;
+  const attributeEdge = (defenderAttribute - attackerAttribute) * 0.01;
+  const skillWeight = (defenderSkillPercent / MAX_SKILL_PERCENT) * AVOID_SKILL_WEIGHT;
+  return Math.max(0, Math.min(AVOID_MAX_CHANCE, AVOID_BASE_CHANCE + levelEdge + attributeEdge + skillWeight));
+}
+
+export function computeDodgeChance(defender: CombatantStats, defenderSkills: Record<string, number>, attacker: CombatantStats): number {
+  return avoidChance(defender.level, defender.dexterity, defenderSkills[DODGE_SKILL] ?? 0, attacker.level, attacker.dexterity);
+}
+
+// Parrying requires a weapon equipped — bare-handed, there's nothing to
+// parry with (same restriction the text game applies to every race but
+// slime, which this project doesn't have).
+export function computeParryChance(
+  defender: CombatantStats,
+  defenderSkills: Record<string, number>,
+  defenderEquipment: Record<string, string>,
+  attacker: CombatantStats
+): number {
+  if (!defenderEquipment.weapon) return 0;
+  return avoidChance(defender.level, defender.strength, defenderSkills[PARRY_SKILL] ?? 0, attacker.level, attacker.strength);
+}
+
+const SHIELD_BLOCK_BASE_CHANCE = 0.2;
+const SHIELD_BLOCK_MAX_CHANCE = 0.8;
+const SHIELD_BLOCK_DIVISOR = 3;
+
+// Requires an actual shield equipped — no bare-handed version.
+export function computeShieldBlockChance(defenderSkills: Record<string, number>, defenderEquipment: Record<string, string>): number {
+  if (!defenderEquipment.shield) return 0;
+  const learnedPercent = defenderSkills[SHIELD_BLOCK_SKILL] ?? 0;
+  const bonus = Math.floor(learnedPercent / SHIELD_BLOCK_DIVISOR) / 100;
+  return Math.min(SHIELD_BLOCK_MAX_CHANCE, SHIELD_BLOCK_BASE_CHANCE + bonus);
 }
 
 // --- Consuming body parts (mirrors the text game's separate
@@ -86,6 +167,33 @@ export function weaponBonusFor(equipment: Record<string, string>): number {
 // evolution, doesn't drive any further mechanic yet in this project) ---
 
 export const CONSUME_EXP_PER_ITEM = 5;
+
+// --- Resistance skills, gained by chance on consuming a body part ---
+// (mirrors the text game's BODY_PART_SKILL reward/chance baked into each
+// dropped item by its source: a wild goblin's parts teach "lesser normal
+// monster resistance" at a lower chance, a wild skeleton's (undead) parts
+// teach "lesser undead monster resistance" at a higher chance — same
+// values as the text game's item-definitions.ts.)
+
+export const LESSER_NORMAL_MONSTER_RESISTANCE = 'lesser normal monster resistance';
+export const LESSER_UNDEAD_MONSTER_RESISTANCE = 'lesser undead monster resistance';
+export const RESISTANCE_SKILL_STARTING_PERCENT = 10;
+
+export interface ResistanceGrant {
+  skill: string;
+  chance: number;
+}
+
+const RESISTANCE_FOR_ITEM: Record<string, ResistanceGrant> = {
+  'wild goblin ear': { skill: LESSER_NORMAL_MONSTER_RESISTANCE, chance: 0.1 },
+  'goblin ear': { skill: LESSER_NORMAL_MONSTER_RESISTANCE, chance: 0.1 },
+  'wild skeleton bone': { skill: LESSER_UNDEAD_MONSTER_RESISTANCE, chance: 0.2 },
+  'skeleton bone': { skill: LESSER_UNDEAD_MONSTER_RESISTANCE, chance: 0.2 },
+};
+
+export function resistanceGrantForItem(item: string): ResistanceGrant | undefined {
+  return RESISTANCE_FOR_ITEM[item];
+}
 
 // --- Leveling — identical shape to the text game's leveling.ts ---
 
