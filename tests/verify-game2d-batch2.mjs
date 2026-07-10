@@ -92,7 +92,9 @@ async function main() {
     });
     console.log('  /time ->', reply.message);
     assert(reply.username === 'System', '/time replies via System message');
-    assert(/It is currently \d{2}:00 \((day|night)\)\./.test(reply.message), '/time message has the expected shape');
+    // Revised from a flat day/night split to dawn/morning/noon/evening/night
+    // (see shared/lighting.ts's timeOfDayLabel) — a later batch's request.
+    assert(/It is currently \d{2}:00 \((dawn|morning|noon|evening|night)\)\./.test(reply.message), '/time message has the expected shape');
     socket.close();
   }
 

@@ -1,4 +1,5 @@
 import type { MapName, Direction } from './constants.js';
+import { FLORO_SHOP_MAPS } from './constants.js';
 
 // A single source of truth for both the server (movement resolution) and
 // the client (rendering the floor/door) — no need to duplicate these
@@ -53,6 +54,63 @@ const GREAT_PLAINS_MID_COL = Math.floor(GREAT_PLAINS_SIZE / 2);
 const GREAT_PLAINS_MID_ROW = Math.floor(GREAT_PLAINS_SIZE / 2);
 const LABYRINTH_MID_COL = Math.floor(LABYRINTH_SIZE / 2);
 const TOWN_MID_ROW = Math.floor(TOWN_SIZE / 2);
+
+// Floro's 7 shop interiors (item 13, phase 1) — a small room each,
+// entered by walking north onto its own door tile on Floro's street (see
+// FLORO_SHOP_DOORS below), landing on the exact same reciprocal exit
+// tile pattern every other map transition in this project already uses
+// (arrive ON the door tile of whichever side you're heading toward).
+const SHOP_INTERIOR_SIZE = 10;
+const SHOP_INTERIOR_MID_COL = Math.floor(SHOP_INTERIOR_SIZE / 2);
+const SHOP_INTERIOR_DOOR_ROW = SHOP_INTERIOR_SIZE - 1;
+
+// Where each shop's door sits on Floro's own street — spread into a
+// loose town-square layout, well clear of Floro's existing east exit
+// back to the Great Plains (row 25, col 49).
+const FLORO_SHOP_DOORS: Record<(typeof FLORO_SHOP_MAPS)[number], { row: number; col: number }> = {
+  'Floro Blacksmith': { row: 10, col: 15 },
+  'Floro General Store': { row: 10, col: 35 },
+  'Floro Inn': { row: 20, col: 8 },
+  'Floro Bank': { row: 20, col: 42 },
+  'Floro Armorer': { row: 32, col: 15 },
+  'Floro Pet Salesman': { row: 32, col: 35 },
+  'Floro Jobs Office': { row: 42, col: 25 },
+};
+
+function shopInteriorDefinition(name: (typeof FLORO_SHOP_MAPS)[number]): MapDefinition {
+  const door = FLORO_SHOP_DOORS[name];
+  return {
+    name,
+    rows: SHOP_INTERIOR_SIZE,
+    cols: SHOP_INTERIOR_SIZE,
+    setting: 'inside',
+    terrain: 'stone',
+    exits: [
+      {
+        row: SHOP_INTERIOR_DOOR_ROW,
+        col: SHOP_INTERIOR_MID_COL,
+        direction: 'south',
+        toMap: 'Floro',
+        toRow: door.row,
+        toCol: door.col,
+      },
+    ],
+  };
+}
+
+function floroShopDoorExits(): MapExit[] {
+  return FLORO_SHOP_MAPS.map((name) => {
+    const door = FLORO_SHOP_DOORS[name];
+    return {
+      row: door.row,
+      col: door.col,
+      direction: 'north',
+      toMap: name,
+      toRow: SHOP_INTERIOR_DOOR_ROW,
+      toCol: SHOP_INTERIOR_MID_COL,
+    };
+  });
+}
 
 export const MAPS: Record<MapName, MapDefinition> = {
   'Great Plains': {
@@ -111,8 +169,8 @@ export const MAPS: Record<MapName, MapDefinition> = {
     cols: TOWN_SIZE,
     // Outside, but built of stone streets, not grass — costs the same to
     // cross as being indoors (see MOVEMENT_COST_FOR_TERRAIN) even though
-    // it isn't. Its buildings will eventually have their own "inside"
-    // shop interiors; the town square itself stays "outside".
+    // it isn't. The town square itself stays "outside"; its 7 shops (see
+    // FLORO_SHOP_MAPS) are each their own real "inside" interior map.
     setting: 'outside',
     terrain: 'stone',
     exits: [
@@ -124,8 +182,16 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toRow: GREAT_PLAINS_MID_ROW,
         toCol: 0,
       },
+      ...floroShopDoorExits(),
     ],
   },
+  'Floro Blacksmith': shopInteriorDefinition('Floro Blacksmith'),
+  'Floro General Store': shopInteriorDefinition('Floro General Store'),
+  'Floro Inn': shopInteriorDefinition('Floro Inn'),
+  'Floro Bank': shopInteriorDefinition('Floro Bank'),
+  'Floro Armorer': shopInteriorDefinition('Floro Armorer'),
+  'Floro Pet Salesman': shopInteriorDefinition('Floro Pet Salesman'),
+  'Floro Jobs Office': shopInteriorDefinition('Floro Jobs Office'),
   Kortho: {
     name: 'Kortho',
     rows: TOWN_SIZE,

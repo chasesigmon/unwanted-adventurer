@@ -41,6 +41,8 @@ export interface PlayerStatsUpdate {
   gold?: number;
   mimicableRaces?: string[];
   mimicForm?: string | null;
+  deathCount?: number;
+  condemned?: boolean;
 }
 
 @Injectable()

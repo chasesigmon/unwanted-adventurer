@@ -104,6 +104,24 @@ export class NetworkManager extends EventTarget {
     this.token = null;
   }
 
+  // Invalidates the session server-side (see auth.controller.ts's own
+  // /auth/logout) before tearing down the socket — best-effort: even if
+  // the HTTP call fails (server unreachable, token already expired), the
+  // client still disconnects and forgets its token locally either way.
+  async logout(): Promise<void> {
+    const token = this.token;
+    this.disconnectAndReset();
+    if (!token) return;
+    try {
+      await fetch(`${this.serverUrl}/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      /* best-effort — the local session is already torn down above */
+    }
+  }
+
   move(direction: Direction): Promise<MoveAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {

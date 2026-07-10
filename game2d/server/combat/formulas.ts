@@ -122,13 +122,42 @@ export function skillBonus(skillPercent: number): number {
   return Math.floor(skillPercent / 20);
 }
 
+// --- Armor Class (item 18) — every player race and monster starts here,
+// on top of dodge/parry/shield-block (which fully negate a hit by
+// chance) and resistance skills (their own flat reduction against a
+// monster class specifically). Matches the design note this was modeled
+// after: AC is deliberately the WEAKEST defense layer, a modest flat
+// mitigation rather than a wall, not something that scales into
+// relevance the way skills do. ---
+
+export const BASE_ARMOR_CLASS = 10;
+// Dexterity nudges AC a little too (on top of its existing dodge-chance
+// role) — a small, secondary effect, not double-dipping into a whole
+// second dodge-shaped mechanic.
+const ARMOR_CLASS_PER_DEXTERITY = 4;
+
+export function armorClassFor(dexterity: number, equipmentBonus: number): number {
+  return BASE_ARMOR_CLASS + Math.floor(dexterity / ARMOR_CLASS_PER_DEXTERITY) + equipmentBonus;
+}
+
+// 1 point of flat damage mitigation per 4 AC — base AC alone (10) blunts
+// 2 damage; a bone shield's +5 (see BONE_SHIELD_ARMOR_CLASS_BONUS) blunts
+// 3. Deliberately modest against a typical early hit (~6-10 damage), so
+// it softens without trivializing.
+const ARMOR_CLASS_DAMAGE_REDUCTION_DIVISOR = 4;
+export function armorDamageReduction(armorClass: number): number {
+  return Math.floor(armorClass / ARMOR_CLASS_DAMAGE_REDUCTION_DIVISOR);
+}
+
 export function punchDamage(
   attacker: CombatantStats,
   defender: CombatantStats,
   punchSkillPercent: number,
-  weaponBonus = 0
+  weaponBonus = 0,
+  defenderArmorClass: number = BASE_ARMOR_CLASS
 ): number {
-  return baseDamage(attacker.strength, attacker.level) + attributeBonus(attacker, defender) + skillBonus(punchSkillPercent) + weaponBonus;
+  const raw = baseDamage(attacker.strength, attacker.level) + attributeBonus(attacker, defender) + skillBonus(punchSkillPercent) + weaponBonus;
+  return Math.max(0, raw - armorDamageReduction(defenderArmorClass));
 }
 
 // Which equipment slot an item goes into, if any — items not listed here
@@ -158,6 +187,15 @@ export function weaponBonusFor(equipment: Record<string, string>, skills: Record
   const flat = WEAPON_DAMAGE_BONUS[weapon] ?? 0;
   const daggerBonus = weapon.toLowerCase().includes('dagger') ? skillBonus(skills[DAGGER_SKILL] ?? 0) : 0;
   return flat + daggerBonus;
+}
+
+// A bone shield's own AC bonus while equipped (item 19) — a torch fills
+// the same off-hand slot but isn't armor, same "only a real shield
+// counts" carve-out computeShieldBlockChance already makes below.
+export const BONE_SHIELD_ARMOR_CLASS_BONUS = 5;
+
+export function armorEquipmentBonus(equipment: Record<string, string>): number {
+  return equipment.shield === 'bone shield' ? BONE_SHIELD_ARMOR_CLASS_BONUS : 0;
 }
 
 // --- Dodge / parry / shield block (mirrors the text game's own
@@ -217,10 +255,19 @@ export function scaledSkillChance(learnedPercent: number): number {
 // Requires an actual shield equipped — no bare-handed version.
 // Requires an actual "bone shield" in the slot — a torch fills the same
 // slot (see EQUIPMENT_SLOT_FOR_ITEM) but isn't a shield and shouldn't
-// grant a block chance.
-export function computeShieldBlockChance(defenderSkills: Record<string, number>, defenderEquipment: Record<string, string>): number {
+// grant a block chance. Constitution nudges it a little further (item
+// 22) — a steadier stance holds a shield up more reliably — on top of
+// the skill-driven base chance.
+const SHIELD_BLOCK_CONSTITUTION_DIVISOR = 5;
+
+export function computeShieldBlockChance(
+  defenderSkills: Record<string, number>,
+  defenderEquipment: Record<string, string>,
+  defenderConstitution: number
+): number {
   if (defenderEquipment.shield !== 'bone shield') return 0;
-  return scaledSkillChance(defenderSkills[SHIELD_BLOCK_SKILL] ?? 0);
+  const constitutionBonus = Math.floor(defenderConstitution / SHIELD_BLOCK_CONSTITUTION_DIVISOR) / 100;
+  return Math.min(SCALED_SKILL_MAX_CHANCE, scaledSkillChance(defenderSkills[SHIELD_BLOCK_SKILL] ?? 0) + constitutionBonus);
 }
 
 // --- Hobgoblin-only: second/third attack (an extra swing per attack,
@@ -346,6 +393,12 @@ export function applyExpGain(state: LevelState, gained: number): LevelState {
 
 export const LEVEL_UP_ATTRIBUTE_BONUS = 1;
 export const LEVEL_UP_VITAL_BONUS = 10;
+// Constitution's own contribution to max hp (item 22) — applied
+// incrementally alongside LEVEL_UP_VITAL_BONUS whenever constitution
+// itself changes (level-up gains it, condeath's CON penalty — see
+// item 23 — removes it), so max hp always reflects current constitution
+// rather than being baked in once.
+export const HP_PER_CONSTITUTION = 5;
 
 // --- Experience rewards ---
 
@@ -357,8 +410,20 @@ export const LEVEL_UP_VITAL_BONUS = 10;
 // reward than a monster kill (see PLAYER_KILL_EXP_REWARD) — since it's a
 // straight multiple fed through this SAME formula, the ratio between
 // them holds at any level pairing, not just when levels happen to match.
+//
+// The reference ratio (victimLevel x RATIO_MULTIPLIER / killerLevel) was
+// originally *10, a direct port of the text game's own formula — but at
+// a matching level pairing that means baseReward x 10 per kill, which
+// against maxTnlForLevel's level x 100 requirement is only ~2 wild
+// goblins to reach level 2 (barely a fight, let alone a grind). Lowered
+// to *2.5 (item 21) so an early level takes a deliberate handful of
+// kills instead of being over almost immediately, while keeping the same
+// relative shape (still worth proportionally more/less as the level gap
+// changes).
+const EXP_RATIO_MULTIPLIER = 2.5;
+
 export function expGainFor(baseReward: number, killerLevel: number, victimLevel: number): number {
-  const ratio = (victimLevel * 10) / killerLevel;
+  const ratio = (victimLevel * EXP_RATIO_MULTIPLIER) / killerLevel;
   return Math.max(1, Math.round(baseReward * ratio));
 }
 

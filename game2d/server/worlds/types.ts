@@ -32,6 +32,7 @@ export interface PlayerState extends Location, Attributes {
   mimicForm: (Race | MonsterKind) | null;
   eatBrainsReadyAtTick: number;
   skillCooldowns: Record<string, number>;
+  deathCount: number;
 }
 
 export type MoveResult =

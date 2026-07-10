@@ -47,6 +47,7 @@ import {
   SKILL_GROWTH_CHANCE,
   LEVEL_UP_ATTRIBUTE_BONUS,
   LEVEL_UP_VITAL_BONUS,
+  HP_PER_CONSTITUTION,
   PLAYER_KILL_EXP_REWARD,
   punchDamage,
   expGainFor,
@@ -55,6 +56,9 @@ import {
   EQUIPMENT_SLOT_FOR_ITEM,
   EQUIPMENT_SLOTS,
   WEAPON_DAMAGE_BONUS,
+  BASE_ARMOR_CLASS,
+  armorClassFor,
+  armorEquipmentBonus,
   CONSUME_EXP_PER_ITEM,
   startingSkills,
   resistanceGrantForItem,
@@ -87,7 +91,7 @@ import type { Monster } from '../monsters/monster.js';
 import type { AppConfig } from '../config/configuration.js';
 import type { PlayerSnapshot, GameServer, GameSocket, CombatEventPayload, UseItemAck, RestState, BuyAck, EatBrainsAck, SacrificeAck, MoveAck } from '../../shared/types.js';
 import { TOWN_MAPS } from '../../shared/constants.js';
-import { emitsLight, TORCH_ITEM, isNightHour, isWithinLightRadius, isWithinShopReach } from '../../shared/lighting.js';
+import { emitsLight, TORCH_ITEM, timeOfDayLabel, isWithinLightRadius, isWithinShopReach } from '../../shared/lighting.js';
 import { MONSTER_KINDS } from '../../shared/constants.js';
 import type { Direction, MapName, MonsterClass, MonsterKind, Race } from '../../shared/constants.js';
 
@@ -135,14 +139,22 @@ const COMBAT_DISENGAGE_TICKS = 3;
 const TORCH_LIFETIME_MS = 15 * 60 * 1000;
 // A flat 30s interval (a setTimeout chain, not setInterval, purely so a
 // future tweak to re-introduce jitter would only touch scheduleStatTick)
-// heals hp/mana/movement by one shared random percent of each stat's own
-// max, the percent range depending on restState.
+// heals hp/mana by one shared random percent of each stat's own max, the
+// percent range depending on restState. Movement regenerates separately
+// (see MOVEMENT_REGEN_PERCENT below) at a flat (not randomized) percent —
+// its own pacing knob, distinct from hp/mana, since it's the resource the
+// per-step movement cost (see shared/maps.ts) drains.
 const HOURS_PER_DAY = 24;
 const STAT_TICK_MS = 30_000;
 const HEAL_PERCENT_RANGE: Record<RestState, [number, number]> = {
   awake: [7, 10],
   resting: [9, 12],
   sleeping: [10, 15],
+};
+const MOVEMENT_REGEN_PERCENT: Record<RestState, number> = {
+  awake: 8,
+  resting: 11,
+  sleeping: 15,
 };
 const STAT_TICK_FLAVOR: Record<RestState, string> = {
   awake: 'You catch your breath',
@@ -298,19 +310,21 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.scheduleStatTick();
   }
 
-  // One shared random percent (of each stat's own max) heals hp, mana,
-  // and movement together — the percent range depends on restState, same
-  // shape as the text game's own applyStatTick.
+  // A shared random percent (of each stat's own max) heals hp and mana
+  // together — the percent range depends on restState, same shape as the
+  // text game's own applyStatTick. Movement regenerates on its own flat
+  // (not randomized) percent instead (see MOVEMENT_REGEN_PERCENT).
   private applyStatTick(client: GameSocket): void {
     if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
 
     const [min, max] = HEAL_PERCENT_RANGE[client.data.restState];
     const percent = min + Math.random() * (max - min);
-    const healed = (current: number, statMax: number) => Math.min(statMax, current + Math.round((percent / 100) * statMax));
+    const healed = (current: number, statMax: number, healPercent: number) =>
+      Math.min(statMax, current + Math.round((healPercent / 100) * statMax));
 
-    const hp = healed(client.data.hp, client.data.maxHp);
-    const mana = healed(client.data.mana, client.data.maxMana);
-    const movement = healed(client.data.movement, client.data.maxMovement);
+    const hp = healed(client.data.hp, client.data.maxHp, percent);
+    const mana = healed(client.data.mana, client.data.maxMana, percent);
+    const movement = healed(client.data.movement, client.data.maxMovement, MOVEMENT_REGEN_PERCENT[client.data.restState]);
     if (hp === client.data.hp && mana === client.data.mana && movement === client.data.movement) return;
 
     client.data.hp = hp;
@@ -363,6 +377,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       mimicForm: client.data.mimicForm,
       eatBrainsReadyAtTick: client.data.eatBrainsReadyAtTick,
       skillCooldowns: client.data.skillCooldowns,
+      armorClass: armorClassFor(client.data.dexterity, armorEquipmentBonus(client.data.equipment)),
+      deathCount: client.data.deathCount,
     };
   }
 
@@ -420,6 +436,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         gold: client.data.gold,
         mimicableRaces: client.data.mimicableRaces,
         mimicForm: client.data.mimicForm,
+        deathCount: client.data.deathCount,
+        condemned: client.data.deathCount >= GameGateway.CONDEATH_LIMIT,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -464,7 +482,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       client.data.wisdom += LEVEL_UP_ATTRIBUTE_BONUS * levelsGained;
       client.data.dexterity += LEVEL_UP_ATTRIBUTE_BONUS * levelsGained;
       client.data.constitution += LEVEL_UP_ATTRIBUTE_BONUS * levelsGained;
-      client.data.maxHp += LEVEL_UP_VITAL_BONUS * levelsGained;
+      client.data.maxHp += LEVEL_UP_VITAL_BONUS * levelsGained + HP_PER_CONSTITUTION * LEVEL_UP_ATTRIBUTE_BONUS * levelsGained;
       client.data.maxMana += LEVEL_UP_VITAL_BONUS * levelsGained;
       client.data.maxMovement += LEVEL_UP_VITAL_BONUS * levelsGained;
       client.data.hp = client.data.maxHp;
@@ -543,7 +561,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { avoided: true, verb: dodged ? 'dodge' : 'parry', skill: dodged ? DODGE_SKILL : PARRY_SKILL };
     }
 
-    const blockChance = computeShieldBlockChance(defenderSkills, defenderEquipment);
+    const blockChance = computeShieldBlockChance(defenderSkills, defenderEquipment, defenderStats.constitution);
     const attemptingBlock = blockChance > 0;
     const blocked = attemptingBlock && Math.random() < blockChance;
     return { avoided: blocked, verb: blocked ? 'block' : undefined, skill: attemptingBlock ? SHIELD_BLOCK_SKILL : undefined };
@@ -694,7 +712,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const hasWeapon = attacker?.carriedItems.some((item) => item.toLowerCase().includes('dagger')) ?? false;
     const skillPercent = attacker ? (attacker.skills[hasWeapon ? DAGGER_SKILL : PUNCH_SKILL] ?? 0) : 0;
     const weaponBonus = hasWeapon ? (WEAPON_DAMAGE_BONUS['bone dagger'] ?? 0) : 0;
-    const rawDamage = punchDamage(attackerStats, this.attackerStatsFor(client), skillPercent, weaponBonus);
+    const defenderAC = armorClassFor(client.data.dexterity, armorEquipmentBonus(client.data.equipment));
+    const rawDamage = punchDamage(attackerStats, this.attackerStatsFor(client), skillPercent, weaponBonus, defenderAC);
     const reduction = monsterClass ? monsterDamageReduction(monsterClass, client.data.skills) : 0;
     const damage = Math.max(0, rawDamage - reduction);
     const verb = hasWeapon ? 'stabs' : 'punches';
@@ -711,6 +730,39 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return died
       ? `The ${attackerLabel} ${verb} you back for ${damage} damage, defeating you!`
       : `The ${attackerLabel} ${verb} you back for ${damage} damage.`;
+  }
+
+  // Condeath (item 23) — a permanent-death "lives" system, separate from
+  // the ordinary respawn every death already triggers. Every death counts
+  // (whether from a monster counter-attack or a PvP kill); every 5th
+  // costs a point of constitution (and the hp that comes with it, see
+  // HP_PER_CONSTITUTION); at the 65th, the character is condemned
+  // outright — locked out of ever logging back in (see handleConnection's
+  // own check) without touching the account/username itself.
+  private static readonly CONDEATH_LIMIT = 65;
+  private static readonly CONDEATH_CON_PENALTY_EVERY = 5;
+
+  private applyCondeathPenalty(client: GameSocket): void {
+    client.data.deathCount += 1;
+
+    if (client.data.deathCount % GameGateway.CONDEATH_CON_PENALTY_EVERY === 0 && client.data.constitution > 1) {
+      client.data.constitution -= 1;
+      client.data.maxHp = Math.max(10, client.data.maxHp - HP_PER_CONSTITUTION);
+      client.data.hp = Math.min(client.data.hp, client.data.maxHp);
+      this.worldManager.updateState(client.data.username, { constitution: client.data.constitution, maxHp: client.data.maxHp });
+      this.systemMessage(client, 'The weight of your deaths wears on you — you feel permanently weaker (-1 constitution).');
+    }
+
+    if (client.data.deathCount >= GameGateway.CONDEATH_LIMIT) {
+      void this.persistStats(client).then(() => {
+        client.emit('session:kicked', {
+          message: `You have died for the ${client.data.deathCount}th time and met CONDEATH — this character can never be played again.`,
+        });
+        client.disconnect(true);
+      });
+      return;
+    }
+    void this.persistStats(client);
   }
 
   // Resets a defeated player back to the starting map at full hp — shared
@@ -737,6 +789,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       void targetClient.leave(previousMap);
       void targetClient.join(targetClient.data.map);
     }
+    this.applyCondeathPenalty(targetClient);
     targetClient.emit('sync', { player: this.snapshotFor(targetClient) });
   }
 
@@ -751,6 +804,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn('[db] could not load player doc on connect:', message);
+    }
+
+    // Condeath (item 23) — a condemned character can never log back in.
+    // The row (and its account) is never deleted, just permanently
+    // locked; same "kick with an explanation" mechanism a duplicate
+    // login already uses elsewhere (see ActiveConnectionsService).
+    if (doc?.condemned) {
+      client.emit('session:kicked', {
+        message: `${username} has met CONDEATH after ${doc.deathCount} deaths and can never be played again.`,
+      });
+      client.disconnect(true);
+      return;
     }
 
     const startingMap = getMap(STARTING_MAP);
@@ -788,6 +853,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.gold = doc?.gold ?? STARTING_GOLD;
     client.data.mimicableRaces = (doc?.mimicableRaces ?? []) as (Race | MonsterKind)[];
     client.data.mimicForm = (doc?.mimicForm ?? null) as (Race | MonsterKind) | null;
+    client.data.deathCount = doc?.deathCount ?? 0;
     // Never persisted — a fresh connection always starts awake, same as
     // the text game's own restState.
     client.data.restState = 'awake';
@@ -832,6 +898,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       mimicForm: client.data.mimicForm,
       eatBrainsReadyAtTick: client.data.eatBrainsReadyAtTick,
       skillCooldowns: client.data.skillCooldowns,
+      deathCount: client.data.deathCount,
     });
     void client.join(client.data.map);
 
@@ -1087,8 +1154,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         Math.abs(targetLoc.row - client.data.row) + Math.abs(targetLoc.col - client.data.col) === 1;
 
       if (!inRange) {
-        session.missedTicks += 1;
-        if (session.missedTicks >= COMBAT_DISENGAGE_TICKS) this.playerCombat.delete(username);
+        // A monster target that's STILL actively chasing this exact
+        // player (see MonsterManagerService.wanderAll's own aggro-based
+        // stepping) is a fight still in progress, not a lapsed one — its
+        // own AGGRO_TIMEOUT_TICKS already governs how long it keeps
+        // trying, so COMBAT_DISENGAGE_TICKS only applies here for
+        // npc/player targets (nothing chases you back) or once the
+        // monster itself gives up.
+        const monsterStillChasing = session.targetKind === 'monster' && this.monsterManager.isAggroedOnto(session.targetId, username);
+        if (!monsterStillChasing) {
+          session.missedTicks += 1;
+          if (session.missedTicks >= COMBAT_DISENGAGE_TICKS) this.playerCombat.delete(username);
+        }
         continue;
       }
       session.missedTicks = 0;
@@ -1127,13 +1204,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
     const weaponBonus = weaponBonusFor(client.data.equipment, client.data.skills);
+    // Monsters carry weapon/shield-shaped loot but never "wear" it for AC
+    // purposes — just their own base+dexterity AC (item 18).
+    const monsterAC = armorClassFor(monster.dexterity, 0);
 
     let totalDamage = 0;
     let died = false;
     let currentHp = monster.hp;
 
     if (skillName === BONE_FINGER_STRIKE_SKILL) {
-      const basePunchDamage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus);
+      const basePunchDamage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus, monsterAC);
       const boneSkillPercent = client.data.skills[BONE_FINGER_STRIKE_SKILL] ?? STARTING_SKILL_PERCENT;
       const swingDamage = computeBoneFingerStrikeDamage(basePunchDamage, boneSkillPercent);
       const result = this.monsterManager.applyDamage(monster.id, swingDamage);
@@ -1147,7 +1227,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     } else {
       const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
       for (let i = 0; i < swings; i++) {
-        const swingDamage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus) + enhancedBonus;
+        const swingDamage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus, monsterAC) + enhancedBonus;
         const result = this.monsterManager.applyDamage(monster.id, swingDamage);
         if (!result) break;
         totalDamage += swingDamage;
@@ -1264,6 +1344,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
     const growthMessages: string[] = [];
+    // A dummy's base AC only — it doesn't equip anything (item 18).
+    const npcAC = armorClassFor(STARTING_ATTRIBUTE, 0);
 
     // The dummy has no equipment/learned skills of its own to defend with
     // — it can still dodge (a flat, skill-less roll), but never parries
@@ -1278,7 +1360,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         this.attackerStatsFor(client),
         defenderStats,
         attackSkillPercent,
-        weaponBonusFor(client.data.equipment, client.data.skills)
+        weaponBonusFor(client.data.equipment, client.data.skills),
+        npcAC
       );
       const boneSkillPercent = client.data.skills[BONE_FINGER_STRIKE_SKILL] ?? STARTING_SKILL_PERCENT;
       const swingDamage = computeBoneFingerStrikeDamage(basePunchDamage, boneSkillPercent);
@@ -1297,8 +1380,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
       for (let i = 0; i < swings; i++) {
         const swingDamage =
-          punchDamage(this.attackerStatsFor(client), defenderStats, attackSkillPercent, weaponBonusFor(client.data.equipment, client.data.skills)) +
-          enhancedBonus;
+          punchDamage(
+            this.attackerStatsFor(client),
+            defenderStats,
+            attackSkillPercent,
+            weaponBonusFor(client.data.equipment, client.data.skills),
+            npcAC
+          ) + enhancedBonus;
         const defense = this.resolveDefense(defenderStats, {}, {}, this.attackerStatsFor(client));
         if (!defense.avoided) {
           totalDamage += swingDamage;
@@ -1391,6 +1479,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
     const growthMessages: string[] = [];
+    const defenderAC = armorClassFor(targetClient.data.dexterity, armorEquipmentBonus(targetClient.data.equipment));
 
     let damage = 0;
     let avoidedVerb: string | undefined;
@@ -1400,7 +1489,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         this.attackerStatsFor(client),
         defenderStats,
         attackSkillPercent,
-        weaponBonusFor(client.data.equipment, client.data.skills)
+        weaponBonusFor(client.data.equipment, client.data.skills),
+        defenderAC
       );
       const boneSkillPercent = client.data.skills[BONE_FINGER_STRIKE_SKILL] ?? STARTING_SKILL_PERCENT;
       const swingDamage = computeBoneFingerStrikeDamage(basePunchDamage, boneSkillPercent);
@@ -1420,8 +1510,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
       for (let i = 0; i < swings; i++) {
         const swingDamage =
-          punchDamage(this.attackerStatsFor(client), defenderStats, attackSkillPercent, weaponBonusFor(client.data.equipment, client.data.skills)) +
-          enhancedBonus;
+          punchDamage(
+            this.attackerStatsFor(client),
+            defenderStats,
+            attackSkillPercent,
+            weaponBonusFor(client.data.equipment, client.data.skills),
+            defenderAC
+          ) + enhancedBonus;
         const defense = this.resolveDefense(defenderStats, targetClient.data.skills, targetClient.data.equipment, this.attackerStatsFor(client));
         if (defense.skill) {
           const defenseGrowth = this.maybeGrowSkill(targetClient, defense.skill);
@@ -1524,6 +1619,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       attackerExp: client.data.exp,
       attackerHp: client.data.hp,
       attackerMaxHp: client.data.maxHp,
+      attackerSkills: client.data.skills,
       ...rest,
     });
   }
@@ -1712,6 +1808,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (corpse.killedBy !== client.data.username) {
       return { ok: false, message: "You didn't land the killing blow on this corpse." };
     }
+    if (corpse.kind === 'skeleton' || corpse.kind === 'wild skeleton') {
+      return { ok: false, message: 'A skull has no brains left to eat.' };
+    }
     if (this.currentTick < client.data.eatBrainsReadyAtTick) {
       const ticksLeft = client.data.eatBrainsReadyAtTick - this.currentTick;
       return { ok: false, message: `Eat Brains isn't ready yet (${ticksLeft} more world tick${ticksLeft === 1 ? '' : 's'}).` };
@@ -1740,6 +1839,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxMana: client.data.maxMana,
       movement: client.data.movement,
       maxMovement: client.data.maxMovement,
+      eatBrainsReadyAtTick: client.data.eatBrainsReadyAtTick,
       message: `You eat the brains, restoring ${EAT_BRAINS_HEAL_PERCENT}% of your hp/mana/movement.`,
     };
   }
@@ -1868,7 +1968,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
   private handleTimeCommand(client: GameSocket): void {
     const hour = String(this.worldHour).padStart(2, '0');
-    const label = isNightHour(this.worldHour) ? 'night' : 'day';
+    const label = timeOfDayLabel(this.worldHour);
     this.systemMessage(client, `It is currently ${hour}:00 (${label}).`);
   }
 

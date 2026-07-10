@@ -53,6 +53,16 @@ export class MonsterManagerService {
     this.aggro.set(monsterId, { targetUsername, lastContactTick: tick });
   }
 
+  // Lets GameGateway's combatTick tell "this player's own combat session
+  // is out of range because the monster hasn't caught up YET" apart from
+  // "this fight is actually over" — a monster still actively chasing
+  // this exact player shouldn't have the player's session disengage out
+  // from under it (item 7's bug: the monster arrived, found no session
+  // to act on, and just wandered off again).
+  isAggroedOnto(monsterId: string, targetUsername: string): boolean {
+    return this.aggro.get(monsterId)?.targetUsername === targetUsername;
+  }
+
   clearAggro(monsterId: string): void {
     this.aggro.delete(monsterId);
   }

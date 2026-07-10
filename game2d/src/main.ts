@@ -62,7 +62,7 @@ import {
   isAlwaysLit,
   torchWallPositionsFor,
 } from '../shared/lighting.js';
-import { MAP_NAMES, MONSTER_KINDS } from '../shared/constants.js';
+import { MAP_NAMES, MONSTER_KINDS, FLORO_SHOP_MAPS, whereLabelFor, townGroupFor } from '../shared/constants.js';
 import type { MapName, Race, Direction, MonsterKind } from '../shared/constants.js';
 import type {
   PlayerSnapshot,
@@ -95,6 +95,63 @@ const SWORD_CURSOR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" hei
   </g>
 </svg>`;
 const SWORD_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(SWORD_CURSOR_SVG)}") 12 12, pointer`;
+
+// A custom-driven tooltip (item 4) instead of the native `title`
+// attribute — description tooltips (skill names, inventory items,
+// character-sheet stats) weren't reliably appearing at all, likely
+// because a native tooltip needs the browser's own ~1-1.5s hover delay
+// with the mouse held completely still, which reads as "there's no
+// tooltip" in ordinary play. Shown near the cursor with a short,
+// deliberate delay we control instead.
+const customTooltip = document.createElement('div');
+customTooltip.id = 'custom-tooltip';
+customTooltip.hidden = true;
+document.body.appendChild(customTooltip);
+
+const TOOLTIP_SHOW_DELAY_MS = 300;
+let tooltipShowTimer: ReturnType<typeof setTimeout> | null = null;
+
+function positionTooltip(x: number, y: number): void {
+  const offset = 14;
+  const rect = customTooltip.getBoundingClientRect();
+  let left = x + offset;
+  let top = y + offset;
+  if (left + rect.width > window.innerWidth) left = x - rect.width - offset;
+  if (top + rect.height > window.innerHeight) top = y - rect.height - offset;
+  customTooltip.style.left = `${Math.max(0, left)}px`;
+  customTooltip.style.top = `${Math.max(0, top)}px`;
+}
+
+function hideCustomTooltip(): void {
+  if (tooltipShowTimer) {
+    clearTimeout(tooltipShowTimer);
+    tooltipShowTimer = null;
+  }
+  customTooltip.hidden = true;
+}
+
+// `getText` is called fresh on every hover (not captured once) so a
+// dynamic tooltip (e.g. Eat Brains' remaining-cooldown count) stays
+// accurate without needing its own bespoke hover wiring.
+function attachTooltip(el: HTMLElement, getText: () => string | undefined | null): void {
+  el.addEventListener('mouseenter', (e) => {
+    const x = (e as MouseEvent).clientX;
+    const y = (e as MouseEvent).clientY;
+    if (tooltipShowTimer) clearTimeout(tooltipShowTimer);
+    tooltipShowTimer = setTimeout(() => {
+      const text = getText();
+      if (!text) return;
+      customTooltip.textContent = text;
+      customTooltip.hidden = false;
+      positionTooltip(x, y);
+    }, TOOLTIP_SHOW_DELAY_MS);
+  });
+  el.addEventListener('mousemove', (e) => {
+    if (customTooltip.hidden) return;
+    positionTooltip((e as MouseEvent).clientX, (e as MouseEvent).clientY);
+  });
+  el.addEventListener('mouseleave', hideCustomTooltip);
+}
 
 const CHAR_SCALE = 0.275;
 const CORPSE_SCALE = 0.35;
@@ -138,6 +195,7 @@ const statusMv = document.getElementById('status-mv') as HTMLSpanElement;
 const statusExp = document.getElementById('status-exp') as HTMLSpanElement;
 const statusGold = document.getElementById('status-gold') as HTMLSpanElement;
 const worldLabel = document.getElementById('world-label') as HTMLDivElement;
+const logoutBtn = document.getElementById('logout-btn') as HTMLButtonElement;
 const targetPanel = document.getElementById('target-panel') as HTMLDivElement;
 const targetName = document.getElementById('target-name') as HTMLSpanElement;
 const targetHpFill = document.getElementById('target-hp-fill') as HTMLDivElement;
@@ -153,10 +211,24 @@ const darkFogOverlay = document.getElementById('dark-fog-overlay') as HTMLDivEle
 // WorldScene.useTargetedSkill, the single place that interprets what
 // each skill name actually does.
 
+// A shared red for every "Attack" (A-icon) skill (item 9) — they already
+// collapse to one action-bar slot (see isAttackSkill), so grouping their
+// color the same way reads as "this is the physical-attack type" at a
+// glance, not just a coincidence of a hash landing on red.
+const ATTACK_SKILL_COLOR = 'hsl(0, 55%, 40%)';
+// A shared blue for every defensive skill (item 10) — dodge/parry/shield
+// block (avoid-the-hit) and the two resistance skills (reduce-the-hit),
+// grouped together as "defensive" even though they work differently.
+const DEFENSIVE_SKILL_COLOR = 'hsl(210, 55%, 40%)';
+const DEFENSIVE_SKILLS = new Set([DODGE_SKILL, PARRY_SKILL, SHIELD_BLOCK_SKILL, LESSER_NORMAL_MONSTER_RESISTANCE, LESSER_UNDEAD_MONSTER_RESISTANCE]);
+
 // A deterministic (not random) color per skill name, so the same skill
 // always gets the same swatch across the Skills modal and the action
-// bar without a hand-maintained color table.
+// bar without a hand-maintained color table — except the attack and
+// defensive groups above, which intentionally share one color each.
 function skillIconColor(name: string): string {
+  if (isAttackSkill(name)) return ATTACK_SKILL_COLOR;
+  if (DEFENSIVE_SKILLS.has(name)) return DEFENSIVE_SKILL_COLOR;
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
   return `hsl(${hash % 360}, 55%, 35%)`;
@@ -170,9 +242,18 @@ function skillIconColor(name: string): string {
 // selected; bone finger strike and glare are real separate active skills
 // (see game.gateway.ts's handleUseSkill) — glare no longer applies
 // automatically on every hit a skeleton lands (item 14), it has to be
-// deliberately queued like this.
+// deliberately queued like this. Mimic/revert (item 5) are "active" in a
+// different sense — no combat target at all, just a chat command under
+// the hood (see useTargetedSkill's own special-casing for these two).
 function isUsableSkill(skillName: string): boolean {
-  return skillName === PUNCH_SKILL || skillName === DAGGER_SKILL || skillName === BONE_FINGER_STRIKE_SKILL || skillName === GLARE_SKILL;
+  return (
+    skillName === PUNCH_SKILL ||
+    skillName === DAGGER_SKILL ||
+    skillName === BONE_FINGER_STRIKE_SKILL ||
+    skillName === GLARE_SKILL ||
+    skillName === MIMIC_SKILL ||
+    skillName === REVERT_SKILL
+  );
 }
 
 // Punch and dagger are the same underlying action from the player's own
@@ -242,29 +323,38 @@ function createCooldownOverlay(skillName: string): HTMLDivElement {
   return overlay;
 }
 
-function updateCooldownOverlay(overlay: HTMLElement): void {
-  const skillName = overlay.dataset.skill;
-  if (!skillName) {
-    overlay.style.background = 'transparent';
-    return;
-  }
-  const fraction = cooldownFraction(skillName);
+// Shared by the Skills modal/action bar (wall-clock skill cooldowns) AND
+// the Eat Brains button (world-tick cooldown, see eatBrainsCooldownFraction)
+// — anything that can express "how much of the cooldown is left, 0 to 1"
+// gets the same dark radial wipe.
+function applyCooldownOverlayFraction(overlay: HTMLElement, fraction: number): void {
   if (fraction <= 0) {
     overlay.style.background = 'transparent';
     return;
   }
-  const deg = (fraction * 360).toFixed(1);
+  const deg = (Math.min(1, fraction) * 360).toFixed(1);
   overlay.style.background = `conic-gradient(rgba(0, 0, 0, 0.75) ${deg}deg, transparent ${deg}deg)`;
+}
+
+function updateCooldownOverlay(overlay: HTMLElement): void {
+  const skillName = overlay.dataset.skill;
+  applyCooldownOverlayFraction(overlay, skillName ? cooldownFraction(skillName) : 0);
 }
 
 // A periodic sweep (rather than tracking element references) — finds
 // whatever cooldown overlays currently exist in the DOM (action-bar
 // slots always; Skills modal icons only while it's open) and updates
-// each from its own `data-skill` tag.
+// each from its own `data-skill` tag. Scoped to `[data-skill]`
+// specifically so it never touches the Eat Brains button's own overlay
+// (see updateEatBrainsButton, called separately below) — that one's
+// world-tick-based, not a shared/skills.ts SKILL_COOLDOWN_MS entry.
 function refreshCooldownOverlays(): void {
-  document.querySelectorAll<HTMLElement>('.cooldown-overlay').forEach(updateCooldownOverlay);
+  document.querySelectorAll<HTMLElement>('.cooldown-overlay[data-skill]').forEach(updateCooldownOverlay);
 }
-setInterval(refreshCooldownOverlays, 250);
+setInterval(() => {
+  refreshCooldownOverlays();
+  updateEatBrainsButton();
+}, 250);
 
 function renderActionSlot(index: number): void {
   // Always called with an index this same module just created below, so
@@ -463,9 +553,19 @@ let worldTimeKnown = false;
 // cooldowns in — lets updateEatBrainsButton gray the button out instead
 // of it just failing silently when clicked mid-cooldown.
 let currentWorldTick = 0;
+// When the last 'worldTime' broadcast actually arrived — combined with
+// WORLD_STAT_TICK_MS below, lets the Eat Brains cooldown wipe (item 8)
+// interpolate smoothly BETWEEN ticks instead of only visibly changing
+// once every 30s when a fresh tick lands.
+let lastWorldTickAt = Date.now();
+// Must match game.gateway.ts's own STAT_TICK_MS — the world tick is now
+// a flat interval (no longer randomized 30-40s), so this estimate is
+// exact barring client/server clock drift.
+const WORLD_STAT_TICK_MS = 30_000;
 function updateWorldHour(hour: number, tick: number): void {
   currentWorldHour = hour;
   currentWorldTick = tick;
+  lastWorldTickAt = Date.now();
   worldTimeKnown = true;
   updateDaynightOverlay(hour);
   updateEatBrainsButton();
@@ -491,8 +591,7 @@ function showDarkFog(screenX: number, screenY: number, radiusPx: number): void {
 const logPanel = document.getElementById('log-panel') as HTMLDivElement;
 const logToggle = document.getElementById('log-toggle') as HTMLButtonElement;
 const logResizeHandle = document.getElementById('log-resize-handle') as HTMLDivElement;
-const combatLogEl = document.getElementById('combat-log') as HTMLDivElement;
-const chatLogEl = document.getElementById('chat-log') as HTMLDivElement;
+const logView = document.getElementById('log-view') as HTMLDivElement;
 const chatInput = document.getElementById('chat-input') as HTMLInputElement;
 const logTabCombatBtn = document.getElementById('log-tab-combat') as HTMLButtonElement;
 const logTabChatBtn = document.getElementById('log-tab-chat') as HTMLButtonElement;
@@ -549,37 +648,45 @@ const LOG_PANEL_MIN_HEIGHT = 120;
   logResizeHandle.addEventListener('pointercancel', stopDragging);
 })();
 
-function appendLogLine(container: HTMLDivElement, text: string, kind?: 'level-up' | 'death'): void {
+// One shared chronological stream (item 3) — combat and chat lines are
+// appended to the SAME container in the order they actually happened,
+// each tagged with which source it came from; the Combat/Chat tab
+// buttons FILTER which tagged lines are visible (via CSS, see
+// updateLogTabsView) rather than each keeping its own separate scrollback.
+// Splitting them into two boxes read as "unnatural" — a system message
+// could land in the chat pane while an unrelated combat line that
+// happened AFTER it showed up in a totally different box above it.
+function appendLogLine(sourceKind: 'combat' | 'chat', text: string, kind?: 'level-up' | 'death'): void {
   const line = document.createElement('div');
-  line.className = kind ? `log-line ${kind}` : 'log-line';
+  line.className = kind ? `log-line log-line-${sourceKind} ${kind}` : `log-line log-line-${sourceKind}`;
   line.textContent = text;
-  container.appendChild(line);
-  while (container.childElementCount > COMBAT_LOG_MAX_LINES) {
-    container.removeChild(container.firstChild as ChildNode);
+  logView.appendChild(line);
+  while (logView.childElementCount > COMBAT_LOG_MAX_LINES) {
+    logView.removeChild(logView.firstChild as ChildNode);
   }
-  container.scrollTop = container.scrollHeight;
+  logView.scrollTop = logView.scrollHeight;
 }
 
 function logCombatMessage(message: string, kind?: 'level-up' | 'death'): void {
-  appendLogLine(combatLogEl, message, kind);
+  appendLogLine('combat', message, kind);
 }
 
 function logChatMessage(username: string, message: string): void {
-  appendLogLine(chatLogEl, `${username}: ${message}`);
+  appendLogLine('chat', `${username}: ${message}`);
 }
 
 // Combat and Chat are independently toggleable (item 14) — either or
 // both can be visible, but turning the last visible one off is refused
-// (at least one must always stay up). Replaces the old mutually-exclusive
-// switchLogTab.
+// (at least one must always stay up). Filtering (not separate storage)
+// is what makes item 3's single fluid ordering possible.
 let combatTabVisible = true;
 let chatTabVisible = false;
 
 function updateLogTabsView(): void {
   logTabCombatBtn.classList.toggle('active', combatTabVisible);
   logTabChatBtn.classList.toggle('active', chatTabVisible);
-  combatLogEl.hidden = !combatTabVisible;
-  chatLogEl.hidden = !chatTabVisible;
+  logPanel.classList.toggle('hide-combat', !combatTabVisible);
+  logPanel.classList.toggle('hide-chat', !chatTabVisible);
   // The chat input only makes sense while the chat pane itself is
   // visible — hiding the Chat tab hides its input along with it.
   if (!chatTabVisible) chatInput.hidden = true;
@@ -631,15 +738,19 @@ function openChatInput(): void {
   chatInput.hidden = false;
   chatInput.focus();
 }
-// Pressing "/" does the same, but also pre-fills the "/" character (item
-// 9) — a player pressing it almost always means to type a command, so
-// it starts the input exactly where they'd type it themselves anyway.
-function openChatInputWithSlash(): void {
+// Pre-fills arbitrary text instead of leaving the chat box empty — used
+// both by the "/" shortcut (item 9, just the slash) and by the action
+// bar's mimic skill (item 5, "/mimic " — it needs a target name typed in,
+// unlike revert which takes none and fires immediately).
+function openChatInputWithText(text: string): void {
   setLogTabVisible('chat', true);
   chatInput.hidden = false;
-  chatInput.value = '/';
+  chatInput.value = text;
   chatInput.focus();
   chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+}
+function openChatInputWithSlash(): void {
+  openChatInputWithText('/');
 }
 chatInput.addEventListener('focus', () => {
   chatInputFocused = true;
@@ -700,6 +811,7 @@ const corpseEatBrainsBtn = document.getElementById('corpse-eat-brains') as HTMLB
 const corpseSacrificeBtn = document.getElementById('corpse-sacrifice') as HTMLButtonElement;
 const shopModal = document.getElementById('shop-modal') as HTMLDivElement;
 const shopModalTitle = document.getElementById('shop-modal-title') as HTMLHeadingElement;
+const shopGreeting = document.getElementById('shop-greeting') as HTMLDivElement;
 const shopGoldLine = document.getElementById('shop-gold-line') as HTMLDivElement;
 const shopItemList = document.getElementById('shop-item-list') as HTMLUListElement;
 const targetInfoModal = document.getElementById('target-info-modal') as HTMLDivElement;
@@ -728,6 +840,17 @@ const ALL_MODALS = [
 // sprites); this is purely the display-side profile.
 let myProfile: PlayerSnapshot | null = null;
 let inputCaptured = false;
+
+// These three don't visually obstruct the map and have no text input of
+// their own, so movement stays usable while they're open (item 15) — a
+// player can browse Skills or Inventory while still walking around.
+// Every OTHER modal (corpse/shop/map/target-info/autopilot's own text
+// prompt/character sheet) still blocks movement as before.
+const MOVEMENT_PASSTHROUGH_MODALS = [inventoryModal, equipmentModal, skillsModal];
+
+function isMovementBlocked(): boolean {
+  return chatInputFocused || ALL_MODALS.some((m) => !m.hidden && !MOVEMENT_PASSTHROUGH_MODALS.includes(m));
+}
 
 function updateInputCaptured(): void {
   inputCaptured = chatInputFocused || ALL_MODALS.some((m) => !m.hidden);
@@ -762,7 +885,7 @@ function appendStatRow(container: HTMLDivElement, label: string, value: string |
   // whatever a bare text node would otherwise pick up (an I-beam, in
   // most browsers, since it reads as selectable text).
   if (description) {
-    labelEl.title = description;
+    attachTooltip(labelEl, () => description);
     labelEl.style.cursor = 'help';
   } else {
     labelEl.style.cursor = 'default';
@@ -779,10 +902,15 @@ const CHAR_SHEET_STAT_DESCRIPTIONS: Record<string, string> = {
   Strength: 'Increases your base melee damage and your parry chance.',
   Intelligence: 'No mechanical effect yet — reserved for future spellcasting.',
   Wisdom: 'No mechanical effect yet — reserved for future use.',
-  Dexterity: 'Increases your dodge chance.',
-  Constitution: 'No mechanical effect yet — reserved for future use.',
+  Dexterity: 'Increases your dodge chance and your Armor Class a little.',
+  Constitution: 'Increases your max hp and (with a shield equipped) your shield-block chance.',
   'Consumed Exp': 'A count of body parts you have consumed (+5 each). Goblins reach Hobgoblin evolution at 300.',
+  'Armor Class': 'A base of 10, plus a small dexterity bonus and +5 while a bone shield is equipped. Flatly reduces incoming damage a little on every hit that lands.',
+  Deaths: 'Every death (from any cause) counts here. Every 5th costs 1 constitution permanently. At 65, CONDEATH — this character can never be played again.',
 };
+
+// Must match game.gateway.ts's own GameGateway.CONDEATH_LIMIT.
+const CONDEATH_LIMIT_CLIENT = 65;
 
 function renderCharSheet(): void {
   if (!myProfile) return;
@@ -801,7 +929,9 @@ function renderCharSheet(): void {
     ['Wisdom', myProfile.wisdom],
     ['Dexterity', myProfile.dexterity],
     ['Constitution', myProfile.constitution],
+    ['Armor Class', myProfile.armorClass],
     ['Consumed Exp', myProfile.consumeExp],
+    ['Deaths', `${myProfile.deathCount}/${CONDEATH_LIMIT_CLIENT}`],
   ];
   for (const [label, value] of rows) appendStatRow(charSheetBody, label, value, CHAR_SHEET_STAT_DESCRIPTIONS[label]);
 }
@@ -840,7 +970,7 @@ function renderSkillRow(skillName: string, valueText: string, notAcquired: boole
   if (usable) {
     icon.draggable = true;
     icon.classList.add('draggable');
-    icon.title = 'Drag to the action bar (or double-click) to use on your selected target';
+    attachTooltip(icon, () => 'Drag to the action bar (or double-click) to use on your selected target');
     icon.addEventListener('dragstart', (e) => {
       e.dataTransfer?.setData('text/plain', skillName);
     });
@@ -867,10 +997,9 @@ function renderSkillRow(skillName: string, valueText: string, notAcquired: boole
   const nameSpan = document.createElement('span');
   nameSpan.textContent = skillName;
   // Hovering the NAME (not the drag-handle icon) shows a description
-  // tooltip (item 16) — the native `title` attribute is a small,
-  // no-component-needed tooltip; `cursor: help` signals "more info here"
-  // distinctly from the icon's own grab/default cursor.
-  nameSpan.title = SKILL_DESCRIPTIONS[skillName] ?? '';
+  // tooltip (item 16) — `cursor: help` signals "more info here" distinctly
+  // from the icon's own grab/default cursor.
+  attachTooltip(nameSpan, () => SKILL_DESCRIPTIONS[skillName]);
   nameSpan.style.cursor = 'help';
 
   labelEl.appendChild(icon);
@@ -994,7 +1123,7 @@ function renderInventory(): void {
     const li = document.createElement('li');
     li.textContent = indices.length > 1 ? `${item} x${indices.length}` : item;
     li.className = 'inventory-item';
-    li.title = itemTooltip(item);
+    attachTooltip(li, () => itemTooltip(item));
     // Every group has at least one index (it's seeded with one on
     // creation above), so this is always defined.
     li.addEventListener('click', () => useInventoryItem(indices[0]!));
@@ -1057,17 +1186,63 @@ let currentCorpseItems: string[] = [];
 let currentCorpseKind: string | undefined;
 let currentCorpseKilledBy: string | undefined;
 
+// Must match game.gateway.ts's own EAT_BRAINS_COOLDOWN_TICKS — needed
+// client-side purely to size the cooldown wipe's denominator (item 8),
+// since the server only ever tells us the target tick, not the original
+// cooldown length.
+const EAT_BRAINS_COOLDOWN_TICKS_CLIENT = 4;
+
+function eatBrainsTicksRemaining(): number {
+  if (!myProfile || !worldTimeKnown) return 0;
+  return Math.max(0, myProfile.eatBrainsReadyAtTick - currentWorldTick);
+}
+
+// Interpolates BETWEEN world ticks using how long ago the last one
+// actually landed — the tick itself is a flat WORLD_STAT_TICK_MS apart
+// now, so this is exact barring clock drift, and gives the wipe smooth
+// per-frame motion instead of only visibly changing once every 30s.
+function eatBrainsMsRemaining(): number {
+  const ticksLeft = eatBrainsTicksRemaining();
+  if (ticksLeft <= 0) return 0;
+  const elapsedSinceLastTick = Date.now() - lastWorldTickAt;
+  return Math.max(0, (ticksLeft - 1) * WORLD_STAT_TICK_MS + (WORLD_STAT_TICK_MS - elapsedSinceLastTick));
+}
+
+const eatBrainsCooldownOverlay = document.createElement('div');
+eatBrainsCooldownOverlay.className = 'cooldown-overlay';
+corpseEatBrainsBtn.appendChild(eatBrainsCooldownOverlay);
+attachTooltip(corpseEatBrainsBtn, () => {
+  const ticksLeft = eatBrainsTicksRemaining();
+  if (ticksLeft <= 0) return '';
+  return `Eat Brains is recharging — ${ticksLeft} more world tick${ticksLeft === 1 ? '' : 's'} (~${Math.ceil(eatBrainsMsRemaining() / 1000)}s).`;
+});
+
+// A skull has no brains left to eat (item 12) — applies to both a
+// player skeleton's own corpse and a wild skeleton's, regardless of who
+// landed the killing blow.
+function corpseHasBrains(kind: string | undefined): boolean {
+  return kind !== 'skeleton' && kind !== 'wild skeleton';
+}
+
 function updateEatBrainsButton(): void {
-  const canEatBrains = myProfile?.race === 'zombie' && currentCorpseKilledBy !== undefined && currentCorpseKilledBy === myProfile.username;
+  const canEatBrains =
+    myProfile?.race === 'zombie' &&
+    currentCorpseKilledBy !== undefined &&
+    currentCorpseKilledBy === myProfile.username &&
+    corpseHasBrains(currentCorpseKind);
   corpseEatBrainsBtn.hidden = !canEatBrains;
-  if (!canEatBrains || !myProfile) return;
+  if (!canEatBrains || !myProfile) {
+    applyCooldownOverlayFraction(eatBrainsCooldownOverlay, 0);
+    return;
+  }
 
   // Only known once worldTimeKnown (the first 'worldTime' broadcast) —
   // until then, assume ready rather than greying it out on a guess.
   const onCooldown = worldTimeKnown && currentWorldTick < myProfile.eatBrainsReadyAtTick;
   corpseEatBrainsBtn.disabled = onCooldown;
   corpseEatBrainsBtn.classList.toggle('on-cooldown', onCooldown);
-  corpseEatBrainsBtn.title = onCooldown ? 'Eat Brains is still on cooldown' : '';
+  const totalMs = EAT_BRAINS_COOLDOWN_TICKS_CLIENT * WORLD_STAT_TICK_MS;
+  applyCooldownOverlayFraction(eatBrainsCooldownOverlay, onCooldown ? eatBrainsMsRemaining() / totalMs : 0);
 }
 
 // Player (and training-dummy) corpses share the same Race-shaped `kind`
@@ -1157,8 +1332,11 @@ corpseEatBrainsBtn.addEventListener('click', () => {
           maxMana: ack.maxMana ?? myProfile.maxMana,
           movement: ack.movement ?? myProfile.movement,
           maxMovement: ack.maxMovement ?? myProfile.maxMovement,
+          eatBrainsReadyAtTick: ack.eatBrainsReadyAtTick ?? myProfile.eatBrainsReadyAtTick,
         };
         updateStatusBar();
+        activeScene?.updateOwnBars();
+        updateEatBrainsButton();
       }
       if (ack.message) logCombatMessage(ack.message);
     })
@@ -1243,6 +1421,7 @@ function openShopModal(vendor: VendorSnapshot): void {
   closeAllModals();
   currentVendor = vendor;
   shopModalTitle.textContent = vendor.name;
+  shopGreeting.textContent = vendor.greeting;
   shopModal.hidden = false;
   updateInputCaptured();
   renderShopModal();
@@ -1433,7 +1612,12 @@ function renderPlayerListTab(tab: 'who' | 'where'): void {
     .then((res) => {
       if (activeMapTab !== tab) return; // the tab changed while this was in flight
       const currentMap = activeScene?.getCurrentMap();
-      const players: WhoEntry[] = tab === 'where' ? res.players.filter((p) => p.map === currentMap) : res.players;
+      // "Where" means "in my town" (item 13) — Floro's street and all 7
+      // of its shop interiors group together, so someone browsing the
+      // Blacksmith still shows up for a player standing out on the
+      // street, not just an exact same-map match.
+      const players: WhoEntry[] =
+        tab === 'where' && currentMap ? res.players.filter((p) => townGroupFor(p.map) === townGroupFor(currentMap)) : res.players;
       mapBody.innerHTML = '';
       const list = document.createElement('ul');
       list.className = 'map-connections';
@@ -1444,7 +1628,12 @@ function renderPlayerListTab(tab: 'who' | 'where'): void {
       }
       for (const p of players) {
         const li = document.createElement('li');
-        li.textContent = tab === 'who' ? `${p.username} (Lv ${p.level}) — ${p.map}` : `${p.username} (Lv ${p.level})`;
+        if (tab === 'who') {
+          li.textContent = `${p.username} (Lv ${p.level}) — ${p.map}`;
+        } else {
+          const buildingLabel = whereLabelFor(p.map);
+          li.textContent = buildingLabel ? `${p.username} (Lv ${p.level}) - ${buildingLabel}` : `${p.username} (Lv ${p.level})`;
+        }
         list.appendChild(li);
       }
       mapBody.appendChild(list);
@@ -1601,6 +1790,14 @@ document.addEventListener('keydown', (e) => {
 
 const network = new NetworkManager(SERVER_URL);
 
+// Item 16 — invalidates the session server-side, tears down the socket,
+// and reloads straight back to the login screen (same "just reload"
+// reset the 'kicked' handler already uses elsewhere, rather than trying
+// to hand-unwind the live Phaser game instance).
+logoutBtn.addEventListener('click', () => {
+  void network.logout().finally(() => window.location.reload());
+});
+
 let mode: 'login' | 'register' = 'login';
 function setMode(next: 'login' | 'register'): void {
   mode = next;
@@ -1647,7 +1844,7 @@ type Facing = FacingGroup;
 
 function floorTextureFor(mapName: MapName): string {
   if (mapName === 'Labyrinth') return 'stone';
-  if (mapName === 'Floro' || mapName === 'Kortho') return 'concrete';
+  if (mapName === 'Floro' || mapName === 'Kortho' || (FLORO_SHOP_MAPS as readonly string[]).includes(mapName)) return 'concrete';
   return 'grass';
 }
 
@@ -1878,7 +2075,7 @@ class WorldScene extends Phaser.Scene {
       }
     }
 
-    if (inputCaptured) return;
+    if (isMovementBlocked()) return;
 
     const now = Date.now();
     if (now - this.lastMoveAt < MOVE_COOLDOWN_MS) return;
@@ -2151,8 +2348,12 @@ class WorldScene extends Phaser.Scene {
   // Own hp/mana/movement bars are a 3-bar stack (item request: show all
   // three above the player, not just hp) — other players/NPCs/monsters
   // keep the single hp-only bar, since NpcSnapshot/MonsterSnapshot don't
-  // carry mana/movement at all.
-  private updateOwnBars(): void {
+  // carry mana/movement at all. Public (not private) so module-level
+  // handlers that mutate myProfile's vitals directly (eat brains, move
+  // acks, ...) can keep this in sync too — several of those used to only
+  // refresh the text status bar, leaving the graphical bar ABOVE the
+  // player stale until the next sync/combat event (item 2).
+  updateOwnBars(): void {
     if (!myProfile) return;
     drawHpBar(this.playerHpBar, myProfile.hp, myProfile.maxHp);
     drawStatBar(this.playerManaBar, myProfile.maxMana > 0 ? myProfile.mana / myProfile.maxMana : 0, MANA_BAR_COLOR);
@@ -2187,9 +2388,40 @@ class WorldScene extends Phaser.Scene {
     }
   }
 
+  // How long the punch/weapon swing animation actually runs (see
+  // characterSprites.ts's PUNCH_FRAME_COUNT/frameRate: 4 frames @ 12fps)
+  // — the weapon overlay's own outward-and-back thrust (item 6) is timed
+  // to match it exactly, peaking at the swing's midpoint via a sine
+  // curve rather than a linear out-and-snap-back.
+  private static readonly SWING_DURATION_MS = (4 / 12) * 1000;
+  private static readonly SWING_THRUST_PX = 6;
+
+  // `owner` carries its own swing-start timestamp (see performPunch/
+  // performSkillAttack for the local player, applyRemotePunch for
+  // everyone else) rather than this being tracked per-scene, since many
+  // owners (every other player on the map) can be mid-swing at once.
+  private swingOffsetFor(facing: Facing, owner: Phaser.GameObjects.Sprite): { x: number; y: number } {
+    const startedAt = owner.getData('swingStartedAt') as number | undefined;
+    if (startedAt === undefined) return { x: 0, y: 0 };
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= WorldScene.SWING_DURATION_MS) return { x: 0, y: 0 };
+    const thrust = Math.sin((elapsed / WorldScene.SWING_DURATION_MS) * Math.PI) * WorldScene.SWING_THRUST_PX;
+    switch (facing) {
+      case 'down':
+        return { x: 0, y: thrust };
+      case 'up':
+        return { x: 0, y: -thrust };
+      case 'left':
+        return { x: -thrust, y: 0 };
+      case 'right':
+        return { x: thrust, y: 0 };
+    }
+  }
+
   private repositionWeaponSprite(weaponSprite: Phaser.GameObjects.Sprite, owner: Phaser.GameObjects.Sprite, facing: Facing): void {
     const offset = this.weaponOffsetFor(facing);
-    weaponSprite.setPosition(owner.x + offset.x, owner.y + offset.y);
+    const swing = this.swingOffsetFor(facing, owner);
+    weaponSprite.setPosition(owner.x + offset.x + swing.x, owner.y + offset.y + swing.y);
   }
 
   // Shows/hides a player's held-weapon overlay based on whether their
@@ -2463,6 +2695,12 @@ class WorldScene extends Phaser.Scene {
     this.updateOwnBars();
     this.updateOwnWeaponSprite(Boolean(player.equipment.weapon));
     this.updateOwnShieldSprite(player.equipment.shield === 'bone shield');
+    // A torch burning out (item 14) clears equipment.shield server-side
+    // and emits exactly this 'sync' — without this, the held-torch
+    // overlay would keep showing in the player's hand even though
+    // vision itself already correctly reverted (that part is purely
+    // reactive to myProfile.equipment, recomputed fresh every frame).
+    this.updateOwnTorchSprite(player.equipment.shield === TORCH_ITEM);
     this.applyRestPose(this.player, player.restState, CHAR_SCALE);
   }
 
@@ -2647,6 +2885,11 @@ class WorldScene extends Phaser.Scene {
         .sprite(pos.x, pos.y, textureKeyFor('shopkeeper'), idleFrameFor('shopkeeper', 'down'))
         .setScale(CHAR_SCALE)
         .setInteractive({ useHandCursor: true });
+      // Randomized appearance (item 13, phase 1) — a skin-tone tint over
+      // the shared shopkeeper spritesheet; there's no separate male/female
+      // sprite art yet, so gender is tracked as data (used for the
+      // generated name) rather than a visual difference today.
+      sprite.setTint(v.skinTint);
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (inputCaptured || !pointer.leftButtonDown()) return;
         // Matches the server's own isClientWithinShopReach check — no
@@ -2782,6 +3025,7 @@ class WorldScene extends Phaser.Scene {
         // rather than only patching `map` on a transition below.
         if (myProfile) myProfile = { ...myProfile, movement: ack.player.movement, maxMovement: ack.player.maxMovement };
         updateStatusBar();
+        this.updateOwnBars();
 
         if (ack.player.map !== this.currentMap) {
           // A map transition is a load, not a walk — snap straight to the
@@ -2909,6 +3153,20 @@ class WorldScene extends Phaser.Scene {
   // range, tryEngage starts walking toward it instead of just refusing
   // (item 12), same as a right-click does for the default attack.
   useTargetedSkill(skillName: string): void {
+    // Mimic/revert (item 5) aren't combat actions at all — no target
+    // needed, they just drive the existing /mimic and /revert chat
+    // commands. Revert takes no argument, so it fires immediately;
+    // mimic needs a target race/monster name typed in, so it just
+    // pre-fills the command instead of guessing which one they meant.
+    if (skillName === REVERT_SKILL) {
+      network.chat('/revert');
+      return;
+    }
+    if (skillName === MIMIC_SKILL) {
+      openChatInputWithText('/mimic ');
+      return;
+    }
+
     if (!this.targetKind || !this.targetId) {
       logCombatMessage('Select a target first (left-click a player or monster).');
       return;
@@ -2931,6 +3189,7 @@ class WorldScene extends Phaser.Scene {
     const animKey = punchAnimKey(this.displayKind(), this.facing);
 
     this.isPunching = true;
+    this.player.setData('swingStartedAt', Date.now());
     this.player.play(animKey, true);
     this.player.once(`animationcomplete-${animKey}`, () => {
       this.isPunching = false;
@@ -2949,6 +3208,7 @@ class WorldScene extends Phaser.Scene {
     const animKey = punchAnimKey(this.displayKind(), this.facing);
 
     this.isPunching = true;
+    this.player.setData('swingStartedAt', Date.now());
     this.player.play(animKey, true);
     this.player.once(`animationcomplete-${animKey}`, () => {
       this.isPunching = false;
@@ -2967,6 +3227,7 @@ class WorldScene extends Phaser.Scene {
     const animKey = punchAnimKey(race, facing);
 
     sprite.setData('isPunching', true);
+    sprite.setData('swingStartedAt', Date.now());
     sprite.play(animKey, true);
     sprite.once(`animationcomplete-${animKey}`, () => {
       sprite.setData('isPunching', false);
@@ -3001,7 +3262,13 @@ class WorldScene extends Phaser.Scene {
     }
 
     if (event.attacker === this.myUsername) {
-      this.applyOwnStats({ level: event.attackerLevel, exp: event.attackerExp, hp: event.attackerHp, maxHp: event.attackerMaxHp });
+      this.applyOwnStats({
+        level: event.attackerLevel,
+        exp: event.attackerExp,
+        hp: event.attackerHp,
+        maxHp: event.attackerMaxHp,
+        skills: event.attackerSkills ?? myProfile?.skills,
+      });
     }
 
     if (event.targetKind === 'player' && event.target === this.myUsername) {

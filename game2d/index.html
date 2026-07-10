@@ -44,7 +44,10 @@
         <div id="daynight-overlay"></div>
         <div id="dark-fog-overlay"></div>
 
-        <div id="world-label"></div>
+        <div id="top-right-bar">
+          <div id="world-label"></div>
+          <button type="button" id="logout-btn" title="Log out">&#128682;</button>
+        </div>
 
         <div id="status-bar" class="panel">
           <button type="button" id="status-toggle" class="panel-toggle" title="Collapse">&minus;</button>
@@ -71,8 +74,7 @@
             <button type="button" id="log-tab-combat" class="log-tab active">Combat</button>
             <button type="button" id="log-tab-chat" class="log-tab">Chat</button>
           </div>
-          <div id="combat-log" class="panel-body log-view"></div>
-          <div id="chat-log" class="panel-body log-view" hidden></div>
+          <div id="log-view" class="panel-body log-view"></div>
           <input id="chat-input" type="text" placeholder="Press Enter to chat..." autocomplete="off" hidden />
           <div id="log-resize-handle" title="Drag to resize"></div>
         </div>
@@ -157,7 +159,7 @@
           <div class="modal-box">
             <button type="button" class="modal-close">&times;</button>
             <h2 id="shop-modal-title">Shop</h2>
-            <div id="shop-greeting">I serve any and all with coin! Don't forget your torches for night in the wilderness!</div>
+            <div id="shop-greeting"></div>
             <div id="shop-gold-line"></div>
             <ul id="shop-item-list" class="inventory-list"></ul>
           </div>

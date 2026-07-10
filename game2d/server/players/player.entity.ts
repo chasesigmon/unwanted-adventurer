@@ -108,6 +108,20 @@ export class Player {
   @Column({ name: 'mimic_form', type: 'varchar', length: 32, nullable: true, default: null })
   mimicForm!: string | null;
 
+  // Condeath tracking (item 23) — every death counts, regardless of
+  // cause (monster counter-attack or PvP). Every 5th death costs a point
+  // of constitution (see game.gateway.ts's applyCondeathPenalty); at
+  // CONDEATH_LIMIT total deaths the character becomes `condemned` and
+  // can never log back in — the ACCOUNT itself isn't touched (a future
+  // multi-character-per-account system is expected to let a condemned
+  // character's owner just start a new one), so this is deliberately a
+  // flag on the character row, not a deletion.
+  @Column({ name: 'death_count', type: 'int', default: 0 })
+  deathCount!: number;
+
+  @Column({ type: 'boolean', default: false })
+  condemned!: boolean;
+
   @Column({ name: 'last_login', type: 'timestamptz', default: () => 'now()' })
   lastLogin!: Date;
 

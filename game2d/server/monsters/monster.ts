@@ -78,7 +78,12 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     monsterClass: 'normal',
     homeMap: 'Great Plains',
     maxCount: 15,
-    startingHp: 15,
+    // Bumped up from 15 (item 20) — a level 1-3 player was killing these
+    // in just a couple of tick-resolved hits, over almost as soon as it
+    // started. Combined with the new Armor Class system (see
+    // combat/formulas.ts) blunting a bit of every hit too, this stretches
+    // an early fight out to a real handful of combat ticks.
+    startingHp: 24,
     expReward: WILD_GOBLIN_EXP_REWARD,
   },
   {
@@ -86,7 +91,8 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     monsterClass: 'undead',
     homeMap: 'Labyrinth',
     maxCount: 10,
-    startingHp: 20,
+    // Same reasoning as wild goblin above — bumped from 20.
+    startingHp: 32,
     expReward: WILD_SKELETON_EXP_REWARD,
     carriedItemRolls: [
       { label: 'bone dagger', chance: 0.3 },

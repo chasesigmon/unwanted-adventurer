@@ -9,6 +9,7 @@ import type { PlayerState, MoveResult } from './types.js';
 import { isTreeTile } from '../../shared/trees.js';
 import { emitsLight } from '../../shared/lighting.js';
 import { vendorsForMap } from './vendors.js';
+import { armorClassFor, armorEquipmentBonus } from '../combat/formulas.js';
 
 // A much smaller version of the text game's own WorldManagerService — no
 // per-map capacity sharding or worker_threads, just an in-memory map of
@@ -160,6 +161,8 @@ export class WorldManagerService {
         mimicForm: state.mimicForm,
         eatBrainsReadyAtTick: state.eatBrainsReadyAtTick,
         skillCooldowns: state.skillCooldowns,
+        armorClass: armorClassFor(state.dexterity, armorEquipmentBonus(state.equipment)),
+        deathCount: state.deathCount,
       });
     }
 

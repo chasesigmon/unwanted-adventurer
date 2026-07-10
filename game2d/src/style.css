@@ -381,6 +381,18 @@ body {
   word-break: break-word;
 }
 
+/* Combat/Chat tabs filter a single shared chronological stream (item 3)
+   rather than each keeping its own separate scrollback — hiding a source
+   just hides lines tagged with it, everything else stays in its original
+   relative order. */
+#log-panel.hide-combat .log-line-combat {
+  display: none;
+}
+
+#log-panel.hide-chat .log-line-chat {
+  display: none;
+}
+
 #chat-input {
   margin-top: 6px;
   width: 100%;
@@ -694,6 +706,8 @@ body {
   font-family: inherit;
   font-size: 13px;
   border-radius: 4px;
+  position: relative;
+  overflow: hidden;
 }
 
 #corpse-eat-brains:hover {
@@ -766,10 +780,18 @@ body {
 
 /* ---------- World label ---------- */
 
-#world-label {
+#top-right-bar {
   position: absolute;
   top: 12px;
   right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Stays visible above the sleep overlay, same reasoning as #status-bar. */
+  z-index: 60;
+}
+
+#world-label {
   background: rgba(10, 10, 16, 0.75);
   border: 1px solid #444;
   border-radius: 4px;
@@ -778,8 +800,27 @@ body {
   font-weight: bold;
   color: #f0c040;
   pointer-events: none;
-  /* Stays visible above the sleep overlay, same reasoning as #status-bar. */
-  z-index: 60;
+}
+
+/* Logout, right of the world label (item 16) — same corner-button look
+   as the map/inventory/etc. buttons in the opposite corner. */
+#logout-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: rgba(10, 10, 16, 0.75);
+  border: 1px solid #444;
+  color: #eee;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#logout-btn:hover {
+  background: rgba(122, 40, 40, 0.75);
+  border-color: #a85050;
 }
 
 /* ---------- Action bar (2x10 skill slots — item 13) ---------- */
@@ -940,4 +981,24 @@ body {
   color: #555;
   font-size: 14px;
   font-style: italic;
+}
+
+/* ---------- Custom tooltip (item 4) ---------- */
+/* Positioned in JS near the cursor (see main.ts's attachTooltip) — sits
+   above everything, including open modals, since it's used for
+   descriptions inside the Skills/Inventory/Character-sheet modals. */
+#custom-tooltip {
+  position: fixed;
+  max-width: 260px;
+  padding: 6px 10px;
+  background: #16161f;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #e8e8e8;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-line;
+  pointer-events: none;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
 }

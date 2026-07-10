@@ -54,6 +54,14 @@ export interface PlayerSnapshot {
   // Wall-clock, not tick-based, so the client can render a countdown/wipe
   // (item 23) without needing to know the server's own tick counter.
   skillCooldowns: Record<string, number>;
+  // Server-computed, not stored — see combat/formulas.ts's armorClassFor
+  // (base 10 + a small dexterity nudge + a bone shield's own +5 while
+  // equipped). Shown on the character sheet purely for transparency;
+  // damage reduction itself is computed fresh per-hit server-side.
+  armorClass: number;
+  // Condeath tracking (item 23) — every death, from any cause, counts
+  // toward CONDEATH_LIMIT (65); see game.gateway.ts's applyCondeathPenalty.
+  deathCount: number;
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
@@ -135,6 +143,16 @@ export interface VendorSnapshot {
   row: number;
   col: number;
   items: VendorItem[];
+  // Randomized appearance (item 13, phase 1) — every shopkeeper is
+  // randomly male/female and gets its own skin-tone tint applied over the
+  // shared shopkeeper spritesheet (see main.ts's rendering). A coarse
+  // first pass, not true per-part hair/eye/clothing customization, which
+  // would need real layered art assets this project doesn't have yet.
+  gender: 'male' | 'female';
+  skinTint: number;
+  // Shown at the top of the shop modal — each shopkeeper's own flavor
+  // line instead of one generic greeting shared by every vendor.
+  greeting: string;
 }
 
 export interface MapStatePayload {
@@ -172,6 +190,13 @@ export interface CombatEventPayload {
   // avoidance actually triggered/was attempted — each a standalone line
   // for the combat log, same message shape for every skill.
   growthMessages?: string[];
+  // The ATTACKER's own current skills (see emitCombat) — lets the client
+  // update myProfile.skills (and re-render an open Skills modal)
+  // immediately when a growth message lands, instead of only reading the
+  // percent back out of `message`'s own text (which the client never
+  // actually parsed, so the Skills modal stayed stale until the next
+  // unrelated 'sync' happened to refresh it).
+  attackerSkills?: Record<string, number>;
 }
 
 export interface MoveAck {
@@ -220,6 +245,12 @@ export interface EatBrainsAck {
   maxMana?: number;
   movement?: number;
   maxMovement?: number;
+  // Missing here used to mean the client's own cooldown gate (see
+  // main.ts's updateEatBrainsButton) never actually learned the new
+  // cooldown until an unrelated 'sync' happened to arrive later — eating
+  // brains looked "still clickable" even though the server had already
+  // started the cooldown.
+  eatBrainsReadyAtTick?: number;
   message?: string;
 }
 
@@ -379,6 +410,10 @@ export interface SocketData {
   // See PlayerSnapshot's own doc comment — same shape, never persisted
   // (resets on reconnect, same tradeoff as restState/torchRemainingMs).
   skillCooldowns: Record<string, number>;
+  // Condeath tracking (item 23) — persisted; loaded from the player doc
+  // on connect (see handleConnection), incremented on every death (see
+  // applyCondeathPenalty).
+  deathCount: number;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

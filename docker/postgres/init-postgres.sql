@@ -11,7 +11,14 @@ CREATE TABLE IF NOT EXISTS players (
   username VARCHAR(16) NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   race VARCHAR(16) NOT NULL DEFAULT 'goblin' CHECK (race IN ('goblin', 'skeleton', 'hobgoblin', 'zombie', 'dragonborn', 'slime')),
-  map VARCHAR(32) NOT NULL DEFAULT 'Great Plains' CHECK (map IN ('Great Plains', 'Labyrinth', 'Floro', 'Kortho')),
+  -- Floro's 7 shop interiors (see game2d/shared/constants.ts's
+  -- FLORO_SHOP_MAPS) are each their own map value too — "worlds of their
+  -- own" a player can be standing in, not just the 4 top-level areas.
+  map VARCHAR(32) NOT NULL DEFAULT 'Great Plains' CHECK (map IN (
+    'Great Plains', 'Labyrinth', 'Floro', 'Kortho',
+    'Floro Blacksmith', 'Floro General Store', 'Floro Inn', 'Floro Bank',
+    'Floro Armorer', 'Floro Pet Salesman', 'Floro Jobs Office'
+  )),
   "row" INTEGER NOT NULL,
   col INTEGER NOT NULL,
   strength INTEGER NOT NULL DEFAULT 1,
@@ -36,6 +43,13 @@ CREATE TABLE IF NOT EXISTS players (
   gold INTEGER NOT NULL DEFAULT 20,
   mimicable_races JSONB NOT NULL DEFAULT '[]',
   mimic_form VARCHAR(32),
+  -- Condeath tracking (see game2d/server/game-gateway/game.gateway.ts's
+  -- applyCondeathPenalty) — every 5th death costs 1 constitution;
+  -- condemned=true at CONDEATH_LIMIT total deaths means this character
+  -- can never log in again, but the row (and its account) is never
+  -- deleted outright.
+  death_count INTEGER NOT NULL DEFAULT 0,
+  condemned BOOLEAN NOT NULL DEFAULT false,
   last_login TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

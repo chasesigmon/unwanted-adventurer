@@ -14,14 +14,19 @@ export function isDarkHour(hour: number): boolean {
   return hour >= DARK_START_HOUR || hour < DARK_END_HOUR;
 }
 
-// The broader cosmetic day/night split (matches the day/night overlay's
-// own 18:00-6:00 tinted range) — used for the /time command's "day" or
-// "night" label, a wider window than the hard-dark hours above.
-export const NIGHT_START_HOUR = 18;
-export const NIGHT_END_HOUR = 6;
+// A finer-grained time-of-day label for the /time command (item 11) —
+// dawn/morning/noon/evening/night instead of a flat day/night split.
+// Ranges cover all 24 hours with no gaps: dawn (5-7), morning (7-12),
+// noon (12-13), evening (13-19, folding the afternoon in rather than
+// adding a 6th label nobody asked for), night (19-5).
+export type TimeOfDay = 'dawn' | 'morning' | 'noon' | 'evening' | 'night';
 
-export function isNightHour(hour: number): boolean {
-  return hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR;
+export function timeOfDayLabel(hour: number): TimeOfDay {
+  if (hour >= 5 && hour < 7) return 'dawn';
+  if (hour >= 7 && hour < 12) return 'morning';
+  if (hour >= 12 && hour < 13) return 'noon';
+  if (hour >= 13 && hour < 19) return 'evening';
+  return 'night';
 }
 
 // Originally "about a 10 foot diameter," doubled per request — a player's

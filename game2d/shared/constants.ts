@@ -9,7 +9,24 @@ export const RACES = ['goblin', 'skeleton', 'zombie', 'dragonborn', 'slime'] as 
 export const EVOLVED_RACES = ['hobgoblin'] as const;
 export type Race = (typeof RACES)[number] | (typeof EVOLVED_RACES)[number];
 
-export const MAP_NAMES = ['Great Plains', 'Labyrinth', 'Floro', 'Kortho'] as const;
+// Floro's 7 shop interiors (item 13, phase 1) — each a real separate map
+// ("worlds of their own"), entered through a door on Floro's own street
+// (see shared/maps.ts), but still considered PART of Floro town: the
+// map/Where tab shows a player inside one of these as "<name> -
+// <Building>" rather than the raw map name (see buildingLabelFor below),
+// and they don't re-trigger the town-entry weapon gate (see TOWN_MAPS)
+// since you already passed it to reach the street outside.
+export const FLORO_SHOP_MAPS = [
+  'Floro Blacksmith',
+  'Floro General Store',
+  'Floro Inn',
+  'Floro Bank',
+  'Floro Armorer',
+  'Floro Pet Salesman',
+  'Floro Jobs Office',
+] as const;
+
+export const MAP_NAMES = ['Great Plains', 'Labyrinth', 'Floro', 'Kortho', ...FLORO_SHOP_MAPS] as const;
 export type MapName = (typeof MAP_NAMES)[number];
 
 export const STARTING_MAP: MapName = 'Great Plains';
@@ -18,7 +35,26 @@ export const STARTING_MAP: MapName = 'Great Plains';
 // edges — entry is gated (see game.gateway.ts's canEnterTown), same idea
 // as the text game's own town-guard gate, simplified down to this
 // project's single equipment slot: you need a weapon equipped to pass.
+// Deliberately NOT extended to FLORO_SHOP_MAPS — stepping from the
+// street into a shop doesn't re-gate you, you're already inside the town.
 export const TOWN_MAPS: MapName[] = ['Floro', 'Kortho'];
+
+// The short building suffix for the map modal's Where tab (item 13) —
+// "<username> - Blacksmith" for someone inside a shop, vs. just
+// "<username>" for someone standing on the street itself (null here).
+export function whereLabelFor(mapName: MapName): string | null {
+  const prefix = 'Floro ';
+  return mapName.startsWith(prefix) && (FLORO_SHOP_MAPS as readonly string[]).includes(mapName) ? mapName.slice(prefix.length) : null;
+}
+
+// Which "town" a map belongs to, for grouping purposes — Floro's street
+// AND all 7 of its shop interiors count as the same place (item 13: a
+// player inside the Blacksmith should still show up in another Floro
+// visitor's own Where tab, not just people on the exact same map value).
+// Everywhere else is its own town of one.
+export function townGroupFor(mapName: MapName): MapName {
+  return mapName === 'Floro' || (FLORO_SHOP_MAPS as readonly string[]).includes(mapName) ? 'Floro' : mapName;
+}
 
 export const DIRECTIONS = ['north', 'south', 'east', 'west'] as const;
 export type Direction = (typeof DIRECTIONS)[number];
