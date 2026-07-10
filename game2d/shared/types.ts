@@ -1,5 +1,5 @@
 import type { Server, Socket } from 'socket.io';
-import type { MapName, Race, Direction, MonsterKind } from './constants.js';
+import type { MapName, Race, Direction, MonsterKind, MonsterClass } from './constants.js';
 
 // Never persisted across sessions (a fresh connection always starts
 // 'awake') — matches the text game's own restState, which the same
@@ -52,12 +52,17 @@ export interface NpcSnapshot {
 export interface MonsterSnapshot {
   id: string;
   kind: MonsterKind;
+  monsterClass: MonsterClass;
   map: MapName;
   row: number;
   col: number;
   level: number;
   hp: number;
   maxHp: number;
+  // While alive, whatever it's carrying — the first weapon-slot item (if
+  // any) shows as a held-weapon overlay, same as a player's equipped
+  // weapon; the rest just ride along until it drops everything on death.
+  carriedItems: string[];
 }
 
 // Left behind when a monster or a real player dies (not the training
@@ -83,6 +88,7 @@ export interface SyncPayload {
 // other players/NPCs/monsters/corpses (and thus for knowing which tiles
 // are occupied).
 export interface MapStatePayload {
+  mapName: MapName;
   players: PlayerSnapshot[];
   npcs: NpcSnapshot[];
   monsters: MonsterSnapshot[];
@@ -184,6 +190,13 @@ export interface StatTickPayload {
   maxMovement: number;
 }
 
+// Broadcast to every connected socket (not just one map's room) whenever
+// the shared world clock advances an hour — the client turns this into a
+// gradually shifting day/night overlay (see main.ts).
+export interface WorldTimePayload {
+  hour: number;
+}
+
 export interface ServerToClientEvents {
   sync: (data: SyncPayload) => void;
   'session:kicked': (data: KickedPayload) => void;
@@ -192,6 +205,7 @@ export interface ServerToClientEvents {
   combat: (data: CombatEventPayload) => void;
   chat: (data: ChatPayload) => void;
   statTick: (data: StatTickPayload) => void;
+  worldTime: (data: WorldTimePayload) => void;
 }
 
 export interface ClientToServerEvents {
@@ -211,6 +225,9 @@ export interface ClientToServerEvents {
   // EQUIPMENT_SLOT_FOR_ITEM) so the client never has to know which items
   // are equippable.
   useItem: (itemIndex: number, ack: (res: UseItemAck) => void) => void;
+  // Right-click: always consumes, even if the item is normally
+  // equippable — see game.gateway.ts's handleConsumeItem.
+  consumeItem: (itemIndex: number, ack: (res: UseItemAck) => void) => void;
   // Fire-and-forget, same as punch — the server trims/validates/length-
   // caps and rebroadcasts to the sender's own map room only.
   chat: (message: string) => void;

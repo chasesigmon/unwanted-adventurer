@@ -13,6 +13,7 @@ import type {
   ChatPayload,
   WhoAck,
   StatTickPayload,
+  WorldTimePayload,
 } from '../shared/types.js';
 import type { Direction } from '../shared/constants.js';
 
@@ -84,6 +85,9 @@ export class NetworkManager extends EventTarget {
     socket.on('statTick', (data: StatTickPayload) =>
       this.dispatchEvent(new CustomEvent<StatTickPayload>('statTick', { detail: data }))
     );
+    socket.on('worldTime', (data: WorldTimePayload) =>
+      this.dispatchEvent(new CustomEvent<WorldTimePayload>('worldTime', { detail: data }))
+    );
     socket.on('disconnect', (reason) => this.dispatchEvent(new CustomEvent('disconnected', { detail: { reason } })));
     socket.on('connect_error', (err) =>
       this.dispatchEvent(new CustomEvent('connect_error', { detail: { message: err.message } }))
@@ -102,9 +106,14 @@ export class NetworkManager extends EventTarget {
         reject(new Error('Not connected.'));
         return;
       }
-      this.socket.emit('move', direction, (res) => {
-        if (res) resolve(res);
-        else reject(new Error('No response from server.'));
+      // A dropped/never-arriving ack here used to leave WorldScene's
+      // isMoving stuck true forever (the same class of bug documented
+      // elsewhere in this project — nothing else ever resets it outside
+      // this callback), permanently freezing movement input. A timeout
+      // guarantees the promise settles either way.
+      this.socket.timeout(5000).emit('move', direction, (err: Error | null, res?: MoveAck) => {
+        if (err || !res) reject(new Error('No response from server.'));
+        else resolve(res);
       });
     });
   }
@@ -134,6 +143,19 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('useItem', itemIndex, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  consumeItem(itemIndex: number): Promise<UseItemAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('consumeItem', itemIndex, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

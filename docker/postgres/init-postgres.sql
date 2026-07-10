@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS players (
   id SERIAL PRIMARY KEY,
   username VARCHAR(16) NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  race VARCHAR(16) NOT NULL DEFAULT 'goblin' CHECK (race IN ('goblin', 'skeleton')),
+  race VARCHAR(16) NOT NULL DEFAULT 'goblin' CHECK (race IN ('goblin', 'skeleton', 'hobgoblin')),
   map VARCHAR(32) NOT NULL DEFAULT 'Great Plains' CHECK (map IN ('Great Plains', 'Labyrinth', 'Floro', 'Kortho')),
   "row" INTEGER NOT NULL,
   col INTEGER NOT NULL,

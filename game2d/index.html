@@ -38,6 +38,8 @@
       <div id="game-root" hidden>
         <div id="game-container"></div>
 
+        <div id="daynight-overlay"></div>
+
         <div id="world-label"></div>
 
         <div id="status-bar" class="panel">
@@ -91,6 +93,7 @@
           <div class="modal-box">
             <button type="button" class="modal-close">&times;</button>
             <h2>Skills</h2>
+            <button type="button" id="skills-show-all-toggle" class="secondary-btn">Show All</button>
             <div id="skills-body" class="modal-stats"></div>
           </div>
         </div>
@@ -139,7 +142,7 @@
         <div id="autopilot-status" hidden></div>
 
         <div id="sleep-overlay" hidden>
-          <div id="sleep-overlay-text">Zzz... (move or attack to wake up)</div>
+          <div id="sleep-overlay-text">Zzz... (move to wake up)</div>
         </div>
       </div>
     </div>

@@ -4,23 +4,47 @@
 // now with equipment, resistances, and dodge/parry/shield-block ported
 // from the text game).
 import { type EquipmentSlot } from '../../shared/equipment.js';
+import type { MonsterClass } from '../../shared/constants.js';
 export { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, type EquipmentSlot } from '../../shared/equipment.js';
+import {
+  PUNCH_SKILL,
+  DODGE_SKILL,
+  PARRY_SKILL,
+  SHIELD_BLOCK_SKILL,
+  DAGGER_SKILL,
+  STARTING_SKILLS,
+  SECOND_ATTACK_SKILL,
+  THIRD_ATTACK_SKILL,
+  ENHANCED_DAMAGE_SKILL,
+  HOBGOBLIN_EVOLUTION_SKILLS,
+  LESSER_NORMAL_MONSTER_RESISTANCE,
+  LESSER_UNDEAD_MONSTER_RESISTANCE,
+} from '../../shared/skills.js';
+export {
+  PUNCH_SKILL,
+  DODGE_SKILL,
+  PARRY_SKILL,
+  SHIELD_BLOCK_SKILL,
+  DAGGER_SKILL,
+  STARTING_SKILLS,
+  SECOND_ATTACK_SKILL,
+  THIRD_ATTACK_SKILL,
+  ENHANCED_DAMAGE_SKILL,
+  HOBGOBLIN_EVOLUTION_SKILLS,
+  LESSER_NORMAL_MONSTER_RESISTANCE,
+  LESSER_UNDEAD_MONSTER_RESISTANCE,
+} from '../../shared/skills.js';
 
 export const STARTING_ATTRIBUTE = 1;
 export const STARTING_VITAL = 100;
 export const STARTING_LEVEL = 1;
+// A goblin can't level past this without evolving — matches the text
+// game's own GOBLIN_MAX_LEVEL exactly. (Skeleton/zombie/dragonborn/slime
+// have no such cap in this project yet — none of them has a defined 2nd
+// form to evolve into.)
+export const GOBLIN_MAX_LEVEL = 10;
 export const STARTING_EXP = 0;
 
-export const PUNCH_SKILL = 'punch';
-// The text game's goblin/skeleton races both fall through to the same
-// generic non-hobgoblin/non-slime skill kit: dodge, parry, shield block,
-// dagger, kick — this project drops kick (no kick action exists here)
-// but keeps the rest, all starting at STARTING_SKILL_PERCENT like punch.
-export const DODGE_SKILL = 'dodge';
-export const PARRY_SKILL = 'parry';
-export const SHIELD_BLOCK_SKILL = 'shield block';
-export const DAGGER_SKILL = 'dagger';
-export const STARTING_SKILLS = [PUNCH_SKILL, DODGE_SKILL, PARRY_SKILL, SHIELD_BLOCK_SKILL, DAGGER_SKILL];
 export const STARTING_SKILL_PERCENT = 1;
 export const MAX_SKILL_PERCENT = 100;
 export const SKILL_GROWTH_CHANCE = 0.02;
@@ -89,6 +113,7 @@ export function punchDamage(
 // CONSUME_EXP_PER_ITEM below).
 export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
   'bone dagger': 'weapon',
+  'bone shield': 'shield',
 };
 
 // Flat damage bonus while a given item is equipped in its slot — matches
@@ -150,17 +175,43 @@ export function computeParryChance(
   return avoidChance(defender.level, defender.strength, defenderSkills[PARRY_SKILL] ?? 0, attacker.level, attacker.strength);
 }
 
-const SHIELD_BLOCK_BASE_CHANCE = 0.2;
-const SHIELD_BLOCK_MAX_CHANCE = 0.8;
-const SHIELD_BLOCK_DIVISOR = 3;
+// Same "scaled skill chance" shape used by shield block AND (Hobgoblin-
+// only) second/third attack: a 20% base chance, +1 percentage point per
+// 3% learned, capped at 80% — matches the text game's own
+// scaledSkillChance exactly.
+const SCALED_SKILL_BASE_CHANCE = 0.2;
+const SCALED_SKILL_MAX_CHANCE = 0.8;
+const SCALED_SKILL_DIVISOR = 3;
+
+export function scaledSkillChance(learnedPercent: number): number {
+  const bonus = Math.floor(learnedPercent / SCALED_SKILL_DIVISOR) / 100;
+  return Math.min(SCALED_SKILL_MAX_CHANCE, SCALED_SKILL_BASE_CHANCE + bonus);
+}
 
 // Requires an actual shield equipped — no bare-handed version.
 export function computeShieldBlockChance(defenderSkills: Record<string, number>, defenderEquipment: Record<string, string>): number {
   if (!defenderEquipment.shield) return 0;
-  const learnedPercent = defenderSkills[SHIELD_BLOCK_SKILL] ?? 0;
-  const bonus = Math.floor(learnedPercent / SHIELD_BLOCK_DIVISOR) / 100;
-  return Math.min(SHIELD_BLOCK_MAX_CHANCE, SHIELD_BLOCK_BASE_CHANCE + bonus);
+  return scaledSkillChance(defenderSkills[SHIELD_BLOCK_SKILL] ?? 0);
 }
+
+// --- Hobgoblin-only: second/third attack (an extra swing per attack,
+// each rolled independently — a hit can proc 0, 1, or 2 bonus swings)
+// and enhanced damage (a flat bonus to base hit damage). All three grow
+// 2% per attack thrown, hit or miss, same as every other skill here. ---
+
+export function computeExtraAttackChance(skillPercent: number): number {
+  return scaledSkillChance(skillPercent);
+}
+
+export function enhancedDamageBonus(skillPercent: number): number {
+  return Math.floor(skillPercent / SCALED_SKILL_DIVISOR);
+}
+
+// --- Goblin -> Hobgoblin evolution (one-way, one-time) ---
+
+export const HOBGOBLIN_EVOLUTION_CXP = 300;
+export const HOBGOBLIN_ATTRIBUTE_BONUS = 10;
+export const HOBGOBLIN_STAT_BONUS = 100;
 
 // --- Consuming body parts (mirrors the text game's separate
 // consumeExp counter — tracked here but, unlike the text game's Hobgoblin
@@ -175,8 +226,6 @@ export const CONSUME_EXP_PER_ITEM = 5;
 // teach "lesser undead monster resistance" at a higher chance — same
 // values as the text game's item-definitions.ts.)
 
-export const LESSER_NORMAL_MONSTER_RESISTANCE = 'lesser normal monster resistance';
-export const LESSER_UNDEAD_MONSTER_RESISTANCE = 'lesser undead monster resistance';
 export const RESISTANCE_SKILL_STARTING_PERCENT = 10;
 
 export interface ResistanceGrant {
@@ -187,12 +236,26 @@ export interface ResistanceGrant {
 const RESISTANCE_FOR_ITEM: Record<string, ResistanceGrant> = {
   'wild goblin ear': { skill: LESSER_NORMAL_MONSTER_RESISTANCE, chance: 0.1 },
   'goblin ear': { skill: LESSER_NORMAL_MONSTER_RESISTANCE, chance: 0.1 },
+  'hobgoblin ear': { skill: LESSER_NORMAL_MONSTER_RESISTANCE, chance: 0.1 },
   'wild skeleton bone': { skill: LESSER_UNDEAD_MONSTER_RESISTANCE, chance: 0.2 },
   'skeleton bone': { skill: LESSER_UNDEAD_MONSTER_RESISTANCE, chance: 0.2 },
 };
 
 export function resistanceGrantForItem(item: string): ResistanceGrant | undefined {
   return RESISTANCE_FOR_ITEM[item];
+}
+
+// Reduces a monster's counter-attack damage (see MONSTER_ATTACK_DAMAGE)
+// against the player who hit it — 1 point per 20% learned, same shape as
+// skillBonus, picked by the monster's own classification.
+export function normalMonsterDamageReduction(skills: Record<string, number>): number {
+  return skillBonus(skills[LESSER_NORMAL_MONSTER_RESISTANCE] ?? 0);
+}
+export function undeadMonsterDamageReduction(skills: Record<string, number>): number {
+  return skillBonus(skills[LESSER_UNDEAD_MONSTER_RESISTANCE] ?? 0);
+}
+export function monsterDamageReduction(monsterClass: MonsterClass, skills: Record<string, number>): number {
+  return monsterClass === 'undead' ? undeadMonsterDamageReduction(skills) : normalMonsterDamageReduction(skills);
 }
 
 // --- Leveling — identical shape to the text game's leveling.ts ---

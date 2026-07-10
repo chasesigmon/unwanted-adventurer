@@ -147,6 +147,6 @@ export class WorldManagerService {
     const npcs = NPCS.filter((npc) => npc.map === mapName);
     const monsters = this.monsterManager.getSnapshotsForMap(mapName);
     const corpses = this.corpseManager.getSnapshotsForMap(mapName);
-    return { players, npcs, monsters, corpses };
+    return { mapName, players, npcs, monsters, corpses };
   }
 }

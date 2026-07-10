@@ -34,6 +34,7 @@ import {
   SHIELD_BLOCK_SKILL,
   DAGGER_SKILL,
   STARTING_LEVEL,
+  GOBLIN_MAX_LEVEL,
   STARTING_EXP,
   STARTING_ATTRIBUTE,
   STARTING_VITAL,
@@ -56,11 +57,22 @@ import {
   computeDodgeChance,
   computeParryChance,
   computeShieldBlockChance,
+  computeExtraAttackChance,
+  enhancedDamageBonus,
+  monsterDamageReduction,
+  SECOND_ATTACK_SKILL,
+  THIRD_ATTACK_SKILL,
+  ENHANCED_DAMAGE_SKILL,
+  HOBGOBLIN_EVOLUTION_SKILLS,
+  HOBGOBLIN_EVOLUTION_CXP,
+  HOBGOBLIN_ATTRIBUTE_BONUS,
+  HOBGOBLIN_STAT_BONUS,
 } from '../combat/formulas.js';
+import { MONSTER_ATTACK_DAMAGE } from '../monsters/monster.js';
 import type { AppConfig } from '../config/configuration.js';
 import type { PlayerSnapshot, GameServer, GameSocket, CombatEventPayload, UseItemAck, RestState } from '../../shared/types.js';
 import { TOWN_MAPS } from '../../shared/constants.js';
-import type { Direction, MapName } from '../../shared/constants.js';
+import type { Direction, MapName, MonsterClass } from '../../shared/constants.js';
 
 const directionSchema = z.enum(DIRECTIONS);
 const MONSTER_TICK_INTERVAL_MS = 3000;
@@ -69,6 +81,7 @@ const MONSTER_TICK_INTERVAL_MS = 3000;
 // re-rolls its own next delay) heals hp/mana/movement by one shared
 // random percent of each stat's own max, the percent range depending on
 // restState exactly like the text game's own HEAL_PERCENT_RANGE.
+const HOURS_PER_DAY = 24;
 const STAT_TICK_MIN_MS = 30_000;
 const STAT_TICK_MAX_MS = 40_000;
 const HEAL_PERCENT_RANGE: Record<RestState, [number, number]> = {
@@ -98,6 +111,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   private server!: GameServer;
 
   private readonly commandLimiters = new Map<string, CommandRateLimiter>();
+  // A shared world clock, advanced by 1 hour on the same tick as the
+  // global stat-tick heal — resets to midnight on server restart, same
+  // tradeoff as the text game's own worldHour. Broadcast to every
+  // connected socket regardless of map (see globalStatTick) so the
+  // client can render a gradually shifting day/night overlay.
+  private worldHour = 0;
   private readonly commandLimiterOptions: CommandRateLimiterOptions;
 
   constructor(
@@ -176,6 +195,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   }
 
   private globalStatTick(): void {
+    this.worldHour = (this.worldHour + 1) % HOURS_PER_DAY;
+    this.server.emit('worldTime', { hour: this.worldHour });
     for (const socket of this.server.sockets.sockets.values()) {
       this.applyStatTick(socket as GameSocket);
     }
@@ -306,10 +327,29 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // full heal to the new max) — mirrors the text game's own
   // GameGateway.grantExp. Also nudges WorldManagerService's cached copy
   // of this player's state so occupancy/combat lookups against them by
-  // OTHER players stay accurate. Returns whether they leveled up.
-  private grantExp(client: GameSocket, gained: number): boolean {
+  // OTHER players stay accurate. A goblin already at GOBLIN_MAX_LEVEL
+  // gets no exp at all from further kills (matches the text game exactly
+  // — the only race with a level cap, since it's the only one with a
+  // defined evolution target); a gain that would push a goblin PAST the
+  // cap is clamped down to exactly level 10 with exp zeroed, rather than
+  // banking the overflow. Returns whether they leveled up and any
+  // cap-related flavor message to show.
+  private grantExp(client: GameSocket, gained: number): { leveledUp: boolean; message?: string } {
+    if (client.data.race === 'goblin' && client.data.level >= GOBLIN_MAX_LEVEL) {
+      return {
+        leveledUp: false,
+        message: `A goblin cannot progress past level ${GOBLIN_MAX_LEVEL} — consume body parts and evolve into a Hobgoblin to grow further.`,
+      };
+    }
+
     const before = client.data.level;
-    const { level, exp } = applyExpGain({ level: client.data.level, exp: client.data.exp }, gained);
+    let { level, exp } = applyExpGain({ level: client.data.level, exp: client.data.exp }, gained);
+    let cappedMessage: string | undefined;
+    if (client.data.race === 'goblin' && level > GOBLIN_MAX_LEVEL) {
+      level = GOBLIN_MAX_LEVEL;
+      exp = 0;
+      cappedMessage = `You have reached the maximum level for a goblin! Consume body parts and evolve into a Hobgoblin to grow further.`;
+    }
     const levelsGained = level - before;
     client.data.level = level;
     client.data.exp = exp;
@@ -351,7 +391,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (levelsGained > 0) {
       client.emit('sync', { player: this.snapshotFor(client) });
     }
-    return levelsGained > 0;
+    return { leveledUp: levelsGained > 0, message: cappedMessage };
   }
 
   // A small chance per attack/defense (hit or miss doesn't matter here,
@@ -390,13 +430,77 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const dodged = Math.random() < computeDodgeChance(defenderStats, defenderSkills, attackerStats);
     const parried = !dodged && Math.random() < computeParryChance(defenderStats, defenderSkills, defenderEquipment, attackerStats);
     if (dodged || parried) {
-      return { avoided: true, verb: dodged ? 'dodges' : 'parries', skill: dodged ? DODGE_SKILL : PARRY_SKILL };
+      return { avoided: true, verb: dodged ? 'dodge' : 'parry', skill: dodged ? DODGE_SKILL : PARRY_SKILL };
     }
 
     const blockChance = computeShieldBlockChance(defenderSkills, defenderEquipment);
     const attemptingBlock = blockChance > 0;
     const blocked = attemptingBlock && Math.random() < blockChance;
-    return { avoided: blocked, verb: blocked ? 'blocks' : undefined, skill: attemptingBlock ? SHIELD_BLOCK_SKILL : undefined };
+    return { avoided: blocked, verb: blocked ? 'block' : undefined, skill: attemptingBlock ? SHIELD_BLOCK_SKILL : undefined };
+  }
+
+  // Hobgoblin-only: an extra swing (or two — second and third attack roll
+  // independently, so a single punch can proc 0, 1, or 2 bonus hits) plus
+  // a flat enhanced-damage bonus. All three grow 2% on every attack
+  // thrown, hit or miss — same as every other skill in this project.
+  private rollHobgoblinExtras(client: GameSocket, growthMessages: string[]): { swings: number; enhancedBonus: number } {
+    if (client.data.race !== 'hobgoblin') return { swings: 1, enhancedBonus: 0 };
+
+    let swings = 1;
+    if (Math.random() < computeExtraAttackChance(client.data.skills[SECOND_ATTACK_SKILL] ?? 0)) {
+      swings++;
+      growthMessages.push('Your second attack triggers!');
+    }
+    const secondGrowth = this.maybeGrowSkill(client, SECOND_ATTACK_SKILL);
+    if (secondGrowth) growthMessages.push(secondGrowth);
+
+    if (Math.random() < computeExtraAttackChance(client.data.skills[THIRD_ATTACK_SKILL] ?? 0)) {
+      swings++;
+      growthMessages.push('Your third attack triggers!');
+    }
+    const thirdGrowth = this.maybeGrowSkill(client, THIRD_ATTACK_SKILL);
+    if (thirdGrowth) growthMessages.push(thirdGrowth);
+
+    const enhancedGrowth = this.maybeGrowSkill(client, ENHANCED_DAMAGE_SKILL);
+    if (enhancedGrowth) growthMessages.push(enhancedGrowth);
+    const enhancedBonus = enhancedDamageBonus(client.data.skills[ENHANCED_DAMAGE_SKILL] ?? 0);
+
+    return { swings, enhancedBonus };
+  }
+
+  // A monster/dummy that survives a punch fights back — a flat punch
+  // (or, if it's carrying a weapon, a weapon-style hit; see main.ts's
+  // held-weapon overlay for the visual side), subject to the PLAYER's own
+  // dodge/parry/shield-block and (for real monsters) resistance skill.
+  // Only ever called if the target actually survived the player's own
+  // swings; returns the counter-attack's own combat-log line, folded into
+  // the same emitCombat call as the player's attack rather than a second
+  // broadcast.
+  private resolveMonsterCounterAttack(
+    client: GameSocket,
+    attackerStats: CombatantStats,
+    attackerLabel: string,
+    monsterClass: MonsterClass | undefined,
+    growthMessages: string[]
+  ): string {
+    const defense = this.resolveDefense(this.attackerStatsFor(client), client.data.skills, client.data.equipment, attackerStats);
+    if (defense.skill) {
+      const growth = this.maybeGrowSkill(client, defense.skill);
+      if (growth) growthMessages.push(growth);
+    }
+    if (defense.avoided) {
+      return defense.verb === 'block'
+        ? `You block the ${attackerLabel}'s counter-attack with your shield!`
+        : `You ${defense.verb} the ${attackerLabel}'s counter-attack!`;
+    }
+
+    const reduction = monsterClass ? monsterDamageReduction(monsterClass, client.data.skills) : 0;
+    const damage = Math.max(0, MONSTER_ATTACK_DAMAGE - reduction);
+    client.data.hp = Math.max(0, client.data.hp - damage);
+    this.worldManager.updateState(client.data.username, { hp: client.data.hp });
+    return damage > 0
+      ? `The ${attackerLabel} counter-attacks you for ${damage} damage.`
+      : `The ${attackerLabel} counter-attacks you, but the blow glances off.`;
   }
 
   async handleConnection(client: GameSocket): Promise<void> {
@@ -594,34 +698,55 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
     const weaponBonus = weaponBonusFor(client.data.equipment, client.data.skills);
-    const damage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus);
-    const result = this.monsterManager.applyDamage(monster.id, damage);
-    if (!result) return;
-    const { died } = result;
+    const growthMessages: string[] = [];
+    const { swings, enhancedBonus } = this.rollHobgoblinExtras(client, growthMessages);
+
+    let totalDamage = 0;
+    let died = false;
+    let currentHp = monster.hp;
+    for (let i = 0; i < swings; i++) {
+      const swingDamage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus) + enhancedBonus;
+      const result = this.monsterManager.applyDamage(monster.id, swingDamage);
+      if (!result) break;
+      totalDamage += swingDamage;
+      currentHp = result.monster.hp;
+      died = result.died;
+      if (died) break;
+    }
 
     let expGained: number | undefined;
     let leveledUp = false;
     if (died) {
-      expGained = expGainFor(monster.expReward, client.data.level, monster.level);
-      leveledUp = this.grantExp(client, expGained);
-      const items = [bodyPartLabelFor(monster.kind), ...(monster.carriedItem ? [monster.carriedItem] : [])];
+      const rawExpGained = expGainFor(monster.expReward, client.data.level, monster.level);
+      const grantResult = this.grantExp(client, rawExpGained);
+      leveledUp = grantResult.leveledUp;
+      // A capped goblin's message means the nominal reward wasn't (fully)
+      // applied — showing "+X exp" would be misleading, so the cap
+      // message stands in for it instead.
+      expGained = grantResult.message ? undefined : rawExpGained;
+      if (grantResult.message) growthMessages.push(grantResult.message);
+      const items = [bodyPartLabelFor(monster.kind), ...monster.carriedItems];
       this.corpseManager.spawn(monster.kind, items, monster.mapName, monster.row, monster.col);
     }
-    const growthMessages: string[] = [];
     const attackGrowth = this.maybeGrowSkill(client, attackSkill);
     if (attackGrowth) growthMessages.push(attackGrowth);
-    void this.persistStats(client);
 
-    const message = died
-      ? `${client.data.username} punches the ${monster.kind} for ${damage} damage, defeating it! (+${expGained} exp)`
-      : `${client.data.username} punches the ${monster.kind} for ${damage} damage.`;
+    let message = died
+      ? `${client.data.username} punches the ${monster.kind} for ${totalDamage} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
+      : `${client.data.username} punches the ${monster.kind} for ${totalDamage} damage.`;
+
+    if (!died) {
+      const counterMessage = this.resolveMonsterCounterAttack(client, monster, monster.kind, monster.monsterClass, growthMessages);
+      message += ` ${counterMessage}`;
+    }
+    void this.persistStats(client);
 
     this.emitCombat(client, {
       targetKind: 'monster',
       target: monster.id,
       targetLabel: monster.kind,
-      damage,
-      targetHp: result.monster.hp,
+      damage: totalDamage,
+      targetHp: currentHp,
       targetMaxHp: monster.maxHp,
       targetDied: died,
       expGained,
@@ -670,19 +795,26 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
-    const rawDamage = punchDamage(
-      this.attackerStatsFor(client),
-      defenderStats,
-      attackSkillPercent,
-      weaponBonusFor(client.data.equipment, client.data.skills)
-    );
+    const growthMessages: string[] = [];
+    const { swings, enhancedBonus } = this.rollHobgoblinExtras(client, growthMessages);
+
     // The dummy has no equipment/learned skills of its own to defend with
     // — it can still dodge (a flat, skill-less roll), but never parries
     // or shield-blocks (both require gear it doesn't have).
-    const defense = this.resolveDefense(defenderStats, {}, {}, this.attackerStatsFor(client));
-    const damage = defense.avoided ? 0 : rawDamage;
-    npc.hp = Math.max(0, npc.hp - damage);
-    const died = npc.hp <= 0;
+    let totalDamage = 0;
+    let died = false;
+    for (let i = 0; i < swings; i++) {
+      const swingDamage =
+        punchDamage(this.attackerStatsFor(client), defenderStats, attackSkillPercent, weaponBonusFor(client.data.equipment, client.data.skills)) +
+        enhancedBonus;
+      const defense = this.resolveDefense(defenderStats, {}, {}, this.attackerStatsFor(client));
+      if (!defense.avoided) {
+        totalDamage += swingDamage;
+        npc.hp = Math.max(0, npc.hp - swingDamage);
+        died = npc.hp <= 0;
+      }
+      if (died) break;
+    }
 
     if (died) {
       this.corpseManager.spawn(npc.race, [bodyPartLabelFor(npc.race), 'bone dagger'], npc.map, npc.row, npc.col);
@@ -691,22 +823,24 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       npc.col = tile.col;
       npc.hp = npc.maxHp;
     }
-    const growthMessages: string[] = [];
     const attackGrowth = this.maybeGrowSkill(client, attackSkill);
     if (attackGrowth) growthMessages.push(attackGrowth);
-    void this.persistStats(client);
 
-    const message = defense.avoided
-      ? `${client.data.username} punches the training dummy, but it ${defense.verb} out of the way!`
-      : died
-        ? `${client.data.username} punches the training dummy for ${damage} damage, defeating it! It leaves a corpse and reappears elsewhere.`
-        : `${client.data.username} punches the training dummy for ${damage} damage.`;
+    let message = died
+      ? `${client.data.username} punches the training dummy for ${totalDamage} damage, defeating it! It leaves a corpse and reappears elsewhere.`
+      : `${client.data.username} punches the training dummy for ${totalDamage} damage.`;
+
+    if (!died) {
+      const counterMessage = this.resolveMonsterCounterAttack(client, defenderStats, 'training dummy', undefined, growthMessages);
+      message += ` ${counterMessage}`;
+    }
+    void this.persistStats(client);
 
     this.emitCombat(client, {
       targetKind: 'npc',
       target: npc.id,
       targetLabel: 'training dummy',
-      damage,
+      damage: totalDamage,
       targetHp: npc.hp,
       targetMaxHp: npc.maxHp,
       targetDied: died,
@@ -723,23 +857,39 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // just no-op rather than crashing on a stats lookup that no longer exists.
     if (!targetClient) return;
 
+    // Being attacked always wakes/stands a sleeping or resting player up
+    // — same as the attacker's own wakeIfNeeded on move/punch, but here
+    // it's the DEFENDER who's forced awake by someone else's action.
+    this.wakeIfNeeded(targetClient);
+
     const defenderStats = this.attackerStatsFor(targetClient);
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
-    const rawDamage = punchDamage(
-      this.attackerStatsFor(client),
-      defenderStats,
-      attackSkillPercent,
-      weaponBonusFor(client.data.equipment, client.data.skills)
-    );
-
     const growthMessages: string[] = [];
-    const defense = this.resolveDefense(defenderStats, targetClient.data.skills, targetClient.data.equipment, this.attackerStatsFor(client));
-    if (defense.skill) {
-      const defenseGrowth = this.maybeGrowSkill(targetClient, defense.skill);
-      if (defenseGrowth) growthMessages.push(defenseGrowth);
+    const { swings, enhancedBonus } = this.rollHobgoblinExtras(client, growthMessages);
+
+    let damage = 0;
+    let avoidedVerb: string | undefined;
+    for (let i = 0; i < swings; i++) {
+      const swingDamage =
+        punchDamage(this.attackerStatsFor(client), defenderStats, attackSkillPercent, weaponBonusFor(client.data.equipment, client.data.skills)) +
+        enhancedBonus;
+      const defense = this.resolveDefense(defenderStats, targetClient.data.skills, targetClient.data.equipment, this.attackerStatsFor(client));
+      if (defense.skill) {
+        const defenseGrowth = this.maybeGrowSkill(targetClient, defense.skill);
+        if (defenseGrowth) growthMessages.push(defenseGrowth);
+      }
+      if (defense.avoided) {
+        avoidedVerb = defense.verb;
+      } else {
+        damage += swingDamage;
+      }
+      if (targetClient.data.hp - damage <= 0) break;
     }
-    const damage = defense.avoided ? 0 : rawDamage;
+    // Only worth narrating the dodge/parry/block if EVERY swing was
+    // avoided — if at least one landed, the damage number speaks for
+    // itself (same simplification as multi-swing monster combat).
+    const fullyAvoidedVerb = damage === 0 ? avoidedVerb : undefined;
 
     targetClient.data.hp = Math.max(0, targetClient.data.hp - damage);
     const died = targetClient.data.hp <= 0;
@@ -748,8 +898,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     let leveledUp = false;
 
     if (died) {
-      expGained = expGainFor(PLAYER_KILL_EXP_REWARD, client.data.level, targetClient.data.level);
-      leveledUp = this.grantExp(client, expGained);
+      const rawExpGained = expGainFor(PLAYER_KILL_EXP_REWARD, client.data.level, targetClient.data.level);
+      const grantResult = this.grantExp(client, rawExpGained);
+      leveledUp = grantResult.leveledUp;
+      expGained = grantResult.message ? undefined : rawExpGained;
+      if (grantResult.message) growthMessages.push(grantResult.message);
       this.corpseManager.spawn(
         targetClient.data.race,
         [bodyPartLabelFor(targetClient.data.race)],
@@ -787,10 +940,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     void this.persistPosition(targetClient);
     void this.persistStats(targetClient);
 
-    const message = defense.avoided
-      ? `${client.data.username} punches ${targetUsername}, but they ${defense.verb} out of the way!`
+    const message = fullyAvoidedVerb
+      ? `${client.data.username} punches ${targetUsername}, but they ${fullyAvoidedVerb} out of the way!`
       : died
-        ? `${client.data.username} punches ${targetUsername} for ${damage} damage, defeating them! (+${expGained} exp)`
+        ? `${client.data.username} punches ${targetUsername} for ${damage} damage, defeating them!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
         : `${client.data.username} punches ${targetUsername} for ${damage} damage.`;
 
     this.emitCombat(client, {
@@ -1028,6 +1181,119 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { players: this.worldManager.getAllPlayers() };
   }
 
+  // One-way, one-time — reaching HOBGOBLIN_EVOLUTION_CXP consumed body
+  // parts as a goblin transforms them into a Hobgoblin: level/exp reset
+  // to a fresh level 1, attributes/vitals boosted (and fully healed),
+  // consumeExp reset to 0, and any of the Hobgoblin-exclusive skills
+  // (second attack/third attack/enhanced damage) they don't already have
+  // granted at STARTING_SKILL_PERCENT. Existing skills are left alone.
+  private maybeEvolveToHobgoblin(client: GameSocket): string[] {
+    if (client.data.race !== 'goblin' || client.data.consumeExp < HOBGOBLIN_EVOLUTION_CXP) return [];
+
+    client.data.race = 'hobgoblin';
+    client.data.level = STARTING_LEVEL;
+    client.data.exp = STARTING_EXP;
+    client.data.consumeExp = 0;
+
+    client.data.strength += HOBGOBLIN_ATTRIBUTE_BONUS;
+    client.data.intelligence += HOBGOBLIN_ATTRIBUTE_BONUS;
+    client.data.wisdom += HOBGOBLIN_ATTRIBUTE_BONUS;
+    client.data.dexterity += HOBGOBLIN_ATTRIBUTE_BONUS;
+    client.data.constitution += HOBGOBLIN_ATTRIBUTE_BONUS;
+
+    client.data.maxHp += HOBGOBLIN_STAT_BONUS;
+    client.data.maxMana += HOBGOBLIN_STAT_BONUS;
+    client.data.maxMovement += HOBGOBLIN_STAT_BONUS;
+    client.data.hp = client.data.maxHp;
+    client.data.mana = client.data.maxMana;
+    client.data.movement = client.data.maxMovement;
+
+    const newSkills: string[] = [];
+    for (const skill of HOBGOBLIN_EVOLUTION_SKILLS) {
+      if (client.data.skills[skill] === undefined) {
+        client.data.skills = { ...client.data.skills, [skill]: STARTING_SKILL_PERCENT };
+        newSkills.push(skill);
+      }
+    }
+
+    this.worldManager.updateState(client.data.username, {
+      race: client.data.race,
+      level: client.data.level,
+      exp: client.data.exp,
+      consumeExp: client.data.consumeExp,
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
+      maxHp: client.data.maxHp,
+      maxMana: client.data.maxMana,
+      maxMovement: client.data.maxMovement,
+      hp: client.data.hp,
+      mana: client.data.mana,
+      movement: client.data.movement,
+      skills: client.data.skills,
+    });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+
+    const messages = [
+      '**Your body twists and swells with dark power — you have evolved into a Hobgoblin!**',
+      'Your level has reset to 1.',
+      `Your attributes have increased by ${HOBGOBLIN_ATTRIBUTE_BONUS}.`,
+      `Your hp, mana, and movement have increased by ${HOBGOBLIN_STAT_BONUS} and been fully restored.`,
+      'Your consumed exp has reset to 0.',
+    ];
+    if (newSkills.length > 0) {
+      messages.push(`You have also learned: ${newSkills.join(', ')} (starting at ${STARTING_SKILL_PERCENT}%).`);
+    }
+    return messages;
+  }
+
+  // Shared by both useItem's "consume" path and the forced consumeItem
+  // RPC: grants consumeExp, rolls a resistance skill if this item's name
+  // maps to one (see resistanceGrantForItem), and checks for a Hobgoblin
+  // evolution. Returns the flavor message lines to show, if any.
+  private applyConsume(client: GameSocket, item: string): string[] {
+    client.data.consumeExp += CONSUME_EXP_PER_ITEM;
+
+    const messages: string[] = [];
+    const grant = resistanceGrantForItem(item);
+    if (grant && client.data.skills[grant.skill] === undefined && Math.random() < grant.chance) {
+      client.data.skills = { ...client.data.skills, [grant.skill]: RESISTANCE_SKILL_STARTING_PERCENT };
+      messages.push(`You have gained ${grant.skill} (${RESISTANCE_SKILL_STARTING_PERCENT}%)!`);
+    }
+    // Checked after the resistance roll above so a body part that both
+    // grants a resistance AND crosses the evolution threshold in the same
+    // consume shows both messages, in that order.
+    messages.push(...this.maybeEvolveToHobgoblin(client));
+    return messages;
+  }
+
+  // Persists/broadcasts/builds the ack after either an equip or a
+  // consume — both useItem and consumeItem end the same way.
+  private finishItemAction(client: GameSocket, inventory: string[], action: 'consumed' | 'equipped', messages: string[]): UseItemAck {
+    client.data.inventory = inventory;
+    this.worldManager.updateState(client.data.username, {
+      inventory: client.data.inventory,
+      equipment: client.data.equipment,
+      consumeExp: client.data.consumeExp,
+      skills: client.data.skills,
+    });
+    void this.persistStats(client);
+    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+
+    return {
+      ok: true,
+      action,
+      inventory: client.data.inventory,
+      equipment: client.data.equipment,
+      consumeExp: client.data.consumeExp,
+      skills: client.data.skills,
+      message: messages.length > 0 ? messages.join('\n') : undefined,
+    };
+  }
+
   // Clicking an inventory item: the server alone decides whether it's
   // equippable (see combat/formulas.ts's EQUIPMENT_SLOT_FOR_ITEM) or just
   // a consumable body part. Equipping swaps out whatever was already in
@@ -1050,47 +1316,37 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     inventory.splice(itemIndex, 1);
 
     const slot = EQUIPMENT_SLOT_FOR_ITEM[item];
-    let action: 'consumed' | 'equipped';
-    let resistanceGained: string | undefined;
     if (slot) {
       const previous = client.data.equipment[slot];
       if (previous) inventory.push(previous);
       client.data.equipment = { ...client.data.equipment, [slot]: item };
-      action = 'equipped';
-    } else {
-      client.data.consumeExp += CONSUME_EXP_PER_ITEM;
-      action = 'consumed';
-
-      // A chance to learn a resistance skill, same as the text game's
-      // BODY_PART_SKILL — which resistance and how likely depends on
-      // which monster the part came from (baked into the item's own
-      // name), and it only ever fires once (a skill you already know
-      // doesn't reroll).
-      const grant = resistanceGrantForItem(item);
-      if (grant && client.data.skills[grant.skill] === undefined && Math.random() < grant.chance) {
-        client.data.skills = { ...client.data.skills, [grant.skill]: RESISTANCE_SKILL_STARTING_PERCENT };
-        resistanceGained = grant.skill;
-      }
+      return this.finishItemAction(client, inventory, 'equipped', []);
     }
 
-    client.data.inventory = inventory;
-    this.worldManager.updateState(client.data.username, {
-      inventory: client.data.inventory,
-      equipment: client.data.equipment,
-      consumeExp: client.data.consumeExp,
-      skills: client.data.skills,
-    });
-    void this.persistStats(client);
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    const messages = this.applyConsume(client, item);
+    return this.finishItemAction(client, inventory, 'consumed', messages);
+  }
 
-    return {
-      ok: true,
-      action,
-      inventory: client.data.inventory,
-      equipment: client.data.equipment,
-      consumeExp: client.data.consumeExp,
-      skills: client.data.skills,
-      message: resistanceGained ? `You have gained ${resistanceGained} (${RESISTANCE_SKILL_STARTING_PERCENT}%)!` : undefined,
-    };
+  // Right-clicking an inventory item (see main.ts, which captures the
+  // browser's own context-menu event to trigger this instead) always
+  // consumes it, even if it's normally equippable (a bone dagger, say) —
+  // same as the text game's "eat <item>" letting you consume a weapon
+  // for its exp instead of wielding it.
+  @SubscribeMessage('consumeItem')
+  handleConsumeItem(@ConnectedSocket() client: GameSocket, @MessageBody() itemIndex: unknown): UseItemAck {
+    if (typeof itemIndex !== 'number' || !Number.isInteger(itemIndex)) {
+      return { ok: false, message: 'Invalid item.' };
+    }
+
+    const item = client.data.inventory[itemIndex];
+    if (item === undefined) {
+      return { ok: false, message: "You don't have that." };
+    }
+
+    const inventory = [...client.data.inventory];
+    inventory.splice(itemIndex, 1);
+
+    const messages = this.applyConsume(client, item);
+    return this.finishItemAction(client, inventory, 'consumed', messages);
   }
 }

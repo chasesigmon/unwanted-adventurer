@@ -91,14 +91,14 @@ export class MonsterManagerService {
     const tile = this.randomFreeTile(species.homeMap);
     if (!tile) return;
 
-    const carriedItem =
-      species.carriedItemLabel && species.carriedItemChance && Math.random() < species.carriedItemChance
-        ? species.carriedItemLabel
-        : undefined;
+    const carriedItems = (species.carriedItemRolls ?? [])
+      .filter((roll) => Math.random() < roll.chance)
+      .map((roll) => roll.label);
 
     const monster: Monster = {
       id: randomUUID(),
       kind: species.kind,
+      monsterClass: species.monsterClass,
       mapName: species.homeMap,
       row: tile.row,
       col: tile.col,
@@ -111,7 +111,7 @@ export class MonsterManagerService {
       wisdom: MONSTER_BASE_ATTRIBUTE,
       dexterity: MONSTER_BASE_ATTRIBUTE,
       constitution: MONSTER_BASE_ATTRIBUTE,
-      carriedItem,
+      carriedItems,
     };
     this.monsters.set(monster.id, monster);
   }
@@ -177,7 +177,18 @@ export class MonsterManagerService {
     const snapshots: MonsterSnapshot[] = [];
     for (const m of this.monsters.values()) {
       if (m.mapName !== mapName) continue;
-      snapshots.push({ id: m.id, kind: m.kind, map: m.mapName, row: m.row, col: m.col, level: m.level, hp: m.hp, maxHp: m.maxHp });
+      snapshots.push({
+        id: m.id,
+        kind: m.kind,
+        monsterClass: m.monsterClass,
+        map: m.mapName,
+        row: m.row,
+        col: m.col,
+        level: m.level,
+        hp: m.hp,
+        maxHp: m.maxHp,
+        carriedItems: m.carriedItems,
+      });
     }
     return snapshots;
   }

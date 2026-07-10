@@ -17,6 +17,7 @@ const PLAYER_CORPSE_TTL_MS = 10 * 60 * 1000;
 const BODY_PART_LABEL: Record<Race | MonsterKind, string> = {
   goblin: 'goblin ear',
   skeleton: 'skeleton bone',
+  hobgoblin: 'hobgoblin ear',
   'wild goblin': 'wild goblin ear',
   'wild skeleton': 'wild skeleton bone',
 };

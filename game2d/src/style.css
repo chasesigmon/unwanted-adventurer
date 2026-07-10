@@ -203,6 +203,9 @@ body {
   left: 12px;
   padding: 6px 10px;
   padding-right: 22px;
+  /* Stays visible/usable above the sleep overlay (z-index 50) — sleeping
+     only blacks out the world view, not the player's own vitals. */
+  z-index: 60;
 }
 
 #status-content {
@@ -239,6 +242,23 @@ body {
   padding: 6px 10px;
   padding-right: 22px;
   width: min(420px, 40vw);
+  height: 220px;
+  display: flex;
+  flex-direction: column;
+  /* Drag-resize from the bottom-right corner (native browser handle) —
+     `overflow: hidden` (rather than the default `visible`) is required
+     for `resize` to actually take effect. */
+  resize: both;
+  overflow: hidden;
+  min-width: 260px;
+  min-height: 120px;
+  max-width: 90vw;
+  max-height: 80vh;
+}
+
+#log-panel.collapsed {
+  resize: none;
+  height: auto;
 }
 
 .log-view .log-line.level-up {
@@ -277,8 +297,8 @@ body {
 }
 
 .log-view {
-  min-height: 80px;
-  max-height: 160px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   line-height: 1.5;
   color: #ccc;
@@ -309,6 +329,9 @@ body {
   right: 12px;
   display: flex;
   gap: 8px;
+  /* Stays clickable above the sleep overlay — you can still e.g. open
+     the map/chat to type /wake even while blacked out. */
+  z-index: 60;
 }
 
 .corner-btn {
@@ -379,11 +402,39 @@ body {
   color: #eee;
 }
 
+.secondary-btn {
+  margin-bottom: 14px;
+  padding: 5px 12px;
+  background: transparent;
+  border: 1px solid #555;
+  color: #ccc;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+.secondary-btn:hover {
+  border-color: #f0c040;
+  color: #f0c040;
+}
+
+.secondary-btn.active {
+  background: #2a2a3a;
+  border-color: #f0c040;
+  color: #f0c040;
+}
+
 .modal-stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px 16px;
   font-size: 13px;
+}
+
+.stat-value.not-acquired {
+  color: #666;
+  font-style: italic;
 }
 
 .modal-stats .stat-label {
@@ -543,6 +594,23 @@ body {
   font-weight: bold;
   color: #f0c040;
   pointer-events: none;
+  /* Stays visible above the sleep overlay, same reasoning as #status-bar. */
+  z-index: 60;
+}
+
+/* ---------- Day/night overlay ---------- */
+
+#daynight-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 5, 20, 0);
+  pointer-events: none;
+  /* Below the sleep overlay (sleeping is always pitch black regardless
+     of time of day) and the HUD (always fully visible), above the game
+     canvas itself. Each hourly update fades smoothly into the next
+     rather than snapping straight to the new value. */
+  z-index: 10;
+  transition: background-color 4s linear;
 }
 
 /* ---------- Sleep overlay ---------- */

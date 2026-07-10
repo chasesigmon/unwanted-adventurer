@@ -21,6 +21,7 @@ import {
 import { getMap, MAPS } from '../shared/maps.js';
 import { treePositionsFor } from '../shared/trees.js';
 import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS } from '../shared/equipment.js';
+import { STARTING_SKILLS, HOBGOBLIN_EVOLUTION_SKILLS, RESISTANCE_SKILLS } from '../shared/skills.js';
 import { RACES, MAP_NAMES } from '../shared/constants.js';
 import type { MapName, Race, Direction, MonsterKind } from '../shared/constants.js';
 import type {
@@ -33,6 +34,9 @@ import type {
   ChatPayload,
   WhoEntry,
   StatTickPayload,
+  RestState,
+  UseItemAck,
+  WorldTimePayload,
 } from '../shared/types.js';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL as string | undefined) || 'http://localhost:3001';
@@ -78,6 +82,7 @@ const statusMv = document.getElementById('status-mv') as HTMLSpanElement;
 const statusExp = document.getElementById('status-exp') as HTMLSpanElement;
 const worldLabel = document.getElementById('world-label') as HTMLDivElement;
 const sleepOverlay = document.getElementById('sleep-overlay') as HTMLDivElement;
+const daynightOverlay = document.getElementById('daynight-overlay') as HTMLDivElement;
 
 function updateWorldLabel(mapName: MapName): void {
   worldLabel.textContent = mapName;
@@ -85,6 +90,18 @@ function updateWorldLabel(mapName: MapName): void {
 
 function updateSleepOverlay(): void {
   sleepOverlay.hidden = myProfile?.restState !== 'sleeping';
+}
+
+// A smooth day/night cycle — darkest at midnight (hour 0), fully clear at
+// noon (hour 12), gradually shifting between the two rather than the
+// text game's own hard day/night on-off split. No darkness is applied
+// until the first 'worldTime' broadcast arrives (a fresh connection
+// otherwise starts at hour 0/"midnight" for a moment before the first
+// tick, which would open on a jarring dark screen).
+const MAX_NIGHT_OPACITY = 0.55;
+function updateDaynightOverlay(hour: number): void {
+  const darkness = ((1 - Math.cos(((hour - 12) / 24) * Math.PI * 2)) / 2) * MAX_NIGHT_OPACITY;
+  daynightOverlay.style.background = `rgba(5, 5, 20, ${darkness.toFixed(3)})`;
 }
 
 const logPanel = document.getElementById('log-panel') as HTMLDivElement;
@@ -129,6 +146,27 @@ function switchLogTab(tab: 'combat' | 'chat'): void {
   combatLogEl.hidden = tab !== 'combat';
   chatLogEl.hidden = tab !== 'chat';
 }
+
+// Auto-switches to the Combat tab exactly once at the START of a fight
+// (if the player wasn't already looking at it) — not on every single
+// exchange, and not forcing them back if they deliberately switch to
+// Chat mid-fight. A "fight" is considered over (so the NEXT punch counts
+// as a new start) after a few seconds of no combat activity.
+const COMBAT_SESSION_IDLE_MS = 8000;
+let combatSessionActive = false;
+let combatSessionTimer: ReturnType<typeof setTimeout> | null = null;
+
+function noteCombatActivity(): void {
+  if (!combatSessionActive) {
+    combatSessionActive = true;
+    if (!logTabCombatBtn.classList.contains('active')) switchLogTab('combat');
+  }
+  if (combatSessionTimer) clearTimeout(combatSessionTimer);
+  combatSessionTimer = setTimeout(() => {
+    combatSessionActive = false;
+  }, COMBAT_SESSION_IDLE_MS);
+}
+
 logTabCombatBtn.addEventListener('click', () => switchLogTab('combat'));
 logTabChatBtn.addEventListener('click', () => switchLogTab('chat'));
 
@@ -186,6 +224,7 @@ const inventoryModal = document.getElementById('inventory-modal') as HTMLDivElem
 const inventoryList = document.getElementById('inventory-list') as HTMLUListElement;
 const skillsModal = document.getElementById('skills-modal') as HTMLDivElement;
 const skillsBody = document.getElementById('skills-body') as HTMLDivElement;
+const skillsShowAllToggle = document.getElementById('skills-show-all-toggle') as HTMLButtonElement;
 const equipmentModal = document.getElementById('equipment-modal') as HTMLDivElement;
 const equipmentBody = document.getElementById('equipment-body') as HTMLDivElement;
 const mapModal = document.getElementById('map-modal') as HTMLDivElement;
@@ -266,13 +305,44 @@ function renderCharSheet(): void {
   for (const [label, value] of rows) appendStatRow(charSheetBody, label, value);
 }
 
+// There's no real per-level skill unlock system in this project (see
+// game.gateway.ts — skills are granted at creation, on evolving, or by
+// chance on consuming a body part, never gated behind a specific
+// character level) — "Show All" instead previews every skill this
+// character could ever still acquire down their current path (their base
+// kit, the Hobgoblin-exclusive skills if they haven't evolved yet, and
+// the two resistance skills), so the player can see what's left to earn.
+let showAllSkills = false;
+
+function acquirableSkillPool(): string[] {
+  const pool = new Set(STARTING_SKILLS);
+  if (myProfile?.race !== 'hobgoblin') {
+    for (const skill of HOBGOBLIN_EVOLUTION_SKILLS) pool.add(skill);
+  }
+  for (const skill of RESISTANCE_SKILLS) pool.add(skill);
+  return [...pool];
+}
+
 function renderSkills(): void {
   if (!myProfile) return;
   skillsBody.innerHTML = '';
   for (const [skillName, percent] of Object.entries(myProfile.skills)) {
     appendStatRow(skillsBody, skillName, `${percent}%`);
   }
+  if (showAllSkills) {
+    for (const skillName of acquirableSkillPool()) {
+      if (myProfile.skills[skillName] !== undefined) continue;
+      appendStatRow(skillsBody, skillName, '(not yet acquired)');
+      skillsBody.lastElementChild?.classList.add('not-acquired');
+    }
+  }
 }
+
+skillsShowAllToggle.addEventListener('click', () => {
+  showAllSkills = !showAllSkills;
+  skillsShowAllToggle.classList.toggle('active', showAllSkills);
+  renderSkills();
+});
 
 function renderEquipment(): void {
   if (!myProfile) return;
@@ -292,44 +362,70 @@ function renderInventory(): void {
     inventoryList.appendChild(li);
     return;
   }
+  // Stack identical items into a single "item x3" line rather than a
+  // repeated line per copy. The server's inventory stays a flat array
+  // (it has no concept of stacks) — this is purely a display grouping;
+  // clicking a stack acts on one instance (the first index sharing that
+  // name), same as clicking any single unstacked item always did.
+  const groups = new Map<string, number[]>();
   items.forEach((item, index) => {
+    const indices = groups.get(item);
+    if (indices) indices.push(index);
+    else groups.set(item, [index]);
+  });
+
+  for (const [item, indices] of groups) {
     const li = document.createElement('li');
-    li.textContent = item;
+    li.textContent = indices.length > 1 ? `${item} x${indices.length}` : item;
     li.className = 'inventory-item';
-    li.title = 'Click to use';
-    li.addEventListener('click', () => useInventoryItem(index));
+    li.title = 'Click to use, right-click to consume';
+    li.addEventListener('click', () => useInventoryItem(indices[0]));
+    // The browser's own right-click context menu is never useful here —
+    // captured and replaced with a forced consume (see
+    // game.gateway.ts's consumeItem), so an otherwise-equippable item
+    // (a bone dagger, say) can be eaten for its exp instead of worn.
+    li.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      consumeInventoryItem(indices[0]);
+    });
     inventoryList.appendChild(li);
+  }
+}
+
+function applyUseItemAck(ack: UseItemAck): void {
+  if (!ack.ok) {
+    if (ack.message) logCombatMessage(ack.message);
+    return;
+  }
+  if (myProfile) {
+    myProfile = {
+      ...myProfile,
+      inventory: ack.inventory ?? myProfile.inventory,
+      equipment: ack.equipment ?? myProfile.equipment,
+      consumeExp: ack.consumeExp ?? myProfile.consumeExp,
+      skills: ack.skills ?? myProfile.skills,
+    };
+    refreshOpenModals();
+    activeScene?.refreshWeaponSprite();
+  }
+  logCombatMessage(ack.action === 'equipped' ? 'You equip it.' : 'You consume it.');
+  if (ack.message) logCombatMessage(ack.message, 'level-up');
+}
+
+// Left-click asks the server to decide consume-vs-equip (see
+// game.gateway.ts's useItem handler) — the client has no copy of that
+// logic, it just reflects whatever the server did.
+function useInventoryItem(index: number): void {
+  network.useItem(index).then(applyUseItemAck).catch(() => {
+    /* nothing to show */
   });
 }
 
-// Clicking an inventory item asks the server to decide consume-vs-equip
-// (see game.gateway.ts's useItem handler) — the client has no copy of
-// that logic, it just reflects whatever the server did.
-function useInventoryItem(index: number): void {
-  network
-    .useItem(index)
-    .then((ack) => {
-      if (!ack.ok) {
-        if (ack.message) logCombatMessage(ack.message);
-        return;
-      }
-      if (myProfile) {
-        myProfile = {
-          ...myProfile,
-          inventory: ack.inventory ?? myProfile.inventory,
-          equipment: ack.equipment ?? myProfile.equipment,
-          consumeExp: ack.consumeExp ?? myProfile.consumeExp,
-          skills: ack.skills ?? myProfile.skills,
-        };
-        refreshOpenModals();
-        activeScene?.refreshWeaponSprite();
-      }
-      logCombatMessage(ack.action === 'equipped' ? 'You equip it.' : 'You consume it.');
-      if (ack.message) logCombatMessage(ack.message, 'level-up');
-    })
-    .catch(() => {
-      /* nothing to show */
-    });
+// Right-click always forces a consume, even for an equippable item.
+function consumeInventoryItem(index: number): void {
+  network.consumeItem(index).then(applyUseItemAck).catch(() => {
+    /* nothing to show */
+  });
 }
 
 // ---------- Player (and training-dummy) corpse loot modal ----------
@@ -878,6 +974,7 @@ class WorldScene extends Phaser.Scene {
     this.network.addEventListener('combat', ((e: CustomEvent<CombatEventPayload>) => this.applyCombatEvent(e.detail)) as EventListener);
     this.network.addEventListener('chat', ((e: CustomEvent<ChatPayload>) => logChatMessage(e.detail.username, e.detail.message)) as EventListener);
     this.network.addEventListener('statTick', ((e: CustomEvent<StatTickPayload>) => this.applyOwnStats(e.detail)) as EventListener);
+    this.network.addEventListener('worldTime', ((e: CustomEvent<WorldTimePayload>) => updateDaynightOverlay(e.detail.hour)) as EventListener);
     this.network.addEventListener('kicked', ((e: CustomEvent<KickedPayload>) => {
       alert(e.detail.message);
       window.location.reload();
@@ -937,7 +1034,50 @@ class WorldScene extends Phaser.Scene {
   // immediately rather than waiting for the next sync/map:state.
   refreshWeaponSprite(): void {
     if (!myProfile) return;
-    this.ensureWeaponSprite(this.player, Boolean(myProfile.equipment.weapon), this.facing);
+    this.updateOwnWeaponSprite(Boolean(myProfile.equipment.weapon));
+  }
+
+  // The local player's own weapon overlay uses the dedicated
+  // playerWeaponSprite FIELD (repositioned every frame in
+  // repositionHpBars), unlike the generic getData-based ensureWeaponSprite
+  // used for other players/npcs/monsters. Calling ensureWeaponSprite on
+  // this.player directly used to create a SEPARATE, second sprite (since
+  // this.player had no 'weaponSprite' data key pointing at the field) —
+  // that phantom only ever got repositioned when this method itself ran
+  // (sync/equip events), never during ordinary movement, while the real,
+  // per-frame-tracked field stayed permanently invisible. That was the
+  // "dagger didn't move with me, only jumped on sit/rest" bug.
+  private updateOwnWeaponSprite(hasWeapon: boolean): void {
+    this.playerWeaponSprite.setVisible(hasWeapon);
+    this.repositionWeaponSprite(this.playerWeaponSprite, this.player, this.facing);
+  }
+
+  // Sleeping is a static 90-degree "lying down" rotation (no dedicated
+  // sprite art). Resting/sitting is a genuine looping animation instead —
+  // a gentle squash-and-stretch "settling down" breathing tween — since
+  // there's no separate sit-frame art either, but a rotation would look
+  // wrong for "sitting up". Only re-applied when the state actually
+  // changes (tracked via getData) so repeated map:state/sync ticks for
+  // an unchanged restState don't restart the tween from scratch.
+  private applyRestPose(sprite: Phaser.GameObjects.Sprite, restState: RestState, baseScale: number): void {
+    if (sprite.getData('restState') === restState) return;
+    sprite.setData('restState', restState);
+    this.tweens.killTweensOf(sprite);
+    sprite.setAngle(0);
+    sprite.setScale(baseScale);
+
+    if (restState === 'sleeping') {
+      sprite.setAngle(90);
+    } else if (restState === 'resting') {
+      this.tweens.add({
+        targets: sprite,
+        scaleY: baseScale * 0.82,
+        duration: 900,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
   }
 
   private manualMoveKeyDown(): boolean {
@@ -1197,7 +1337,14 @@ class WorldScene extends Phaser.Scene {
     for (const sprite of this.doorSprites) sprite.destroy();
     this.doorSprites = def.exits.map((exit) => {
       const pos = this.tilePosition(exit.row, exit.col);
-      return this.add.sprite(pos.x, pos.y, 'door');
+      // Every reciprocal door pair lands you exactly on the tile that
+      // triggers the return exit (see shared/maps.ts), so the player
+      // stands ON a door sprite on every single transition. Without an
+      // explicit depth, door sprites (recreated — and so re-inserted at
+      // the top of the display list — on every renderMap call) rendered
+      // OVER the player, hiding the sprite completely. Depth -0.5 keeps
+      // them above the floor (-1) but below every character.
+      return this.add.sprite(pos.x, pos.y, 'door').setDepth(-0.5);
     });
 
     // Other entities belong to whichever map we just left — clear them
@@ -1258,12 +1405,9 @@ class WorldScene extends Phaser.Scene {
     this.isMoving = false;
     this.isPunching = false;
     this.setIdle();
-    this.ensureHpBar(this.player, player.hp, player.maxHp);
     this.updateOwnBars();
-    this.ensureWeaponSprite(this.player, Boolean(player.equipment.weapon), this.facing);
-    // Lying down is approximated with a 90-degree rotation of the normal
-    // idle frame — there's no dedicated "sleeping" sprite art yet.
-    this.player.setAngle(player.restState === 'sleeping' ? 90 : 0);
+    this.updateOwnWeaponSprite(Boolean(player.equipment.weapon));
+    this.applyRestPose(this.player, player.restState, CHAR_SCALE);
   }
 
   private applyMapState(state: MapStatePayload): void {
@@ -1274,6 +1418,14 @@ class WorldScene extends Phaser.Scene {
     // sprite (always facing its default down/idle pose, since only real
     // *other* players get their facing driven by remote punches).
     if (!this.myUsername) return;
+    // A map:state for whichever map we've already left/not yet entered
+    // can arrive slightly out of order around a transition (the server
+    // broadcasts to a room the instant this socket joins it, which can
+    // race the move's own ack/renderMap on the client) — merging it in
+    // would populate otherPlayers/npcSprites/monsterSprites/corpseSprites
+    // with entries for the wrong map. Only apply a snapshot for the map
+    // we're actually currently rendering.
+    if (state.mapName !== this.currentMap) return;
 
     const seenPlayers = new Set<string>();
     for (const p of state.players) {
@@ -1293,7 +1445,7 @@ class WorldScene extends Phaser.Scene {
       sprite.setData('race', p.race);
       this.ensureHpBar(sprite, p.hp, p.maxHp);
       this.ensureWeaponSprite(sprite, Boolean(p.equipment.weapon), (sprite.getData('facing') as Facing) ?? 'down');
-      sprite.setAngle(p.restState === 'sleeping' ? 90 : 0);
+      this.applyRestPose(sprite, p.restState, CHAR_SCALE);
     }
     for (const [username, sprite] of this.otherPlayers) {
       if (!seenPlayers.has(username)) {
@@ -1339,6 +1491,8 @@ class WorldScene extends Phaser.Scene {
       }
       sprite.setData('kind', m.kind);
       this.ensureHpBar(sprite, m.hp, m.maxHp);
+      const hasWeapon = m.carriedItems.some((item) => item.toLowerCase().includes('dagger'));
+      this.ensureWeaponSprite(sprite, hasWeapon, (sprite.getData('facing') as Facing) ?? 'down');
     }
     for (const [id, sprite] of this.monsterSprites) {
       if (!seenMonsters.has(id)) {
@@ -1430,7 +1584,9 @@ class WorldScene extends Phaser.Scene {
           // A map transition is a load, not a walk — snap straight to the
           // new map rather than tweening across two different worlds.
           this.race = ack.player.race;
+          if (myProfile) myProfile = { ...myProfile, map: ack.player.map };
           this.renderMap(ack.player.map);
+          updateWorldLabel(ack.player.map);
           const pos = this.tilePosition(ack.player.row, ack.player.col);
           this.player.setPosition(pos.x, pos.y);
           this.isMoving = false;
@@ -1512,6 +1668,10 @@ class WorldScene extends Phaser.Scene {
   // this just reflects it: a combat-log line, and an immediate HP-bar/
   // status-bar update rather than waiting for the next map:state tick.
   private applyCombatEvent(event: CombatEventPayload): void {
+    // Only auto-switch tabs for a fight the player is actually in — not
+    // for every combat line broadcast to the room from someone else's.
+    const involvesMe = event.attacker === this.myUsername || (event.targetKind === 'player' && event.target === this.myUsername);
+    if (involvesMe) noteCombatActivity();
     const logKind = event.targetDied ? 'death' : event.leveledUp ? 'level-up' : undefined;
     logCombatMessage(event.message, logKind);
     if (event.leveledUp && event.attacker === this.myUsername) {
@@ -1551,7 +1711,6 @@ class WorldScene extends Phaser.Scene {
   private applyOwnStats(updates: Partial<PlayerSnapshot>): void {
     if (!myProfile) return;
     myProfile = { ...myProfile, ...updates };
-    this.ensureHpBar(this.player, myProfile.hp, myProfile.maxHp);
     this.updateOwnBars();
     updateStatusBar();
     refreshOpenModals();
