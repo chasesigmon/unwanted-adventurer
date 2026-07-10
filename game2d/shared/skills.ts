@@ -40,6 +40,12 @@ export const EAT_BRAINS_SKILL = 'eat brains'; // zombie: heal by eating a corpse
 export const GLARE_SKILL = 'glare'; // skeleton: paralyze whoever it's fighting for 2 combat rounds
 export const ENHANCED_DURABILITY_SKILL = 'enhanced durability'; // skeleton: +5% armor (armor itself: future work)
 
+// Not race-bound — any race has a small chance of picking this up the
+// first time they consume a "bone dagger" (see combat/formulas.ts's
+// BONE_FINGER_STRIKE_GRANT_CHANCE), same as the resistance skills above
+// but a real active attack rather than a passive damage reduction.
+export const BONE_FINGER_STRIKE_SKILL = 'bone finger strike';
+
 export const RACE_INNATE_SKILLS: Record<Race, string[]> = {
   goblin: [INFRAVISION_SKILL],
   skeleton: [GLARE_SKILL, ENHANCED_DURABILITY_SKILL],

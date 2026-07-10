@@ -11,6 +11,7 @@ import type {
   LootAck,
   BuyAck,
   EatBrainsAck,
+  SacrificeAck,
   UseItemAck,
   ChatPayload,
   WhoAck,
@@ -18,6 +19,7 @@ import type {
   WorldTimePayload,
 } from '../shared/types.js';
 import type { Direction } from '../shared/constants.js';
+import type { EquipmentSlot } from '../shared/equipment.js';
 
 type GameClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 type AuthResponse = { ok: true; token: string } | { ok: false; error: string };
@@ -125,6 +127,14 @@ export class NetworkManager extends EventTarget {
     this.socket?.emit('punch', direction);
   }
 
+  // No ack — same fire-and-forget shape as punch. Used for any queued
+  // skill besides the default punch/dagger swing (bone finger strike,
+  // glare) — the server engages combat with this skill instead of the
+  // default, the same way punch() does.
+  useSkill(direction: Direction, skill: string): void {
+    this.socket?.emit('useSkill', { direction, skill });
+  }
+
   loot(corpseId: string): Promise<LootAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
@@ -145,6 +155,19 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('useItem', itemIndex, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  unequipItem(slot: EquipmentSlot): Promise<UseItemAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('unequipItem', slot, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });
@@ -197,6 +220,19 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('eatBrains', corpseId, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  sacrificeCorpse(corpseId: string): Promise<SacrificeAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('sacrificeCorpse', corpseId, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

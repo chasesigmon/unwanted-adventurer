@@ -15,11 +15,34 @@ export interface MapExit {
   toCol: number;
 }
 
+// "inside" (Labyrinth) vs. "outside" (everywhere else) — pure
+// flavor/classification here (unlike the text game's own GameMap.ts,
+// where "inside" alone drives movement cost). This project's cost is
+// driven by terrain instead (see MOVEMENT_COST_FOR_TERRAIN below), since
+// Floro/Kortho are outside but built of stone, not grass, and are meant
+// to cost the same as being inside.
+export type MapSetting = 'inside' | 'outside';
+export type MapTerrain = 'stone' | 'grass';
+
 export interface MapDefinition {
   name: MapName;
   rows: number;
   cols: number;
+  setting: MapSetting;
+  terrain: MapTerrain;
   exits: MapExit[];
+}
+
+// Per-step movement-point cost, purely by terrain — stone (Labyrinth,
+// and Floro/Kortho's town streets) costs the same whether you're
+// nominally "inside" or "outside"; open grass (Great Plains) costs more.
+export const MOVEMENT_COST_FOR_TERRAIN: Record<MapTerrain, number> = {
+  stone: 2,
+  grass: 3,
+};
+
+export function movementCostFor(mapName: MapName): number {
+  return MOVEMENT_COST_FOR_TERRAIN[getMap(mapName).terrain];
 }
 
 const GREAT_PLAINS_SIZE = 100;
@@ -37,6 +60,8 @@ export const MAPS: Record<MapName, MapDefinition> = {
     name: 'Great Plains',
     rows: GREAT_PLAINS_SIZE,
     cols: GREAT_PLAINS_SIZE,
+    setting: 'outside',
+    terrain: 'grass',
     exits: [
       {
         row: 0,
@@ -68,6 +93,8 @@ export const MAPS: Record<MapName, MapDefinition> = {
     name: 'Labyrinth',
     rows: LABYRINTH_SIZE,
     cols: LABYRINTH_SIZE,
+    setting: 'inside',
+    terrain: 'stone',
     exits: [
       {
         row: LABYRINTH_SIZE - 1,
@@ -83,6 +110,12 @@ export const MAPS: Record<MapName, MapDefinition> = {
     name: 'Floro',
     rows: TOWN_SIZE,
     cols: TOWN_SIZE,
+    // Outside, but built of stone streets, not grass — costs the same to
+    // cross as being indoors (see MOVEMENT_COST_FOR_TERRAIN) even though
+    // it isn't. Its buildings will eventually have their own "inside"
+    // shop interiors; the town square itself stays "outside".
+    setting: 'outside',
+    terrain: 'stone',
     exits: [
       {
         row: TOWN_MID_ROW,
@@ -98,6 +131,9 @@ export const MAPS: Record<MapName, MapDefinition> = {
     name: 'Kortho',
     rows: TOWN_SIZE,
     cols: TOWN_SIZE,
+    // Same reasoning as Floro above.
+    setting: 'outside',
+    terrain: 'stone',
     exits: [
       {
         row: TOWN_MID_ROW,

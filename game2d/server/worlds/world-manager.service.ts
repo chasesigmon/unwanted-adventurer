@@ -7,7 +7,7 @@ import type { MapName, Direction } from '../../shared/constants.js';
 import type { PlayerSnapshot, MapStatePayload } from '../../shared/types.js';
 import type { PlayerState, MoveResult } from './types.js';
 import { isTreeTile } from '../../shared/trees.js';
-import { hasLightSource } from '../../shared/lighting.js';
+import { emitsLight } from '../../shared/lighting.js';
 import { vendorsForMap } from './vendors.js';
 
 // A much smaller version of the text game's own WorldManagerService — no
@@ -68,10 +68,11 @@ export class WorldManagerService {
     return false;
   }
 
-  // True if a player (other than excludeUsername), an NPC, or a monster
-  // already occupies this tile — the basis of "players and NPCs/monsters
-  // can't walk through each other". Corpses are deliberately NOT
-  // occupancy-blocking — you can walk onto (and loot) one.
+  // True if a player (other than excludeUsername), an NPC, a monster, or a
+  // vendor's own stall already occupies this tile — the basis of
+  // "players and NPCs/monsters/vendors can't walk through each other".
+  // Corpses are deliberately NOT occupancy-blocking — you can walk onto
+  // (and loot) one.
   private isOccupied(mapName: MapName, row: number, col: number, excludeUsername: string): boolean {
     if (isTreeTile(mapName, row, col)) return true;
 
@@ -79,6 +80,13 @@ export class WorldManagerService {
     if (npcHit) return true;
 
     if (this.monsterManager.isOccupied(mapName, row, col)) return true;
+
+    // A vendor blocks both its own tile and the shopfront tile directly
+    // in front of it (one row south — see main.ts's rendering of that
+    // same offset), even though the shopfront isn't a separate entity of
+    // its own server-side.
+    const vendorHit = vendorsForMap(mapName).some((v) => (v.row === row && v.col === col) || (v.row + 1 === row && v.col === col));
+    if (vendorHit) return true;
 
     for (const [username, state] of this.playerLocation) {
       if (username === excludeUsername) continue;
@@ -143,10 +151,14 @@ export class WorldManagerService {
         equipment: state.equipment,
         consumeExp: state.consumeExp,
         restState: state.restState,
-        hasLight: hasLightSource(state.skills, state.equipment),
+        // Whether OTHER players standing next to this one benefit from
+        // their light — a carried torch only, not infravision (see
+        // shared/lighting.ts's emitsLight).
+        hasLight: emitsLight(state.equipment),
         gold: state.gold,
         mimicableRaces: state.mimicableRaces,
         mimicForm: state.mimicForm,
+        eatBrainsReadyAtTick: state.eatBrainsReadyAtTick,
       });
     }
 

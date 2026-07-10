@@ -9,6 +9,7 @@ import { SessionStoreService } from './session-store.service.js';
 import { ActiveConnectionsService } from './active-connections.service.js';
 import { getMap } from '../../shared/maps.js';
 import { STARTING_MAP } from '../../shared/constants.js';
+import { startingSkills } from '../combat/formulas.js';
 import type { AppConfig } from '../config/configuration.js';
 import type { CredentialsDto, RegisterCredentialsDto } from './dto/credentials.dto.js';
 
@@ -62,6 +63,7 @@ export class AuthService {
       map: STARTING_MAP,
       row: Math.floor(startingMap.rows / 2),
       col: Math.floor(startingMap.cols / 2),
+      skills: startingSkills(race),
     });
 
     const token = await this.issueSession(username);

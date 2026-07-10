@@ -3,11 +3,13 @@ import { Injectable } from '@nestjs/common';
 import { getMap } from '../../shared/maps.js';
 import { isTreeTile } from '../../shared/trees.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
-import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, type Monster, type MonsterSpecies } from './monster.js';
+import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
+import { vendorsForMap } from '../worlds/vendors.js';
 import type { MapName } from '../../shared/constants.js';
 import type { MonsterSnapshot } from '../../shared/types.js';
 
 export type OccupancyChecker = (mapName: MapName, row: number, col: number) => boolean;
+export type PlayerLocator = (username: string) => { mapName: MapName; row: number; col: number } | undefined;
 
 // A much smaller version of the text game's own monster-manager.service.ts
 // — no engaged-in-combat tracking (a punch here is a single instant
@@ -31,6 +33,30 @@ export class MonsterManagerService {
     this.isPlayerAt = checker;
   }
 
+  // Set alongside the occupancy checker, same reasoning — lets a monster
+  // that's aggroed onto a player (see setAggro/wanderAll) know where to
+  // chase them without a circular Monsters<->Worlds dependency.
+  private locatePlayer: PlayerLocator = () => undefined;
+
+  setPlayerLocator(locator: PlayerLocator): void {
+    this.locatePlayer = locator;
+  }
+
+  // Whoever last landed a hit on this monster (by any means — a tick-
+  // resolved attack, a queued skill) — set by GameGateway's combat tick.
+  // Aggro persists until it times out from lack of contact, the target
+  // logs off/changes map, or the monster dies.
+  private aggro = new Map<string, { targetUsername: string; lastContactTick: number }>();
+  private static readonly AGGRO_TIMEOUT_TICKS = 10;
+
+  setAggro(monsterId: string, targetUsername: string, tick: number): void {
+    this.aggro.set(monsterId, { targetUsername, lastContactTick: tick });
+  }
+
+  clearAggro(monsterId: string): void {
+    this.aggro.delete(monsterId);
+  }
+
   spawnInitial(): void {
     for (const species of MONSTER_SPECIES) {
       for (let i = 0; i < species.maxCount; i++) this.spawnOne(species);
@@ -48,6 +74,10 @@ export class MonsterManagerService {
     if (row < 0 || row >= map.rows || col < 0 || col >= map.cols) return false;
     if (map.exits.some((e) => e.row === row && e.col === col)) return false;
     if (isTreeTile(mapName, row, col)) return false;
+    // Same "own tile + shopfront tile in front of it" collision shape as
+    // WorldManagerService.isOccupied — a wandering/spawning monster
+    // shouldn't stand inside the shop stall either.
+    if (vendorsForMap(mapName).some((v) => (v.row === row && v.col === col) || (v.row + 1 === row && v.col === col))) return false;
     for (const m of this.monsters.values()) {
       if (m.mapName === mapName && m.row === row && m.col === col) return false;
     }
@@ -112,6 +142,7 @@ export class MonsterManagerService {
       dexterity: MONSTER_BASE_ATTRIBUTE,
       constitution: MONSTER_BASE_ATTRIBUTE,
       carriedItems,
+      skills: skillsForCarriedItems(carriedItems),
     };
     this.monsters.set(monster.id, monster);
   }
@@ -127,10 +158,14 @@ export class MonsterManagerService {
     }
   }
 
-  wanderAll(): Set<MapName> {
+  // `currentTick` is GameGateway's own combat/world-tick counter, used
+  // purely to expire stale aggro (see AGGRO_TIMEOUT_TICKS).
+  wanderAll(currentTick: number): Set<MapName> {
     const deltas = Object.values(DIRECTION_DELTAS);
     const changedMaps = new Set<MapName>();
     for (const monster of this.monsters.values()) {
+      if (this.stepTowardAggroTarget(monster, currentTick, changedMaps)) continue;
+
       const delta = deltas[Math.floor(Math.random() * deltas.length)]!;
       const nextRow = monster.row + delta.dr;
       const nextCol = monster.col + delta.dc;
@@ -143,8 +178,54 @@ export class MonsterManagerService {
     return changedMaps;
   }
 
+  // Returns true if this monster's aggro state was handled this tick
+  // (whether that meant chasing, staying put already-adjacent, or having
+  // its aggro just expire) — false means "fall through to normal random
+  // wander" (no aggro at all, or the target's gone and aggro just cleared).
+  private stepTowardAggroTarget(monster: Monster, currentTick: number, changedMaps: Set<MapName>): boolean {
+    const aggro = this.aggro.get(monster.id);
+    if (!aggro) return false;
+
+    if (currentTick - aggro.lastContactTick > MonsterManagerService.AGGRO_TIMEOUT_TICKS) {
+      this.aggro.delete(monster.id);
+      return false;
+    }
+
+    const target = this.locatePlayer(aggro.targetUsername);
+    if (!target || target.mapName !== monster.mapName) {
+      this.aggro.delete(monster.id);
+      return false;
+    }
+
+    const dRow = target.row - monster.row;
+    const dCol = target.col - monster.col;
+    if (Math.abs(dRow) <= 1 && Math.abs(dCol) <= 1) {
+      // Already adjacent — stand and fight (the combat tick resolves the
+      // actual hit), don't wander off.
+      return true;
+    }
+
+    // Greedy chase: close whichever axis has the bigger gap first.
+    const stepRow = Math.abs(dRow) >= Math.abs(dCol) ? Math.sign(dRow) : 0;
+    const stepCol = stepRow === 0 ? Math.sign(dCol) : 0;
+    const nextRow = monster.row + stepRow;
+    const nextCol = monster.col + stepCol;
+    if (this.isFree(monster.mapName, nextRow, nextCol)) {
+      monster.row = nextRow;
+      monster.col = nextCol;
+      changedMaps.add(monster.mapName);
+    }
+    return true;
+  }
+
   getMonster(id: string): Monster | undefined {
     return this.monsters.get(id);
+  }
+
+  // Backs GameGateway's monsterAttackTick — every live monster, regardless
+  // of map (the caller filters by adjacency to a player itself).
+  allMonsters(): Monster[] {
+    return [...this.monsters.values()];
   }
 
   // Contact lookup for the punch/combat system — exact tile match, same
@@ -169,7 +250,10 @@ export class MonsterManagerService {
 
     monster.hp = Math.max(0, monster.hp - amount);
     const died = monster.hp <= 0;
-    if (died) this.monsters.delete(id);
+    if (died) {
+      this.monsters.delete(id);
+      this.aggro.delete(id);
+    }
     return { monster, died };
   }
 

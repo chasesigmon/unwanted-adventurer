@@ -15,6 +15,7 @@ import { PlayersService } from '../players/players.service.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
 import { MonsterManagerService } from '../monsters/monster-manager.service.js';
 import { CorpseManagerService, bodyPartLabelFor, raceForBodyPart } from '../worlds/corpse-manager.service.js';
+import { WorldClockService } from '../worlds/world-clock.service.js';
 import { findVendor } from '../worlds/vendors.js';
 import { MONSTER_SPECIES } from '../monsters/monster.js';
 import { NPCS } from '../worlds/npcs.js';
@@ -23,7 +24,7 @@ import { SessionStoreService } from '../auth/session-store.service.js';
 import { ActiveConnectionsService } from '../auth/active-connections.service.js';
 import { SocketConnectionLimiterService } from '../rate-limit/socket-connection-limiter.service.js';
 import { CommandRateLimiter, type CommandRateLimiterOptions } from '../rate-limit/command-rate-limiter.js';
-import { getMap } from '../../shared/maps.js';
+import { getMap, movementCostFor } from '../../shared/maps.js';
 import { resolveMove } from '../worlds/resolveMove.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { STARTING_MAP, DIRECTIONS } from '../../shared/constants.js';
@@ -42,6 +43,7 @@ import {
   STARTING_VITAL,
   STARTING_SKILL_PERCENT,
   MAX_SKILL_PERCENT,
+  RACE_INNATE_SKILLS,
   SKILL_GROWTH_CHANCE,
   LEVEL_UP_ATTRIBUTE_BONUS,
   LEVEL_UP_VITAL_BONUS,
@@ -51,10 +53,16 @@ import {
   applyExpGain,
   weaponBonusFor,
   EQUIPMENT_SLOT_FOR_ITEM,
+  EQUIPMENT_SLOTS,
+  WEAPON_DAMAGE_BONUS,
   CONSUME_EXP_PER_ITEM,
   startingSkills,
   resistanceGrantForItem,
   RESISTANCE_SKILL_STARTING_PERCENT,
+  BONE_FINGER_STRIKE_SKILL,
+  BONE_FINGER_STRIKE_GRANT_CHANCE,
+  computeBoneFingerStrikeDamage,
+  GLARE_SKILL,
   skillGrowthMessage,
   computeDodgeChance,
   computeParryChance,
@@ -63,6 +71,8 @@ import {
   computeLacerateChance,
   enhancedDamageBonus,
   monsterDamageReduction,
+  LESSER_NORMAL_MONSTER_RESISTANCE,
+  LESSER_UNDEAD_MONSTER_RESISTANCE,
   SECOND_ATTACK_SKILL,
   THIRD_ATTACK_SKILL,
   ENHANCED_DAMAGE_SKILL,
@@ -72,28 +82,56 @@ import {
   HOBGOBLIN_ATTRIBUTE_BONUS,
   HOBGOBLIN_STAT_BONUS,
 } from '../combat/formulas.js';
-import { MONSTER_ATTACK_DAMAGE } from '../monsters/monster.js';
+import type { Monster } from '../monsters/monster.js';
 import type { AppConfig } from '../config/configuration.js';
-import type { PlayerSnapshot, GameServer, GameSocket, CombatEventPayload, UseItemAck, RestState, BuyAck, EatBrainsAck } from '../../shared/types.js';
+import type { PlayerSnapshot, GameServer, GameSocket, CombatEventPayload, UseItemAck, RestState, BuyAck, EatBrainsAck, SacrificeAck } from '../../shared/types.js';
 import { TOWN_MAPS } from '../../shared/constants.js';
-import { hasLightSource, TORCH_ITEM } from '../../shared/lighting.js';
+import { emitsLight, TORCH_ITEM, isNightHour, isWithinLightRadius, isWithinShopReach } from '../../shared/lighting.js';
+import { MONSTER_KINDS } from '../../shared/constants.js';
 import type { Direction, MapName, MonsterClass, MonsterKind, Race } from '../../shared/constants.js';
 
 const directionSchema = z.enum(DIRECTIONS);
+const equipmentSlotSchema = z.enum(EQUIPMENT_SLOTS);
+const useSkillSchema = z.object({ direction: directionSchema, skill: z.string() });
+
+// One player's ongoing fight — engageCombat creates/refreshes one of
+// these instead of resolving a hit immediately; combatTick is the only
+// place that ever actually resolves damage from it.
+interface CombatSession {
+  targetKind: 'monster' | 'npc' | 'player';
+  targetId: string;
+  skill: string;
+  // Consecutive combatTicks the target's been out of reach — see
+  // COMBAT_DISENGAGE_TICKS.
+  missedTicks: number;
+}
 const MONSTER_TICK_INTERVAL_MS = 3000;
 // Zombie-only "Eat Brains" (see handleEatBrains) — "a 4 tick cooldown"
-// measured in the one recurring tick this project already has (the
-// monster wander/respawn/corpse-expiry interval above), so 4 ticks = 12s.
+// measured in the game's actual world tick: the same randomized 30-40s
+// global stat tick that advances worldHour (see globalStatTick/
+// currentTick below), NOT the 3s monster wander tick. 4 of those ticks is
+// ~2-2.7 minutes, not a fixed duration.
 const EAT_BRAINS_COOLDOWN_TICKS = 4;
-const EAT_BRAINS_COOLDOWN_MS = EAT_BRAINS_COOLDOWN_TICKS * MONSTER_TICK_INTERVAL_MS;
 const EAT_BRAINS_HEAL_PERCENT = 20;
-// Skeleton-only "Glare" — same tick-based translation of "N combat
-// rounds" as Eat Brains above: 2 rounds = 2 * the shared tick interval.
-// Refreshed on every hit a skeleton lands on a still-living target, so
-// staying in a fight with one keeps the target locked down; it lapses
-// GLARE_PARALYSIS_MS after their last hit.
+// Skeleton-only "Glare" — measured in COMBAT ticks (see combatTickCount
+// below), the same ~3s cadence hits themselves land on, NOT the slow
+// 30-40s world tick Eat Brains uses above. Only applied when a skeleton
+// deliberately queues Glare as their combat skill (see engageCombat) —
+// it lapses GLARE_PARALYSIS_ROUNDS combat ticks after the last time it
+// was cast, so staying locked down requires re-casting it, not just
+// throwing ordinary punches.
 const GLARE_PARALYSIS_ROUNDS = 2;
-const GLARE_PARALYSIS_MS = GLARE_PARALYSIS_ROUNDS * MONSTER_TICK_INTERVAL_MS;
+// How many consecutive combat ticks a player's target is allowed to be
+// out of reach before that combat session quietly ends — long enough to
+// survive a monster's own greedy chase catching up, short enough that a
+// target who's genuinely fled doesn't stay "in combat" forever.
+const COMBAT_DISENGAGE_TICKS = 3;
+// A torch's total burn time, real-world — ticks down only while actually
+// equipped (see lightTorch/pauseTorch/checkTorchBurnout), pausing (not
+// resetting) whenever it's taken off. Checked once per global stat tick
+// (every 30-40s) rather than its own timer — plenty precise for a
+// 15-minute budget.
+const TORCH_LIFETIME_MS = 15 * 60 * 1000;
 // Same shape as the text game's own global stat tick — a randomized
 // 30-40s interval (a setTimeout chain, not setInterval, so each firing
 // re-rolls its own next delay) heals hp/mana/movement by one shared
@@ -129,18 +167,32 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   private server!: GameServer;
 
   private readonly commandLimiters = new Map<string, CommandRateLimiter>();
-  // Skeleton-only Glare (see applyGlare/isParalyzed) — an expiry
-  // timestamp per target, keyed "player:<username>" / "monster:<id>" /
-  // "npc:<id>" so all three target kinds share one map without colliding
-  // on id. Entirely in-memory/ephemeral, same tradeoff as everything else
-  // combat-related in this project.
-  private readonly paralyzedUntil = new Map<string, number>();
+  // Skeleton-only Glare (see applyGlare/isParalyzed) — an expiry WORLD
+  // TICK NUMBER per target (see currentTick below), keyed
+  // "player:<username>" / "monster:<id>" / "npc:<id>" so all three target
+  // kinds share one map without colliding on id. Entirely in-memory/
+  // ephemeral, same tradeoff as everything else combat-related here.
+  private readonly paralyzedUntilTick = new Map<string, number>();
   // A shared world clock, advanced by 1 hour on the same tick as the
   // global stat-tick heal — resets to midnight on server restart, same
   // tradeoff as the text game's own worldHour. Broadcast to every
   // connected socket regardless of map (see globalStatTick) so the
   // client can render a gradually shifting day/night overlay.
   private worldHour = 0;
+  // Counts globalStatTick firings (each a random 30-40s apart) — the
+  // actual "world tick" unit Eat Brains/Glare cooldowns are measured in,
+  // as opposed to the much faster, fixed-interval MONSTER_TICK_INTERVAL_MS
+  // (wander/respawn/corpse-expiry), which isn't a "combat tick" at all.
+  private currentTick = 0;
+  // Counts the shared MONSTER_TICK_INTERVAL_MS firings (a fixed ~3s apart)
+  // — the actual "combat tick" unit combatTick/wanderAll's aggro-timeout
+  // and Glare's paralysis window are measured in, as opposed to the much
+  // slower, randomized currentTick above (world-clock/Eat-Brains only).
+  private combatTickCount = 0;
+  // One active fight per player, keyed by username — set by engageCombat
+  // (right-click or a queued action-bar skill) and resolved once per
+  // combatTick, not instantly on click. See combatTick/engageCombat.
+  private readonly playerCombat = new Map<string, CombatSession>();
   private readonly commandLimiterOptions: CommandRateLimiterOptions;
 
   constructor(
@@ -148,6 +200,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     private readonly worldManager: WorldManagerService,
     private readonly monsterManager: MonsterManagerService,
     private readonly corpseManager: CorpseManagerService,
+    private readonly worldClock: WorldClockService,
     private readonly authService: AuthService,
     private readonly sessionStore: SessionStoreService,
     private readonly activeConnections: ActiveConnectionsService,
@@ -167,10 +220,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // callback instead of a compile-time module cycle: this is the one
     // place both services are already available together.
     this.monsterManager.setPlayerOccupancyChecker((mapName, row, col) => this.worldManager.isPlayerAt(mapName, row, col));
+    // Same reasoning as the occupancy checker above — lets a monster
+    // that's aggroed onto a player (see combatTick/setAggro) chase them
+    // without a circular Monsters<->Worlds dependency.
+    this.monsterManager.setPlayerLocator((username) => {
+      const loc = this.worldManager.getLocation(username);
+      return loc ? { mapName: loc.mapName, row: loc.row, col: loc.col } : undefined;
+    });
     this.monsterManager.spawnInitial();
 
     setInterval(() => {
-      this.monsterManager.wanderAll();
+      this.combatTickCount += 1;
+      this.combatTick();
+      this.monsterManager.wanderAll(this.combatTickCount);
       this.monsterManager.respawnBelowMax();
       const expiredCorpseMaps = this.corpseManager.removeExpired();
       const mapsToBroadcast = new Set<MapName>([...ACTIVE_MONSTER_MAPS, ...expiredCorpseMaps]);
@@ -179,7 +241,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
     }, MONSTER_TICK_INTERVAL_MS);
 
-    this.scheduleStatTick();
+    // Resumes wherever the world clock last left off (see WorldClockService)
+    // instead of always starting the tick loop from worldHour's field
+    // default (0/midnight) — a dev server restarts constantly, and
+    // resetting to midnight every time is what actually made every fresh
+    // connection look permanently dark, not a lighting bug.
+    void this.worldClock.getStartingHour().then((hour) => {
+      this.worldHour = hour;
+      this.scheduleStatTick();
+    });
 
     server.use(async (socket, next) => {
       const ip = socket.handshake.address;
@@ -219,10 +289,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   }
 
   private globalStatTick(): void {
+    this.currentTick += 1;
     this.worldHour = (this.worldHour + 1) % HOURS_PER_DAY;
-    this.server.emit('worldTime', { hour: this.worldHour });
+    this.worldClock.persistHour(this.worldHour);
+    this.server.emit('worldTime', { hour: this.worldHour, tick: this.currentTick });
     for (const socket of this.server.sockets.sockets.values()) {
       this.applyStatTick(socket as GameSocket);
+      this.checkTorchBurnout(socket as GameSocket);
     }
     this.scheduleStatTick();
   }
@@ -286,10 +359,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       equipment: client.data.equipment,
       consumeExp: client.data.consumeExp,
       restState: client.data.restState,
-      hasLight: hasLightSource(client.data.skills, client.data.equipment),
+      hasLight: emitsLight(client.data.equipment),
       gold: client.data.gold,
       mimicableRaces: client.data.mimicableRaces,
       mimicForm: client.data.mimicForm,
+      eatBrainsReadyAtTick: client.data.eatBrainsReadyAtTick,
     };
   }
 
@@ -447,6 +521,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return weapon && weapon.toLowerCase().includes('dagger') ? DAGGER_SKILL : PUNCH_SKILL;
   }
 
+  // The combat-log verb for an attack — a dagger stabs, bare hands punch.
+  private attackVerb(client: GameSocket): string {
+    const weapon = client.data.equipment.weapon;
+    return weapon && weapon.toLowerCase().includes('dagger') ? 'stabs' : 'punches';
+  }
+
   // Dodge/parry are rolled first (either one fully negates the hit);
   // shield block is only even attempted once both have failed. Growth:
   // dodge/parry only grow when they actually trigger, shield block grows
@@ -519,12 +599,50 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // handlePunch).
   private applyGlare(client: GameSocket, targetKey: string): void {
     if (client.data.race !== 'skeleton') return;
-    this.paralyzedUntil.set(targetKey, Date.now() + GLARE_PARALYSIS_MS);
+    this.paralyzedUntilTick.set(targetKey, this.combatTickCount + GLARE_PARALYSIS_ROUNDS);
   }
 
   private isParalyzed(targetKey: string): boolean {
-    const until = this.paralyzedUntil.get(targetKey);
-    return until !== undefined && Date.now() < until;
+    const untilTick = this.paralyzedUntilTick.get(targetKey);
+    return untilTick !== undefined && this.combatTickCount < untilTick;
+  }
+
+  // Starts (or resumes) a torch's burn-down clock — called the instant
+  // one becomes the equipped shield-slot item.
+  private lightTorch(client: GameSocket): void {
+    client.data.torchLitAt = Date.now();
+  }
+
+  // Freezes the clock wherever it is — called the instant a lit torch
+  // stops being the equipped shield-slot item (unequipped, or swapped for
+  // something else), "saving" the remaining burn time for later.
+  private pauseTorch(client: GameSocket): void {
+    if (client.data.torchLitAt === null) return;
+    const elapsed = Date.now() - client.data.torchLitAt;
+    client.data.torchRemainingMs = Math.max(0, client.data.torchRemainingMs - elapsed);
+    client.data.torchLitAt = null;
+  }
+
+  // Checked once per global stat tick (see globalStatTick) for every
+  // connected client — extinguishes (and discards) a torch that's burned
+  // through its full TORCH_LIFETIME_MS while continuously equipped.
+  private checkTorchBurnout(client: GameSocket): void {
+    if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
+    if (client.data.torchLitAt === null) return;
+    const elapsed = Date.now() - client.data.torchLitAt;
+    if (elapsed < client.data.torchRemainingMs) return;
+
+    const equipment = { ...client.data.equipment };
+    delete equipment.shield;
+    client.data.equipment = equipment;
+    client.data.torchLitAt = null;
+    client.data.torchRemainingMs = TORCH_LIFETIME_MS;
+
+    this.worldManager.updateState(client.data.username, { equipment: client.data.equipment });
+    void this.persistStats(client);
+    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, 'Your torch burns out and crumbles to ash.');
   }
 
   // A monster/dummy that survives a punch fights back — a flat punch
@@ -535,31 +653,92 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // swings; returns the counter-attack's own combat-log line, folded into
   // the same emitCombat call as the player's attack rather than a second
   // broadcast.
+  // A resistance skill only grows if the player already has it (earned
+  // first via resistanceGrantForItem) — unlike every other skill here,
+  // it's never auto-granted from nothing just by being hit. Rolled
+  // whether the attack actually landed or was avoided ("every hit/miss"),
+  // same as any other skill's growth chance.
+  private maybeGrowResistanceSkill(client: GameSocket, monsterClass: MonsterClass | undefined, growthMessages: string[]): void {
+    if (!monsterClass) return;
+    const skill = monsterClass === 'undead' ? LESSER_UNDEAD_MONSTER_RESISTANCE : LESSER_NORMAL_MONSTER_RESISTANCE;
+    if (client.data.skills[skill] === undefined) return;
+    const growth = this.maybeGrowSkill(client, skill);
+    if (growth) growthMessages.push(growth);
+  }
+
+  // A monster/dummy's own attack skill/weapon, if it has either — a real
+  // monster (see Monster.skills) fights back with its own punch or
+  // (carrying one) weapon skill through the exact same punchDamage()
+  // formula a player uses; the training dummy has neither (undefined),
+  // so it falls back to a bare-handed 0%-skill swing, same shape as
+  // before but no longer a made-up flat number either.
   private resolveMonsterCounterAttack(
     client: GameSocket,
     attackerStats: CombatantStats,
     attackerLabel: string,
     monsterClass: MonsterClass | undefined,
-    growthMessages: string[]
+    growthMessages: string[],
+    attacker?: { skills: Record<string, number>; carriedItems: string[] }
   ): string {
     const defense = this.resolveDefense(this.attackerStatsFor(client), client.data.skills, client.data.equipment, attackerStats);
     if (defense.skill) {
       const growth = this.maybeGrowSkill(client, defense.skill);
       if (growth) growthMessages.push(growth);
     }
+    this.maybeGrowResistanceSkill(client, monsterClass, growthMessages);
     if (defense.avoided) {
       return defense.verb === 'block'
         ? `You block the ${attackerLabel}'s counter-attack with your shield!`
         : `You ${defense.verb} the ${attackerLabel}'s counter-attack!`;
     }
 
+    const hasWeapon = attacker?.carriedItems.some((item) => item.toLowerCase().includes('dagger')) ?? false;
+    const skillPercent = attacker ? (attacker.skills[hasWeapon ? DAGGER_SKILL : PUNCH_SKILL] ?? 0) : 0;
+    const weaponBonus = hasWeapon ? (WEAPON_DAMAGE_BONUS['bone dagger'] ?? 0) : 0;
+    const rawDamage = punchDamage(attackerStats, this.attackerStatsFor(client), skillPercent, weaponBonus);
     const reduction = monsterClass ? monsterDamageReduction(monsterClass, client.data.skills) : 0;
-    const damage = Math.max(0, MONSTER_ATTACK_DAMAGE - reduction);
+    const damage = Math.max(0, rawDamage - reduction);
+    const verb = hasWeapon ? 'stabs' : 'punches';
+
     client.data.hp = Math.max(0, client.data.hp - damage);
-    this.worldManager.updateState(client.data.username, { hp: client.data.hp });
-    return damage > 0
-      ? `The ${attackerLabel} counter-attacks you for ${damage} damage.`
-      : `The ${attackerLabel} counter-attacks you, but the blow glances off.`;
+    const died = client.data.hp <= 0;
+    if (died) {
+      this.respawnDefeatedPlayer(client);
+    } else {
+      this.worldManager.updateState(client.data.username, { hp: client.data.hp });
+    }
+
+    if (damage <= 0) return `The ${attackerLabel} ${verb} at you, but the blow glances off.`;
+    return died
+      ? `The ${attackerLabel} ${verb} you back for ${damage} damage, defeating you!`
+      : `The ${attackerLabel} ${verb} you back for ${damage} damage.`;
+  }
+
+  // Resets a defeated player back to the starting map at full hp — shared
+  // by a player kill (resolveHitOnPlayer) and a monster's own
+  // counter-attack (resolveMonsterCounterAttack). Doesn't grant exp or
+  // leave a corpse (only a player killer does that); this just puts them
+  // back on their feet somewhere.
+  private respawnDefeatedPlayer(targetClient: GameSocket): void {
+    const previousMap = targetClient.data.map;
+    const startingMap = getMap(STARTING_MAP);
+    targetClient.data.map = STARTING_MAP;
+    targetClient.data.row = Math.floor(startingMap.rows / 2);
+    targetClient.data.col = Math.floor(startingMap.cols / 2);
+    targetClient.data.hp = targetClient.data.maxHp;
+
+    this.worldManager.updateState(targetClient.data.username, {
+      mapName: targetClient.data.map,
+      row: targetClient.data.row,
+      col: targetClient.data.col,
+      hp: targetClient.data.hp,
+    });
+
+    if (previousMap !== targetClient.data.map) {
+      void targetClient.leave(previousMap);
+      void targetClient.join(targetClient.data.map);
+    }
+    targetClient.emit('sync', { player: this.snapshotFor(targetClient) });
   }
 
   async handleConnection(client: GameSocket): Promise<void> {
@@ -594,6 +773,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.movement = doc?.movement ?? STARTING_VITAL;
     client.data.maxMovement = doc?.maxMovement ?? STARTING_VITAL;
     client.data.skills = doc?.skills ?? startingSkills(client.data.race);
+    // Backfills any race-innate skill an EXISTING account is still
+    // missing (e.g. created before a registration bug — now fixed — used
+    // to skip granting the full starting kit at all). An innate ability
+    // is something the race is simply born with, not something that
+    // should require a fresh character to pick up.
+    for (const innateSkill of RACE_INNATE_SKILLS[client.data.race] ?? []) {
+      if (client.data.skills[innateSkill] === undefined) {
+        client.data.skills = { ...client.data.skills, [innateSkill]: MAX_SKILL_PERCENT };
+      }
+    }
     client.data.inventory = doc?.inventory ?? [];
     client.data.equipment = doc?.equipment ?? {};
     client.data.consumeExp = doc?.consumeExp ?? 0;
@@ -605,7 +794,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.restState = 'awake';
     // Never persisted either — a fresh connection always starts off
     // cooldown.
-    client.data.eatBrainsReadyAt = 0;
+    client.data.eatBrainsReadyAtTick = 0;
+    // A torch already equipped from a previous session is treated as
+    // freshly re-lit rather than remembering how far it had burned down —
+    // torchRemainingMs isn't persisted, same tradeoff as everything else
+    // here.
+    client.data.torchRemainingMs = TORCH_LIFETIME_MS;
+    client.data.torchLitAt = client.data.equipment.shield === TORCH_ITEM ? Date.now() : null;
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
@@ -633,10 +828,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       gold: client.data.gold,
       mimicableRaces: client.data.mimicableRaces,
       mimicForm: client.data.mimicForm,
+      eatBrainsReadyAtTick: client.data.eatBrainsReadyAtTick,
     });
     void client.join(client.data.map);
 
     client.emit('sync', { player: this.snapshotFor(client) });
+    // Every player should agree on the current time of day the instant
+    // they connect, rather than waiting for the next 30-40s stat tick —
+    // otherwise a fresh connection sits at the client's own "unknown yet"
+    // default (see main.ts's worldTimeKnown) for up to that long.
+    client.emit('worldTime', { hour: this.worldHour, tick: this.currentTick });
     this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
   }
 
@@ -706,6 +907,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.map = result.mapName;
     client.data.row = result.row;
     client.data.col = result.col;
+    // Cost is based on the room being LEFT, not the destination — matches
+    // the text game's own deductMovementCost. Terrain-driven (stone vs.
+    // grass), not "inside"/"outside", so Floro/Kortho's stone streets
+    // cost the same as the Labyrinth despite being "outside" (item 16).
+    client.data.movement = Math.max(0, client.data.movement - movementCostFor(previousMap));
+    this.worldManager.updateState(client.data.username, { movement: client.data.movement });
+    void this.persistStats(client);
 
     void this.persistPosition(client);
 
@@ -728,7 +936,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // WorldManagerService's collision) takes the hit; a 'combat' event
   // carries the result to everyone sharing the map.
   @SubscribeMessage('punch')
-  async handlePunch(@ConnectedSocket() client: GameSocket, @MessageBody() rawDirection: unknown): Promise<void> {
+  handlePunch(@ConnectedSocket() client: GameSocket, @MessageBody() rawDirection: unknown): void {
     const limiter = this.commandLimiters.get(client.id);
     if (limiter && !limiter.tryConsume()) return;
 
@@ -739,10 +947,39 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     const parsed = directionSchema.safeParse(rawDirection);
     if (!parsed.success) return;
-    const direction: Direction = parsed.data;
 
+    this.engageInDirection(client, parsed.data, this.attackGrowthSkill(client));
+  }
+
+  // The action-bar's explicit-skill counterpart to punch above — same
+  // contact-range direction targeting, but names exactly which learned
+  // skill to queue (bone finger strike, glare) instead of always
+  // defaulting to punch/dagger.
+  @SubscribeMessage('useSkill')
+  handleUseSkill(@ConnectedSocket() client: GameSocket, @MessageBody() raw: unknown): void {
+    const limiter = this.commandLimiters.get(client.id);
+    if (limiter && !limiter.tryConsume()) return;
+
+    const parsed = useSkillSchema.safeParse(raw);
+    if (!parsed.success) return;
+    if (client.data.skills[parsed.data.skill] === undefined) return;
+
+    if (this.isParalyzed(`player:${client.data.username}`)) {
+      this.systemMessage(client, "You are paralyzed by a skeleton's glare and cannot attack!");
+      return;
+    }
+
+    this.engageInDirection(client, parsed.data.direction, parsed.data.skill);
+  }
+
+  // Shared by punch/useSkill: throws the swing animation immediately
+  // (instant, cosmetic feedback that the input landed) and, if an
+  // NPC/monster/other player is standing exactly one tile ahead, arms or
+  // refreshes a combat session with the given skill — the actual hit
+  // isn't resolved here at all, only by the next combatTick (see item 6:
+  // "only hits should be performed during the combat tick").
+  private engageInDirection(client: GameSocket, direction: Direction, skill: string): void {
     this.wakeIfNeeded(client);
-
     this.server.to(client.data.map).emit('punch', { username: client.data.username, direction });
 
     const delta = DIRECTION_DELTAS[direction];
@@ -752,43 +989,140 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     const monster = this.monsterManager.findMonsterAt(mapName, targetRow, targetCol);
     if (monster) {
-      this.resolveMonsterHit(client, monster.id);
+      this.engageCombat(client, 'monster', monster.id, skill);
       return;
     }
 
     const npc = NPCS.find((n) => n.map === mapName && n.row === targetRow && n.col === targetCol);
     if (npc) {
-      this.resolveNpcHit(client, npc);
+      this.engageCombat(client, 'npc', npc.id, skill);
       return;
     }
 
     const targetUsername = this.worldManager.findPlayerAt(mapName, targetRow, targetCol, client.data.username);
     if (targetUsername) {
-      await this.resolvePlayerHit(client, targetUsername);
+      this.engageCombat(client, 'player', targetUsername, skill);
     }
   }
 
-  private resolveMonsterHit(client: GameSocket, monsterId: string): void {
-    const monster = this.monsterManager.getMonster(monsterId);
-    if (!monster) return;
+  // Arms (or refreshes/retargets) this player's one active fight — see
+  // playerCombat/CombatSession. Aggroes a targeted monster immediately
+  // (item 5: it should start closing distance even before the first
+  // tick's hit lands), refreshed again every tick contact continues (see
+  // combatTick/resolveHitOnMonster).
+  private engageCombat(client: GameSocket, targetKind: CombatSession['targetKind'], targetId: string, skill: string): void {
+    this.playerCombat.set(client.data.username, { targetKind, targetId, skill, missedTicks: 0 });
+    if (targetKind === 'monster') {
+      this.monsterManager.setAggro(targetId, client.data.username, this.combatTickCount);
+    }
+  }
 
+  // Where a live target actually is right now, for the adjacency check
+  // below — undefined if it's gone (dead monster, disconnected player).
+  private locateCombatTarget(kind: CombatSession['targetKind'], id: string): { mapName: MapName; row: number; col: number } | undefined {
+    if (kind === 'monster') {
+      const monster = this.monsterManager.getMonster(id);
+      return monster ? { mapName: monster.mapName, row: monster.row, col: monster.col } : undefined;
+    }
+    if (kind === 'npc') {
+      const npc = NPCS.find((n) => n.id === id);
+      return npc ? { mapName: npc.map, row: npc.row, col: npc.col } : undefined;
+    }
+    const loc = this.worldManager.getLocation(id);
+    return loc ? { mapName: loc.mapName, row: loc.row, col: loc.col } : undefined;
+  }
+
+  // Fired once per shared MONSTER_TICK_INTERVAL_MS (~3s) — the only place
+  // that ever resolves actual combat damage now (item 6). Each active
+  // session gets at most one resolved hit per tick, only if its target is
+  // still alive/connected and adjacent; otherwise its miss streak grows
+  // until it quietly disengages (COMBAT_DISENGAGE_TICKS).
+  private combatTick(): void {
+    for (const [username, session] of this.playerCombat) {
+      const socketId = this.activeConnections.getActiveSocketId(username);
+      const client = socketId ? (this.server.sockets.sockets.get(socketId) as GameSocket | undefined) : undefined;
+      if (!client) {
+        this.playerCombat.delete(username);
+        continue;
+      }
+      if (this.isParalyzed(`player:${username}`)) continue;
+
+      const targetLoc = this.locateCombatTarget(session.targetKind, session.targetId);
+      const inRange =
+        targetLoc !== undefined &&
+        targetLoc.mapName === client.data.map &&
+        Math.abs(targetLoc.row - client.data.row) + Math.abs(targetLoc.col - client.data.col) === 1;
+
+      if (!inRange) {
+        session.missedTicks += 1;
+        if (session.missedTicks >= COMBAT_DISENGAGE_TICKS) this.playerCombat.delete(username);
+        continue;
+      }
+      session.missedTicks = 0;
+
+      if (session.targetKind === 'monster') {
+        const monster = this.monsterManager.getMonster(session.targetId);
+        if (!monster) {
+          this.playerCombat.delete(username);
+          continue;
+        }
+        this.monsterManager.setAggro(monster.id, username, this.combatTickCount);
+        this.resolveHitOnMonster(client, monster, session.skill);
+      } else if (session.targetKind === 'npc') {
+        const npc = NPCS.find((n) => n.id === session.targetId);
+        if (!npc) {
+          this.playerCombat.delete(username);
+          continue;
+        }
+        this.resolveHitOnNpc(client, npc, session.skill);
+      } else {
+        void this.resolveHitOnPlayer(client, session.targetId, session.skill);
+      }
+    }
+  }
+
+  // Resolves exactly one combat tick's worth of hit(s) on a monster —
+  // called only from combatTick (item 6). `skillName` picks the damage
+  // shape: bone finger strike is its own single-swing formula (item 1);
+  // anything else (punch/dagger/glare) is the player's ordinary swing(s),
+  // glare additionally paralyzing the monster so it skips THIS tick's own
+  // counter (item 14) rather than being an automatic side effect of every
+  // hit.
+  private resolveHitOnMonster(client: GameSocket, monster: Monster, skillName: string): void {
+    const growthMessages: string[] = [];
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
     const weaponBonus = weaponBonusFor(client.data.equipment, client.data.skills);
-    const growthMessages: string[] = [];
-    const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
 
     let totalDamage = 0;
     let died = false;
     let currentHp = monster.hp;
-    for (let i = 0; i < swings; i++) {
-      const swingDamage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus) + enhancedBonus;
+
+    if (skillName === BONE_FINGER_STRIKE_SKILL) {
+      const basePunchDamage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus);
+      const boneSkillPercent = client.data.skills[BONE_FINGER_STRIKE_SKILL] ?? STARTING_SKILL_PERCENT;
+      const swingDamage = computeBoneFingerStrikeDamage(basePunchDamage, boneSkillPercent);
       const result = this.monsterManager.applyDamage(monster.id, swingDamage);
-      if (!result) break;
-      totalDamage += swingDamage;
-      currentHp = result.monster.hp;
-      died = result.died;
-      if (died) break;
+      if (result) {
+        totalDamage = swingDamage;
+        currentHp = result.monster.hp;
+        died = result.died;
+      }
+      const skillGrowth = this.maybeGrowSkill(client, BONE_FINGER_STRIKE_SKILL);
+      if (skillGrowth) growthMessages.push(skillGrowth);
+    } else {
+      const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
+      for (let i = 0; i < swings; i++) {
+        const swingDamage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus) + enhancedBonus;
+        const result = this.monsterManager.applyDamage(monster.id, swingDamage);
+        if (!result) break;
+        totalDamage += swingDamage;
+        currentHp = result.monster.hp;
+        died = result.died;
+        if (died) break;
+      }
+      const attackGrowth = this.maybeGrowSkill(client, attackSkill);
+      if (attackGrowth) growthMessages.push(attackGrowth);
     }
 
     let expGained: number | undefined;
@@ -803,22 +1137,37 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       expGained = grantResult.message ? undefined : rawExpGained;
       if (grantResult.message) growthMessages.push(grantResult.message);
       const items = [bodyPartLabelFor(monster.kind), ...monster.carriedItems];
-      this.corpseManager.spawn(monster.kind, items, monster.mapName, monster.row, monster.col, client.data.username);
+      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username);
+      this.playerCombat.delete(client.data.username);
     }
-    const attackGrowth = this.maybeGrowSkill(client, attackSkill);
-    if (attackGrowth) growthMessages.push(attackGrowth);
+    this.maybeGrowResistanceSkill(client, monster.monsterClass, growthMessages);
 
-    let message = died
-      ? `${client.data.username} punches the ${monster.kind} for ${totalDamage} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
-      : `${client.data.username} punches the ${monster.kind} for ${totalDamage} damage.`;
+    let message: string;
+    if (skillName === BONE_FINGER_STRIKE_SKILL) {
+      message = died
+        ? `${client.data.username}'s bone finger strike hits the ${monster.kind} for ${totalDamage} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
+        : `${client.data.username}'s bone finger strike hits the ${monster.kind} for ${totalDamage} damage.`;
+    } else {
+      const verb = this.attackVerb(client);
+      message = died
+        ? `${client.data.username} ${verb} the ${monster.kind} for ${totalDamage} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
+        : `${client.data.username} ${verb} the ${monster.kind} for ${totalDamage} damage.`;
+    }
 
     if (!died) {
       const paralysisKey = `monster:${monster.id}`;
-      const wasParalyzed = this.isParalyzed(paralysisKey);
-      this.applyGlare(client, paralysisKey);
-      const counterMessage = wasParalyzed
-        ? `The ${monster.kind} is paralyzed by your glare and cannot counter-attack!`
-        : this.resolveMonsterCounterAttack(client, monster, monster.kind, monster.monsterClass, growthMessages);
+      let counterMessage: string;
+      if (skillName === GLARE_SKILL) {
+        const wasParalyzed = this.isParalyzed(paralysisKey);
+        this.applyGlare(client, paralysisKey);
+        counterMessage = wasParalyzed
+          ? `The ${monster.kind} is still paralyzed by your glare and cannot counter-attack!`
+          : `Your glare paralyzes the ${monster.kind}, freezing it before it can retaliate!`;
+      } else if (this.isParalyzed(paralysisKey)) {
+        counterMessage = `The ${monster.kind} is paralyzed by your glare and cannot counter-attack!`;
+      } else {
+        counterMessage = this.resolveMonsterCounterAttack(client, monster, monster.kind, monster.monsterClass, growthMessages, monster);
+      }
       message += ` ${counterMessage}`;
     }
     void this.persistStats(client);
@@ -841,7 +1190,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
   // Anywhere on a map that isn't a wall/exit tile and isn't already
   // occupied by a player, monster, or another NPC — used to relocate the
-  // training dummy after it "dies" (see resolveNpcHit) instead of just
+  // training dummy after it "dies" (see resolveHitOnNpc) instead of just
   // resetting it in place.
   private randomFreeTileFor(mapName: MapName): { row: number; col: number } {
     const map = getMap(mapName);
@@ -857,7 +1206,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { row: Math.floor(map.rows / 2), col: Math.floor(map.cols / 2) };
   }
 
-  private resolveNpcHit(client: GameSocket, npc: (typeof NPCS)[number]): void {
+  // Same skillName dispatch as resolveHitOnMonster, against the training
+  // dummy — see that method's own doc comment for the shared reasoning.
+  private resolveHitOnNpc(client: GameSocket, npc: (typeof NPCS)[number], skillName: string): void {
     // The training dummy has the same starting attributes as a brand-new
     // player (see combat/formulas.ts) — it's "a player as well" for
     // damage-formula purposes ("the test player"). It still grants no
@@ -878,24 +1229,51 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
     const growthMessages: string[] = [];
-    const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
 
     // The dummy has no equipment/learned skills of its own to defend with
     // — it can still dodge (a flat, skill-less roll), but never parries
     // or shield-blocks (both require gear it doesn't have).
     let totalDamage = 0;
     let died = false;
-    for (let i = 0; i < swings; i++) {
-      const swingDamage =
-        punchDamage(this.attackerStatsFor(client), defenderStats, attackSkillPercent, weaponBonusFor(client.data.equipment, client.data.skills)) +
-        enhancedBonus;
+    let avoided = false;
+    let avoidVerb: string | undefined;
+
+    if (skillName === BONE_FINGER_STRIKE_SKILL) {
+      const basePunchDamage = punchDamage(
+        this.attackerStatsFor(client),
+        defenderStats,
+        attackSkillPercent,
+        weaponBonusFor(client.data.equipment, client.data.skills)
+      );
+      const boneSkillPercent = client.data.skills[BONE_FINGER_STRIKE_SKILL] ?? STARTING_SKILL_PERCENT;
+      const swingDamage = computeBoneFingerStrikeDamage(basePunchDamage, boneSkillPercent);
       const defense = this.resolveDefense(defenderStats, {}, {}, this.attackerStatsFor(client));
-      if (!defense.avoided) {
-        totalDamage += swingDamage;
+      if (defense.avoided) {
+        avoided = true;
+        avoidVerb = defense.verb;
+      } else {
+        totalDamage = swingDamage;
         npc.hp = Math.max(0, npc.hp - swingDamage);
         died = npc.hp <= 0;
       }
-      if (died) break;
+      const skillGrowth = this.maybeGrowSkill(client, BONE_FINGER_STRIKE_SKILL);
+      if (skillGrowth) growthMessages.push(skillGrowth);
+    } else {
+      const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
+      for (let i = 0; i < swings; i++) {
+        const swingDamage =
+          punchDamage(this.attackerStatsFor(client), defenderStats, attackSkillPercent, weaponBonusFor(client.data.equipment, client.data.skills)) +
+          enhancedBonus;
+        const defense = this.resolveDefense(defenderStats, {}, {}, this.attackerStatsFor(client));
+        if (!defense.avoided) {
+          totalDamage += swingDamage;
+          npc.hp = Math.max(0, npc.hp - swingDamage);
+          died = npc.hp <= 0;
+        }
+        if (died) break;
+      }
+      const attackGrowth = this.maybeGrowSkill(client, attackSkill);
+      if (attackGrowth) growthMessages.push(attackGrowth);
     }
 
     if (died) {
@@ -903,26 +1281,41 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // the no-exp rule above: an ever-respawning dummy would otherwise
       // make a zombie's Eat Brains cooldown meaningless (free heal on
       // demand instead of an actual reward for a real kill).
-      this.corpseManager.spawn(npc.race, [bodyPartLabelFor(npc.race), 'bone dagger'], npc.map, npc.row, npc.col);
+      this.corpseManager.spawn(npc.race, npc.level, [bodyPartLabelFor(npc.race), 'bone dagger'], npc.map, npc.row, npc.col);
       const tile = this.randomFreeTileFor(npc.map);
       npc.row = tile.row;
       npc.col = tile.col;
       npc.hp = npc.maxHp;
     }
-    const attackGrowth = this.maybeGrowSkill(client, attackSkill);
-    if (attackGrowth) growthMessages.push(attackGrowth);
 
-    let message = died
-      ? `${client.data.username} punches the training dummy for ${totalDamage} damage, defeating it! It leaves a corpse and reappears elsewhere.`
-      : `${client.data.username} punches the training dummy for ${totalDamage} damage.`;
+    let message: string;
+    if (skillName === BONE_FINGER_STRIKE_SKILL) {
+      message = avoided
+        ? `${client.data.username}'s bone finger strike misses the training dummy — it ${avoidVerb}s out of the way!`
+        : died
+          ? `${client.data.username}'s bone finger strike hits the training dummy for ${totalDamage} damage, defeating it! It leaves a corpse and reappears elsewhere.`
+          : `${client.data.username}'s bone finger strike hits the training dummy for ${totalDamage} damage.`;
+    } else {
+      const verb = this.attackVerb(client);
+      message = died
+        ? `${client.data.username} ${verb} the training dummy for ${totalDamage} damage, defeating it! It leaves a corpse and reappears elsewhere.`
+        : `${client.data.username} ${verb} the training dummy for ${totalDamage} damage.`;
+    }
 
     if (!died) {
       const paralysisKey = `npc:${npc.id}`;
-      const wasParalyzed = this.isParalyzed(paralysisKey);
-      this.applyGlare(client, paralysisKey);
-      const counterMessage = wasParalyzed
-        ? 'The training dummy is paralyzed by your glare and cannot counter-attack!'
-        : this.resolveMonsterCounterAttack(client, defenderStats, 'training dummy', undefined, growthMessages);
+      let counterMessage: string;
+      if (skillName === GLARE_SKILL) {
+        const wasParalyzed = this.isParalyzed(paralysisKey);
+        this.applyGlare(client, paralysisKey);
+        counterMessage = wasParalyzed
+          ? 'The training dummy is still paralyzed by your glare and cannot counter-attack!'
+          : 'Your glare paralyzes the training dummy, freezing it before it can retaliate!';
+      } else if (this.isParalyzed(paralysisKey)) {
+        counterMessage = 'The training dummy is paralyzed by your glare and cannot counter-attack!';
+      } else {
+        counterMessage = this.resolveMonsterCounterAttack(client, defenderStats, 'training dummy', undefined, growthMessages);
+      }
       message += ` ${counterMessage}`;
     }
     void this.persistStats(client);
@@ -941,12 +1334,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
   }
 
-  private async resolvePlayerHit(client: GameSocket, targetUsername: string): Promise<void> {
+  // Same skillName dispatch as resolveHitOnMonster/resolveHitOnNpc, for
+  // PvP — see resolveHitOnMonster's doc comment for the shared reasoning.
+  private async resolveHitOnPlayer(client: GameSocket, targetUsername: string, skillName: string): Promise<void> {
     const targetSocketId = this.activeConnections.getActiveSocketId(targetUsername);
     const targetClient = targetSocketId ? (this.server.sockets.sockets.get(targetSocketId) as GameSocket | undefined) : undefined;
     // Extremely rare (disconnected between the occupancy check and here) —
     // just no-op rather than crashing on a stats lookup that no longer exists.
-    if (!targetClient) return;
+    if (!targetClient) {
+      this.playerCombat.delete(client.data.username);
+      return;
+    }
 
     // Being attacked always wakes/stands a sleeping or resting player up
     // — same as the attacker's own wakeIfNeeded on move/punch, but here
@@ -957,14 +1355,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
     const growthMessages: string[] = [];
-    const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
 
     let damage = 0;
     let avoidedVerb: string | undefined;
-    for (let i = 0; i < swings; i++) {
-      const swingDamage =
-        punchDamage(this.attackerStatsFor(client), defenderStats, attackSkillPercent, weaponBonusFor(client.data.equipment, client.data.skills)) +
-        enhancedBonus;
+
+    if (skillName === BONE_FINGER_STRIKE_SKILL) {
+      const basePunchDamage = punchDamage(
+        this.attackerStatsFor(client),
+        defenderStats,
+        attackSkillPercent,
+        weaponBonusFor(client.data.equipment, client.data.skills)
+      );
+      const boneSkillPercent = client.data.skills[BONE_FINGER_STRIKE_SKILL] ?? STARTING_SKILL_PERCENT;
+      const swingDamage = computeBoneFingerStrikeDamage(basePunchDamage, boneSkillPercent);
       const defense = this.resolveDefense(defenderStats, targetClient.data.skills, targetClient.data.equipment, this.attackerStatsFor(client));
       if (defense.skill) {
         const defenseGrowth = this.maybeGrowSkill(targetClient, defense.skill);
@@ -973,9 +1376,30 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (defense.avoided) {
         avoidedVerb = defense.verb;
       } else {
-        damage += swingDamage;
+        damage = swingDamage;
       }
-      if (targetClient.data.hp - damage <= 0) break;
+      const skillGrowth = this.maybeGrowSkill(client, BONE_FINGER_STRIKE_SKILL);
+      if (skillGrowth) growthMessages.push(skillGrowth);
+    } else {
+      const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
+      for (let i = 0; i < swings; i++) {
+        const swingDamage =
+          punchDamage(this.attackerStatsFor(client), defenderStats, attackSkillPercent, weaponBonusFor(client.data.equipment, client.data.skills)) +
+          enhancedBonus;
+        const defense = this.resolveDefense(defenderStats, targetClient.data.skills, targetClient.data.equipment, this.attackerStatsFor(client));
+        if (defense.skill) {
+          const defenseGrowth = this.maybeGrowSkill(targetClient, defense.skill);
+          if (defenseGrowth) growthMessages.push(defenseGrowth);
+        }
+        if (defense.avoided) {
+          avoidedVerb = defense.verb;
+        } else {
+          damage += swingDamage;
+        }
+        if (targetClient.data.hp - damage <= 0) break;
+      }
+      const attackGrowth = this.maybeGrowSkill(client, attackSkill);
+      if (attackGrowth) growthMessages.push(attackGrowth);
     }
     // Only worth narrating the dodge/parry/block if EVERY swing was
     // avoided — if at least one landed, the damage number speaks for
@@ -996,6 +1420,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (grantResult.message) growthMessages.push(grantResult.message);
       this.corpseManager.spawn(
         targetClient.data.race,
+        targetClient.data.level,
         [bodyPartLabelFor(targetClient.data.race)],
         targetClient.data.map,
         targetClient.data.row,
@@ -1003,44 +1428,35 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         client.data.username
       );
 
-      const previousMap = targetClient.data.map;
-      const startingMap = getMap(STARTING_MAP);
-      targetClient.data.map = STARTING_MAP;
-      targetClient.data.row = Math.floor(startingMap.rows / 2);
-      targetClient.data.col = Math.floor(startingMap.cols / 2);
-      targetClient.data.hp = targetClient.data.maxHp;
-
-      this.worldManager.updateState(targetUsername, {
-        mapName: targetClient.data.map,
-        row: targetClient.data.row,
-        col: targetClient.data.col,
-        hp: targetClient.data.hp,
-      });
-
-      if (previousMap !== targetClient.data.map) {
-        void targetClient.leave(previousMap);
-        void targetClient.join(targetClient.data.map);
-      }
-      targetClient.emit('sync', { player: this.snapshotFor(targetClient) });
+      this.respawnDefeatedPlayer(targetClient);
+      this.playerCombat.delete(client.data.username);
     } else {
       this.worldManager.updateState(targetUsername, { hp: targetClient.data.hp });
-      if (client.data.race === 'skeleton') {
+      if (skillName === GLARE_SKILL) {
         this.applyGlare(client, `player:${targetUsername}`);
         growthMessages.push(`${targetUsername} is paralyzed by your glare and cannot move or attack!`);
       }
     }
 
-    const attackGrowth = this.maybeGrowSkill(client, attackSkill);
-    if (attackGrowth) growthMessages.push(attackGrowth);
     void this.persistStats(client);
     void this.persistPosition(targetClient);
     void this.persistStats(targetClient);
 
-    const message = fullyAvoidedVerb
-      ? `${client.data.username} punches ${targetUsername}, but they ${fullyAvoidedVerb} out of the way!`
-      : died
-        ? `${client.data.username} punches ${targetUsername} for ${damage} damage, defeating them!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
-        : `${client.data.username} punches ${targetUsername} for ${damage} damage.`;
+    let message: string;
+    if (skillName === BONE_FINGER_STRIKE_SKILL) {
+      message = fullyAvoidedVerb
+        ? `${client.data.username}'s bone finger strike misses ${targetUsername}, who ${fullyAvoidedVerb}s out of the way!`
+        : died
+          ? `${client.data.username}'s bone finger strike hits ${targetUsername} for ${damage} damage, defeating them!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
+          : `${client.data.username}'s bone finger strike hits ${targetUsername} for ${damage} damage.`;
+    } else {
+      const verb = this.attackVerb(client);
+      message = fullyAvoidedVerb
+        ? `${client.data.username} ${verb} ${targetUsername}, but they ${fullyAvoidedVerb} out of the way!`
+        : died
+          ? `${client.data.username} ${verb} ${targetUsername} for ${damage} damage, defeating them!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
+          : `${client.data.username} ${verb} ${targetUsername} for ${damage} damage.`;
+    }
 
     this.emitCombat(client, {
       targetKind: 'player',
@@ -1097,8 +1513,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: "You're too far away to reach that." };
     }
 
-    this.corpseManager.remove(corpseId);
-    client.data.inventory = [...client.data.inventory, ...corpse.items];
+    // Captured BEFORE clearItems — `corpse` is a live reference into the
+    // corpse manager's own map, so clearing it in place would otherwise
+    // mutate this exact array out from under us, and every grab-all would
+    // silently add nothing to the inventory (the actual bug reported:
+    // looted items never showing up even though the log message did,
+    // since that message is built client-side from what it OFFERED to
+    // grab, not from what the server actually returned).
+    const items = [...corpse.items];
+    this.corpseManager.clearItems(corpseId);
+    client.data.inventory = [...client.data.inventory, ...items];
     this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
     void this.persistStats(client);
 
@@ -1107,8 +1531,50 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, inventory: client.data.inventory };
   }
 
+  // Monster-corpse-only "sacrifice it to the gods" — same reward formula
+  // as the text game's own sacrifice command (corpse level x 3 gold).
+  // Player (and training-dummy) corpses use the same Race-shaped `kind`
+  // as each other with nothing to tell them apart, so both are excluded
+  // here exactly as intended ("player corpses cannot be sacrificed").
+  private static readonly SACRIFICE_GOLD_PER_LEVEL = 3;
+
+  @SubscribeMessage('sacrificeCorpse')
+  handleSacrificeCorpse(@ConnectedSocket() client: GameSocket, @MessageBody() corpseId: unknown): SacrificeAck {
+    if (typeof corpseId !== 'string') {
+      return { ok: false, message: 'Invalid corpse.' };
+    }
+    const corpse = this.corpseManager.get(corpseId);
+    if (!corpse || corpse.map !== client.data.map) {
+      return { ok: false, message: "That's already gone." };
+    }
+    if (!this.isWithinLootReach(client, corpse.row, corpse.col)) {
+      return { ok: false, message: "You're too far away to reach that." };
+    }
+    if (!(MONSTER_KINDS as readonly string[]).includes(corpse.kind)) {
+      return { ok: false, message: 'Only a monster corpse can be sacrificed.' };
+    }
+
+    const goldReward = corpse.level * GameGateway.SACRIFICE_GOLD_PER_LEVEL;
+    this.corpseManager.remove(corpseId);
+    client.data.gold += goldReward;
+    this.worldManager.updateState(client.data.username, { gold: client.data.gold });
+    void this.persistStats(client);
+
+    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+
+    return { ok: true, gold: client.data.gold, message: `You sacrifice the ${corpse.kind} corpse to the gods, receiving ${goldReward} gold.` };
+  }
+
   private isWithinLootReach(client: GameSocket, row: number, col: number): boolean {
     return Math.abs(row - client.data.row) <= 1 && Math.abs(col - client.data.col) <= 1;
+  }
+
+  // A shop's reach is more generous than looting a corpse — "within about
+  // 10 feet" of the shopkeeper (shared/lighting.ts's own SHOP_REACH_TILES,
+  // deliberately independent of LIGHT_RADIUS_TILES), not basically
+  // touching them.
+  private isClientWithinShopReach(client: GameSocket, row: number, col: number): boolean {
+    return isWithinShopReach(client.data.row, client.data.col, row, col);
   }
 
   // The corpse loot modal's "click one item" path — takes a single item
@@ -1169,7 +1635,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!vendor || vendor.map !== client.data.map) {
       return { ok: false, message: "That shop isn't here." };
     }
-    if (!this.isWithinLootReach(client, vendor.row, vendor.col)) {
+    if (!this.isClientWithinShopReach(client, vendor.row, vendor.col)) {
       return { ok: false, message: "You're too far away to reach the shop." };
     }
     const item = vendor.items.find((i) => i.label === itemLabel);
@@ -1188,8 +1654,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, inventory: client.data.inventory, gold: client.data.gold, message: `You buy a ${item.label} for ${item.price} gold.` };
   }
 
-  // Zombie-only: heals 20% hp/mana/movement and starts a 4-tick
-  // (EAT_BRAINS_COOLDOWN_MS) cooldown — only offered on a corpse this
+  // Zombie-only: heals 20% hp/mana/movement and starts a 4-world-tick
+  // (EAT_BRAINS_COOLDOWN_TICKS) cooldown — only offered on a corpse this
   // zombie itself landed the killing blow on (see corpse.killedBy, set at
   // spawn time), same reach rule as looting it.
   @SubscribeMessage('eatBrains')
@@ -1210,13 +1676,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (corpse.killedBy !== client.data.username) {
       return { ok: false, message: "You didn't land the killing blow on this corpse." };
     }
-    const now = Date.now();
-    if (now < client.data.eatBrainsReadyAt) {
-      const secondsLeft = Math.ceil((client.data.eatBrainsReadyAt - now) / 1000);
-      return { ok: false, message: `Eat Brains is on cooldown for another ${secondsLeft}s.` };
+    if (this.currentTick < client.data.eatBrainsReadyAtTick) {
+      const ticksLeft = client.data.eatBrainsReadyAtTick - this.currentTick;
+      return { ok: false, message: `Eat Brains isn't ready yet (${ticksLeft} more world tick${ticksLeft === 1 ? '' : 's'}).` };
     }
 
-    client.data.eatBrainsReadyAt = now + EAT_BRAINS_COOLDOWN_MS;
+    client.data.eatBrainsReadyAtTick = this.currentTick + EAT_BRAINS_COOLDOWN_TICKS;
     client.data.hp = Math.min(client.data.maxHp, client.data.hp + Math.round((client.data.maxHp * EAT_BRAINS_HEAL_PERCENT) / 100));
     client.data.mana = Math.min(client.data.maxMana, client.data.mana + Math.round((client.data.maxMana * EAT_BRAINS_HEAL_PERCENT) / 100));
     client.data.movement = Math.min(
@@ -1278,6 +1743,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     '/wake, /stand - get up from sleeping or resting',
     '/mimic [race] - slime only: with no argument, lists what you can mimic; with one, shifts your form to it',
     '/revert - slime only: shift back to your natural slime form',
+    '/time - show the current game hour and whether it is day or night',
   ].join('\n');
 
   private handleCommand(client: GameSocket, commandText: string): void {
@@ -1308,6 +1774,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         break;
       case 'revert':
         this.handleRevertCommand(client);
+        break;
+      case 'time':
+        this.handleTimeCommand(client);
         break;
       default:
         this.systemMessage(client, `Unknown command: /${command}. Try /commands.`);
@@ -1359,6 +1828,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     this.setMimicForm(client, null);
     this.systemMessage(client, 'You revert to your natural slime form.');
+  }
+
+  private handleTimeCommand(client: GameSocket): void {
+    const hour = String(this.worldHour).padStart(2, '0');
+    const label = isNightHour(this.worldHour) ? 'night' : 'day';
+    this.systemMessage(client, `It is currently ${hour}:00 (${label}).`);
   }
 
   // Toggles sleeping <-> awake, same messages as the text game. Never
@@ -1510,6 +1985,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       client.data.skills = { ...client.data.skills, [grant.skill]: RESISTANCE_SKILL_STARTING_PERCENT };
       messages.push(`You have gained ${grant.skill} (${RESISTANCE_SKILL_STARTING_PERCENT}%)!`);
     }
+    if (
+      item === 'bone dagger' &&
+      client.data.skills[BONE_FINGER_STRIKE_SKILL] === undefined &&
+      Math.random() < BONE_FINGER_STRIKE_GRANT_CHANCE
+    ) {
+      client.data.skills = { ...client.data.skills, [BONE_FINGER_STRIKE_SKILL]: STARTING_SKILL_PERCENT };
+      messages.push(`You have gained ${BONE_FINGER_STRIKE_SKILL} (${STARTING_SKILL_PERCENT}%)!`);
+    }
     // Checked after the resistance roll above so a body part that both
     // grants a resistance AND crosses the evolution threshold in the same
     // consume shows both messages, in that order.
@@ -1531,7 +2014,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
   // Persists/broadcasts/builds the ack after either an equip or a
   // consume — both useItem and consumeItem end the same way.
-  private finishItemAction(client: GameSocket, inventory: string[], action: 'consumed' | 'equipped', messages: string[]): UseItemAck {
+  private finishItemAction(
+    client: GameSocket,
+    inventory: string[],
+    action: 'consumed' | 'equipped' | 'unequipped',
+    messages: string[]
+  ): UseItemAck {
     client.data.inventory = inventory;
     this.worldManager.updateState(client.data.username, {
       inventory: client.data.inventory,
@@ -1580,6 +2068,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const previous = client.data.equipment[slot];
       if (previous) inventory.push(previous);
       client.data.equipment = { ...client.data.equipment, [slot]: item };
+      if (slot === 'shield' && previous === TORCH_ITEM) this.pauseTorch(client);
+      if (slot === 'shield' && item === TORCH_ITEM) this.lightTorch(client);
       return this.finishItemAction(client, inventory, 'equipped', []);
     }
 
@@ -1608,5 +2098,29 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     const messages = this.applyConsume(client, item);
     return this.finishItemAction(client, inventory, 'consumed', messages);
+  }
+
+  // The Equipment modal's 'x' button (item 15) — takes whatever's in the
+  // given slot back off and returns it to the inventory. Equipping is
+  // still the only way to fill a slot (see handleUseItem); this only
+  // ever empties one.
+  @SubscribeMessage('unequipItem')
+  handleUnequipItem(@ConnectedSocket() client: GameSocket, @MessageBody() rawSlot: unknown): UseItemAck {
+    const parsed = equipmentSlotSchema.safeParse(rawSlot);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid equipment slot.' };
+    }
+    const slot = parsed.data;
+    const item = client.data.equipment[slot];
+    if (!item) {
+      return { ok: true, inventory: client.data.inventory, equipment: client.data.equipment };
+    }
+
+    const equipment = { ...client.data.equipment };
+    delete equipment[slot];
+    client.data.equipment = equipment;
+    if (slot === 'shield' && item === TORCH_ITEM) this.pauseTorch(client);
+    const inventory = [...client.data.inventory, item];
+    return this.finishItemAction(client, inventory, 'unequipped', []);
   }
 }

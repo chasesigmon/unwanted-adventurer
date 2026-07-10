@@ -288,6 +288,13 @@ body {
   min-height: 120px;
   max-width: 90vw;
   max-height: 80vh;
+  /* Was missing entirely — every OTHER HUD panel has z-index:60 to stay
+     above the dark-fog/day-night overlays (15/10), but without one here
+     this panel fell into the z-index:auto layer, which sits BELOW any
+     positioned sibling that has an explicit z-index — so at night the
+     fog/tint painted over the chat/combat log, same underlying stacking
+     rule as the earlier "modals unreadable at night" bug. */
+  z-index: 60;
 }
 
 #log-panel.collapsed {
@@ -397,6 +404,13 @@ body {
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.55);
+  /* Without an explicit z-index here, the dark-fog/day-night overlays
+     (z-index 15/10) painted OVER every modal at night despite coming
+     earlier in the DOM — any positioned sibling with a z-index forces
+     z-index:auto siblings into the same "0" layer below it, regardless
+     of source order. Above the HUD panels (60) too, so a modal is never
+     see-through to them either. */
+  z-index: 70;
 }
 
 .modal:not([hidden]) {
@@ -478,6 +492,31 @@ body {
 .modal-stats .stat-value {
   color: #eee;
   text-align: right;
+}
+
+.equipment-value {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.equipment-remove-btn {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  padding: 0;
+  background: rgba(192, 57, 43, 0.25);
+  border: 1px solid #c0392b;
+  border-radius: 3px;
+  color: #eee;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.equipment-remove-btn:hover {
+  background: rgba(192, 57, 43, 0.5);
 }
 
 #target-info-consideration {
@@ -623,6 +662,36 @@ body {
   background: #6a3850;
 }
 
+#corpse-eat-brains.on-cooldown,
+#corpse-eat-brains:disabled {
+  background: #2a2a2e;
+  border-color: #444;
+  color: #777;
+  cursor: not-allowed;
+}
+
+#corpse-eat-brains.on-cooldown:hover,
+#corpse-eat-brains:disabled:hover {
+  background: #2a2a2e;
+}
+
+#corpse-sacrifice {
+  margin-top: 8px;
+  width: 100%;
+  padding: 8px;
+  background: #4d3a1a;
+  border: 1px solid #a87830;
+  color: #eee;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  border-radius: 4px;
+}
+
+#corpse-sacrifice:hover {
+  background: #6a4f24;
+}
+
 /* ---------- Autopilot prompt modal ---------- */
 
 .autopilot-field {
@@ -686,7 +755,14 @@ body {
   grid-template-columns: repeat(10, 36px);
   grid-template-rows: repeat(2, 36px);
   gap: 4px;
-  z-index: 60;
+  /* Higher than .modal (70) deliberately — dragging a skill icon out of
+     the (open) Skills modal onto this bar is the whole point of it, but
+     a modal's full-screen backdrop sitting above it meant every 'drop'
+     landed on the backdrop instead of a slot, so nothing ever registered.
+     Sitting above modals is a minor visual quirk (the bar renders in
+     front of an open modal near the bottom of the screen) that's worth
+     it for drag-and-drop to actually work. */
+  z-index: 80;
 }
 
 .action-slot {

@@ -30,6 +30,7 @@ export interface PlayerState extends Location, Attributes {
   gold: number;
   mimicableRaces: (Race | MonsterKind)[];
   mimicForm: (Race | MonsterKind) | null;
+  eatBrainsReadyAtTick: number;
 }
 
 export type MoveResult =

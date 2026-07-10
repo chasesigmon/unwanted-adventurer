@@ -6,6 +6,9 @@ import { createConcreteTexture } from './concreteTexture.js';
 import { createDoorTexture } from './doorSprite.js';
 import { createTreeSpritesheet, createTreeSwayAnim, TREE_TEXTURE_KEY, TREE_SWAY_ANIM_KEY } from './treeSprite.js';
 import { createDaggerTexture, DAGGER_TEXTURE_KEY } from './daggerSprite.js';
+import { createBoneShieldTexture, BONE_SHIELD_TEXTURE_KEY } from './boneShieldSprite.js';
+import { createShopfrontTexture } from './shopfrontSprite.js';
+import { createWallTorchTexture, WALL_TORCH_TEXTURE_KEY } from './wallTorchSprite.js';
 import {
   preloadCharacterSprites,
   createCharacterAnims,
@@ -20,10 +23,29 @@ import {
 } from './characterSprites.js';
 import { getMap, MAPS } from '../shared/maps.js';
 import { treePositionsFor } from '../shared/trees.js';
-import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS } from '../shared/equipment.js';
-import { STARTING_SKILLS, HOBGOBLIN_EVOLUTION_SKILLS, RESISTANCE_SKILLS, PUNCH_SKILL, DAGGER_SKILL } from '../shared/skills.js';
-import { isDarkHour, LIGHT_RADIUS_TILES, isNearStaticLight, isWithinLightRadius, hasLightSource } from '../shared/lighting.js';
-import { MAP_NAMES } from '../shared/constants.js';
+import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, type EquipmentSlot } from '../shared/equipment.js';
+import {
+  STARTING_SKILLS,
+  HOBGOBLIN_EVOLUTION_SKILLS,
+  RESISTANCE_SKILLS,
+  PUNCH_SKILL,
+  DAGGER_SKILL,
+  INFRAVISION_SKILL,
+  BONE_FINGER_STRIKE_SKILL,
+  GLARE_SKILL,
+} from '../shared/skills.js';
+import {
+  isDarkHour,
+  LIGHT_RADIUS_TILES,
+  SHOP_REACH_TILES,
+  isNearStaticLight,
+  isWithinLightRadius,
+  isWithinRadius,
+  TORCH_ITEM,
+  isAlwaysLit,
+  torchWallPositionsFor,
+} from '../shared/lighting.js';
+import { MAP_NAMES, MONSTER_KINDS } from '../shared/constants.js';
 import type { MapName, Race, Direction, MonsterKind } from '../shared/constants.js';
 import type {
   PlayerSnapshot,
@@ -109,14 +131,16 @@ function skillIconColor(name: string): string {
 }
 
 // Only a skill with a real, currently-implemented targeted action can be
-// slotted — everything else in this project is either a passive bonus or
-// an automatic combat proc (see shared/skills.ts), not something to
-// manually fire at a target. Punch/dagger are the one exception: this
-// just lets the action bar throw the same contact-range attack the
-// direction keys/right-click already do, aimed at whichever target is
-// currently selected instead of wherever the player happens to be facing.
+// slotted — everything else in this project is a passive bonus (see
+// shared/skills.ts), not something to manually fire at a target.
+// Punch/dagger throw the same contact-range attack the direction
+// keys/right-click already do, aimed at whichever target is currently
+// selected; bone finger strike and glare are real separate active skills
+// (see game.gateway.ts's handleUseSkill) — glare no longer applies
+// automatically on every hit a skeleton lands (item 14), it has to be
+// deliberately queued like this.
 function isUsableSkill(skillName: string): boolean {
-  return skillName === PUNCH_SKILL || skillName === DAGGER_SKILL;
+  return skillName === PUNCH_SKILL || skillName === DAGGER_SKILL || skillName === BONE_FINGER_STRIKE_SKILL || skillName === GLARE_SKILL;
 }
 
 const ACTION_BAR_SLOT_COUNT = 20;
@@ -141,6 +165,41 @@ function renderActionSlot(index: number): void {
   }
 }
 
+// Persisted per-username in localStorage so a slotted loadout survives a
+// reload/reconnect — purely a client-side convenience, the server has no
+// idea the action bar exists at all.
+function actionBarStorageKey(username: string): string {
+  return `game2d:actionBar:${username}`;
+}
+
+function saveActionBar(): void {
+  if (!myProfile) return;
+  try {
+    localStorage.setItem(actionBarStorageKey(myProfile.username), JSON.stringify(actionBarSkills));
+  } catch {
+    /* localStorage unavailable (private browsing etc.) — not worth surfacing */
+  }
+}
+
+let actionBarLoadedForUsername: string | null = null;
+function loadActionBarOnce(username: string): void {
+  if (actionBarLoadedForUsername === username) return;
+  actionBarLoadedForUsername = username;
+  try {
+    const raw = localStorage.getItem(actionBarStorageKey(username));
+    if (!raw) return;
+    const saved = JSON.parse(raw) as unknown;
+    if (!Array.isArray(saved)) return;
+    for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
+      const skillName = saved[i];
+      actionBarSkills[i] = typeof skillName === 'string' ? skillName : null;
+      renderActionSlot(i);
+    }
+  } catch {
+    /* corrupt/missing data — just leave the bar empty */
+  }
+}
+
 for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
   const slot = document.createElement('div');
   slot.className = 'action-slot';
@@ -157,6 +216,7 @@ for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
     if (!skillName) return;
     actionBarSkills[i] = skillName;
     renderActionSlot(i);
+    saveActionBar();
   });
   slot.addEventListener('click', () => {
     const skillName = actionBarSkills[i];
@@ -172,9 +232,9 @@ function updateWorldLabel(mapName: MapName): void {
 
 // Backs item 11's left-click targeting — see WorldScene's
 // setTarget/clearTarget, the only callers.
-function updateTargetPanel(label: string, hp: number, maxHp: number): void {
+function updateTargetPanel(label: string, level: number, hp: number, maxHp: number): void {
   targetPanel.hidden = false;
-  targetName.textContent = label;
+  targetName.textContent = `${label} (Lv ${level})`;
   const ratio = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
   targetHpFill.style.width = `${(ratio * 100).toFixed(1)}%`;
 }
@@ -194,8 +254,26 @@ function updateSleepOverlay(): void {
 // otherwise starts at hour 0/"midnight" for a moment before the first
 // tick, which would open on a jarring dark screen).
 const MAX_NIGHT_OPACITY = 0.55;
+
+function nightDarknessForHour(hour: number): number {
+  return ((1 - Math.cos(((hour - 12) / 24) * Math.PI * 2)) / 2) * MAX_NIGHT_OPACITY;
+}
+
+// Infravision caps full midnight-dark down to whatever the ambient tint
+// already looks like at 21:00 — noticeably dimmer than broad daylight,
+// but nowhere near as dark as true night — applied every frame in
+// WorldScene.update() (see applyDaynightTint) since it depends on the
+// player's own skills, not just the hour.
+const INFRAVISION_MAX_NIGHT_OPACITY = nightDarknessForHour(21);
+
+let currentNightDarkness = 0;
 function updateDaynightOverlay(hour: number): void {
-  const darkness = ((1 - Math.cos(((hour - 12) / 24) * Math.PI * 2)) / 2) * MAX_NIGHT_OPACITY;
+  currentNightDarkness = nightDarknessForHour(hour);
+  applyDaynightTint(false);
+}
+
+function applyDaynightTint(hasFullVision: boolean): void {
+  const darkness = hasFullVision ? Math.min(currentNightDarkness, INFRAVISION_MAX_NIGHT_OPACITY) : currentNightDarkness;
   daynightOverlay.style.background = `rgba(5, 5, 20, ${darkness.toFixed(3)})`;
 }
 
@@ -205,11 +283,22 @@ function updateDaynightOverlay(hour: number): void {
 // same reasoning as MAX_NIGHT_OPACITY above.
 let currentWorldHour = 12;
 let worldTimeKnown = false;
-function updateWorldHour(hour: number): void {
+// The same world-tick counter GameGateway measures Eat Brains/Glare
+// cooldowns in — lets updateEatBrainsButton gray the button out instead
+// of it just failing silently when clicked mid-cooldown.
+let currentWorldTick = 0;
+function updateWorldHour(hour: number, tick: number): void {
   currentWorldHour = hour;
+  currentWorldTick = tick;
   worldTimeKnown = true;
   updateDaynightOverlay(hour);
+  updateEatBrainsButton();
 }
+
+// With no light at all, only barely more than the player's own tile is
+// visible — a real (if small) radius rather than zero, since rendering
+// literally nothing (not even your own character) isn't playable.
+const NO_LIGHT_RADIUS_TILES = 0.5;
 
 function hideDarkFog(): void {
   darkFogOverlay.style.background = 'transparent';
@@ -357,6 +446,7 @@ const corpseModalTitle = document.getElementById('corpse-modal-title') as HTMLHe
 const corpseItemList = document.getElementById('corpse-item-list') as HTMLUListElement;
 const corpseGrabAllBtn = document.getElementById('corpse-grab-all') as HTMLButtonElement;
 const corpseEatBrainsBtn = document.getElementById('corpse-eat-brains') as HTMLButtonElement;
+const corpseSacrificeBtn = document.getElementById('corpse-sacrifice') as HTMLButtonElement;
 const shopModal = document.getElementById('shop-modal') as HTMLDivElement;
 const shopModalTitle = document.getElementById('shop-modal-title') as HTMLHeadingElement;
 const shopGoldLine = document.getElementById('shop-gold-line') as HTMLDivElement;
@@ -518,11 +608,45 @@ skillsShowAllToggle.addEventListener('click', () => {
   renderSkills();
 });
 
+// A slot with something equipped gets a small 'x' next to it (item 15) —
+// built by hand rather than reusing appendStatRow, same reasoning as the
+// Skills modal's renderSkillRow.
+function renderEquipmentRow(slot: EquipmentSlot, label: string, item: string | undefined): void {
+  const labelEl = document.createElement('div');
+  labelEl.className = 'stat-label';
+  labelEl.textContent = label;
+
+  const valueEl = document.createElement('div');
+  valueEl.className = 'stat-value equipment-value';
+  const text = document.createElement('span');
+  text.textContent = item ?? '(none)';
+  valueEl.appendChild(text);
+
+  if (item) {
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'equipment-remove-btn';
+    removeBtn.textContent = '×';
+    removeBtn.title = `Remove ${item}`;
+    removeBtn.addEventListener('click', () => unequipSlot(slot));
+    valueEl.appendChild(removeBtn);
+  }
+
+  equipmentBody.appendChild(labelEl);
+  equipmentBody.appendChild(valueEl);
+}
+
+function unequipSlot(slot: EquipmentSlot): void {
+  network.unequipItem(slot).then(applyUseItemAck).catch(() => {
+    /* nothing to show */
+  });
+}
+
 function renderEquipment(): void {
   if (!myProfile) return;
   equipmentBody.innerHTML = '';
   for (const slot of EQUIPMENT_SLOTS) {
-    appendStatRow(equipmentBody, EQUIPMENT_SLOT_LABELS[slot], myProfile.equipment[slot] ?? '(none)');
+    renderEquipmentRow(slot, EQUIPMENT_SLOT_LABELS[slot], myProfile.equipment[slot]);
   }
 }
 
@@ -582,9 +706,10 @@ function applyUseItemAck(ack: UseItemAck): void {
       skills: ack.skills ?? myProfile.skills,
     };
     refreshOpenModals();
-    activeScene?.refreshWeaponSprite();
+    activeScene?.refreshEquipmentSprites();
   }
-  logCombatMessage(ack.action === 'equipped' ? 'You equip it.' : 'You consume it.');
+  const actionMessage = ack.action === 'equipped' ? 'You equip it.' : ack.action === 'unequipped' ? 'You remove it.' : 'You consume it.';
+  logCombatMessage(actionMessage);
   if (ack.message) logCombatMessage(ack.message, 'level-up');
 }
 
@@ -611,18 +736,43 @@ function consumeInventoryItem(index: number): void {
 
 let currentCorpseId: string | null = null;
 let currentCorpseItems: string[] = [];
+let currentCorpseKind: string | undefined;
 let currentCorpseKilledBy: string | undefined;
 
 function updateEatBrainsButton(): void {
   const canEatBrains = myProfile?.race === 'zombie' && currentCorpseKilledBy !== undefined && currentCorpseKilledBy === myProfile.username;
   corpseEatBrainsBtn.hidden = !canEatBrains;
+  if (!canEatBrains || !myProfile) return;
+
+  // Only known once worldTimeKnown (the first 'worldTime' broadcast) —
+  // until then, assume ready rather than greying it out on a guess.
+  const onCooldown = worldTimeKnown && currentWorldTick < myProfile.eatBrainsReadyAtTick;
+  corpseEatBrainsBtn.disabled = onCooldown;
+  corpseEatBrainsBtn.classList.toggle('on-cooldown', onCooldown);
+  corpseEatBrainsBtn.title = onCooldown ? 'Eat Brains is still on cooldown' : '';
 }
 
+// Player (and training-dummy) corpses share the same Race-shaped `kind`
+// as each other with no way to tell them apart — only a REAL monster
+// corpse (kind is one of MONSTER_KINDS) can be sacrificed, matching the
+// server's own check in handleSacrificeCorpse.
+function updateSacrificeButton(): void {
+  const canSacrifice = currentCorpseKind !== undefined && (MONSTER_KINDS as readonly string[]).includes(currentCorpseKind);
+  corpseSacrificeBtn.hidden = !canSacrifice;
+}
+
+// A corpse no longer disappears once its last item is grabbed — it
+// sticks around (see shared/types.ts's CorpseSnapshot) until its TTL or,
+// for a monster corpse, sacrifice — so an empty item list just means
+// nothing left to grab, not "close the modal".
 function renderCorpseModal(): void {
   corpseItemList.innerHTML = '';
+  corpseGrabAllBtn.hidden = currentCorpseItems.length === 0;
   if (currentCorpseItems.length === 0) {
-    hideModal(corpseModal);
-    updateInputCaptured();
+    const li = document.createElement('li');
+    li.className = 'inventory-empty';
+    li.textContent = 'Nothing left to grab.';
+    corpseItemList.appendChild(li);
     return;
   }
   currentCorpseItems.forEach((item, index) => {
@@ -639,13 +789,37 @@ function openCorpseModal(corpseId: string, items: string[], kind: string, killed
   closeAllModals();
   currentCorpseId = corpseId;
   currentCorpseItems = [...items];
+  currentCorpseKind = kind;
   currentCorpseKilledBy = killedBy;
   corpseModalTitle.textContent = `${kind} corpse`;
   corpseModal.hidden = false;
   updateInputCaptured();
   updateEatBrainsButton();
+  updateSacrificeButton();
   renderCorpseModal();
 }
+
+corpseSacrificeBtn.addEventListener('click', () => {
+  if (!currentCorpseId) return;
+  network
+    .sacrificeCorpse(currentCorpseId)
+    .then((ack) => {
+      if (!ack.ok) {
+        if (ack.message) logCombatMessage(ack.message);
+        return;
+      }
+      if (myProfile && ack.gold !== undefined) {
+        myProfile = { ...myProfile, gold: ack.gold };
+        updateStatusBar();
+      }
+      if (ack.message) logCombatMessage(ack.message);
+      hideModal(corpseModal);
+      updateInputCaptured();
+    })
+    .catch(() => {
+      /* nothing to show */
+    });
+});
 
 corpseEatBrainsBtn.addEventListener('click', () => {
   if (!currentCorpseId) return;
@@ -706,13 +880,16 @@ corpseGrabAllBtn.addEventListener('click', () => {
         if (ack.message) logCombatMessage(ack.message);
         return;
       }
+      logCombatMessage(`You pick up the ${currentCorpseItems.join(' and ')}.`);
+      currentCorpseItems = [];
       if (myProfile && ack.inventory) {
         myProfile = { ...myProfile, inventory: ack.inventory };
         refreshOpenModals();
       }
-      logCombatMessage(`You pick up the ${currentCorpseItems.join(' and ')}.`);
-      hideModal(corpseModal);
-      updateInputCaptured();
+      // The corpse itself now sticks around empty (see shared/types.ts's
+      // CorpseSnapshot) — keep the modal open in case a monster corpse
+      // is about to be sacrificed instead.
+      renderCorpseModal();
     })
     .catch(() => {
       /* nothing to show */
@@ -1153,12 +1330,6 @@ function facingForDirection(direction: Direction): Facing {
   return direction === 'west' ? 'left' : 'right';
 }
 
-function directionForFacing(facing: Facing): Direction {
-  if (facing === 'up') return 'north';
-  if (facing === 'down') return 'south';
-  return facing === 'left' ? 'west' : 'east';
-}
-
 function drawStatBar(bar: Phaser.GameObjects.Graphics, ratio: number, color: number): void {
   bar.clear();
   bar.fillStyle(0x000000, 0.55);
@@ -1187,6 +1358,7 @@ class WorldScene extends Phaser.Scene {
   private playerManaBar!: Phaser.GameObjects.Graphics;
   private playerMovementBar!: Phaser.GameObjects.Graphics;
   private playerWeaponSprite!: Phaser.GameObjects.Sprite;
+  private playerShieldSprite!: Phaser.GameObjects.Sprite;
   private floorTile!: Phaser.GameObjects.TileSprite;
   private doorSprites: Phaser.GameObjects.Sprite[] = [];
   private race: Race = 'goblin';
@@ -1220,16 +1392,29 @@ class WorldScene extends Phaser.Scene {
   // Shopkeepers etc. — static and never a combat target, so no HP bar and
   // no occupancy/collision handling beyond what the server already does.
   private vendorSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  // The decorative shopfront stall standing in front of each vendor —
+  // tracked separately purely so renderMap's map-transition cleanup can
+  // destroy it alongside the vendor sprite itself.
+  private vendorFrontSprites = new Map<string, Phaser.GameObjects.Sprite>();
   // Left-click target (see setTarget/handleLeftClick) — id is a username
   // for a player, otherwise the npc/monster's own id. Cleared whenever
   // the target dies/leaves/disconnects (see applyMapState's cleanup
   // loops).
   private targetKind: 'player' | 'npc' | 'monster' | null = null;
   private targetId: string | null = null;
+  // Set when a right-click/action-bar skill use targets something too far
+  // to hit yet (item 12) — each move-cooldown tick walks one step closer
+  // (see runApproachTick), then automatically engages once adjacent.
+  private approach: { kind: 'player' | 'npc' | 'monster'; id: string; skill: string } | null = null;
+  private lastApproachMoveAt = 0;
   // Great-Plains-only background dressing — server-enforced collision
   // (see shared/trees.ts), but no per-row depth sorting against
   // characters (always drawn behind them; see renderMap).
   private treeSprites: Phaser.GameObjects.Sprite[] = [];
+  // Labyrinth-only decorative wall torches (item 7) — recreated on every
+  // renderMap the same way treeSprites are, just from
+  // torchWallPositionsFor instead of treePositionsFor.
+  private wallTorchSprites: Phaser.GameObjects.Sprite[] = [];
 
   private autopilotActive = false;
   private autopilotTargetKind: MonsterKind | null = null;
@@ -1250,6 +1435,9 @@ class WorldScene extends Phaser.Scene {
     createDoorTexture(this, 'door');
     createTreeSpritesheet(this);
     createDaggerTexture(this);
+    createBoneShieldTexture(this);
+    createShopfrontTexture(this, 'shopfront');
+    createWallTorchTexture(this);
     preloadCharacterSprites(this);
   }
 
@@ -1263,6 +1451,7 @@ class WorldScene extends Phaser.Scene {
     this.playerManaBar = this.add.graphics();
     this.playerMovementBar = this.add.graphics();
     this.playerWeaponSprite = this.add.sprite(0, 0, DAGGER_TEXTURE_KEY).setVisible(false).setDepth(1);
+    this.playerShieldSprite = this.add.sprite(0, 0, BONE_SHIELD_TEXTURE_KEY).setVisible(false).setDepth(1);
 
     // A 100x100 Great Plains is far too big to fit on screen at once —
     // the camera follows the player instead, clamped to each map's own
@@ -1299,18 +1488,32 @@ class WorldScene extends Phaser.Scene {
     this.network.addEventListener('combat', ((e: CustomEvent<CombatEventPayload>) => this.applyCombatEvent(e.detail)) as EventListener);
     this.network.addEventListener('chat', ((e: CustomEvent<ChatPayload>) => logChatMessage(e.detail.username, e.detail.message)) as EventListener);
     this.network.addEventListener('statTick', ((e: CustomEvent<StatTickPayload>) => this.applyOwnStats(e.detail)) as EventListener);
-    this.network.addEventListener('worldTime', ((e: CustomEvent<WorldTimePayload>) => updateWorldHour(e.detail.hour)) as EventListener);
+    this.network.addEventListener('worldTime', ((e: CustomEvent<WorldTimePayload>) => updateWorldHour(e.detail.hour, e.detail.tick)) as EventListener);
     this.network.addEventListener('kicked', ((e: CustomEvent<KickedPayload>) => {
       alert(e.detail.message);
       window.location.reload();
     }) as EventListener);
 
     activeScene = this;
+
+    // Only connect the socket now that every listener above is actually
+    // registered — startGame() used to connect immediately after
+    // game.scene.add(), racing this scene's own preload (several
+    // spritesheet fetches) to finish booting. On a fast/cached load the
+    // server's very first 'sync' could arrive and fire into the void
+    // before anything was listening for it (EventTarget doesn't replay
+    // missed events), permanently starving this client of its own
+    // race/position and — since applyMapState also refuses to do
+    // anything until applySync has set myUsername — every monster/NPC/
+    // other-player render too. This was the "always a goblin, no
+    // monsters, screen never lights up" bug.
+    this.network.connectSocket();
   }
 
   update(): void {
     this.repositionHpBars();
     this.updateDarkFog();
+    applyDaynightTint(this.hasFullVision());
 
     if (this.isMoving || this.isPunching) return;
 
@@ -1319,6 +1522,15 @@ class WorldScene extends Phaser.Scene {
         this.stopAutopilot('Autopilot stopped (manual movement).');
       } else {
         this.runAutopilotTick();
+        return;
+      }
+    }
+
+    if (this.approach) {
+      if (this.manualMoveKeyDown()) {
+        this.approach = null;
+      } else {
+        this.runApproachTick();
         return;
       }
     }
@@ -1356,11 +1568,12 @@ class WorldScene extends Phaser.Scene {
     return this.currentMap;
   }
 
-  // Called after an equip/unequip so the held-weapon overlay updates
-  // immediately rather than waiting for the next sync/map:state.
-  refreshWeaponSprite(): void {
+  // Called after an equip/unequip so the held-weapon/shield overlays
+  // update immediately rather than waiting for the next sync/map:state.
+  refreshEquipmentSprites(): void {
     if (!myProfile) return;
     this.updateOwnWeaponSprite(Boolean(myProfile.equipment.weapon));
+    this.updateOwnShieldSprite(myProfile.equipment.shield === 'bone shield');
   }
 
   // The local player's own weapon overlay uses the dedicated
@@ -1376,6 +1589,11 @@ class WorldScene extends Phaser.Scene {
   private updateOwnWeaponSprite(hasWeapon: boolean): void {
     this.playerWeaponSprite.setVisible(hasWeapon);
     this.repositionWeaponSprite(this.playerWeaponSprite, this.player, this.facing);
+  }
+
+  private updateOwnShieldSprite(hasShield: boolean): void {
+    this.playerShieldSprite.setVisible(hasShield);
+    this.repositionShieldSprite(this.playerShieldSprite, this.player, this.facing);
   }
 
   // Sleeping is a static 90-degree "lying down" rotation (no dedicated
@@ -1486,11 +1704,76 @@ class WorldScene extends Phaser.Scene {
     this.attemptMove(direction);
   }
 
+  private spriteMapFor(kind: 'player' | 'npc' | 'monster'): Map<string, Phaser.GameObjects.Sprite> {
+    return kind === 'player' ? this.otherPlayers : kind === 'npc' ? this.npcSprites : this.monsterSprites;
+  }
+
+  // Right-click and the action bar both funnel through here (item 12):
+  // if the target's already adjacent, throw the attack now; otherwise
+  // start (or keep) walking toward it and let runApproachTick retry once
+  // in range. Doesn't worry about obstacles — same "you navigate around
+  // doors/walls yourself" tradeoff as autopilot's own greedy stepping.
+  private tryEngage(kind: 'player' | 'npc' | 'monster', id: string, skill: string): void {
+    const sprite = this.spriteMapFor(kind).get(id);
+    if (!sprite) {
+      this.approach = null;
+      logCombatMessage('Your target is no longer here.');
+      return;
+    }
+
+    const targetRow = sprite.getData('row') as number;
+    const targetCol = sprite.getData('col') as number;
+    const dRow = targetRow - this.row;
+    const dCol = targetCol - this.col;
+
+    if (Math.abs(dRow) + Math.abs(dCol) === 1) {
+      this.approach = null;
+      const direction: Direction = dRow === -1 ? 'north' : dRow === 1 ? 'south' : dCol === -1 ? 'west' : 'east';
+      if (skill === PUNCH_SKILL || skill === DAGGER_SKILL) this.performPunch(direction);
+      else this.performSkillAttack(direction, skill);
+      return;
+    }
+
+    this.approach = { kind, id, skill };
+  }
+
+  private runApproachTick(): void {
+    if (!this.approach) return;
+    const now = Date.now();
+    if (now - this.lastApproachMoveAt < MOVE_COOLDOWN_MS) return;
+    if (this.isMoving || this.isPunching) return;
+
+    const { kind, id, skill } = this.approach;
+    const sprite = this.spriteMapFor(kind).get(id);
+    if (!sprite) {
+      this.approach = null;
+      logCombatMessage('Your target is no longer here.');
+      return;
+    }
+
+    const targetRow = sprite.getData('row') as number;
+    const targetCol = sprite.getData('col') as number;
+    const dRow = targetRow - this.row;
+    const dCol = targetCol - this.col;
+
+    this.lastApproachMoveAt = now;
+    if (Math.abs(dRow) + Math.abs(dCol) === 1) {
+      this.approach = null;
+      this.tryEngage(kind, id, skill);
+      return;
+    }
+
+    const direction: Direction =
+      Math.abs(dRow) >= Math.abs(dCol) ? (dRow < 0 ? 'north' : 'south') : dCol < 0 ? 'west' : 'east';
+    this.attemptMove(direction);
+  }
+
   private repositionHpBars(): void {
     this.playerHpBar.setPosition(this.player.x, this.player.y + HP_BAR_OFFSET_Y);
     this.playerManaBar.setPosition(this.player.x, this.player.y + HP_BAR_OFFSET_Y + HP_BAR_HEIGHT + BAR_STACK_GAP);
     this.playerMovementBar.setPosition(this.player.x, this.player.y + HP_BAR_OFFSET_Y + (HP_BAR_HEIGHT + BAR_STACK_GAP) * 2);
     this.repositionWeaponSprite(this.playerWeaponSprite, this.player, this.facing);
+    this.repositionShieldSprite(this.playerShieldSprite, this.player, this.facing);
     for (const sprite of this.otherPlayers.values()) this.repositionBarFor(sprite);
     for (const sprite of this.npcSprites.values()) this.repositionBarFor(sprite);
     for (const sprite of this.monsterSprites.values()) this.repositionBarFor(sprite);
@@ -1501,6 +1784,8 @@ class WorldScene extends Phaser.Scene {
     bar?.setPosition(sprite.x, sprite.y + HP_BAR_OFFSET_Y);
     const weaponSprite = sprite.getData('weaponSprite') as Phaser.GameObjects.Sprite | undefined;
     if (weaponSprite) this.repositionWeaponSprite(weaponSprite, sprite, (sprite.getData('facing') as Facing) ?? 'down');
+    const shieldSprite = sprite.getData('shieldSprite') as Phaser.GameObjects.Sprite | undefined;
+    if (shieldSprite) this.repositionShieldSprite(shieldSprite, sprite, (sprite.getData('facing') as Facing) ?? 'down');
   }
 
   // Own hp/mana/movement bars are a 3-bar stack (item request: show all
@@ -1561,9 +1846,35 @@ class WorldScene extends Phaser.Scene {
     this.repositionWeaponSprite(weaponSprite, sprite, facing);
   }
 
+  // The shield overlay's offset is the weapon's own, mirrored — the
+  // opposite arm from whatever's holding the weapon.
+  private shieldOffsetFor(facing: Facing): { x: number; y: number } {
+    const weapon = this.weaponOffsetFor(facing);
+    return { x: -weapon.x, y: weapon.y };
+  }
+
+  private repositionShieldSprite(shieldSprite: Phaser.GameObjects.Sprite, owner: Phaser.GameObjects.Sprite, facing: Facing): void {
+    const offset = this.shieldOffsetFor(facing);
+    shieldSprite.setPosition(owner.x + offset.x, owner.y + offset.y);
+  }
+
+  // Same shape as ensureWeaponSprite, but only for an actual "bone
+  // shield" — a torch fills the same equipment slot (see
+  // shared/lighting.ts) but isn't a shield and shouldn't render one.
+  private ensureShieldSprite(sprite: Phaser.GameObjects.Sprite, hasShield: boolean, facing: Facing): void {
+    let shieldSprite = sprite.getData('shieldSprite') as Phaser.GameObjects.Sprite | undefined;
+    if (!shieldSprite) {
+      shieldSprite = this.add.sprite(sprite.x, sprite.y, BONE_SHIELD_TEXTURE_KEY).setDepth(1);
+      sprite.setData('shieldSprite', shieldSprite);
+    }
+    shieldSprite.setVisible(hasShield);
+    this.repositionShieldSprite(shieldSprite, sprite, facing);
+  }
+
   private destroyEntitySprite(sprite: Phaser.GameObjects.Sprite): void {
     (sprite.getData('hpBar') as Phaser.GameObjects.Graphics | undefined)?.destroy();
     (sprite.getData('weaponSprite') as Phaser.GameObjects.Sprite | undefined)?.destroy();
+    (sprite.getData('shieldSprite') as Phaser.GameObjects.Sprite | undefined)?.destroy();
     sprite.destroy();
   }
 
@@ -1692,6 +2003,8 @@ class WorldScene extends Phaser.Scene {
     this.corpseSprites.clear();
     for (const sprite of this.vendorSprites.values()) sprite.destroy();
     this.vendorSprites.clear();
+    for (const sprite of this.vendorFrontSprites.values()) sprite.destroy();
+    this.vendorFrontSprites.clear();
 
     // Great-Plains-only, fixed positions from the shared/trees.ts seed —
     // the server blocks movement onto these same tiles (see
@@ -1707,6 +2020,25 @@ class WorldScene extends Phaser.Scene {
         this.treeSprites.push(sprite);
       }
     }
+
+    // Always-lit maps only (the Labyrinth) — purely decorative, giving
+    // the visual reason it never goes dark (item 7). A gentle alpha
+    // flicker per torch, each on its own randomized cycle so they don't
+    // all pulse in lockstep.
+    for (const sprite of this.wallTorchSprites) sprite.destroy();
+    this.wallTorchSprites = [];
+    for (const { row, col } of torchWallPositionsFor(mapName)) {
+      const pos = this.tilePosition(row, col);
+      const sprite = this.add.sprite(pos.x, pos.y, WALL_TORCH_TEXTURE_KEY).setOrigin(0.5, 0.9).setDepth(-0.5);
+      this.tweens.add({
+        targets: sprite,
+        alpha: { from: 0.75, to: 1 },
+        duration: 400 + Math.random() * 300,
+        yoyo: true,
+        repeat: -1,
+      });
+      this.wallTorchSprites.push(sprite);
+    }
   }
 
   private applySync(player: PlayerSnapshot): void {
@@ -1716,6 +2048,7 @@ class WorldScene extends Phaser.Scene {
     this.row = player.row;
     this.col = player.col;
     myProfile = player;
+    loadActionBarOnce(player.username);
     updateStatusBar();
     updateWorldLabel(player.map);
     refreshOpenModals();
@@ -1743,6 +2076,7 @@ class WorldScene extends Phaser.Scene {
     this.setIdle();
     this.updateOwnBars();
     this.updateOwnWeaponSprite(Boolean(player.equipment.weapon));
+    this.updateOwnShieldSprite(player.equipment.shield === 'bone shield');
     this.applyRestPose(this.player, player.restState, CHAR_SCALE);
   }
 
@@ -1800,8 +2134,9 @@ class WorldScene extends Phaser.Scene {
       sprite.setData('equipment', p.equipment);
       this.ensureHpBar(sprite, p.hp, p.maxHp);
       this.ensureWeaponSprite(sprite, Boolean(p.equipment.weapon), (sprite.getData('facing') as Facing) ?? 'down');
+      this.ensureShieldSprite(sprite, p.equipment.shield === 'bone shield', (sprite.getData('facing') as Facing) ?? 'down');
       this.applyRestPose(sprite, p.restState, CHAR_SCALE);
-      if (this.targetKind === 'player' && this.targetId === p.username) updateTargetPanel(p.username, p.hp, p.maxHp);
+      if (this.targetKind === 'player' && this.targetId === p.username) updateTargetPanel(p.username, p.level, p.hp, p.maxHp);
     }
     for (const [username, sprite] of this.otherPlayers) {
       if (!seenPlayers.has(username)) {
@@ -1834,7 +2169,7 @@ class WorldScene extends Phaser.Scene {
       sprite.setData('maxHp', npc.maxHp);
       sprite.setData('level', npc.level);
       this.ensureHpBar(sprite, npc.hp, npc.maxHp);
-      if (this.targetKind === 'npc' && this.targetId === npc.id) updateTargetPanel('training dummy', npc.hp, npc.maxHp);
+      if (this.targetKind === 'npc' && this.targetId === npc.id) updateTargetPanel('training dummy', npc.level, npc.hp, npc.maxHp);
     }
 
     const seenMonsters = new Set<string>();
@@ -1859,8 +2194,10 @@ class WorldScene extends Phaser.Scene {
       sprite.setData('carriedItems', m.carriedItems);
       this.ensureHpBar(sprite, m.hp, m.maxHp);
       const hasWeapon = m.carriedItems.some((item) => item.toLowerCase().includes('dagger'));
+      const hasShield = m.carriedItems.some((item) => item.toLowerCase().includes('shield'));
       this.ensureWeaponSprite(sprite, hasWeapon, (sprite.getData('facing') as Facing) ?? 'down');
-      if (this.targetKind === 'monster' && this.targetId === m.id) updateTargetPanel(m.kind, m.hp, m.maxHp);
+      this.ensureShieldSprite(sprite, hasShield, (sprite.getData('facing') as Facing) ?? 'down');
+      if (this.targetKind === 'monster' && this.targetId === m.id) updateTargetPanel(m.kind, m.level, m.hp, m.maxHp);
     }
     for (const [id, sprite] of this.monsterSprites) {
       if (!seenMonsters.has(id)) {
@@ -1895,7 +2232,7 @@ class WorldScene extends Phaser.Scene {
       // kill it just landed) is always within reach, since the punch
       // contact rule already requires standing adjacent to the target.
       if (this.autopilotActive && this.isWithinLootReach(c.row, c.col)) {
-        this.lootCorpse(c.id, c.items);
+        this.lootCorpse(c.id, c.items, c.kind);
       }
     }
     for (const [id, sprite] of this.corpseSprites) {
@@ -1910,6 +2247,14 @@ class WorldScene extends Phaser.Scene {
     // to create each one once, the first time it shows up in a snapshot.
     for (const v of state.vendors) {
       if (this.vendorSprites.has(v.id)) continue;
+
+      // The shopfront stall sits directly in front of (one tile south
+      // of) the shopkeeper, who stands behind it — decorative only, not
+      // interactive/collidable.
+      const frontPos = this.tilePosition(v.row + 1, v.col);
+      const frontSprite = this.add.sprite(frontPos.x, frontPos.y, 'shopfront').setDepth(-0.5);
+      this.vendorFrontSprites.set(v.id, frontSprite);
+
       const pos = this.tilePosition(v.row, v.col);
       const sprite = this.add
         .sprite(pos.x, pos.y, textureKeyFor('shopkeeper'), idleFrameFor('shopkeeper', 'down'))
@@ -1917,19 +2262,37 @@ class WorldScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (inputCaptured || !pointer.leftButtonDown()) return;
+        // Matches the server's own isClientWithinShopReach check — no
+        // point opening a modal whose Buy button would just fail anyway,
+        // and the message is clearer about why nothing happened.
+        if (!isWithinRadius(this.row, this.col, v.row, v.col, SHOP_REACH_TILES)) {
+          logCombatMessage("You're too far away to reach the shop.");
+          return;
+        }
         openShopModal(v);
       });
       this.vendorSprites.set(v.id, sprite);
     }
   }
 
-  // True if the local player can currently see in the dark — their own
-  // infravision/torch, a nearby ally carrying one, or standing near a
-  // static fixture (see shared/lighting.ts). Irrelevant outside the dark
-  // hours, where updateDarkFog never calls this at all.
-  private playerHasLightNearby(): boolean {
+  // True either because the player can see everywhere themselves
+  // (infravision — strictly better than a torch, which only lights a
+  // small radius, see hasLocalLight below) or because the map itself is
+  // always lit regardless of who's standing in it (item 7: the
+  // torch-lined Labyrinth). Matches shared/lighting.ts's hasFullVision
+  // for the infravision half of this.
+  private hasFullVision(): boolean {
+    if (isAlwaysLit(this.currentMap)) return true;
+    return myProfile ? myProfile.skills[INFRAVISION_SKILL] !== undefined : false;
+  }
+
+  // True if the local player has a LOCAL-radius-only light source — their
+  // own carried torch, a nearby ally's carried torch (a torch is the only
+  // thing that actually emits light others can share in — see
+  // shared/lighting.ts's emitsLight), or standing near a static fixture.
+  private hasLocalLight(): boolean {
     if (!myProfile) return false;
-    if (hasLightSource(myProfile.skills, myProfile.equipment)) return true;
+    if (myProfile.equipment.shield === TORCH_ITEM) return true;
     if (isNearStaticLight(this.currentMap, this.row, this.col)) return true;
     for (const sprite of this.otherPlayers.values()) {
       if (!sprite.getData('hasLight')) continue;
@@ -1942,16 +2305,20 @@ class WorldScene extends Phaser.Scene {
 
   // Drives the #dark-fog-overlay DOM element every frame — cheap (just a
   // CSS background string), and simplest kept here rather than adding a
-  // dedicated "did anything actually change" cache.
+  // dedicated "did anything actually change" cache. Three tiers: full
+  // vision (infravision) clears the whole screen; local light (torch/
+  // ally/static fixture) clears only a small radius; no light at all
+  // clears barely more than the player's own tile.
   private updateDarkFog(): void {
-    if (!worldTimeKnown || !myProfile || !isDarkHour(currentWorldHour) || this.playerHasLightNearby()) {
+    if (!worldTimeKnown || !myProfile || !isDarkHour(currentWorldHour) || this.hasFullVision()) {
       hideDarkFog();
       return;
     }
     const cam = this.cameras.main;
     const screenX = (this.player.x - cam.scrollX) * cam.zoom;
     const screenY = (this.player.y - cam.scrollY) * cam.zoom;
-    const radiusPx = LIGHT_RADIUS_TILES * TILE_SIZE * cam.zoom;
+    const radiusTiles = this.hasLocalLight() ? LIGHT_RADIUS_TILES : NO_LIGHT_RADIUS_TILES;
+    const radiusPx = radiusTiles * TILE_SIZE * cam.zoom;
     showDarkFog(screenX, screenY, radiusPx);
   }
 
@@ -1959,7 +2326,10 @@ class WorldScene extends Phaser.Scene {
     return Math.abs(row - this.row) <= 1 && Math.abs(col - this.col) <= 1;
   }
 
-  private lootCorpse(corpseId: string, items: string[]): void {
+  // `kind` is only passed by the autopilot call site (item 11) — used
+  // purely to decide whether to also auto-sacrifice afterward, so a
+  // manual (non-autopilot) loot never triggers it.
+  private lootCorpse(corpseId: string, items: string[], kind?: string): void {
     this.network
       .loot(corpseId)
       .then((ack) => {
@@ -1971,7 +2341,29 @@ class WorldScene extends Phaser.Scene {
           myProfile = { ...myProfile, inventory: ack.inventory };
           refreshOpenModals();
         }
-        logCombatMessage(`You pick up the ${items.join(' and ')}.`);
+        if (items.length > 0) logCombatMessage(`You pick up the ${items.join(' and ')}.`);
+
+        // Only a real monster corpse can be sacrificed at all (matches
+        // updateSacrificeButton/the server's own handleSacrificeCorpse
+        // check) — a player/training-dummy corpse is just left as-is.
+        if (this.autopilotActive && kind !== undefined && (MONSTER_KINDS as readonly string[]).includes(kind)) {
+          this.network
+            .sacrificeCorpse(corpseId)
+            .then((sacrificeAck) => {
+              if (!sacrificeAck.ok) {
+                if (sacrificeAck.message) logCombatMessage(sacrificeAck.message);
+                return;
+              }
+              if (myProfile && sacrificeAck.gold !== undefined) {
+                myProfile = { ...myProfile, gold: sacrificeAck.gold };
+                updateStatusBar();
+              }
+              if (sacrificeAck.message) logCombatMessage(sacrificeAck.message);
+            })
+            .catch(() => {
+              /* nothing to show */
+            });
+        }
       })
       .catch(() => {
         /* corpse likely already looted by someone else — nothing to show */
@@ -1994,6 +2386,11 @@ class WorldScene extends Phaser.Scene {
 
         this.row = ack.player.row;
         this.col = ack.player.col;
+        // Every successful step costs movement points (item 16) — keep
+        // the status bar's MV readout (and its own bar fill) in sync
+        // rather than only patching `map` on a transition below.
+        if (myProfile) myProfile = { ...myProfile, movement: ack.player.movement, maxMovement: ack.player.maxMovement };
+        updateStatusBar();
 
         if (ack.player.map !== this.currentMap) {
           // A map transition is a load, not a walk — snap straight to the
@@ -2029,25 +2426,18 @@ class WorldScene extends Phaser.Scene {
   }
 
   // Right-click on another player, the training dummy, or a wild monster:
-  // throw a punch in whichever direction the player is CURRENTLY facing
-  // (from the last WASD/arrow press) — the click just has to land on a
-  // target, it doesn't re-aim the punch toward it. Damage only actually
-  // applies server-side if that target is standing exactly one tile
-  // ahead in the punched direction (see game.gateway.ts's handlePunch) —
-  // right-clicking a target further away still throws the punch (and
-  // still looks the same locally) but simply won't connect.
+  // selects it as your target and engages combat with your default
+  // attack (punch, or your equipped weapon's skill) — if it's already
+  // adjacent that arms the next combat tick immediately (item 6); if not,
+  // walks you toward it first and engages once in range (item 12).
   private handleRightClick(pointer: Phaser.Input.Pointer): void {
     if (this.isMoving || this.isPunching) return;
-    if (!this.findEntityAt(pointer.worldX, pointer.worldY)) return;
+    const found = this.findTargetableAt(pointer.worldX, pointer.worldY);
+    if (!found) return;
 
-    this.performPunch(directionForFacing(this.facing));
-  }
-
-  private findEntityAt(x: number, y: number): boolean {
-    for (const sprite of [...this.otherPlayers.values(), ...this.npcSprites.values(), ...this.monsterSprites.values()]) {
-      if (sprite.getBounds().contains(x, y)) return true;
-    }
-    return false;
+    this.setTarget(found.kind, found.id, found.sprite);
+    const defaultSkill = myProfile?.equipment.weapon?.toLowerCase().includes('dagger') ? DAGGER_SKILL : PUNCH_SKILL;
+    this.tryEngage(found.kind, found.id, defaultSkill);
   }
 
   // Left click anywhere a player/npc/monster sprite's bounds cover sets
@@ -2076,7 +2466,17 @@ class WorldScene extends Phaser.Scene {
 
   private handleLeftClick(pointer: Phaser.Input.Pointer): void {
     const found = this.findTargetableAt(pointer.worldX, pointer.worldY);
-    if (!found) return;
+    if (!found) {
+      // Clicking empty ground deselects whatever was targeted (item 10) —
+      // but a click that actually landed on a corpse or vendor (handled
+      // entirely by their own pointerdown listeners) isn't "empty ground",
+      // just not a combat-targetable entity; leave the target alone.
+      const hitOther = [...this.corpseSprites.values(), ...this.vendorSprites.values()].some((s) =>
+        s.getBounds().contains(pointer.worldX, pointer.worldY)
+      );
+      if (!hitOther && this.targetKind) this.clearTarget();
+      return;
+    }
     this.setTarget(found.kind, found.id, found.sprite);
 
     const key = `${found.kind}:${found.id}`;
@@ -2094,9 +2494,10 @@ class WorldScene extends Phaser.Scene {
     this.targetKind = kind;
     this.targetId = id;
     const label = (sprite.getData('label') as string | undefined) ?? id;
+    const level = (sprite.getData('level') as number | undefined) ?? 1;
     const hp = (sprite.getData('hp') as number | undefined) ?? 0;
     const maxHp = (sprite.getData('maxHp') as number | undefined) ?? 1;
-    updateTargetPanel(label, hp, maxHp);
+    updateTargetPanel(label, level, hp, maxHp);
   }
 
   private clearTarget(): void {
@@ -2112,40 +2513,26 @@ class WorldScene extends Phaser.Scene {
     return { kind: this.targetKind, id: this.targetId };
   }
 
-  // The action bar's click handler for a filled slot (item 14) — resolves
-  // the currently selected target's sprite, checks it's still here and
-  // adjacent, then dispatches to whatever that skill actually does. Punch
-  // and dagger are the only ones wired up today (see isUsableSkill in
-  // main.ts's module scope) — both are the same contact-range attack the
-  // direction keys/right-click already throw, just aimed at the target
-  // instead of wherever the player happens to be facing.
+  // The action bar's click handler for a filled slot (item 14) — engages
+  // the currently selected target with this exact skill. If it's out of
+  // range, tryEngage starts walking toward it instead of just refusing
+  // (item 12), same as a right-click does for the default attack.
   useTargetedSkill(skillName: string): void {
     if (!this.targetKind || !this.targetId) {
       logCombatMessage('Select a target first (left-click a player or monster).');
       return;
     }
-    const spriteMap = this.targetKind === 'player' ? this.otherPlayers : this.targetKind === 'npc' ? this.npcSprites : this.monsterSprites;
-    const sprite = spriteMap.get(this.targetId);
-    if (!sprite) {
-      logCombatMessage('Your target is no longer here.');
-      this.clearTarget();
-      return;
-    }
-
-    const targetRow = sprite.getData('row') as number;
-    const targetCol = sprite.getData('col') as number;
-    const dRow = targetRow - this.row;
-    const dCol = targetCol - this.col;
-    if (Math.abs(dRow) + Math.abs(dCol) !== 1) {
-      logCombatMessage("You're not in range of your target.");
+    if (skillName === PUNCH_SKILL && myProfile?.equipment.weapon) {
+      // Bare-handed only — wielding any weapon means there's a real
+      // attack to throw instead (the dagger skill, or just the default
+      // contact attack, both of which already apply the weapon's own
+      // bonus damage server-side).
+      logCombatMessage("You can't punch while wielding a weapon.");
       return;
     }
     if (this.isMoving || this.isPunching) return;
 
-    const direction: Direction = dRow === -1 ? 'north' : dRow === 1 ? 'south' : dCol === -1 ? 'west' : 'east';
-    if (skillName === PUNCH_SKILL || skillName === DAGGER_SKILL) {
-      this.performPunch(direction);
-    }
+    this.tryEngage(this.targetKind, this.targetId, skillName);
   }
 
   private performPunch(direction: Direction): void {
@@ -2160,6 +2547,24 @@ class WorldScene extends Phaser.Scene {
     });
 
     this.network.punch(direction);
+  }
+
+  // Same swing animation as performPunch — no dedicated art per skill —
+  // but dispatches the useSkill socket event naming exactly which learned
+  // skill to queue (bone finger strike, glare) instead of the default
+  // punch/dagger (see game.gateway.ts's handleUseSkill).
+  private performSkillAttack(direction: Direction, skill: string): void {
+    this.facing = facingForDirection(direction);
+    const animKey = punchAnimKey(this.displayKind(), this.facing);
+
+    this.isPunching = true;
+    this.player.play(animKey, true);
+    this.player.once(`animationcomplete-${animKey}`, () => {
+      this.isPunching = false;
+      this.setIdle();
+    });
+
+    this.network.useSkill(direction, skill);
   }
 
   private applyRemotePunch({ username, direction }: PunchPayload): void {
@@ -2182,6 +2587,15 @@ class WorldScene extends Phaser.Scene {
   // this just reflects it: a combat-log line, and an immediate HP-bar/
   // status-bar update rather than waiting for the next map:state tick.
   private applyCombatEvent(event: CombatEventPayload): void {
+    // Deselect a target the instant it dies (item 10) — covers monster/
+    // npc/player kills alike, including cases (an NPC dummy relocating, a
+    // killed player respawning elsewhere) where the entity doesn't
+    // actually disappear from the next map:state, so the removal-based
+    // cleanup in applyMapState would never have caught it.
+    if (event.targetDied && this.targetKind === event.targetKind && this.targetId === event.target) {
+      this.clearTarget();
+    }
+
     // Only auto-switch tabs for a fight the player is actually in — not
     // for every combat line broadcast to the room from someone else's.
     const involvesMe = event.attacker === this.myUsername || (event.targetKind === 'player' && event.target === this.myUsername);
@@ -2259,7 +2673,8 @@ function startGame(): void {
   });
   gameInstance = game;
 
+  // The socket connects from inside WorldScene.create() instead of here —
+  // see its own comment for why (a startup race that used to sometimes
+  // lose the very first 'sync').
   game.scene.add('world', WorldScene, true, { network });
-
-  network.connectSocket();
 }

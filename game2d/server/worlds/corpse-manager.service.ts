@@ -49,10 +49,19 @@ export class CorpseManagerService {
   private corpses = new Map<string, CorpseSnapshot>();
   private expiresAt = new Map<string, number>();
 
-  spawn(kind: Race | MonsterKind, items: string[], mapName: MapName, row: number, col: number, killedBy?: string): CorpseSnapshot {
+  spawn(
+    kind: Race | MonsterKind,
+    level: number,
+    items: string[],
+    mapName: MapName,
+    row: number,
+    col: number,
+    killedBy?: string
+  ): CorpseSnapshot {
     const corpse: CorpseSnapshot = {
       id: randomUUID(),
       kind,
+      level,
       items,
       map: mapName,
       row,
@@ -73,16 +82,23 @@ export class CorpseManagerService {
     this.expiresAt.delete(id);
   }
 
+  // Empties a corpse's item list without removing the corpse itself — a
+  // grab-all no longer despawns it early; only its TTL (or, for a
+  // monster corpse, sacrificing it) does that now.
+  clearItems(id: string): void {
+    const corpse = this.corpses.get(id);
+    if (corpse) corpse.items = [];
+  }
+
   // Removes and returns a single item from a corpse (for "click one item
-  // in the loot modal" rather than grab-everything) — the corpse itself
-  // disappears once its last item is taken.
+  // in the loot modal" rather than grab-everything) — the corpse sticks
+  // around even once empty, same as clearItems above.
   removeItem(id: string, itemIndex: number): string | undefined {
     const corpse = this.corpses.get(id);
     if (!corpse) return undefined;
     const item = corpse.items[itemIndex];
     if (item === undefined) return undefined;
     corpse.items = [...corpse.items.slice(0, itemIndex), ...corpse.items.slice(itemIndex + 1)];
-    if (corpse.items.length === 0) this.remove(id);
     return item;
   }
 

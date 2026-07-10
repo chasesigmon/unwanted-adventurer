@@ -11,6 +11,7 @@ export interface NewPlayerInput {
   map: MapName;
   row: number;
   col: number;
+  skills: Record<string, number>;
 }
 
 export interface PlayerPosition {

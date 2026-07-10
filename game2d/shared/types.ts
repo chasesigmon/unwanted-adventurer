@@ -1,5 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 import type { MapName, Race, Direction, MonsterKind, MonsterClass } from './constants.js';
+import type { EquipmentSlot } from './equipment.js';
 
 // Never persisted across sessions (a fresh connection always starts
 // 'awake') — matches the text game's own restState, which the same
@@ -30,10 +31,10 @@ export interface PlayerSnapshot {
   equipment: Record<string, string>;
   consumeExp: number;
   restState: RestState;
-  // Whether THIS player currently provides light (infravision or a
-  // carried torch) — used both for their own vision and, if a nearby
-  // ally has it, to light up everyone around them too (see
-  // shared/lighting.ts).
+  // Whether THIS player currently EMITS light (a carried torch) that a
+  // nearby ally could benefit from — infravision is deliberately excluded
+  // (personal vision, not light emitted into the world); see
+  // shared/lighting.ts's emitsLight/hasFullVision.
   hasLight: boolean;
   gold: number;
   // Slime-only (see shared/skills.ts's MIMIC_SKILL/REVERT_SKILL):
@@ -43,6 +44,10 @@ export interface PlayerSnapshot {
   // slime appearance. No mechanical effect yet, purely cosmetic.
   mimicableRaces: (Race | MonsterKind)[];
   mimicForm: (Race | MonsterKind) | null;
+  // Zombie-only Eat Brains cooldown, in the same world-tick units as
+  // WorldTimePayload.tick — lets the client gray the button out instead
+  // of letting it be clicked and fail (see main.ts's updateEatBrainsButton).
+  eatBrainsReadyAtTick: number;
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
@@ -78,14 +83,19 @@ export interface MonsterSnapshot {
   carriedItems: string[];
 }
 
-// Left behind when a monster or a real player dies (not the training
-// dummy — it just resets, there's no "kill" to leave remains from).
+// Left behind when a monster, the training dummy, or a real player dies.
 // Usually just a body part, but some monsters (a wild skeleton with a
-// carried weapon) can drop more than one item; looting takes everything
-// at once and removes the corpse.
+// carried weapon) can drop more than one item. Looting (grab-all or one
+// at a time) empties the item list but does NOT remove the corpse
+// itself — it sticks around (see corpse-manager.service.ts's
+// CORPSE_TTL_MS) until its 10-minute TTL expires, or — monster corpses
+// only — until it's sacrificed (see the "Sacrifice" loot-modal option).
 export interface CorpseSnapshot {
   id: string;
   kind: Race | MonsterKind;
+  // The level of whatever died — a monster corpse's sacrifice-for-gold
+  // reward is based on this (see game.gateway.ts's handleSacrificeCorpse).
+  level: number;
   items: string[];
   map: MapName;
   row: number;
@@ -201,9 +211,15 @@ export interface EatBrainsAck {
   message?: string;
 }
 
+export interface SacrificeAck {
+  ok: boolean;
+  gold?: number;
+  message?: string;
+}
+
 export interface UseItemAck {
   ok: boolean;
-  action?: 'consumed' | 'equipped';
+  action?: 'consumed' | 'equipped' | 'unequipped';
   inventory?: string[];
   equipment?: Record<string, string>;
   consumeExp?: number;
@@ -245,9 +261,13 @@ export interface StatTickPayload {
 
 // Broadcast to every connected socket (not just one map's room) whenever
 // the shared world clock advances an hour — the client turns this into a
-// gradually shifting day/night overlay (see main.ts).
+// gradually shifting day/night overlay (see main.ts). `tick` is the same
+// globalStatTick counter GameGateway measures Eat Brains/Glare cooldowns
+// in, exposed so the client can gray out a still-cooling-down skill
+// button rather than just letting the user click it and fail.
 export interface WorldTimePayload {
   hour: number;
+  tick: number;
 }
 
 export interface ServerToClientEvents {
@@ -268,6 +288,13 @@ export interface ClientToServerEvents {
   // applied and a 'combat' event is broadcast — no separate "attack"
   // event needed, the direction alone is enough.
   punch: (direction: Direction) => void;
+  // Same contact-range shape as punch, but names an explicit learned
+  // skill (bone finger strike, glare) instead of always defaulting to
+  // punch/dagger — silently ignored if the player hasn't actually learned
+  // it. Either way this only ARMS/refreshes a combat session; the actual
+  // hit resolves on the next combat tick (see game.gateway.ts's
+  // handleUseSkill/combatTick).
+  useSkill: (payload: { direction: Direction; skill: string }) => void;
   loot: (corpseId: string, ack: (res: LootAck) => void) => void;
   // Grabs a single item out of a corpse by index (the corpse loot modal's
   // "click one item" path) rather than everything at once — the corpse
@@ -275,8 +302,11 @@ export interface ClientToServerEvents {
   lootItem: (payload: { corpseId: string; itemIndex: number }, ack: (res: LootAck) => void) => void;
   buyItem: (payload: { vendorId: string; itemLabel: string }, ack: (res: BuyAck) => void) => void;
   // Zombie-only: heals 20% hp/mana/movement, see game.gateway.ts's
-  // EAT_BRAINS_COOLDOWN_MS for the cooldown this starts.
+  // EAT_BRAINS_COOLDOWN_TICKS for the cooldown this starts.
   eatBrains: (corpseId: string, ack: (res: EatBrainsAck) => void) => void;
+  // Monster-corpse-only "sacrifice it to the gods" — see
+  // game.gateway.ts's handleSacrificeCorpse for the gold formula.
+  sacrificeCorpse: (corpseId: string, ack: (res: SacrificeAck) => void) => void;
   // Clicking an inventory item: the server decides consume vs. equip
   // based on the item itself (see combat/formulas.ts's
   // EQUIPMENT_SLOT_FOR_ITEM) so the client never has to know which items
@@ -285,6 +315,10 @@ export interface ClientToServerEvents {
   // Right-click: always consumes, even if the item is normally
   // equippable — see game.gateway.ts's handleConsumeItem.
   consumeItem: (itemIndex: number, ack: (res: UseItemAck) => void) => void;
+  // The Equipment modal's 'x' button (item 15) — moves whatever's in
+  // that slot back into the inventory. A no-op ack (still ok: true) if
+  // the slot was already empty.
+  unequipItem: (slot: EquipmentSlot, ack: (res: UseItemAck) => void) => void;
   // Fire-and-forget, same as punch — the server trims/validates/length-
   // caps and rebroadcasts to the sender's own map room only.
   chat: (message: string) => void;
@@ -320,9 +354,16 @@ export interface SocketData {
   gold: number;
   mimicableRaces: (Race | MonsterKind)[];
   mimicForm: (Race | MonsterKind) | null;
-  // Zombie-only Eat Brains cooldown — an epoch-ms timestamp, never
-  // persisted (resets on reconnect, same tradeoff as restState).
-  eatBrainsReadyAt: number;
+  // Zombie-only Eat Brains cooldown — a world-tick number (see
+  // GameGateway's currentTick/globalStatTick), never persisted (resets on
+  // reconnect, same tradeoff as restState).
+  eatBrainsReadyAtTick: number;
+  // A carried torch's remaining burn time (see GameGateway's
+  // TORCH_LIFETIME_MS) — torchLitAt is the epoch-ms it was last equipped,
+  // or null while unequipped/not carrying one; neither is persisted
+  // (resets to a fresh torch on reconnect, same tradeoff as restState).
+  torchRemainingMs: number;
+  torchLitAt: number | null;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

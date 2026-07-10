@@ -22,6 +22,7 @@ import {
   LESSER_NORMAL_MONSTER_RESISTANCE,
   LESSER_UNDEAD_MONSTER_RESISTANCE,
   RACE_INNATE_SKILLS,
+  BONE_FINGER_STRIKE_SKILL,
 } from '../../shared/skills.js';
 export {
   STARTING_SKILL_PERCENT,
@@ -46,6 +47,7 @@ export {
   EAT_BRAINS_SKILL,
   GLARE_SKILL,
   ENHANCED_DURABILITY_SKILL,
+  BONE_FINGER_STRIKE_SKILL,
 } from '../../shared/skills.js';
 
 export const STARTING_ATTRIBUTE = 1;
@@ -212,8 +214,11 @@ export function scaledSkillChance(learnedPercent: number): number {
 }
 
 // Requires an actual shield equipped — no bare-handed version.
+// Requires an actual "bone shield" in the slot — a torch fills the same
+// slot (see EQUIPMENT_SLOT_FOR_ITEM) but isn't a shield and shouldn't
+// grant a block chance.
 export function computeShieldBlockChance(defenderSkills: Record<string, number>, defenderEquipment: Record<string, string>): number {
-  if (!defenderEquipment.shield) return 0;
+  if (defenderEquipment.shield !== 'bone shield') return 0;
   return scaledSkillChance(defenderSkills[SHIELD_BLOCK_SKILL] ?? 0);
 }
 
@@ -280,6 +285,26 @@ const RESISTANCE_FOR_ITEM: Record<string, ResistanceGrant> = {
 
 export function resistanceGrantForItem(item: string): ResistanceGrant | undefined {
   return RESISTANCE_FOR_ITEM[item];
+}
+
+// --- "Bone finger strike" — a real active attack (unlike the passive
+// resistance skills above), with a small chance of being picked up the
+// first time a bone dagger is eaten. Starts at STARTING_SKILL_PERCENT and
+// grows the same 2%-per-use way as every other skill. ---
+
+export const BONE_FINGER_STRIKE_GRANT_CHANCE = 0.05;
+// Base multiplier over the player's own ordinary attack damage (their
+// real punchDamage() roll — same strength/level/weapon bonus a normal hit
+// uses), per the exact spec: "the damage should be player damage x 1.5".
+export const BONE_FINGER_STRIKE_DAMAGE_MULTIPLIER = 1.5;
+// "Slightly" scales the multiplier up further with skill percent — +0.2%
+// on top of the 1.5x per percent learned, so a maxed-out 100% skill hits
+// noticeably harder than a fresh 1% one.
+const BONE_FINGER_STRIKE_DAMAGE_PER_PERCENT = 0.002;
+
+export function computeBoneFingerStrikeDamage(basePunchDamage: number, skillPercent: number): number {
+  const multiplier = BONE_FINGER_STRIKE_DAMAGE_MULTIPLIER + skillPercent * BONE_FINGER_STRIKE_DAMAGE_PER_PERCENT;
+  return Math.round(basePunchDamage * multiplier);
 }
 
 // Reduces a monster's counter-attack damage (see MONSTER_ATTACK_DAMAGE)
