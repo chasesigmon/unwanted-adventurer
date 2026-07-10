@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS players (
   id SERIAL PRIMARY KEY,
   username VARCHAR(16) NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  race VARCHAR(16) NOT NULL DEFAULT 'goblin' CHECK (race IN ('goblin', 'skeleton', 'hobgoblin')),
+  race VARCHAR(16) NOT NULL DEFAULT 'goblin' CHECK (race IN ('goblin', 'skeleton', 'hobgoblin', 'zombie', 'dragonborn', 'slime')),
   map VARCHAR(32) NOT NULL DEFAULT 'Great Plains' CHECK (map IN ('Great Plains', 'Labyrinth', 'Floro', 'Kortho')),
   "row" INTEGER NOT NULL,
   col INTEGER NOT NULL,
@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS players (
   inventory JSONB NOT NULL DEFAULT '[]',
   equipment JSONB NOT NULL DEFAULT '{}',
   consume_exp INTEGER NOT NULL DEFAULT 0,
+  gold INTEGER NOT NULL DEFAULT 20,
+  mimicable_races JSONB NOT NULL DEFAULT '[]',
+  mimic_form VARCHAR(32),
   last_login TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

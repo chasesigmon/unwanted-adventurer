@@ -4,9 +4,11 @@
 // now with equipment, resistances, and dodge/parry/shield-block ported
 // from the text game).
 import { type EquipmentSlot } from '../../shared/equipment.js';
-import type { MonsterClass } from '../../shared/constants.js';
+import type { MonsterClass, Race } from '../../shared/constants.js';
 export { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, type EquipmentSlot } from '../../shared/equipment.js';
 import {
+  STARTING_SKILL_PERCENT,
+  MAX_SKILL_PERCENT,
   PUNCH_SKILL,
   DODGE_SKILL,
   PARRY_SKILL,
@@ -19,8 +21,11 @@ import {
   HOBGOBLIN_EVOLUTION_SKILLS,
   LESSER_NORMAL_MONSTER_RESISTANCE,
   LESSER_UNDEAD_MONSTER_RESISTANCE,
+  RACE_INNATE_SKILLS,
 } from '../../shared/skills.js';
 export {
+  STARTING_SKILL_PERCENT,
+  MAX_SKILL_PERCENT,
   PUNCH_SKILL,
   DODGE_SKILL,
   PARRY_SKILL,
@@ -33,6 +38,14 @@ export {
   HOBGOBLIN_EVOLUTION_SKILLS,
   LESSER_NORMAL_MONSTER_RESISTANCE,
   LESSER_UNDEAD_MONSTER_RESISTANCE,
+  RACE_INNATE_SKILLS,
+  INFRAVISION_SKILL,
+  LACERATE_SKILL,
+  MIMIC_SKILL,
+  REVERT_SKILL,
+  EAT_BRAINS_SKILL,
+  GLARE_SKILL,
+  ENHANCED_DURABILITY_SKILL,
 } from '../../shared/skills.js';
 
 export const STARTING_ATTRIBUTE = 1;
@@ -44,13 +57,20 @@ export const STARTING_LEVEL = 1;
 // form to evolve into.)
 export const GOBLIN_MAX_LEVEL = 10;
 export const STARTING_EXP = 0;
+export const STARTING_GOLD = 20;
 
-export const STARTING_SKILL_PERCENT = 1;
-export const MAX_SKILL_PERCENT = 100;
 export const SKILL_GROWTH_CHANCE = 0.02;
 
-export function startingSkills(): Record<string, number> {
-  return Object.fromEntries(STARTING_SKILLS.map((skill) => [skill, STARTING_SKILL_PERCENT]));
+// Every race gets the universal kit (punch/dodge/parry/shield block/
+// dagger) at STARTING_SKILL_PERCENT, PLUS its own innate skill(s) (see
+// RACE_INNATE_SKILLS) at MAX_SKILL_PERCENT — innate abilities are simply
+// there from birth, not something practiced up from scratch.
+export function startingSkills(race: Race): Record<string, number> {
+  const skills = Object.fromEntries(STARTING_SKILLS.map((skill) => [skill, STARTING_SKILL_PERCENT]));
+  for (const skill of RACE_INNATE_SKILLS[race] ?? []) {
+    skills[skill] = MAX_SKILL_PERCENT;
+  }
+  return skills;
 }
 
 // Same message shape for every skill's growth notice — quoted here so
@@ -114,6 +134,9 @@ export function punchDamage(
 export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
   'bone dagger': 'weapon',
   'bone shield': 'shield',
+  // Carried in the off-hand, same slot a shield would use — a light
+  // source, not armor, but this project only has the one off-hand slot.
+  torch: 'shield',
 };
 
 // Flat damage bonus while a given item is equipped in its slot — matches
@@ -205,6 +228,20 @@ export function computeExtraAttackChance(skillPercent: number): number {
 
 export function enhancedDamageBonus(skillPercent: number): number {
   return Math.floor(skillPercent / SCALED_SKILL_DIVISOR);
+}
+
+// --- Dragonborn-only: lacerate (an extra "laceration" swing per attack,
+// rolled independently of anything else) — a 60% base chance scaling up
+// to 90% at 100% learned, a noticeably higher/narrower band than the
+// generic scaledSkillChance shape above (granted innately at
+// MAX_SKILL_PERCENT, so in practice it's always rolled at 90%). ---
+
+const LACERATE_BASE_CHANCE = 0.6;
+const LACERATE_MAX_CHANCE = 0.9;
+
+export function computeLacerateChance(skillPercent: number): number {
+  const bonus = (LACERATE_MAX_CHANCE - LACERATE_BASE_CHANCE) * (skillPercent / MAX_SKILL_PERCENT);
+  return Math.min(LACERATE_MAX_CHANCE, LACERATE_BASE_CHANCE + bonus);
 }
 
 // --- Goblin -> Hobgoblin evolution (one-way, one-time) ---

@@ -1,12 +1,12 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
-import { RACES, type MapName, type Race, type MonsterKind } from '../../shared/constants.js';
+import type { MapName, Race, MonsterKind } from '../../shared/constants.js';
 import type { CorpseSnapshot } from '../../shared/types.js';
 
-// Player (and the training dummy, which counts as "a player" for combat
-// purposes — see game.gateway.ts) corpses despawn after this long; wild
-// monster corpses have no TTL at all, same as before, until looted.
-const PLAYER_CORPSE_TTL_MS = 10 * 60 * 1000;
+// Every corpse (player, training dummy, or wild monster) despawns after
+// this long — same TTL for all of them now, and the same "Grab all or
+// pick items" loot modal client-side (see main.ts).
+const CORPSE_TTL_MS = 10 * 60 * 1000;
 
 // The body-part item every corpse always includes, named after whatever
 // died — reusing the character's own vocabulary (ears read as
@@ -18,6 +18,9 @@ const BODY_PART_LABEL: Record<Race | MonsterKind, string> = {
   goblin: 'goblin ear',
   skeleton: 'skeleton bone',
   hobgoblin: 'hobgoblin ear',
+  zombie: 'zombie finger',
+  dragonborn: 'dragonborn scale',
+  slime: 'slime residue',
   'wild goblin': 'wild goblin ear',
   'wild skeleton': 'wild skeleton bone',
 };
@@ -26,15 +29,27 @@ export function bodyPartLabelFor(kind: Race | MonsterKind): string {
   return BODY_PART_LABEL[kind];
 }
 
+// The reverse of BODY_PART_LABEL — which race/monster-kind a given
+// consumed item's body part came from, if any (a weapon a corpse also
+// carried, like a wild skeleton's bone dagger, correctly has no entry
+// here). Backs the slime mimic skill (see game.gateway.ts's applyConsume).
+const RACE_FOR_BODY_PART = new Map<string, Race | MonsterKind>(
+  (Object.entries(BODY_PART_LABEL) as Array<[Race | MonsterKind, string]>).map(([kind, label]) => [label, kind])
+);
+
+export function raceForBodyPart(item: string): (Race | MonsterKind) | undefined {
+  return RACE_FOR_BODY_PART.get(item);
+}
+
 // Entirely in-memory, same tradeoff as MonsterManagerService — corpses
-// reset on server restart. There's no despawn timer; they sit until
-// looted (or forever, for this project's scope).
+// reset on server restart. Every corpse despawns after CORPSE_TTL_MS
+// regardless of whether it's ever looted (see removeExpired).
 @Injectable()
 export class CorpseManagerService {
   private corpses = new Map<string, CorpseSnapshot>();
   private expiresAt = new Map<string, number>();
 
-  spawn(kind: Race | MonsterKind, items: string[], mapName: MapName, row: number, col: number): CorpseSnapshot {
+  spawn(kind: Race | MonsterKind, items: string[], mapName: MapName, row: number, col: number, killedBy?: string): CorpseSnapshot {
     const corpse: CorpseSnapshot = {
       id: randomUUID(),
       kind,
@@ -42,11 +57,10 @@ export class CorpseManagerService {
       map: mapName,
       row,
       col,
+      killedBy,
     };
     this.corpses.set(corpse.id, corpse);
-    if ((RACES as readonly string[]).includes(kind)) {
-      this.expiresAt.set(corpse.id, Date.now() + PLAYER_CORPSE_TTL_MS);
-    }
+    this.expiresAt.set(corpse.id, Date.now() + CORPSE_TTL_MS);
     return corpse;
   }
 

@@ -3,6 +3,11 @@
 // Skills modal's "Show All" preview of not-yet-acquired skills) — pure
 // data, no server-only logic, so it lives here rather than being
 // duplicated.
+import type { Race } from './constants.js';
+
+export const STARTING_SKILL_PERCENT = 1;
+export const MAX_SKILL_PERCENT = 100;
+
 export const PUNCH_SKILL = 'punch';
 export const DODGE_SKILL = 'dodge';
 export const PARRY_SKILL = 'parry';
@@ -20,3 +25,28 @@ export const HOBGOBLIN_EVOLUTION_SKILLS = [SECOND_ATTACK_SKILL, THIRD_ATTACK_SKI
 export const LESSER_NORMAL_MONSTER_RESISTANCE = 'lesser normal monster resistance';
 export const LESSER_UNDEAD_MONSTER_RESISTANCE = 'lesser undead monster resistance';
 export const RESISTANCE_SKILLS = [LESSER_NORMAL_MONSTER_RESISTANCE, LESSER_UNDEAD_MONSTER_RESISTANCE];
+
+// --- Per-race innate skills — each granted at character creation
+// alongside the universal STARTING_SKILLS above, but starting at
+// MAX_SKILL_PERCENT (100%) rather than STARTING_SKILL_PERCENT, since
+// these are innate abilities the race is simply born with, not something
+// learned through practice. ---
+
+export const INFRAVISION_SKILL = 'infravision'; // goblin: see in the dark, no torch needed
+export const LACERATE_SKILL = 'lacerate'; // dragonborn: chance of an extra "laceration" attack per combat tick
+export const MIMIC_SKILL = 'mimic'; // slime: can transform into a consumed race's form
+export const REVERT_SKILL = 'revert'; // slime: change back to plain slime form
+export const EAT_BRAINS_SKILL = 'eat brains'; // zombie: heal by eating a corpse's brains (own killing blow only)
+export const GLARE_SKILL = 'glare'; // skeleton: paralyze whoever it's fighting for 2 combat rounds
+export const ENHANCED_DURABILITY_SKILL = 'enhanced durability'; // skeleton: +5% armor (armor itself: future work)
+
+export const RACE_INNATE_SKILLS: Record<Race, string[]> = {
+  goblin: [INFRAVISION_SKILL],
+  skeleton: [GLARE_SKILL, ENHANCED_DURABILITY_SKILL],
+  zombie: [EAT_BRAINS_SKILL],
+  dragonborn: [LACERATE_SKILL],
+  slime: [MIMIC_SKILL, REVERT_SKILL],
+  // Hobgoblin is evolution-only (never a starting race) — its own extra
+  // skills are granted separately, see HOBGOBLIN_EVOLUTION_SKILLS.
+  hobgoblin: [],
+};

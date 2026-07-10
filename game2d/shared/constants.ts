@@ -1,9 +1,8 @@
-// The two races selectable at registration — the sprites this project
-// actually draws (see assets/goblin-spritesheet.png,
-// assets/skeleton-spritesheet.png). Kept separate from the text game's
-// much longer race list (src/shared/constants.ts there) since this
-// project has nothing to do with that one.
-export const RACES = ['goblin', 'skeleton'] as const;
+// The five races selectable at registration — matches the text game's
+// own RACES list, each with its own spritesheet (see characterSprites.ts
+// for the race->texture-key mapping; 'dragonborn' reuses the
+// dragon-man-spritesheet.png asset).
+export const RACES = ['goblin', 'skeleton', 'zombie', 'dragonborn', 'slime'] as const;
 // Reached only by evolving (see game.gateway.ts's maybeEvolveToHobgoblin)
 // — never selectable at registration, same one-way/one-time convention
 // as the text game's own EVOLVED_RACES.

@@ -214,6 +214,40 @@ body {
   color: #ddd;
 }
 
+/* ---------- Target panel (left-click a player/npc/monster to select — item 11) ---------- */
+
+#target-panel {
+  top: 50px;
+  left: 12px;
+  padding: 6px 10px;
+  z-index: 60;
+  min-width: 120px;
+}
+
+#target-name {
+  display: block;
+  color: #ddd;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#target-hp-bar {
+  width: 100%;
+  height: 6px;
+  background: #3a1414;
+  border: 1px solid #5a2222;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+#target-hp-fill {
+  height: 100%;
+  background: #c0392b;
+  transition: width 0.15s linear;
+}
+
 #status-content span {
   white-space: nowrap;
 }
@@ -446,6 +480,15 @@ body {
   text-align: right;
 }
 
+#target-info-consideration {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #333;
+  font-size: 13px;
+  font-style: italic;
+  color: #d0a840;
+}
+
 .inventory-list {
   list-style: none;
   margin: 0;
@@ -474,6 +517,23 @@ body {
 
 .inventory-item:hover {
   border-color: #f0c040;
+}
+
+.shop-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.shop-item button {
+  flex-shrink: 0;
+}
+
+#shop-gold-line {
+  font-size: 13px;
+  color: #f0c040;
+  margin-bottom: 8px;
 }
 
 /* ---------- Map modal (Here / World Map / Who / Where) ---------- */
@@ -546,6 +606,23 @@ body {
   background: #386a4c;
 }
 
+#corpse-eat-brains {
+  margin-top: 8px;
+  width: 100%;
+  padding: 8px;
+  background: #4d2a3a;
+  border: 1px solid #7a3f56;
+  color: #eee;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  border-radius: 4px;
+}
+
+#corpse-eat-brains:hover {
+  background: #6a3850;
+}
+
 /* ---------- Autopilot prompt modal ---------- */
 
 .autopilot-field {
@@ -598,6 +675,76 @@ body {
   z-index: 60;
 }
 
+/* ---------- Action bar (2x10 skill slots — item 13) ---------- */
+
+#action-bar {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: repeat(10, 36px);
+  grid-template-rows: repeat(2, 36px);
+  gap: 4px;
+  z-index: 60;
+}
+
+.action-slot {
+  width: 36px;
+  height: 36px;
+  background: rgba(20, 20, 28, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+.action-slot.drag-over {
+  border-color: #f0c040;
+  background: rgba(240, 192, 64, 0.2);
+}
+
+.action-slot.filled {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #f0e8d0;
+  font-size: 15px;
+  font-weight: bold;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+/* ---------- Skill icons (Skills modal — item 14) ---------- */
+
+.skill-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.skill-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: bold;
+  color: #f0e8d0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.skill-icon.draggable {
+  cursor: grab;
+  box-shadow: 0 0 0 1px rgba(240, 192, 64, 0.6);
+}
+
+.skill-icon.draggable:active {
+  cursor: grabbing;
+}
+
 /* ---------- Day/night overlay ---------- */
 
 #daynight-overlay {
@@ -611,6 +758,19 @@ body {
      rather than snapping straight to the new value. */
   z-index: 10;
   transition: background-color 4s linear;
+}
+
+/* ---------- Dark fog overlay (no light source at night) ---------- */
+/* A radial "hole" centered on the player, sized/positioned every frame
+   from WorldScene.update() (see main.ts's updateDarkFog) — everything
+   past LIGHT_RADIUS_TILES fades to near-black. Sits above the ambient
+   day/night tint but below the sleep overlay and HUD. */
+#dark-fog-overlay {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  pointer-events: none;
+  z-index: 15;
 }
 
 /* ---------- Sleep overlay ---------- */

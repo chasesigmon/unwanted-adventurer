@@ -94,6 +94,18 @@ export class Player {
   @Column({ name: 'consume_exp', type: 'int', default: 0 })
   consumeExp!: number;
 
+  @Column({ type: 'int', default: 20 })
+  gold!: number;
+
+  // Slime-only mimic/revert tracking (see shared/skills.ts) — every
+  // race/monster-kind name whose body part this slime has ever consumed,
+  // and whichever one (if any) it's currently disguised as.
+  @Column({ name: 'mimicable_races', type: 'jsonb', default: () => "'[]'" })
+  mimicableRaces!: string[];
+
+  @Column({ name: 'mimic_form', type: 'varchar', length: 32, nullable: true, default: null })
+  mimicForm!: string | null;
+
   @Column({ name: 'last_login', type: 'timestamptz', default: () => 'now()' })
   lastLogin!: Date;
 

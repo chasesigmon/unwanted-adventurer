@@ -30,6 +30,19 @@ export interface PlayerSnapshot {
   equipment: Record<string, string>;
   consumeExp: number;
   restState: RestState;
+  // Whether THIS player currently provides light (infravision or a
+  // carried torch) — used both for their own vision and, if a nearby
+  // ally has it, to light up everyone around them too (see
+  // shared/lighting.ts).
+  hasLight: boolean;
+  gold: number;
+  // Slime-only (see shared/skills.ts's MIMIC_SKILL/REVERT_SKILL):
+  // mimicableRaces accumulates every unique race/monster-kind whose body
+  // part this slime has ever consumed; mimicForm is whichever of those
+  // (if any) it's currently disguised as — null means its own plain
+  // slime appearance. No mechanical effect yet, purely cosmetic.
+  mimicableRaces: (Race | MonsterKind)[];
+  mimicForm: (Race | MonsterKind) | null;
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
@@ -77,6 +90,11 @@ export interface CorpseSnapshot {
   map: MapName;
   row: number;
   col: number;
+  // Whoever landed the killing blow, if anyone did (a corpse from some
+  // future non-combat source could have none) — backs the zombie-only
+  // "Eat Brains" option in the loot modal (see main.ts), only offered to
+  // the player who actually earned it.
+  killedBy?: string;
 }
 
 export interface SyncPayload {
@@ -87,12 +105,29 @@ export interface SyncPayload {
 // within it, or leaves — the client's only source of truth for rendering
 // other players/NPCs/monsters/corpses (and thus for knowing which tiles
 // are occupied).
+// A static, never-attackable shop NPC (see server/worlds/vendors.ts) —
+// deliberately a separate list from NpcSnapshot, which is a combat
+// target.
+export interface VendorItem {
+  label: string;
+  price: number;
+}
+export interface VendorSnapshot {
+  id: string;
+  name: string;
+  map: MapName;
+  row: number;
+  col: number;
+  items: VendorItem[];
+}
+
 export interface MapStatePayload {
   mapName: MapName;
   players: PlayerSnapshot[];
   npcs: NpcSnapshot[];
   monsters: MonsterSnapshot[];
   corpses: CorpseSnapshot[];
+  vendors: VendorSnapshot[];
 }
 
 // Broadcast to a map's room whenever a punch actually lands on a target
@@ -145,6 +180,24 @@ export interface PunchPayload {
 export interface LootAck {
   ok: boolean;
   inventory?: string[];
+  message?: string;
+}
+
+export interface BuyAck {
+  ok: boolean;
+  inventory?: string[];
+  gold?: number;
+  message?: string;
+}
+
+export interface EatBrainsAck {
+  ok: boolean;
+  hp?: number;
+  maxHp?: number;
+  mana?: number;
+  maxMana?: number;
+  movement?: number;
+  maxMovement?: number;
   message?: string;
 }
 
@@ -220,6 +273,10 @@ export interface ClientToServerEvents {
   // "click one item" path) rather than everything at once — the corpse
   // itself is removed once its last item is taken.
   lootItem: (payload: { corpseId: string; itemIndex: number }, ack: (res: LootAck) => void) => void;
+  buyItem: (payload: { vendorId: string; itemLabel: string }, ack: (res: BuyAck) => void) => void;
+  // Zombie-only: heals 20% hp/mana/movement, see game.gateway.ts's
+  // EAT_BRAINS_COOLDOWN_MS for the cooldown this starts.
+  eatBrains: (corpseId: string, ack: (res: EatBrainsAck) => void) => void;
   // Clicking an inventory item: the server decides consume vs. equip
   // based on the item itself (see combat/formulas.ts's
   // EQUIPMENT_SLOT_FOR_ITEM) so the client never has to know which items
@@ -260,6 +317,12 @@ export interface SocketData {
   equipment: Record<string, string>;
   consumeExp: number;
   restState: RestState;
+  gold: number;
+  mimicableRaces: (Race | MonsterKind)[];
+  mimicForm: (Race | MonsterKind) | null;
+  // Zombie-only Eat Brains cooldown — an epoch-ms timestamp, never
+  // persisted (resets on reconnect, same tradeoff as restState).
+  eatBrainsReadyAt: number;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

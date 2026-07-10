@@ -7,6 +7,8 @@ import type { MapName, Direction } from '../../shared/constants.js';
 import type { PlayerSnapshot, MapStatePayload } from '../../shared/types.js';
 import type { PlayerState, MoveResult } from './types.js';
 import { isTreeTile } from '../../shared/trees.js';
+import { hasLightSource } from '../../shared/lighting.js';
+import { vendorsForMap } from './vendors.js';
 
 // A much smaller version of the text game's own WorldManagerService — no
 // per-map capacity sharding or worker_threads, just an in-memory map of
@@ -141,12 +143,17 @@ export class WorldManagerService {
         equipment: state.equipment,
         consumeExp: state.consumeExp,
         restState: state.restState,
+        hasLight: hasLightSource(state.skills, state.equipment),
+        gold: state.gold,
+        mimicableRaces: state.mimicableRaces,
+        mimicForm: state.mimicForm,
       });
     }
 
     const npcs = NPCS.filter((npc) => npc.map === mapName);
     const monsters = this.monsterManager.getSnapshotsForMap(mapName);
     const corpses = this.corpseManager.getSnapshotsForMap(mapName);
-    return { mapName, players, npcs, monsters, corpses };
+    const vendors = vendorsForMap(mapName);
+    return { mapName, players, npcs, monsters, corpses, vendors };
   }
 }

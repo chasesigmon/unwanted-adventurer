@@ -1,9 +1,9 @@
 // Loads the real PNG spritesheets (game2d/assets/*-spritesheet.png) and
-// builds the walk + punch animations for every kind — playable races
+// builds the walk + attack animations for every kind — playable races
 // (including the evolved-only hobgoblin), wild monster kinds, and a
 // handful of decorative-only kinds with no gameplay hookup yet — all
 // sharing the same rig/layout (4 fully distinct directional rows:
-// down/up/left/right, 8 columns per row: 4 walk frames then 4 punch
+// down/up/left/right, 8 columns per row: 4 walk frames then 4 attack
 // frames). No runtime horizontal flip anywhere — "right" is its own real
 // row baked into the PNG (a mirror of "left" applied at generation time).
 import type { Race, MonsterKind } from '../shared/constants.js';
@@ -18,9 +18,9 @@ export type FacingGroup = 'down' | 'up' | 'left' | 'right';
 const ROW_INDEX: Record<FacingGroup, number> = { down: 0, up: 1, left: 2, right: 3 };
 
 // Kinds with a spritesheet but no gameplay hookup yet (no playable race,
-// no spawned monster) — assets exist and their walk/punch anims are
+// no spawned monster) — assets exist and their walk/attack anims are
 // fully created/playable, ready for whatever uses them next.
-export type DecorativeKind = 'ogre' | 'zombie' | 'slime' | 'dragonman';
+export type DecorativeKind = 'ogre' | 'shopkeeper';
 
 // A "kind" is anything with its own spritesheet — a playable race
 // (including the evolved-only hobgoblin), a wild monster kind, or one of
@@ -31,24 +31,35 @@ const TEXTURE_KEYS: Record<SpriteKind, string> = {
   goblin: 'goblin',
   skeleton: 'skeleton',
   hobgoblin: 'hobgoblin',
+  zombie: 'zombie',
+  dragonborn: 'dragon-man',
+  slime: 'slime',
   'wild goblin': 'wild-goblin',
   'wild skeleton': 'wild-skeleton',
   ogre: 'ogre',
-  zombie: 'zombie',
-  slime: 'slime',
-  dragonman: 'dragon-man',
+  shopkeeper: 'shopkeeper',
 };
 const SHEET_PATHS: Record<SpriteKind, string> = {
   goblin: '/goblin-spritesheet.png',
   skeleton: '/skeleton-spritesheet.png',
   hobgoblin: '/hobgoblin-spritesheet.png',
+  zombie: '/zombie-spritesheet.png',
+  dragonborn: '/dragon-man-spritesheet.png',
+  slime: '/slime-spritesheet.png',
   'wild goblin': '/wild-goblin-spritesheet.png',
   'wild skeleton': '/wild-skeleton-spritesheet.png',
   ogre: '/ogre-spritesheet.png',
-  zombie: '/zombie-spritesheet.png',
-  slime: '/slime-spritesheet.png',
-  dragonman: '/dragon-man-spritesheet.png',
+  shopkeeper: '/shopkeeper-spritesheet.png',
 };
+
+// The attack animation is always the same 4 frames (columns 4-7) — only
+// its NAME differs for a slime, which "slaps" rather than "punches"
+// (still triggered by the same punch action/server event; this only
+// changes what the client calls/labels the clip).
+const ATTACK_VERB: Partial<Record<SpriteKind, string>> = { slime: 'slap' };
+function attackVerbFor(kind: SpriteKind): string {
+  return ATTACK_VERB[kind] ?? 'punch';
+}
 
 export function textureKeyFor(kind: SpriteKind): string {
   return TEXTURE_KEYS[kind];
@@ -63,7 +74,7 @@ export function walkAnimKey(kind: SpriteKind, facing: FacingGroup): string {
 }
 
 export function punchAnimKey(kind: SpriteKind, facing: FacingGroup): string {
-  return `${TEXTURE_KEYS[kind]}-punch-${facing}`;
+  return `${TEXTURE_KEYS[kind]}-${attackVerbFor(kind)}-${facing}`;
 }
 
 export function preloadCharacterSprites(scene: Phaser.Scene): void {

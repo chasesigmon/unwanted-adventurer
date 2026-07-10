@@ -28,6 +28,9 @@
             <select id="auth-race">
               <option value="goblin">Goblin</option>
               <option value="skeleton">Skeleton</option>
+              <option value="zombie">Zombie</option>
+              <option value="dragonborn">Dragonborn</option>
+              <option value="slime">Slime</option>
             </select>
           </label>
           <div id="auth-error"></div>
@@ -39,6 +42,7 @@
         <div id="game-container"></div>
 
         <div id="daynight-overlay"></div>
+        <div id="dark-fog-overlay"></div>
 
         <div id="world-label"></div>
 
@@ -50,6 +54,14 @@
             <span id="status-mana"></span>
             <span id="status-mv"></span>
             <span id="status-exp"></span>
+            <span id="status-gold"></span>
+          </div>
+        </div>
+
+        <div id="target-panel" class="panel" hidden>
+          <div class="panel-body">
+            <span id="target-name"></span>
+            <div id="target-hp-bar"><div id="target-hp-fill"></div></div>
           </div>
         </div>
 
@@ -126,6 +138,25 @@
             <h2 id="corpse-modal-title">Corpse</h2>
             <ul id="corpse-item-list" class="inventory-list"></ul>
             <button type="button" id="corpse-grab-all">Grab all</button>
+            <button type="button" id="corpse-eat-brains" hidden>Eat Brains</button>
+          </div>
+        </div>
+
+        <div id="target-info-modal" class="modal" hidden>
+          <div class="modal-box">
+            <button type="button" class="modal-close">&times;</button>
+            <h2 id="target-info-title">Target</h2>
+            <div id="target-info-body" class="modal-stats"></div>
+            <div id="target-info-consideration"></div>
+          </div>
+        </div>
+
+        <div id="shop-modal" class="modal" hidden>
+          <div class="modal-box">
+            <button type="button" class="modal-close">&times;</button>
+            <h2 id="shop-modal-title">Shop</h2>
+            <div id="shop-gold-line"></div>
+            <ul id="shop-item-list" class="inventory-list"></ul>
           </div>
         </div>
 
@@ -140,6 +171,8 @@
           </div>
         </div>
         <div id="autopilot-status" hidden></div>
+
+        <div id="action-bar"></div>
 
         <div id="sleep-overlay" hidden>
           <div id="sleep-overlay-text">Zzz... (move to wake up)</div>

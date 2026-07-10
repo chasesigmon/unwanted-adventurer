@@ -9,6 +9,8 @@ import type {
   PunchPayload,
   CombatEventPayload,
   LootAck,
+  BuyAck,
+  EatBrainsAck,
   UseItemAck,
   ChatPayload,
   WhoAck,
@@ -169,6 +171,32 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('lootItem', { corpseId, itemIndex }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  buyItem(vendorId: string, itemLabel: string): Promise<BuyAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('buyItem', { vendorId, itemLabel }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  eatBrains(corpseId: string): Promise<EatBrainsAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('eatBrains', corpseId, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

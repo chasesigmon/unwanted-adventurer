@@ -37,6 +37,9 @@ export interface PlayerStatsUpdate {
   inventory?: string[];
   equipment?: Record<string, string>;
   consumeExp?: number;
+  gold?: number;
+  mimicableRaces?: string[];
+  mimicForm?: string | null;
 }
 
 @Injectable()

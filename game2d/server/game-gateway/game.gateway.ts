@@ -14,7 +14,8 @@ import { z } from 'zod';
 import { PlayersService } from '../players/players.service.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
 import { MonsterManagerService } from '../monsters/monster-manager.service.js';
-import { CorpseManagerService, bodyPartLabelFor } from '../worlds/corpse-manager.service.js';
+import { CorpseManagerService, bodyPartLabelFor, raceForBodyPart } from '../worlds/corpse-manager.service.js';
+import { findVendor } from '../worlds/vendors.js';
 import { MONSTER_SPECIES } from '../monsters/monster.js';
 import { NPCS } from '../worlds/npcs.js';
 import { AuthService } from '../auth/auth.service.js';
@@ -34,6 +35,7 @@ import {
   SHIELD_BLOCK_SKILL,
   DAGGER_SKILL,
   STARTING_LEVEL,
+  STARTING_GOLD,
   GOBLIN_MAX_LEVEL,
   STARTING_EXP,
   STARTING_ATTRIBUTE,
@@ -58,11 +60,13 @@ import {
   computeParryChance,
   computeShieldBlockChance,
   computeExtraAttackChance,
+  computeLacerateChance,
   enhancedDamageBonus,
   monsterDamageReduction,
   SECOND_ATTACK_SKILL,
   THIRD_ATTACK_SKILL,
   ENHANCED_DAMAGE_SKILL,
+  LACERATE_SKILL,
   HOBGOBLIN_EVOLUTION_SKILLS,
   HOBGOBLIN_EVOLUTION_CXP,
   HOBGOBLIN_ATTRIBUTE_BONUS,
@@ -70,12 +74,26 @@ import {
 } from '../combat/formulas.js';
 import { MONSTER_ATTACK_DAMAGE } from '../monsters/monster.js';
 import type { AppConfig } from '../config/configuration.js';
-import type { PlayerSnapshot, GameServer, GameSocket, CombatEventPayload, UseItemAck, RestState } from '../../shared/types.js';
+import type { PlayerSnapshot, GameServer, GameSocket, CombatEventPayload, UseItemAck, RestState, BuyAck, EatBrainsAck } from '../../shared/types.js';
 import { TOWN_MAPS } from '../../shared/constants.js';
-import type { Direction, MapName, MonsterClass } from '../../shared/constants.js';
+import { hasLightSource, TORCH_ITEM } from '../../shared/lighting.js';
+import type { Direction, MapName, MonsterClass, MonsterKind, Race } from '../../shared/constants.js';
 
 const directionSchema = z.enum(DIRECTIONS);
 const MONSTER_TICK_INTERVAL_MS = 3000;
+// Zombie-only "Eat Brains" (see handleEatBrains) — "a 4 tick cooldown"
+// measured in the one recurring tick this project already has (the
+// monster wander/respawn/corpse-expiry interval above), so 4 ticks = 12s.
+const EAT_BRAINS_COOLDOWN_TICKS = 4;
+const EAT_BRAINS_COOLDOWN_MS = EAT_BRAINS_COOLDOWN_TICKS * MONSTER_TICK_INTERVAL_MS;
+const EAT_BRAINS_HEAL_PERCENT = 20;
+// Skeleton-only "Glare" — same tick-based translation of "N combat
+// rounds" as Eat Brains above: 2 rounds = 2 * the shared tick interval.
+// Refreshed on every hit a skeleton lands on a still-living target, so
+// staying in a fight with one keeps the target locked down; it lapses
+// GLARE_PARALYSIS_MS after their last hit.
+const GLARE_PARALYSIS_ROUNDS = 2;
+const GLARE_PARALYSIS_MS = GLARE_PARALYSIS_ROUNDS * MONSTER_TICK_INTERVAL_MS;
 // Same shape as the text game's own global stat tick — a randomized
 // 30-40s interval (a setTimeout chain, not setInterval, so each firing
 // re-rolls its own next delay) heals hp/mana/movement by one shared
@@ -111,6 +129,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   private server!: GameServer;
 
   private readonly commandLimiters = new Map<string, CommandRateLimiter>();
+  // Skeleton-only Glare (see applyGlare/isParalyzed) — an expiry
+  // timestamp per target, keyed "player:<username>" / "monster:<id>" /
+  // "npc:<id>" so all three target kinds share one map without colliding
+  // on id. Entirely in-memory/ephemeral, same tradeoff as everything else
+  // combat-related in this project.
+  private readonly paralyzedUntil = new Map<string, number>();
   // A shared world clock, advanced by 1 hour on the same tick as the
   // global stat-tick heal — resets to midnight on server restart, same
   // tradeoff as the text game's own worldHour. Broadcast to every
@@ -262,6 +286,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       equipment: client.data.equipment,
       consumeExp: client.data.consumeExp,
       restState: client.data.restState,
+      hasLight: hasLightSource(client.data.skills, client.data.equipment),
+      gold: client.data.gold,
+      mimicableRaces: client.data.mimicableRaces,
+      mimicForm: client.data.mimicForm,
     };
   }
 
@@ -316,6 +344,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         inventory: client.data.inventory,
         equipment: client.data.equipment,
         consumeExp: client.data.consumeExp,
+        gold: client.data.gold,
+        mimicableRaces: client.data.mimicableRaces,
+        mimicForm: client.data.mimicForm,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -439,33 +470,61 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { avoided: blocked, verb: blocked ? 'block' : undefined, skill: attemptingBlock ? SHIELD_BLOCK_SKILL : undefined };
   }
 
-  // Hobgoblin-only: an extra swing (or two — second and third attack roll
-  // independently, so a single punch can proc 0, 1, or 2 bonus hits) plus
-  // a flat enhanced-damage bonus. All three grow 2% on every attack
-  // thrown, hit or miss — same as every other skill in this project.
-  private rollHobgoblinExtras(client: GameSocket, growthMessages: string[]): { swings: number; enhancedBonus: number } {
-    if (client.data.race !== 'hobgoblin') return { swings: 1, enhancedBonus: 0 };
-
+  // Race-specific extra swings on top of the base attack, rolled
+  // independently of each other so a single punch can proc more than one:
+  // hobgoblin's second/third attack (each also grows 2% on every attack
+  // thrown, hit or miss, same as every other skill in this project) plus
+  // a flat enhanced-damage bonus, and dragonborn's lacerate (innate at
+  // MAX_SKILL_PERCENT, so nothing left to grow).
+  private rollExtraAttacks(client: GameSocket, growthMessages: string[]): { swings: number; enhancedBonus: number } {
     let swings = 1;
-    if (Math.random() < computeExtraAttackChance(client.data.skills[SECOND_ATTACK_SKILL] ?? 0)) {
-      swings++;
-      growthMessages.push('Your second attack triggers!');
-    }
-    const secondGrowth = this.maybeGrowSkill(client, SECOND_ATTACK_SKILL);
-    if (secondGrowth) growthMessages.push(secondGrowth);
+    let enhancedBonus = 0;
 
-    if (Math.random() < computeExtraAttackChance(client.data.skills[THIRD_ATTACK_SKILL] ?? 0)) {
-      swings++;
-      growthMessages.push('Your third attack triggers!');
-    }
-    const thirdGrowth = this.maybeGrowSkill(client, THIRD_ATTACK_SKILL);
-    if (thirdGrowth) growthMessages.push(thirdGrowth);
+    if (client.data.race === 'hobgoblin') {
+      if (Math.random() < computeExtraAttackChance(client.data.skills[SECOND_ATTACK_SKILL] ?? 0)) {
+        swings++;
+        growthMessages.push('Your second attack triggers!');
+      }
+      const secondGrowth = this.maybeGrowSkill(client, SECOND_ATTACK_SKILL);
+      if (secondGrowth) growthMessages.push(secondGrowth);
 
-    const enhancedGrowth = this.maybeGrowSkill(client, ENHANCED_DAMAGE_SKILL);
-    if (enhancedGrowth) growthMessages.push(enhancedGrowth);
-    const enhancedBonus = enhancedDamageBonus(client.data.skills[ENHANCED_DAMAGE_SKILL] ?? 0);
+      if (Math.random() < computeExtraAttackChance(client.data.skills[THIRD_ATTACK_SKILL] ?? 0)) {
+        swings++;
+        growthMessages.push('Your third attack triggers!');
+      }
+      const thirdGrowth = this.maybeGrowSkill(client, THIRD_ATTACK_SKILL);
+      if (thirdGrowth) growthMessages.push(thirdGrowth);
+
+      const enhancedGrowth = this.maybeGrowSkill(client, ENHANCED_DAMAGE_SKILL);
+      if (enhancedGrowth) growthMessages.push(enhancedGrowth);
+      enhancedBonus = enhancedDamageBonus(client.data.skills[ENHANCED_DAMAGE_SKILL] ?? 0);
+    }
+
+    if (client.data.race === 'dragonborn') {
+      if (Math.random() < computeLacerateChance(client.data.skills[LACERATE_SKILL] ?? 0)) {
+        swings++;
+        growthMessages.push('Your lacerate triggers — an extra laceration attack!');
+      }
+    }
 
     return { swings, enhancedBonus };
+  }
+
+  // Skeleton-only: every hit landed on a still-living target refreshes
+  // its paralysis window (see GLARE_PARALYSIS_MS) — the target can't act
+  // back until GLARE_PARALYSIS_MS after the skeleton's LAST hit, so
+  // staying in the fight keeps them locked down. Call sites decide what
+  // "can't act" means for their target kind (skip a counter-attack for a
+  // monster/dummy; refuse move/punch for a player — see handleMove/
+  // handlePunch).
+  private applyGlare(client: GameSocket, targetKey: string): void {
+    if (client.data.race !== 'skeleton') return;
+    this.paralyzedUntil.set(targetKey, Date.now() + GLARE_PARALYSIS_MS);
+  }
+
+  private isParalyzed(targetKey: string): boolean {
+    const until = this.paralyzedUntil.get(targetKey);
+    return until !== undefined && Date.now() < until;
   }
 
   // A monster/dummy that survives a punch fights back — a flat punch
@@ -534,13 +593,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.maxMana = doc?.maxMana ?? STARTING_VITAL;
     client.data.movement = doc?.movement ?? STARTING_VITAL;
     client.data.maxMovement = doc?.maxMovement ?? STARTING_VITAL;
-    client.data.skills = doc?.skills ?? startingSkills();
+    client.data.skills = doc?.skills ?? startingSkills(client.data.race);
     client.data.inventory = doc?.inventory ?? [];
     client.data.equipment = doc?.equipment ?? {};
     client.data.consumeExp = doc?.consumeExp ?? 0;
+    client.data.gold = doc?.gold ?? STARTING_GOLD;
+    client.data.mimicableRaces = (doc?.mimicableRaces ?? []) as (Race | MonsterKind)[];
+    client.data.mimicForm = (doc?.mimicForm ?? null) as (Race | MonsterKind) | null;
     // Never persisted — a fresh connection always starts awake, same as
     // the text game's own restState.
     client.data.restState = 'awake';
+    // Never persisted either — a fresh connection always starts off
+    // cooldown.
+    client.data.eatBrainsReadyAt = 0;
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
@@ -565,6 +630,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       equipment: client.data.equipment,
       consumeExp: client.data.consumeExp,
       restState: client.data.restState,
+      gold: client.data.gold,
+      mimicableRaces: client.data.mimicableRaces,
+      mimicForm: client.data.mimicForm,
     });
     void client.join(client.data.map);
 
@@ -595,6 +663,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const limiter = this.commandLimiters.get(client.id);
     if (limiter && !limiter.tryConsume()) {
       return { ok: false, player: this.snapshotFor(client), message: 'Slow down — too many moves.' };
+    }
+
+    if (this.isParalyzed(`player:${client.data.username}`)) {
+      return { ok: false, player: this.snapshotFor(client), message: "You are paralyzed by a skeleton's glare and cannot move!" };
     }
 
     const parsed = directionSchema.safeParse(rawDirection);
@@ -660,6 +732,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const limiter = this.commandLimiters.get(client.id);
     if (limiter && !limiter.tryConsume()) return;
 
+    if (this.isParalyzed(`player:${client.data.username}`)) {
+      this.systemMessage(client, "You are paralyzed by a skeleton's glare and cannot attack!");
+      return;
+    }
+
     const parsed = directionSchema.safeParse(rawDirection);
     if (!parsed.success) return;
     const direction: Direction = parsed.data;
@@ -699,7 +776,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
     const weaponBonus = weaponBonusFor(client.data.equipment, client.data.skills);
     const growthMessages: string[] = [];
-    const { swings, enhancedBonus } = this.rollHobgoblinExtras(client, growthMessages);
+    const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
 
     let totalDamage = 0;
     let died = false;
@@ -726,7 +803,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       expGained = grantResult.message ? undefined : rawExpGained;
       if (grantResult.message) growthMessages.push(grantResult.message);
       const items = [bodyPartLabelFor(monster.kind), ...monster.carriedItems];
-      this.corpseManager.spawn(monster.kind, items, monster.mapName, monster.row, monster.col);
+      this.corpseManager.spawn(monster.kind, items, monster.mapName, monster.row, monster.col, client.data.username);
     }
     const attackGrowth = this.maybeGrowSkill(client, attackSkill);
     if (attackGrowth) growthMessages.push(attackGrowth);
@@ -736,7 +813,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       : `${client.data.username} punches the ${monster.kind} for ${totalDamage} damage.`;
 
     if (!died) {
-      const counterMessage = this.resolveMonsterCounterAttack(client, monster, monster.kind, monster.monsterClass, growthMessages);
+      const paralysisKey = `monster:${monster.id}`;
+      const wasParalyzed = this.isParalyzed(paralysisKey);
+      this.applyGlare(client, paralysisKey);
+      const counterMessage = wasParalyzed
+        ? `The ${monster.kind} is paralyzed by your glare and cannot counter-attack!`
+        : this.resolveMonsterCounterAttack(client, monster, monster.kind, monster.monsterClass, growthMessages);
       message += ` ${counterMessage}`;
     }
     void this.persistStats(client);
@@ -796,7 +878,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
     const growthMessages: string[] = [];
-    const { swings, enhancedBonus } = this.rollHobgoblinExtras(client, growthMessages);
+    const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
 
     // The dummy has no equipment/learned skills of its own to defend with
     // — it can still dodge (a flat, skill-less roll), but never parries
@@ -817,6 +899,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     if (died) {
+      // No killedBy, deliberately — same "not a real kill" reasoning as
+      // the no-exp rule above: an ever-respawning dummy would otherwise
+      // make a zombie's Eat Brains cooldown meaningless (free heal on
+      // demand instead of an actual reward for a real kill).
       this.corpseManager.spawn(npc.race, [bodyPartLabelFor(npc.race), 'bone dagger'], npc.map, npc.row, npc.col);
       const tile = this.randomFreeTileFor(npc.map);
       npc.row = tile.row;
@@ -831,7 +917,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       : `${client.data.username} punches the training dummy for ${totalDamage} damage.`;
 
     if (!died) {
-      const counterMessage = this.resolveMonsterCounterAttack(client, defenderStats, 'training dummy', undefined, growthMessages);
+      const paralysisKey = `npc:${npc.id}`;
+      const wasParalyzed = this.isParalyzed(paralysisKey);
+      this.applyGlare(client, paralysisKey);
+      const counterMessage = wasParalyzed
+        ? 'The training dummy is paralyzed by your glare and cannot counter-attack!'
+        : this.resolveMonsterCounterAttack(client, defenderStats, 'training dummy', undefined, growthMessages);
       message += ` ${counterMessage}`;
     }
     void this.persistStats(client);
@@ -866,7 +957,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
     const growthMessages: string[] = [];
-    const { swings, enhancedBonus } = this.rollHobgoblinExtras(client, growthMessages);
+    const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
 
     let damage = 0;
     let avoidedVerb: string | undefined;
@@ -908,7 +999,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         [bodyPartLabelFor(targetClient.data.race)],
         targetClient.data.map,
         targetClient.data.row,
-        targetClient.data.col
+        targetClient.data.col,
+        client.data.username
       );
 
       const previousMap = targetClient.data.map;
@@ -932,6 +1024,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       targetClient.emit('sync', { player: this.snapshotFor(targetClient) });
     } else {
       this.worldManager.updateState(targetUsername, { hp: targetClient.data.hp });
+      if (client.data.race === 'skeleton') {
+        this.applyGlare(client, `player:${targetUsername}`);
+        growthMessages.push(`${targetUsername} is paralyzed by your glare and cannot move or attack!`);
+      }
     }
 
     const attackGrowth = this.maybeGrowSkill(client, attackSkill);
@@ -1054,6 +1150,99 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, inventory: client.data.inventory };
   }
 
+  // Buying from a vendor requires standing at or next to it, same reach
+  // rule as looting a corpse — vendors never move, so this is really
+  // just "walk up to the shop front".
+  @SubscribeMessage('buyItem')
+  handleBuyItem(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): BuyAck {
+    if (
+      typeof payload !== 'object' ||
+      payload === null ||
+      typeof (payload as { vendorId?: unknown }).vendorId !== 'string' ||
+      typeof (payload as { itemLabel?: unknown }).itemLabel !== 'string'
+    ) {
+      return { ok: false, message: 'Invalid request.' };
+    }
+    const { vendorId, itemLabel } = payload as { vendorId: string; itemLabel: string };
+
+    const vendor = findVendor(vendorId);
+    if (!vendor || vendor.map !== client.data.map) {
+      return { ok: false, message: "That shop isn't here." };
+    }
+    if (!this.isWithinLootReach(client, vendor.row, vendor.col)) {
+      return { ok: false, message: "You're too far away to reach the shop." };
+    }
+    const item = vendor.items.find((i) => i.label === itemLabel);
+    if (!item) {
+      return { ok: false, message: "The shop doesn't sell that." };
+    }
+    if (client.data.gold < item.price) {
+      return { ok: false, message: `You don't have enough gold (${item.price} needed).` };
+    }
+
+    client.data.gold -= item.price;
+    client.data.inventory = [...client.data.inventory, item.label];
+    this.worldManager.updateState(client.data.username, { gold: client.data.gold, inventory: client.data.inventory });
+    void this.persistStats(client);
+
+    return { ok: true, inventory: client.data.inventory, gold: client.data.gold, message: `You buy a ${item.label} for ${item.price} gold.` };
+  }
+
+  // Zombie-only: heals 20% hp/mana/movement and starts a 4-tick
+  // (EAT_BRAINS_COOLDOWN_MS) cooldown — only offered on a corpse this
+  // zombie itself landed the killing blow on (see corpse.killedBy, set at
+  // spawn time), same reach rule as looting it.
+  @SubscribeMessage('eatBrains')
+  handleEatBrains(@ConnectedSocket() client: GameSocket, @MessageBody() corpseId: unknown): EatBrainsAck {
+    if (typeof corpseId !== 'string') {
+      return { ok: false, message: 'Invalid corpse.' };
+    }
+    if (client.data.race !== 'zombie') {
+      return { ok: false, message: 'Only a zombie can eat brains.' };
+    }
+    const corpse = this.corpseManager.get(corpseId);
+    if (!corpse || corpse.map !== client.data.map) {
+      return { ok: false, message: "That corpse isn't here." };
+    }
+    if (!this.isWithinLootReach(client, corpse.row, corpse.col)) {
+      return { ok: false, message: "You're too far away to reach the corpse." };
+    }
+    if (corpse.killedBy !== client.data.username) {
+      return { ok: false, message: "You didn't land the killing blow on this corpse." };
+    }
+    const now = Date.now();
+    if (now < client.data.eatBrainsReadyAt) {
+      const secondsLeft = Math.ceil((client.data.eatBrainsReadyAt - now) / 1000);
+      return { ok: false, message: `Eat Brains is on cooldown for another ${secondsLeft}s.` };
+    }
+
+    client.data.eatBrainsReadyAt = now + EAT_BRAINS_COOLDOWN_MS;
+    client.data.hp = Math.min(client.data.maxHp, client.data.hp + Math.round((client.data.maxHp * EAT_BRAINS_HEAL_PERCENT) / 100));
+    client.data.mana = Math.min(client.data.maxMana, client.data.mana + Math.round((client.data.maxMana * EAT_BRAINS_HEAL_PERCENT) / 100));
+    client.data.movement = Math.min(
+      client.data.maxMovement,
+      client.data.movement + Math.round((client.data.maxMovement * EAT_BRAINS_HEAL_PERCENT) / 100)
+    );
+    this.worldManager.updateState(client.data.username, {
+      hp: client.data.hp,
+      mana: client.data.mana,
+      movement: client.data.movement,
+    });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+
+    return {
+      ok: true,
+      hp: client.data.hp,
+      maxHp: client.data.maxHp,
+      mana: client.data.mana,
+      maxMana: client.data.maxMana,
+      movement: client.data.movement,
+      maxMovement: client.data.maxMovement,
+      message: `You eat the brains, restoring ${EAT_BRAINS_HEAL_PERCENT}% of your hp/mana/movement.`,
+    };
+  }
+
   // Local (map-scoped) chat — same shape as punch: fire-and-forget,
   // rebroadcast only to the sender's own map room, so someone in the
   // Labyrinth or a town never sees Great Plains chat and vice versa. A
@@ -1087,11 +1276,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     "/sleep - lie down and close your eyes, recovering hp/mana/movement faster until you wake up (moving or attacking wakes you)",
     '/rest, /sit - sit down to rest, recovering a bit faster than standing around',
     '/wake, /stand - get up from sleeping or resting',
+    '/mimic [race] - slime only: with no argument, lists what you can mimic; with one, shifts your form to it',
+    '/revert - slime only: shift back to your natural slime form',
   ].join('\n');
 
   private handleCommand(client: GameSocket, commandText: string): void {
-    const [rawCommand] = commandText.trim().split(/\s+/);
-    const command = (rawCommand ?? '').toLowerCase();
+    const trimmed = commandText.trim();
+    const spaceIndex = trimmed.indexOf(' ');
+    const rawCommand = spaceIndex === -1 ? trimmed : trimmed.slice(0, spaceIndex);
+    const arg = spaceIndex === -1 ? '' : trimmed.slice(spaceIndex + 1).trim();
+    const command = rawCommand.toLowerCase();
 
     switch (command) {
       case 'commands':
@@ -1109,9 +1303,62 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       case 'stand':
         this.handleWakeCommand(client);
         break;
+      case 'mimic':
+        this.handleMimicCommand(client, arg);
+        break;
+      case 'revert':
+        this.handleRevertCommand(client);
+        break;
       default:
         this.systemMessage(client, `Unknown command: /${command}. Try /commands.`);
     }
+  }
+
+  // Persists/broadcasts a mimic-form change — shared by both /mimic and
+  // /revert (reverting is just setting it back to null).
+  private setMimicForm(client: GameSocket, mimicForm: (Race | MonsterKind) | null): void {
+    client.data.mimicForm = mimicForm;
+    this.worldManager.updateState(client.data.username, { mimicForm });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+  }
+
+  private handleMimicCommand(client: GameSocket, rawTarget: string): void {
+    if (client.data.race !== 'slime') {
+      this.systemMessage(client, 'Only a slime can mimic another creature.');
+      return;
+    }
+    if (!rawTarget) {
+      this.systemMessage(
+        client,
+        client.data.mimicableRaces.length === 0
+          ? "You haven't consumed any unique body parts to mimic yet."
+          : `You can mimic: ${client.data.mimicableRaces.join(', ')}. Use /mimic <name>.`
+      );
+      return;
+    }
+    const target = rawTarget.toLowerCase();
+    const match = client.data.mimicableRaces.find((r) => r.toLowerCase() === target);
+    if (!match) {
+      this.systemMessage(client, `You haven't learned to mimic "${rawTarget}". Try /mimic to see your options.`);
+      return;
+    }
+    this.setMimicForm(client, match);
+    this.systemMessage(client, `You shift your form to mimic a ${match}.`);
+  }
+
+  private handleRevertCommand(client: GameSocket): void {
+    if (client.data.race !== 'slime') {
+      this.systemMessage(client, 'Only a slime can revert to a mimicked form.');
+      return;
+    }
+    if (client.data.mimicForm === null) {
+      this.systemMessage(client, 'You are already in your natural slime form.');
+      return;
+    }
+    this.setMimicForm(client, null);
+    this.systemMessage(client, 'You revert to your natural slime form.');
   }
 
   // Toggles sleeping <-> awake, same messages as the text game. Never
@@ -1267,6 +1514,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // grants a resistance AND crosses the evolution threshold in the same
     // consume shows both messages, in that order.
     messages.push(...this.maybeEvolveToHobgoblin(client));
+
+    // Slime-only: consuming a body part it's never eaten before teaches
+    // it to mimic that race/monster-kind's appearance (see /mimic and
+    // /revert below) — no mechanical bonus yet, purely cosmetic.
+    if (client.data.race === 'slime') {
+      const learned = raceForBodyPart(item);
+      if (learned && !client.data.mimicableRaces.includes(learned)) {
+        client.data.mimicableRaces = [...client.data.mimicableRaces, learned];
+        messages.push(`You have learned to mimic a ${learned}! (/mimic ${learned})`);
+      }
+    }
+
     return messages;
   }
 
@@ -1279,6 +1538,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       equipment: client.data.equipment,
       consumeExp: client.data.consumeExp,
       skills: client.data.skills,
+      mimicableRaces: client.data.mimicableRaces,
     });
     void this.persistStats(client);
     this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));

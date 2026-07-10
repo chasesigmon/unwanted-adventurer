@@ -1,4 +1,4 @@
-import type { MapName, Race } from '../../shared/constants.js';
+import type { MapName, MonsterKind, Race } from '../../shared/constants.js';
 import type { RestState } from '../../shared/types.js';
 import type { Attributes } from '../combat/formulas.js';
 
@@ -27,6 +27,9 @@ export interface PlayerState extends Location, Attributes {
   equipment: Record<string, string>;
   consumeExp: number;
   restState: RestState;
+  gold: number;
+  mimicableRaces: (Race | MonsterKind)[];
+  mimicForm: (Race | MonsterKind) | null;
 }
 
 export type MoveResult =

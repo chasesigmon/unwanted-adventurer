@@ -21,8 +21,9 @@ import {
 import { getMap, MAPS } from '../shared/maps.js';
 import { treePositionsFor } from '../shared/trees.js';
 import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS } from '../shared/equipment.js';
-import { STARTING_SKILLS, HOBGOBLIN_EVOLUTION_SKILLS, RESISTANCE_SKILLS } from '../shared/skills.js';
-import { RACES, MAP_NAMES } from '../shared/constants.js';
+import { STARTING_SKILLS, HOBGOBLIN_EVOLUTION_SKILLS, RESISTANCE_SKILLS, PUNCH_SKILL, DAGGER_SKILL } from '../shared/skills.js';
+import { isDarkHour, LIGHT_RADIUS_TILES, isNearStaticLight, isWithinLightRadius, hasLightSource } from '../shared/lighting.js';
+import { MAP_NAMES } from '../shared/constants.js';
 import type { MapName, Race, Direction, MonsterKind } from '../shared/constants.js';
 import type {
   PlayerSnapshot,
@@ -37,6 +38,7 @@ import type {
   RestState,
   UseItemAck,
   WorldTimePayload,
+  VendorSnapshot,
 } from '../shared/types.js';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL as string | undefined) || 'http://localhost:3001';
@@ -80,12 +82,105 @@ const statusHp = document.getElementById('status-hp') as HTMLSpanElement;
 const statusMana = document.getElementById('status-mana') as HTMLSpanElement;
 const statusMv = document.getElementById('status-mv') as HTMLSpanElement;
 const statusExp = document.getElementById('status-exp') as HTMLSpanElement;
+const statusGold = document.getElementById('status-gold') as HTMLSpanElement;
 const worldLabel = document.getElementById('world-label') as HTMLDivElement;
+const targetPanel = document.getElementById('target-panel') as HTMLDivElement;
+const targetName = document.getElementById('target-name') as HTMLSpanElement;
+const targetHpFill = document.getElementById('target-hp-fill') as HTMLDivElement;
 const sleepOverlay = document.getElementById('sleep-overlay') as HTMLDivElement;
 const daynightOverlay = document.getElementById('daynight-overlay') as HTMLDivElement;
+const darkFogOverlay = document.getElementById('dark-fog-overlay') as HTMLDivElement;
+
+// ---------- Action bar (2x10 slots — item 13) ---------- built here
+// rather than hand-written in index.html since it's a fixed, repetitive
+// grid. A skill icon (see the Skills modal's renderSkillRow) can be
+// dragged into any slot; a filled slot is then clickable, using that
+// skill on the currently selected target (item 14) — see
+// WorldScene.useTargetedSkill, the single place that interprets what
+// each skill name actually does.
+
+// A deterministic (not random) color per skill name, so the same skill
+// always gets the same swatch across the Skills modal and the action
+// bar without a hand-maintained color table.
+function skillIconColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  return `hsl(${hash % 360}, 55%, 35%)`;
+}
+
+// Only a skill with a real, currently-implemented targeted action can be
+// slotted — everything else in this project is either a passive bonus or
+// an automatic combat proc (see shared/skills.ts), not something to
+// manually fire at a target. Punch/dagger are the one exception: this
+// just lets the action bar throw the same contact-range attack the
+// direction keys/right-click already do, aimed at whichever target is
+// currently selected instead of wherever the player happens to be facing.
+function isUsableSkill(skillName: string): boolean {
+  return skillName === PUNCH_SKILL || skillName === DAGGER_SKILL;
+}
+
+const ACTION_BAR_SLOT_COUNT = 20;
+const actionBar = document.getElementById('action-bar') as HTMLDivElement;
+const actionSlots: HTMLDivElement[] = [];
+const actionBarSkills: Array<string | null> = new Array(ACTION_BAR_SLOT_COUNT).fill(null);
+
+function renderActionSlot(index: number): void {
+  // Always called with an index this same module just created below, so
+  // the slot is guaranteed to exist.
+  const slot = actionSlots[index]!;
+  const skillName = actionBarSkills[index];
+  slot.classList.toggle('filled', skillName !== null);
+  if (skillName) {
+    slot.textContent = skillName.charAt(0).toUpperCase();
+    slot.style.background = skillIconColor(skillName);
+    slot.title = `${skillName} (click to use on your selected target)`;
+  } else {
+    slot.textContent = '';
+    slot.style.background = '';
+    slot.title = '';
+  }
+}
+
+for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
+  const slot = document.createElement('div');
+  slot.className = 'action-slot';
+  slot.dataset.slotIndex = String(i);
+  slot.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    slot.classList.add('drag-over');
+  });
+  slot.addEventListener('dragleave', () => slot.classList.remove('drag-over'));
+  slot.addEventListener('drop', (e) => {
+    e.preventDefault();
+    slot.classList.remove('drag-over');
+    const skillName = e.dataTransfer?.getData('text/plain');
+    if (!skillName) return;
+    actionBarSkills[i] = skillName;
+    renderActionSlot(i);
+  });
+  slot.addEventListener('click', () => {
+    const skillName = actionBarSkills[i];
+    if (skillName) activeScene?.useTargetedSkill(skillName);
+  });
+  actionBar.appendChild(slot);
+  actionSlots.push(slot);
+}
 
 function updateWorldLabel(mapName: MapName): void {
   worldLabel.textContent = mapName;
+}
+
+// Backs item 11's left-click targeting — see WorldScene's
+// setTarget/clearTarget, the only callers.
+function updateTargetPanel(label: string, hp: number, maxHp: number): void {
+  targetPanel.hidden = false;
+  targetName.textContent = label;
+  const ratio = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
+  targetHpFill.style.width = `${(ratio * 100).toFixed(1)}%`;
+}
+
+function hideTargetPanel(): void {
+  targetPanel.hidden = true;
 }
 
 function updateSleepOverlay(): void {
@@ -102,6 +197,30 @@ const MAX_NIGHT_OPACITY = 0.55;
 function updateDaynightOverlay(hour: number): void {
   const darkness = ((1 - Math.cos(((hour - 12) / 24) * Math.PI * 2)) / 2) * MAX_NIGHT_OPACITY;
   daynightOverlay.style.background = `rgba(5, 5, 20, ${darkness.toFixed(3)})`;
+}
+
+// The "can't see outside without a light source" mechanic (see
+// shared/lighting.ts) — a hard, narrower window than the cosmetic
+// day/night tint above. Not known until the first 'worldTime' broadcast,
+// same reasoning as MAX_NIGHT_OPACITY above.
+let currentWorldHour = 12;
+let worldTimeKnown = false;
+function updateWorldHour(hour: number): void {
+  currentWorldHour = hour;
+  worldTimeKnown = true;
+  updateDaynightOverlay(hour);
+}
+
+function hideDarkFog(): void {
+  darkFogOverlay.style.background = 'transparent';
+}
+
+// A radial "hole" centered on the player's own SCREEN position (not
+// world position) — this naturally follows the camera's clamping near a
+// small map's edges, same as everything else the camera renders.
+function showDarkFog(screenX: number, screenY: number, radiusPx: number): void {
+  const edgePx = radiusPx * 1.6;
+  darkFogOverlay.style.background = `radial-gradient(circle at ${screenX.toFixed(0)}px ${screenY.toFixed(0)}px, rgba(0,0,0,0) ${radiusPx.toFixed(0)}px, rgba(2,2,6,0.96) ${edgePx.toFixed(0)}px)`;
 }
 
 const logPanel = document.getElementById('log-panel') as HTMLDivElement;
@@ -237,11 +356,30 @@ const corpseModal = document.getElementById('corpse-modal') as HTMLDivElement;
 const corpseModalTitle = document.getElementById('corpse-modal-title') as HTMLHeadingElement;
 const corpseItemList = document.getElementById('corpse-item-list') as HTMLUListElement;
 const corpseGrabAllBtn = document.getElementById('corpse-grab-all') as HTMLButtonElement;
+const corpseEatBrainsBtn = document.getElementById('corpse-eat-brains') as HTMLButtonElement;
+const shopModal = document.getElementById('shop-modal') as HTMLDivElement;
+const shopModalTitle = document.getElementById('shop-modal-title') as HTMLHeadingElement;
+const shopGoldLine = document.getElementById('shop-gold-line') as HTMLDivElement;
+const shopItemList = document.getElementById('shop-item-list') as HTMLUListElement;
+const targetInfoModal = document.getElementById('target-info-modal') as HTMLDivElement;
+const targetInfoTitle = document.getElementById('target-info-title') as HTMLHeadingElement;
+const targetInfoBody = document.getElementById('target-info-body') as HTMLDivElement;
+const targetInfoConsideration = document.getElementById('target-info-consideration') as HTMLDivElement;
 const autopilotModal = document.getElementById('autopilot-modal') as HTMLDivElement;
 const autopilotInput = document.getElementById('autopilot-input') as HTMLInputElement;
 const autopilotStatusEl = document.getElementById('autopilot-status') as HTMLDivElement;
 
-const ALL_MODALS = [charSheetModal, inventoryModal, skillsModal, equipmentModal, mapModal, corpseModal, autopilotModal];
+const ALL_MODALS = [
+  charSheetModal,
+  inventoryModal,
+  skillsModal,
+  equipmentModal,
+  mapModal,
+  corpseModal,
+  shopModal,
+  targetInfoModal,
+  autopilotModal,
+];
 
 // The single source of truth for "my own" stats — updated on 'sync' and
 // on any 'combat'/'loot' outcome that affects me, and read by the status
@@ -269,6 +407,7 @@ function updateStatusBar(): void {
   statusMana.textContent = `MP ${myProfile.mana}/${myProfile.maxMana}`;
   statusMv.textContent = `MV ${myProfile.movement}/${myProfile.maxMovement}`;
   statusExp.textContent = `EXP ${myProfile.exp}`;
+  statusGold.textContent = `Gold ${myProfile.gold}`;
   updateSleepOverlay();
 }
 
@@ -323,17 +462,52 @@ function acquirableSkillPool(): string[] {
   return [...pool];
 }
 
+// A skill row with a small icon to the left of its name (item 14) — built
+// by hand rather than reusing appendStatRow, since a usable skill's icon
+// also needs to be draggable into the action bar.
+function renderSkillRow(skillName: string, valueText: string, notAcquired: boolean): void {
+  const labelEl = document.createElement('div');
+  labelEl.className = 'stat-label skill-label';
+
+  const icon = document.createElement('span');
+  icon.className = 'skill-icon';
+  icon.textContent = skillName.charAt(0).toUpperCase();
+  icon.style.background = skillIconColor(skillName);
+
+  if (!notAcquired && isUsableSkill(skillName)) {
+    icon.draggable = true;
+    icon.classList.add('draggable');
+    icon.title = 'Drag to the action bar to use on your selected target';
+    icon.addEventListener('dragstart', (e) => {
+      e.dataTransfer?.setData('text/plain', skillName);
+    });
+  }
+
+  const nameSpan = document.createElement('span');
+  nameSpan.textContent = skillName;
+
+  labelEl.appendChild(icon);
+  labelEl.appendChild(nameSpan);
+
+  const valueEl = document.createElement('div');
+  valueEl.className = 'stat-value';
+  valueEl.textContent = valueText;
+  if (notAcquired) valueEl.classList.add('not-acquired');
+
+  skillsBody.appendChild(labelEl);
+  skillsBody.appendChild(valueEl);
+}
+
 function renderSkills(): void {
   if (!myProfile) return;
   skillsBody.innerHTML = '';
   for (const [skillName, percent] of Object.entries(myProfile.skills)) {
-    appendStatRow(skillsBody, skillName, `${percent}%`);
+    renderSkillRow(skillName, `${percent}%`, false);
   }
   if (showAllSkills) {
     for (const skillName of acquirableSkillPool()) {
       if (myProfile.skills[skillName] !== undefined) continue;
-      appendStatRow(skillsBody, skillName, '(not yet acquired)');
-      skillsBody.lastElementChild?.classList.add('not-acquired');
+      renderSkillRow(skillName, '(not yet acquired)', true);
     }
   }
 }
@@ -379,14 +553,16 @@ function renderInventory(): void {
     li.textContent = indices.length > 1 ? `${item} x${indices.length}` : item;
     li.className = 'inventory-item';
     li.title = 'Click to use, right-click to consume';
-    li.addEventListener('click', () => useInventoryItem(indices[0]));
+    // Every group has at least one index (it's seeded with one on
+    // creation above), so this is always defined.
+    li.addEventListener('click', () => useInventoryItem(indices[0]!));
     // The browser's own right-click context menu is never useful here —
     // captured and replaced with a forced consume (see
     // game.gateway.ts's consumeItem), so an otherwise-equippable item
     // (a bone dagger, say) can be eaten for its exp instead of worn.
     li.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      consumeInventoryItem(indices[0]);
+      consumeInventoryItem(indices[0]!);
     });
     inventoryList.appendChild(li);
   }
@@ -428,14 +604,19 @@ function consumeInventoryItem(index: number): void {
   });
 }
 
-// ---------- Player (and training-dummy) corpse loot modal ----------
-// Monster corpses stay grab-everything-on-click (see WorldScene.lootCorpse)
-// — this modal is only for player-kind corpses (see the RACES check at the
-// corpse sprite's pointerdown handler), where the user asked for a choice
-// between "Grab all" and picking items one at a time.
+// ---------- Corpse loot modal (players, the training dummy, and monsters
+// alike) ---------- a choice between "Grab all" and picking items one at
+// a time. Autopilot bypasses this entirely (see applyMapState), grabbing
+// straight away so automation doesn't stall on a modal.
 
 let currentCorpseId: string | null = null;
 let currentCorpseItems: string[] = [];
+let currentCorpseKilledBy: string | undefined;
+
+function updateEatBrainsButton(): void {
+  const canEatBrains = myProfile?.race === 'zombie' && currentCorpseKilledBy !== undefined && currentCorpseKilledBy === myProfile.username;
+  corpseEatBrainsBtn.hidden = !canEatBrains;
+}
 
 function renderCorpseModal(): void {
   corpseItemList.innerHTML = '';
@@ -454,15 +635,45 @@ function renderCorpseModal(): void {
   });
 }
 
-function openCorpseModal(corpseId: string, items: string[], kind: string): void {
+function openCorpseModal(corpseId: string, items: string[], kind: string, killedBy: string | undefined): void {
   closeAllModals();
   currentCorpseId = corpseId;
   currentCorpseItems = [...items];
+  currentCorpseKilledBy = killedBy;
   corpseModalTitle.textContent = `${kind} corpse`;
   corpseModal.hidden = false;
   updateInputCaptured();
+  updateEatBrainsButton();
   renderCorpseModal();
 }
+
+corpseEatBrainsBtn.addEventListener('click', () => {
+  if (!currentCorpseId) return;
+  network
+    .eatBrains(currentCorpseId)
+    .then((ack) => {
+      if (!ack.ok) {
+        if (ack.message) logCombatMessage(ack.message);
+        return;
+      }
+      if (myProfile) {
+        myProfile = {
+          ...myProfile,
+          hp: ack.hp ?? myProfile.hp,
+          maxHp: ack.maxHp ?? myProfile.maxHp,
+          mana: ack.mana ?? myProfile.mana,
+          maxMana: ack.maxMana ?? myProfile.maxMana,
+          movement: ack.movement ?? myProfile.movement,
+          maxMovement: ack.maxMovement ?? myProfile.maxMovement,
+        };
+        updateStatusBar();
+      }
+      if (ack.message) logCombatMessage(ack.message);
+    })
+    .catch(() => {
+      /* nothing to show */
+    });
+});
 
 function grabCorpseItem(index: number): void {
   if (!currentCorpseId) return;
@@ -508,11 +719,110 @@ corpseGrabAllBtn.addEventListener('click', () => {
     });
 });
 
+// ---------- Shop modal (a vendor's fixed item list, each with a Buy
+// button) — vendors never move or restock, so there's nothing to poll;
+// every purchase just re-renders against the same static item list.
+
+let currentVendor: VendorSnapshot | null = null;
+
+function renderShopModal(): void {
+  shopGoldLine.textContent = `Your gold: ${myProfile?.gold ?? 0}`;
+  shopItemList.innerHTML = '';
+  if (!currentVendor) return;
+  for (const item of currentVendor.items) {
+    const li = document.createElement('li');
+    li.className = 'shop-item';
+    const label = document.createElement('span');
+    label.textContent = `${item.label} — ${item.price} gold`;
+    const buyBtn = document.createElement('button');
+    buyBtn.type = 'button';
+    buyBtn.textContent = 'Buy';
+    buyBtn.addEventListener('click', () => buyVendorItem(item.label));
+    li.appendChild(label);
+    li.appendChild(buyBtn);
+    shopItemList.appendChild(li);
+  }
+}
+
+function openShopModal(vendor: VendorSnapshot): void {
+  closeAllModals();
+  currentVendor = vendor;
+  shopModalTitle.textContent = vendor.name;
+  shopModal.hidden = false;
+  updateInputCaptured();
+  renderShopModal();
+}
+
+function buyVendorItem(itemLabel: string): void {
+  if (!currentVendor) return;
+  network
+    .buyItem(currentVendor.id, itemLabel)
+    .then((ack) => {
+      if (!ack.ok) {
+        if (ack.message) logCombatMessage(ack.message);
+        return;
+      }
+      if (myProfile) {
+        myProfile = {
+          ...myProfile,
+          inventory: ack.inventory ?? myProfile.inventory,
+          gold: ack.gold ?? myProfile.gold,
+        };
+        refreshOpenModals();
+      }
+      if (ack.message) logCombatMessage(ack.message);
+      renderShopModal();
+    })
+    .catch(() => {
+      /* nothing to show */
+    });
+}
+
+// ---------- Target info modal (double-click a player/npc/monster — item
+// 12) ---------- name, equipment/carried items, and a "consideration"
+// message comparing the target's level to your own. This project has no
+// prior "consider" mechanic to match (the text game doesn't have one
+// either) — these tiers/wording are new, not ported from anywhere.
+
+function considerationMessage(viewerLevel: number, targetLevel: number): string {
+  const diff = targetLevel - viewerLevel;
+  if (diff <= -5) return 'This would be no challenge at all for you.';
+  if (diff <= -2) return 'You would win this fight easily.';
+  if (diff <= 1) return 'This would be a fair fight.';
+  if (diff <= 4) return 'This could go either way — be careful.';
+  return 'You would likely be defeated.';
+}
+
+function openTargetInfoModal(kind: 'player' | 'npc' | 'monster', id: string, sprite: Phaser.GameObjects.Sprite): void {
+  closeAllModals();
+  const label = (sprite.getData('label') as string | undefined) ?? id;
+  const level = (sprite.getData('level') as number | undefined) ?? 1;
+
+  targetInfoTitle.textContent = label;
+  targetInfoBody.innerHTML = '';
+  appendStatRow(targetInfoBody, 'Level', level);
+
+  if (kind === 'player') {
+    const equipment = (sprite.getData('equipment') as Record<string, string> | undefined) ?? {};
+    for (const slot of EQUIPMENT_SLOTS) {
+      appendStatRow(targetInfoBody, EQUIPMENT_SLOT_LABELS[slot], equipment[slot] ?? '(none)');
+    }
+  } else if (kind === 'monster') {
+    const carried = (sprite.getData('carriedItems') as string[] | undefined) ?? [];
+    appendStatRow(targetInfoBody, 'Carrying', carried.length > 0 ? carried.join(', ') : '(nothing)');
+  }
+
+  targetInfoConsideration.textContent = myProfile ? considerationMessage(myProfile.level, level) : '';
+  targetInfoModal.hidden = false;
+  updateInputCaptured();
+}
+
 function refreshOpenModals(): void {
   if (!charSheetModal.hidden) renderCharSheet();
   if (!inventoryModal.hidden) renderInventory();
   if (!skillsModal.hidden) renderSkills();
   if (!equipmentModal.hidden) renderEquipment();
+  if (!shopModal.hidden) renderShopModal();
 }
 
 // Hides a modal without any side effects beyond that — used both by the
@@ -880,6 +1190,11 @@ class WorldScene extends Phaser.Scene {
   private floorTile!: Phaser.GameObjects.TileSprite;
   private doorSprites: Phaser.GameObjects.Sprite[] = [];
   private race: Race = 'goblin';
+  // A slime's current mimicked appearance (see shared/skills.ts's
+  // MIMIC_SKILL/REVERT_SKILL) — overrides race for texture/animation
+  // lookups ONLY (see displayKind); race itself is always the true,
+  // mechanical one.
+  private mimicForm: (Race | MonsterKind) | null = null;
   private facing: Facing = 'down';
   private currentMap: MapName = 'Great Plains';
   private row = 0;
@@ -902,6 +1217,15 @@ class WorldScene extends Phaser.Scene {
   private npcSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private monsterSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private corpseSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  // Shopkeepers etc. — static and never a combat target, so no HP bar and
+  // no occupancy/collision handling beyond what the server already does.
+  private vendorSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  // Left-click target (see setTarget/handleLeftClick) — id is a username
+  // for a player, otherwise the npc/monster's own id. Cleared whenever
+  // the target dies/leaves/disconnects (see applyMapState's cleanup
+  // loops).
+  private targetKind: 'player' | 'npc' | 'monster' | null = null;
+  private targetId: string | null = null;
   // Great-Plains-only background dressing — server-enforced collision
   // (see shared/trees.ts), but no per-row depth sorting against
   // characters (always drawn behind them; see renderMap).
@@ -958,6 +1282,7 @@ class WorldScene extends Phaser.Scene {
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       if (inputCaptured) return;
       if (pointer.rightButtonDown()) this.handleRightClick(pointer);
+      else if (pointer.leftButtonDown()) this.handleLeftClick(pointer);
     });
 
     // A window resize can cross the "map fits in the viewport" threshold
@@ -974,7 +1299,7 @@ class WorldScene extends Phaser.Scene {
     this.network.addEventListener('combat', ((e: CustomEvent<CombatEventPayload>) => this.applyCombatEvent(e.detail)) as EventListener);
     this.network.addEventListener('chat', ((e: CustomEvent<ChatPayload>) => logChatMessage(e.detail.username, e.detail.message)) as EventListener);
     this.network.addEventListener('statTick', ((e: CustomEvent<StatTickPayload>) => this.applyOwnStats(e.detail)) as EventListener);
-    this.network.addEventListener('worldTime', ((e: CustomEvent<WorldTimePayload>) => updateDaynightOverlay(e.detail.hour)) as EventListener);
+    this.network.addEventListener('worldTime', ((e: CustomEvent<WorldTimePayload>) => updateWorldHour(e.detail.hour)) as EventListener);
     this.network.addEventListener('kicked', ((e: CustomEvent<KickedPayload>) => {
       alert(e.detail.message);
       window.location.reload();
@@ -985,6 +1310,7 @@ class WorldScene extends Phaser.Scene {
 
   update(): void {
     this.repositionHpBars();
+    this.updateDarkFog();
 
     if (this.isMoving || this.isPunching) return;
 
@@ -1245,9 +1571,16 @@ class WorldScene extends Phaser.Scene {
     return { x: col * TILE_SIZE + TILE_SIZE / 2, y: row * TILE_SIZE + TILE_SIZE / 2 };
   }
 
+  // The kind actually rendered — a slime's mimicForm, if set, otherwise
+  // its real race. Every texture/animation lookup for the LOCAL player
+  // goes through this instead of `race` directly.
+  private displayKind(): SpriteKind {
+    return this.mimicForm ?? this.race;
+  }
+
   private setIdle(): void {
     this.player.anims.stop();
-    this.player.setTexture(textureKeyFor(this.race), idleFrameFor(this.race, this.facing));
+    this.player.setTexture(textureKeyFor(this.displayKind()), idleFrameFor(this.displayKind(), this.facing));
   }
 
   // Moves an existing other-player/monster sprite to its newly-reported
@@ -1357,6 +1690,8 @@ class WorldScene extends Phaser.Scene {
     this.monsterSprites.clear();
     for (const sprite of this.corpseSprites.values()) sprite.destroy();
     this.corpseSprites.clear();
+    for (const sprite of this.vendorSprites.values()) sprite.destroy();
+    this.vendorSprites.clear();
 
     // Great-Plains-only, fixed positions from the shared/trees.ts seed —
     // the server blocks movement onto these same tiles (see
@@ -1377,6 +1712,7 @@ class WorldScene extends Phaser.Scene {
   private applySync(player: PlayerSnapshot): void {
     this.myUsername = player.username;
     this.race = player.race;
+    this.mimicForm = player.mimicForm;
     this.row = player.row;
     this.col = player.col;
     myProfile = player;
@@ -1432,25 +1768,46 @@ class WorldScene extends Phaser.Scene {
       if (p.username === this.myUsername) continue;
       seenPlayers.add(p.username);
 
+      // A slime's mimicForm (if set) overrides its rendered appearance
+      // entirely — see shared/skills.ts's MIMIC_SKILL/REVERT_SKILL —
+      // while p.race stays the real, mechanical one underneath.
+      const displayKind: SpriteKind = p.mimicForm ?? p.race;
       let sprite = this.otherPlayers.get(p.username);
       if (!sprite) {
         const pos = this.tilePosition(p.row, p.col);
-        sprite = this.add.sprite(pos.x, pos.y, textureKeyFor(p.race), idleFrameFor(p.race, 'down')).setScale(CHAR_SCALE);
+        sprite = this.add.sprite(pos.x, pos.y, textureKeyFor(displayKind), idleFrameFor(displayKind, 'down')).setScale(CHAR_SCALE);
         sprite.setData('row', p.row);
         sprite.setData('col', p.col);
         this.otherPlayers.set(p.username, sprite);
       } else {
-        this.moveOrSnap(sprite, p.race, p.row, p.col);
+        this.moveOrSnap(sprite, displayKind, p.row, p.col);
+      }
+      // A mimic-form change while standing still (no move to trigger
+      // moveOrSnap's own texture swap) needs its own immediate refresh.
+      if (sprite.getData('displayKind') !== displayKind) {
+        sprite.setData('displayKind', displayKind);
+        if (!sprite.getData('isPunching')) {
+          const facing = (sprite.getData('facing') as FacingGroup) ?? 'down';
+          sprite.setTexture(textureKeyFor(displayKind), idleFrameFor(displayKind, facing));
+        }
       }
       sprite.setData('race', p.race);
+      sprite.setData('hasLight', p.hasLight);
+      sprite.setData('label', p.username);
+      sprite.setData('hp', p.hp);
+      sprite.setData('maxHp', p.maxHp);
+      sprite.setData('level', p.level);
+      sprite.setData('equipment', p.equipment);
       this.ensureHpBar(sprite, p.hp, p.maxHp);
       this.ensureWeaponSprite(sprite, Boolean(p.equipment.weapon), (sprite.getData('facing') as Facing) ?? 'down');
       this.applyRestPose(sprite, p.restState, CHAR_SCALE);
+      if (this.targetKind === 'player' && this.targetId === p.username) updateTargetPanel(p.username, p.hp, p.maxHp);
     }
     for (const [username, sprite] of this.otherPlayers) {
       if (!seenPlayers.has(username)) {
         this.destroyEntitySprite(sprite);
         this.otherPlayers.delete(username);
+        if (this.targetKind === 'player' && this.targetId === username) this.clearTarget();
       }
     }
 
@@ -1472,7 +1829,12 @@ class WorldScene extends Phaser.Scene {
         sprite.setPosition(pos.x, pos.y);
       }
       sprite.setData('race', npc.race);
+      sprite.setData('label', 'training dummy');
+      sprite.setData('hp', npc.hp);
+      sprite.setData('maxHp', npc.maxHp);
+      sprite.setData('level', npc.level);
       this.ensureHpBar(sprite, npc.hp, npc.maxHp);
+      if (this.targetKind === 'npc' && this.targetId === npc.id) updateTargetPanel('training dummy', npc.hp, npc.maxHp);
     }
 
     const seenMonsters = new Set<string>();
@@ -1490,14 +1852,21 @@ class WorldScene extends Phaser.Scene {
         this.moveOrSnap(sprite, m.kind, m.row, m.col);
       }
       sprite.setData('kind', m.kind);
+      sprite.setData('label', m.kind);
+      sprite.setData('hp', m.hp);
+      sprite.setData('maxHp', m.maxHp);
+      sprite.setData('level', m.level);
+      sprite.setData('carriedItems', m.carriedItems);
       this.ensureHpBar(sprite, m.hp, m.maxHp);
       const hasWeapon = m.carriedItems.some((item) => item.toLowerCase().includes('dagger'));
       this.ensureWeaponSprite(sprite, hasWeapon, (sprite.getData('facing') as Facing) ?? 'down');
+      if (this.targetKind === 'monster' && this.targetId === m.id) updateTargetPanel(m.kind, m.hp, m.maxHp);
     }
     for (const [id, sprite] of this.monsterSprites) {
       if (!seenMonsters.has(id)) {
         this.destroyEntitySprite(sprite);
         this.monsterSprites.delete(id);
+        if (this.targetKind === 'monster' && this.targetId === id) this.clearTarget();
       }
     }
 
@@ -1514,14 +1883,11 @@ class WorldScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (inputCaptured || !pointer.leftButtonDown()) return;
-        // Player (and training-dummy) corpses open the loot modal for a
-        // grab-all-or-pick-items choice; monster corpses stay a simple
-        // grab-everything click, same as before.
-        if ((RACES as readonly string[]).includes(c.kind)) {
-          openCorpseModal(c.id, c.items, c.kind);
-        } else {
-          this.lootCorpse(c.id, c.items);
-        }
+        // Every corpse (player, training dummy, or monster) opens the
+        // same grab-all-or-pick-items loot modal — autopilot bypasses it
+        // entirely below, grabbing straight away so automation doesn't
+        // stall waiting on a modal.
+        openCorpseModal(c.id, c.items, c.kind, c.killedBy);
       });
       this.corpseSprites.set(c.id, sprite);
 
@@ -1538,6 +1904,55 @@ class WorldScene extends Phaser.Scene {
         this.corpseSprites.delete(id);
       }
     }
+
+    // Vendors are static and permanent for the lifetime of the map (never
+    // added/removed by anything the client does), so this only ever needs
+    // to create each one once, the first time it shows up in a snapshot.
+    for (const v of state.vendors) {
+      if (this.vendorSprites.has(v.id)) continue;
+      const pos = this.tilePosition(v.row, v.col);
+      const sprite = this.add
+        .sprite(pos.x, pos.y, textureKeyFor('shopkeeper'), idleFrameFor('shopkeeper', 'down'))
+        .setScale(CHAR_SCALE)
+        .setInteractive({ useHandCursor: true });
+      sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (inputCaptured || !pointer.leftButtonDown()) return;
+        openShopModal(v);
+      });
+      this.vendorSprites.set(v.id, sprite);
+    }
+  }
+
+  // True if the local player can currently see in the dark — their own
+  // infravision/torch, a nearby ally carrying one, or standing near a
+  // static fixture (see shared/lighting.ts). Irrelevant outside the dark
+  // hours, where updateDarkFog never calls this at all.
+  private playerHasLightNearby(): boolean {
+    if (!myProfile) return false;
+    if (hasLightSource(myProfile.skills, myProfile.equipment)) return true;
+    if (isNearStaticLight(this.currentMap, this.row, this.col)) return true;
+    for (const sprite of this.otherPlayers.values()) {
+      if (!sprite.getData('hasLight')) continue;
+      const otherRow = sprite.getData('row') as number;
+      const otherCol = sprite.getData('col') as number;
+      if (isWithinLightRadius(this.row, this.col, otherRow, otherCol)) return true;
+    }
+    return false;
+  }
+
+  // Drives the #dark-fog-overlay DOM element every frame — cheap (just a
+  // CSS background string), and simplest kept here rather than adding a
+  // dedicated "did anything actually change" cache.
+  private updateDarkFog(): void {
+    if (!worldTimeKnown || !myProfile || !isDarkHour(currentWorldHour) || this.playerHasLightNearby()) {
+      hideDarkFog();
+      return;
+    }
+    const cam = this.cameras.main;
+    const screenX = (this.player.x - cam.scrollX) * cam.zoom;
+    const screenY = (this.player.y - cam.scrollY) * cam.zoom;
+    const radiusPx = LIGHT_RADIUS_TILES * TILE_SIZE * cam.zoom;
+    showDarkFog(screenX, screenY, radiusPx);
   }
 
   private isWithinLootReach(row: number, col: number): boolean {
@@ -1565,7 +1980,7 @@ class WorldScene extends Phaser.Scene {
 
   private attemptMove(direction: Direction): void {
     this.facing = facingForDirection(direction);
-    this.player.play(walkAnimKey(this.race, this.facing), true);
+    this.player.play(walkAnimKey(this.displayKind(), this.facing), true);
     this.isMoving = true;
 
     this.network
@@ -1584,6 +1999,7 @@ class WorldScene extends Phaser.Scene {
           // A map transition is a load, not a walk — snap straight to the
           // new map rather than tweening across two different worlds.
           this.race = ack.player.race;
+          this.mimicForm = ack.player.mimicForm;
           if (myProfile) myProfile = { ...myProfile, map: ack.player.map };
           this.renderMap(ack.player.map);
           updateWorldLabel(ack.player.map);
@@ -1634,9 +2050,107 @@ class WorldScene extends Phaser.Scene {
     return false;
   }
 
+  // Left click anywhere a player/npc/monster sprite's bounds cover sets
+  // it as the current target (see item 11) — deliberately not gated on
+  // reach/adjacency the way punch is, since selecting a target you're
+  // about to walk toward is normal play.
+  private findTargetableAt(
+    x: number,
+    y: number
+  ): { kind: 'player' | 'npc' | 'monster'; id: string; sprite: Phaser.GameObjects.Sprite } | null {
+    for (const [username, sprite] of this.otherPlayers) {
+      if (sprite.getBounds().contains(x, y)) return { kind: 'player', id: username, sprite };
+    }
+    for (const [id, sprite] of this.npcSprites) {
+      if (sprite.getBounds().contains(x, y)) return { kind: 'npc', id, sprite };
+    }
+    for (const [id, sprite] of this.monsterSprites) {
+      if (sprite.getBounds().contains(x, y)) return { kind: 'monster', id, sprite };
+    }
+    return null;
+  }
+
+  private lastClickKey: string | null = null;
+  private lastClickAt = 0;
+  private static readonly DOUBLE_CLICK_MS = 350;
+
+  private handleLeftClick(pointer: Phaser.Input.Pointer): void {
+    const found = this.findTargetableAt(pointer.worldX, pointer.worldY);
+    if (!found) return;
+    this.setTarget(found.kind, found.id, found.sprite);
+
+    const key = `${found.kind}:${found.id}`;
+    const now = Date.now();
+    if (this.lastClickKey === key && now - this.lastClickAt < WorldScene.DOUBLE_CLICK_MS) {
+      this.lastClickKey = null;
+      openTargetInfoModal(found.kind, found.id, found.sprite);
+    } else {
+      this.lastClickKey = key;
+      this.lastClickAt = now;
+    }
+  }
+
+  private setTarget(kind: 'player' | 'npc' | 'monster', id: string, sprite: Phaser.GameObjects.Sprite): void {
+    this.targetKind = kind;
+    this.targetId = id;
+    const label = (sprite.getData('label') as string | undefined) ?? id;
+    const hp = (sprite.getData('hp') as number | undefined) ?? 0;
+    const maxHp = (sprite.getData('maxHp') as number | undefined) ?? 1;
+    updateTargetPanel(label, hp, maxHp);
+  }
+
+  private clearTarget(): void {
+    this.targetKind = null;
+    this.targetId = null;
+    hideTargetPanel();
+  }
+
+  // Read by the action bar (item 14) when a slotted skill is clicked —
+  // "the currently selected target," if any.
+  getTarget(): { kind: 'player' | 'npc' | 'monster'; id: string } | null {
+    if (!this.targetKind || !this.targetId) return null;
+    return { kind: this.targetKind, id: this.targetId };
+  }
+
+  // The action bar's click handler for a filled slot (item 14) — resolves
+  // the currently selected target's sprite, checks it's still here and
+  // adjacent, then dispatches to whatever that skill actually does. Punch
+  // and dagger are the only ones wired up today (see isUsableSkill in
+  // main.ts's module scope) — both are the same contact-range attack the
+  // direction keys/right-click already throw, just aimed at the target
+  // instead of wherever the player happens to be facing.
+  useTargetedSkill(skillName: string): void {
+    if (!this.targetKind || !this.targetId) {
+      logCombatMessage('Select a target first (left-click a player or monster).');
+      return;
+    }
+    const spriteMap = this.targetKind === 'player' ? this.otherPlayers : this.targetKind === 'npc' ? this.npcSprites : this.monsterSprites;
+    const sprite = spriteMap.get(this.targetId);
+    if (!sprite) {
+      logCombatMessage('Your target is no longer here.');
+      this.clearTarget();
+      return;
+    }
+
+    const targetRow = sprite.getData('row') as number;
+    const targetCol = sprite.getData('col') as number;
+    const dRow = targetRow - this.row;
+    const dCol = targetCol - this.col;
+    if (Math.abs(dRow) + Math.abs(dCol) !== 1) {
+      logCombatMessage("You're not in range of your target.");
+      return;
+    }
+    if (this.isMoving || this.isPunching) return;
+
+    const direction: Direction = dRow === -1 ? 'north' : dRow === 1 ? 'south' : dCol === -1 ? 'west' : 'east';
+    if (skillName === PUNCH_SKILL || skillName === DAGGER_SKILL) {
+      this.performPunch(direction);
+    }
+  }
+
   private performPunch(direction: Direction): void {
     this.facing = facingForDirection(direction);
-    const animKey = punchAnimKey(this.race, this.facing);
+    const animKey = punchAnimKey(this.displayKind(), this.facing);
 
     this.isPunching = true;
     this.player.play(animKey, true);
