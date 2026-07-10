@@ -63,6 +63,7 @@ import {
   BONE_FINGER_STRIKE_GRANT_CHANCE,
   computeBoneFingerStrikeDamage,
   GLARE_SKILL,
+  SKILL_COOLDOWN_MS,
   skillGrowthMessage,
   computeDodgeChance,
   computeParryChance,
@@ -84,7 +85,7 @@ import {
 } from '../combat/formulas.js';
 import type { Monster } from '../monsters/monster.js';
 import type { AppConfig } from '../config/configuration.js';
-import type { PlayerSnapshot, GameServer, GameSocket, CombatEventPayload, UseItemAck, RestState, BuyAck, EatBrainsAck, SacrificeAck } from '../../shared/types.js';
+import type { PlayerSnapshot, GameServer, GameSocket, CombatEventPayload, UseItemAck, RestState, BuyAck, EatBrainsAck, SacrificeAck, MoveAck } from '../../shared/types.js';
 import { TOWN_MAPS } from '../../shared/constants.js';
 import { emitsLight, TORCH_ITEM, isNightHour, isWithinLightRadius, isWithinShopReach } from '../../shared/lighting.js';
 import { MONSTER_KINDS } from '../../shared/constants.js';
@@ -132,18 +133,16 @@ const COMBAT_DISENGAGE_TICKS = 3;
 // (every 30-40s) rather than its own timer — plenty precise for a
 // 15-minute budget.
 const TORCH_LIFETIME_MS = 15 * 60 * 1000;
-// Same shape as the text game's own global stat tick — a randomized
-// 30-40s interval (a setTimeout chain, not setInterval, so each firing
-// re-rolls its own next delay) heals hp/mana/movement by one shared
-// random percent of each stat's own max, the percent range depending on
-// restState exactly like the text game's own HEAL_PERCENT_RANGE.
+// A flat 30s interval (a setTimeout chain, not setInterval, purely so a
+// future tweak to re-introduce jitter would only touch scheduleStatTick)
+// heals hp/mana/movement by one shared random percent of each stat's own
+// max, the percent range depending on restState.
 const HOURS_PER_DAY = 24;
-const STAT_TICK_MIN_MS = 30_000;
-const STAT_TICK_MAX_MS = 40_000;
+const STAT_TICK_MS = 30_000;
 const HEAL_PERCENT_RANGE: Record<RestState, [number, number]> = {
-  awake: [2, 5],
-  resting: [4, 7],
-  sleeping: [5, 10],
+  awake: [7, 10],
+  resting: [9, 12],
+  sleeping: [10, 15],
 };
 const STAT_TICK_FLAVOR: Record<RestState, string> = {
   awake: 'You catch your breath',
@@ -179,9 +178,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // connected socket regardless of map (see globalStatTick) so the
   // client can render a gradually shifting day/night overlay.
   private worldHour = 0;
-  // Counts globalStatTick firings (each a random 30-40s apart) — the
-  // actual "world tick" unit Eat Brains/Glare cooldowns are measured in,
-  // as opposed to the much faster, fixed-interval MONSTER_TICK_INTERVAL_MS
+  // Counts globalStatTick firings (a flat STAT_TICK_MS apart) — the
+  // actual "world tick" unit Eat Brains cooldowns are measured in, as
+  // opposed to the much faster, fixed-interval MONSTER_TICK_INTERVAL_MS
   // (wander/respawn/corpse-expiry), which isn't a "combat tick" at all.
   private currentTick = 0;
   // Counts the shared MONSTER_TICK_INTERVAL_MS firings (a fixed ~3s apart)
@@ -284,8 +283,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   }
 
   private scheduleStatTick(): void {
-    const delay = STAT_TICK_MIN_MS + Math.random() * (STAT_TICK_MAX_MS - STAT_TICK_MIN_MS);
-    setTimeout(() => this.globalStatTick(), delay).unref();
+    setTimeout(() => this.globalStatTick(), STAT_TICK_MS).unref();
   }
 
   private globalStatTick(): void {
@@ -364,6 +362,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       mimicableRaces: client.data.mimicableRaces,
       mimicForm: client.data.mimicForm,
       eatBrainsReadyAtTick: client.data.eatBrainsReadyAtTick,
+      skillCooldowns: client.data.skillCooldowns,
     };
   }
 
@@ -801,6 +800,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // here.
     client.data.torchRemainingMs = TORCH_LIFETIME_MS;
     client.data.torchLitAt = client.data.equipment.shield === TORCH_ITEM ? Date.now() : null;
+    // Never persisted — a fresh connection always starts every skill off
+    // cooldown, same tradeoff as restState/eatBrainsReadyAtTick above.
+    client.data.skillCooldowns = {};
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
@@ -829,6 +831,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       mimicableRaces: client.data.mimicableRaces,
       mimicForm: client.data.mimicForm,
       eatBrainsReadyAtTick: client.data.eatBrainsReadyAtTick,
+      skillCooldowns: client.data.skillCooldowns,
     });
     void client.join(client.data.map);
 
@@ -857,10 +860,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   }
 
   @SubscribeMessage('move')
-  async handleMove(
-    @ConnectedSocket() client: GameSocket,
-    @MessageBody() rawDirection: unknown
-  ): Promise<{ ok: boolean; player: PlayerSnapshot; message?: string }> {
+  async handleMove(@ConnectedSocket() client: GameSocket, @MessageBody() rawDirection: unknown): Promise<MoveAck> {
     const limiter = this.commandLimiters.get(client.id);
     if (limiter && !limiter.tryConsume()) {
       return { ok: false, player: this.snapshotFor(client), message: 'Slow down — too many moves.' };
@@ -873,6 +873,20 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const parsed = directionSchema.safeParse(rawDirection);
     if (!parsed.success) {
       return { ok: false, player: this.snapshotFor(client), message: 'Unknown direction.' };
+    }
+
+    // Not enough movement left to afford even one step on the ground
+    // they're currently standing on (item 8) — refused outright, same as
+    // any other blocked move, rather than letting movement go negative.
+    // Checked against the DEPARTURE map's own cost, matching how the
+    // cost itself is charged (see the deduction further below).
+    if (client.data.movement < movementCostFor(client.data.map)) {
+      return {
+        ok: false,
+        player: this.snapshotFor(client),
+        message: "You're out of movement and need to rest.",
+        outOfMovement: true,
+      };
     }
 
     this.wakeIfNeeded(client);
@@ -969,7 +983,26 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return;
     }
 
+    const cooldownUntil = client.data.skillCooldowns[parsed.data.skill];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      this.systemMessage(client, `${parsed.data.skill} is still recharging (${secondsLeft}s left).`);
+      return;
+    }
+
     this.engageInDirection(client, parsed.data.direction, parsed.data.skill);
+  }
+
+  // Starts a skill's cooldown (item 22) — only skills with an entry in
+  // SKILL_COOLDOWN_MS have one at all (today, just Glare); called right
+  // after a queued skill actually resolves (see resolveHitOnMonster/Npc/
+  // Player), not at engage time, so spamming useSkill while a hit is
+  // still pending doesn't start the clock early.
+  private startSkillCooldown(client: GameSocket, skill: string): void {
+    const durationMs = SKILL_COOLDOWN_MS[skill];
+    if (durationMs === undefined) return;
+    client.data.skillCooldowns = { ...client.data.skillCooldowns, [skill]: Date.now() + durationMs };
+    this.worldManager.updateState(client.data.username, { skillCooldowns: client.data.skillCooldowns });
   }
 
   // Shared by punch/useSkill: throws the swing animation immediately
@@ -1089,6 +1122,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // counter (item 14) rather than being an automatic side effect of every
   // hit.
   private resolveHitOnMonster(client: GameSocket, monster: Monster, skillName: string): void {
+    if (skillName === GLARE_SKILL) this.startSkillCooldown(client, GLARE_SKILL);
     const growthMessages: string[] = [];
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
@@ -1209,6 +1243,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // Same skillName dispatch as resolveHitOnMonster, against the training
   // dummy — see that method's own doc comment for the shared reasoning.
   private resolveHitOnNpc(client: GameSocket, npc: (typeof NPCS)[number], skillName: string): void {
+    if (skillName === GLARE_SKILL) this.startSkillCooldown(client, GLARE_SKILL);
     // The training dummy has the same starting attributes as a brand-new
     // player (see combat/formulas.ts) — it's "a player as well" for
     // damage-formula purposes ("the test player"). It still grants no
@@ -1337,6 +1372,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // Same skillName dispatch as resolveHitOnMonster/resolveHitOnNpc, for
   // PvP — see resolveHitOnMonster's doc comment for the shared reasoning.
   private async resolveHitOnPlayer(client: GameSocket, targetUsername: string, skillName: string): Promise<void> {
+    if (skillName === GLARE_SKILL) this.startSkillCooldown(client, GLARE_SKILL);
     const targetSocketId = this.activeConnections.getActiveSocketId(targetUsername);
     const targetClient = targetSocketId ? (this.server.sockets.sockets.get(targetSocketId) as GameSocket | undefined) : undefined;
     // Extremely rare (disconnected between the occupancy check and here) —

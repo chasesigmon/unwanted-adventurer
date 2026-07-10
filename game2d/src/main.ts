@@ -1,14 +1,17 @@
 import Phaser from 'phaser';
 import { NetworkManager } from './net.js';
-import { createGrassTexture, TILE_SIZE } from './grassTexture.js';
-import { createStoneTexture } from './stoneTexture.js';
-import { createConcreteTexture } from './concreteTexture.js';
-import { createDoorTexture } from './doorSprite.js';
-import { createTreeSpritesheet, createTreeSwayAnim, TREE_TEXTURE_KEY, TREE_SWAY_ANIM_KEY } from './treeSprite.js';
-import { createDaggerTexture, DAGGER_TEXTURE_KEY } from './daggerSprite.js';
-import { createBoneShieldTexture, BONE_SHIELD_TEXTURE_KEY } from './boneShieldSprite.js';
-import { createShopfrontTexture } from './shopfrontSprite.js';
 import { createWallTorchTexture, WALL_TORCH_TEXTURE_KEY } from './wallTorchSprite.js';
+
+// Real image assets under game2d/assets/ (Vite's publicDir, served at
+// the site root — see characterSprites.ts's own SHEET_PATHS for the
+// established convention), loaded via Phaser's SVG loader in preload()
+// below — not procedurally drawn at runtime (see the memory note this
+// was converted to follow: new sprites/textures are real asset files).
+const TILE_SIZE = 32;
+const TREE_TEXTURE_KEY = 'tree';
+const DAGGER_TEXTURE_KEY = 'held-dagger';
+const BONE_SHIELD_TEXTURE_KEY = 'held-bone-shield';
+const TORCH_HELD_TEXTURE_KEY = 'held-torch';
 import {
   preloadCharacterSprites,
   createCharacterAnims,
@@ -29,10 +32,24 @@ import {
   HOBGOBLIN_EVOLUTION_SKILLS,
   RESISTANCE_SKILLS,
   PUNCH_SKILL,
+  DODGE_SKILL,
+  PARRY_SKILL,
+  SHIELD_BLOCK_SKILL,
   DAGGER_SKILL,
+  SECOND_ATTACK_SKILL,
+  THIRD_ATTACK_SKILL,
+  ENHANCED_DAMAGE_SKILL,
+  LESSER_NORMAL_MONSTER_RESISTANCE,
+  LESSER_UNDEAD_MONSTER_RESISTANCE,
   INFRAVISION_SKILL,
+  LACERATE_SKILL,
+  MIMIC_SKILL,
+  REVERT_SKILL,
+  EAT_BRAINS_SKILL,
+  ENHANCED_DURABILITY_SKILL,
   BONE_FINGER_STRIKE_SKILL,
   GLARE_SKILL,
+  SKILL_COOLDOWN_MS,
 } from '../shared/skills.js';
 import {
   isDarkHour,
@@ -64,6 +81,21 @@ import type {
 } from '../shared/types.js';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL as string | undefined) || 'http://localhost:3001';
+
+// A hand-rolled inline SVG cursor (item 10) rather than an image asset —
+// a small enough shape that hand-authored SVG is clearer than a sprite
+// round-trip. Hotspot (12, 12) sits on the blade so the tip visually
+// points at whatever's under the cursor.
+const SWORD_CURSOR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <g transform="rotate(45 12 12)">
+    <rect x="10.5" y="1" width="3" height="13" rx="0.5" fill="#e4e4e4" stroke="#2a2a2a" stroke-width="0.75"/>
+    <rect x="11.4" y="1" width="1.2" height="13" fill="#ffffff" opacity="0.6"/>
+    <rect x="7" y="14" width="10" height="2.4" rx="0.6" fill="#8a6a3a" stroke="#2a2a2a" stroke-width="0.5"/>
+    <rect x="10.3" y="16.4" width="3.4" height="6.2" rx="1" fill="#5a4020" stroke="#2a2a2a" stroke-width="0.5"/>
+  </g>
+</svg>`;
+const SWORD_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(SWORD_CURSOR_SVG)}") 12 12, pointer`;
+
 const CHAR_SCALE = 0.275;
 const CORPSE_SCALE = 0.35;
 // One server round trip per tile-step, throttled the same way holding a
@@ -143,10 +175,96 @@ function isUsableSkill(skillName: string): boolean {
   return skillName === PUNCH_SKILL || skillName === DAGGER_SKILL || skillName === BONE_FINGER_STRIKE_SKILL || skillName === GLARE_SKILL;
 }
 
+// Punch and dagger are the same underlying action from the player's own
+// perspective — whatever's equipped, right-click just throws "an attack"
+// (see item 20) — so they share one icon/letter and may only occupy ONE
+// action-bar slot between the two of them (see the drop handler below).
+function isAttackSkill(skillName: string): boolean {
+  return skillName === PUNCH_SKILL || skillName === DAGGER_SKILL;
+}
+
+function skillIconLetter(skillName: string): string {
+  return isAttackSkill(skillName) ? 'A' : skillName.charAt(0).toUpperCase();
+}
+
+// Short mechanical/flavor blurbs for the Skills modal's name-hover
+// tooltip (item 16) — native `title` attributes (a small delayed
+// tooltip, no custom component needed) paired with a `cursor: help` so
+// hovering the NAME (as opposed to the drag-handle icon) reads as "more
+// info here" rather than "draggable".
+const SKILL_DESCRIPTIONS: Record<string, string> = {
+  [PUNCH_SKILL]: 'Bare-handed melee damage. Grows with practice; used automatically whenever no weapon is equipped.',
+  [DODGE_SKILL]: 'Chance to fully avoid an incoming hit by evasion. Grows whenever it triggers.',
+  [PARRY_SKILL]: "Chance to fully avoid an incoming hit with your weapon. Requires a weapon equipped; grows whenever it triggers.",
+  [SHIELD_BLOCK_SKILL]: 'Chance to fully avoid an incoming hit with a shield. Requires a bone shield equipped; grows on every attempt.',
+  [DAGGER_SKILL]: 'Melee damage while a dagger is equipped, replacing punch. Grows with practice.',
+  [SECOND_ATTACK_SKILL]: 'Hobgoblin-only: chance of an extra swing on top of your normal attack.',
+  [THIRD_ATTACK_SKILL]: 'Hobgoblin-only: chance of a second extra swing on top of your normal attack.',
+  [ENHANCED_DAMAGE_SKILL]: 'Hobgoblin-only: a flat bonus added to your base hit damage.',
+  [LESSER_NORMAL_MONSTER_RESISTANCE]: 'Reduces damage taken from normal-class monster counter-attacks.',
+  [LESSER_UNDEAD_MONSTER_RESISTANCE]: 'Reduces damage taken from undead-class monster counter-attacks.',
+  [INFRAVISION_SKILL]: 'Goblin-only: see clearly across the whole map regardless of time of day, no torch needed.',
+  [LACERATE_SKILL]: 'Dragonborn-only: chance of an extra laceration attack on top of your normal attack.',
+  [MIMIC_SKILL]: "Slime-only: transform into the form of any race/monster whose body part you've consumed.",
+  [REVERT_SKILL]: 'Slime-only: change back to your plain slime form.',
+  [EAT_BRAINS_SKILL]: 'Zombie-only: heal a portion of hp/mana/movement by eating the brains of a corpse you personally killed.',
+  [GLARE_SKILL]: 'Skeleton-only: paralyze whoever you hit, blocking their counter-attack. Has its own cooldown between casts.',
+  [ENHANCED_DURABILITY_SKILL]: 'Skeleton-only: passively tougher armor (future work — no armor system yet).',
+  [BONE_FINGER_STRIKE_SKILL]:
+    'A separate active attack, earnable by chance from consuming bone daggers. Deals 1.5x your normal hit damage, scaling further with skill percent.',
+};
+
 const ACTION_BAR_SLOT_COUNT = 20;
 const actionBar = document.getElementById('action-bar') as HTMLDivElement;
 const actionSlots: HTMLDivElement[] = [];
 const actionBarSkills: Array<string | null> = new Array(ACTION_BAR_SLOT_COUNT).fill(null);
+
+// Cooldown visualization (item 23) shared between the Skills modal's
+// icons and the action bar's slots — a dark radial "clock wipe" overlay
+// that shrinks from a full circle down to nothing as the cooldown
+// elapses. Purely wall-clock driven (see shared/skills.ts's
+// SKILL_COOLDOWN_MS/PlayerSnapshot.skillCooldowns), refreshed on a timer
+// rather than tied to any server push.
+function cooldownFraction(skillName: string): number {
+  if (!myProfile) return 0;
+  const readyAt = myProfile.skillCooldowns[skillName];
+  const totalMs = SKILL_COOLDOWN_MS[skillName];
+  if (readyAt === undefined || totalMs === undefined) return 0;
+  const remaining = readyAt - Date.now();
+  if (remaining <= 0) return 0;
+  return Math.min(1, remaining / totalMs);
+}
+
+function createCooldownOverlay(skillName: string): HTMLDivElement {
+  const overlay = document.createElement('div');
+  overlay.className = 'cooldown-overlay';
+  overlay.dataset.skill = skillName;
+  return overlay;
+}
+
+function updateCooldownOverlay(overlay: HTMLElement): void {
+  const skillName = overlay.dataset.skill;
+  if (!skillName) {
+    overlay.style.background = 'transparent';
+    return;
+  }
+  const fraction = cooldownFraction(skillName);
+  if (fraction <= 0) {
+    overlay.style.background = 'transparent';
+    return;
+  }
+  const deg = (fraction * 360).toFixed(1);
+  overlay.style.background = `conic-gradient(rgba(0, 0, 0, 0.75) ${deg}deg, transparent ${deg}deg)`;
+}
+
+// A periodic sweep (rather than tracking element references) — finds
+// whatever cooldown overlays currently exist in the DOM (action-bar
+// slots always; Skills modal icons only while it's open) and updates
+// each from its own `data-skill` tag.
+function refreshCooldownOverlays(): void {
+  document.querySelectorAll<HTMLElement>('.cooldown-overlay').forEach(updateCooldownOverlay);
+}
+setInterval(refreshCooldownOverlays, 250);
 
 function renderActionSlot(index: number): void {
   // Always called with an index this same module just created below, so
@@ -154,15 +272,22 @@ function renderActionSlot(index: number): void {
   const slot = actionSlots[index]!;
   const skillName = actionBarSkills[index];
   slot.classList.toggle('filled', skillName !== null);
+  slot.draggable = skillName !== null;
+  const overlay = slot.querySelector<HTMLElement>('.cooldown-overlay')!;
   if (skillName) {
-    slot.textContent = skillName.charAt(0).toUpperCase();
+    slot.textContent = skillIconLetter(skillName);
+    slot.appendChild(overlay); // textContent= above wipes children too — re-append
     slot.style.background = skillIconColor(skillName);
-    slot.title = `${skillName} (click to use on your selected target)`;
+    slot.title = `${skillName} (click to use on your selected target, drag off to remove)`;
+    overlay.dataset.skill = skillName;
   } else {
     slot.textContent = '';
+    slot.appendChild(overlay);
     slot.style.background = '';
     slot.title = '';
+    delete overlay.dataset.skill;
   }
+  updateCooldownOverlay(overlay);
 }
 
 // Persisted per-username in localStorage so a slotted loadout survives a
@@ -200,10 +325,34 @@ function loadActionBarOnce(username: string): void {
   }
 }
 
+// Custom MIME type carrying which action-bar slot a drag started from
+// (if any) — set only when dragging FROM a slot (see the dragstart
+// handler below), never when dragging from the Skills modal — so the
+// drop handler can tell "rearranging within the bar" (clear the source
+// slot too) apart from "dragging a fresh copy in from the modal".
+const ACTION_SLOT_SOURCE_MIME = 'application/x-action-slot-index';
+
+function assignActionSlot(index: number, skillName: string): void {
+  // Punch and dagger share one "Attack" slot (item 20) — dropping either
+  // one bumps whichever OTHER slot currently holds the other, rather
+  // than allowing two at once.
+  if (isAttackSkill(skillName)) {
+    for (let j = 0; j < ACTION_BAR_SLOT_COUNT; j++) {
+      if (j !== index && actionBarSkills[j] !== null && isAttackSkill(actionBarSkills[j]!)) {
+        actionBarSkills[j] = null;
+        renderActionSlot(j);
+      }
+    }
+  }
+  actionBarSkills[index] = skillName;
+  renderActionSlot(index);
+}
+
 for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
   const slot = document.createElement('div');
   slot.className = 'action-slot';
   slot.dataset.slotIndex = String(i);
+  slot.appendChild(createCooldownOverlay(''));
   slot.addEventListener('dragover', (e) => {
     e.preventDefault();
     slot.classList.add('drag-over');
@@ -214,9 +363,36 @@ for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
     slot.classList.remove('drag-over');
     const skillName = e.dataTransfer?.getData('text/plain');
     if (!skillName) return;
-    actionBarSkills[i] = skillName;
-    renderActionSlot(i);
+    const sourceIndexRaw = e.dataTransfer?.getData(ACTION_SLOT_SOURCE_MIME);
+    const sourceIndex = sourceIndexRaw ? Number(sourceIndexRaw) : null;
+
+    assignActionSlot(i, skillName);
+    // Dragging in from ANOTHER slot is a move, not a copy — clear
+    // wherever it came from (unless dropped back onto itself).
+    if (sourceIndex !== null && sourceIndex !== i && actionBarSkills[sourceIndex] === skillName) {
+      actionBarSkills[sourceIndex] = null;
+      renderActionSlot(sourceIndex);
+    }
     saveActionBar();
+  });
+  // A filled slot is itself draggable (item 13) — dropped anywhere that
+  // doesn't accept it (dropEffect stays 'none'), that's how you remove
+  // it from the bar entirely.
+  slot.addEventListener('dragstart', (e) => {
+    const skillName = actionBarSkills[i];
+    if (!skillName) {
+      e.preventDefault();
+      return;
+    }
+    e.dataTransfer?.setData('text/plain', skillName);
+    e.dataTransfer?.setData(ACTION_SLOT_SOURCE_MIME, String(i));
+  });
+  slot.addEventListener('dragend', (e) => {
+    if (e.dataTransfer?.dropEffect === 'none' && actionBarSkills[i] !== null) {
+      actionBarSkills[i] = null;
+      renderActionSlot(i);
+      saveActionBar();
+    }
   });
   slot.addEventListener('click', () => {
     const skillName = actionBarSkills[i];
@@ -314,6 +490,7 @@ function showDarkFog(screenX: number, screenY: number, radiusPx: number): void {
 
 const logPanel = document.getElementById('log-panel') as HTMLDivElement;
 const logToggle = document.getElementById('log-toggle') as HTMLButtonElement;
+const logResizeHandle = document.getElementById('log-resize-handle') as HTMLDivElement;
 const combatLogEl = document.getElementById('combat-log') as HTMLDivElement;
 const chatLogEl = document.getElementById('chat-log') as HTMLDivElement;
 const chatInput = document.getElementById('chat-input') as HTMLInputElement;
@@ -328,6 +505,49 @@ function setupCollapsible(panel: HTMLElement, toggle: HTMLButtonElement): void {
 }
 setupCollapsible(statusBarPanel, statusToggle);
 setupCollapsible(logPanel, logToggle);
+
+// Custom drag-resize (item 11) instead of the native CSS `resize: both`
+// handle — the panel is anchored to the bottom-left of the screen (see
+// #log-panel's `bottom`/`left`), and the native resize box only reliably
+// grows in the direction away from whichever edges are actually anchored
+// in every browser; a handle we drive ourselves works the same way
+// regardless of anchor edge. Dragging down-right grows the panel
+// (upward/rightward, away from its bottom-left anchor).
+const LOG_PANEL_MIN_WIDTH = 260;
+const LOG_PANEL_MIN_HEIGHT = 120;
+(function setupLogPanelResize(): void {
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  let startWidth = 0;
+  let startHeight = 0;
+
+  logResizeHandle.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    startWidth = logPanel.getBoundingClientRect().width;
+    startHeight = logPanel.getBoundingClientRect().height;
+    logResizeHandle.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  logResizeHandle.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const maxWidth = window.innerWidth * 0.9;
+    const maxHeight = window.innerHeight * 0.8;
+    const width = Math.min(maxWidth, Math.max(LOG_PANEL_MIN_WIDTH, startWidth + (e.clientX - startX)));
+    const height = Math.min(maxHeight, Math.max(LOG_PANEL_MIN_HEIGHT, startHeight + (e.clientY - startY)));
+    logPanel.style.width = `${width}px`;
+    logPanel.style.height = `${height}px`;
+  });
+  const stopDragging = (e: PointerEvent) => {
+    if (!dragging) return;
+    dragging = false;
+    logResizeHandle.releasePointerCapture(e.pointerId);
+  };
+  logResizeHandle.addEventListener('pointerup', stopDragging);
+  logResizeHandle.addEventListener('pointercancel', stopDragging);
+})();
 
 function appendLogLine(container: HTMLDivElement, text: string, kind?: 'level-up' | 'death'): void {
   const line = document.createElement('div');
@@ -348,18 +568,38 @@ function logChatMessage(username: string, message: string): void {
   appendLogLine(chatLogEl, `${username}: ${message}`);
 }
 
-function switchLogTab(tab: 'combat' | 'chat'): void {
-  logTabCombatBtn.classList.toggle('active', tab === 'combat');
-  logTabChatBtn.classList.toggle('active', tab === 'chat');
-  combatLogEl.hidden = tab !== 'combat';
-  chatLogEl.hidden = tab !== 'chat';
+// Combat and Chat are independently toggleable (item 14) — either or
+// both can be visible, but turning the last visible one off is refused
+// (at least one must always stay up). Replaces the old mutually-exclusive
+// switchLogTab.
+let combatTabVisible = true;
+let chatTabVisible = false;
+
+function updateLogTabsView(): void {
+  logTabCombatBtn.classList.toggle('active', combatTabVisible);
+  logTabChatBtn.classList.toggle('active', chatTabVisible);
+  combatLogEl.hidden = !combatTabVisible;
+  chatLogEl.hidden = !chatTabVisible;
+  // The chat input only makes sense while the chat pane itself is
+  // visible — hiding the Chat tab hides its input along with it.
+  if (!chatTabVisible) chatInput.hidden = true;
 }
 
-// Auto-switches to the Combat tab exactly once at the START of a fight
-// (if the player wasn't already looking at it) — not on every single
-// exchange, and not forcing them back if they deliberately switch to
-// Chat mid-fight. A "fight" is considered over (so the NEXT punch counts
-// as a new start) after a few seconds of no combat activity.
+function setLogTabVisible(tab: 'combat' | 'chat', visible: boolean): void {
+  if (!visible) {
+    const otherVisible = tab === 'combat' ? chatTabVisible : combatTabVisible;
+    if (!otherVisible) return; // refused — at least one tab must stay active
+  }
+  if (tab === 'combat') combatTabVisible = visible;
+  else chatTabVisible = visible;
+  updateLogTabsView();
+}
+
+// Auto-shows the Combat tab exactly once at the START of a fight (if it
+// wasn't already visible) — not on every single exchange, and never
+// hides Chat to do it (item 14: both can be up at once). A "fight" is
+// considered over (so the NEXT punch counts as a new start) after a few
+// seconds of no combat activity.
 const COMBAT_SESSION_IDLE_MS = 8000;
 let combatSessionActive = false;
 let combatSessionTimer: ReturnType<typeof setTimeout> | null = null;
@@ -367,7 +607,7 @@ let combatSessionTimer: ReturnType<typeof setTimeout> | null = null;
 function noteCombatActivity(): void {
   if (!combatSessionActive) {
     combatSessionActive = true;
-    if (!logTabCombatBtn.classList.contains('active')) switchLogTab('combat');
+    setLogTabVisible('combat', true);
   }
   if (combatSessionTimer) clearTimeout(combatSessionTimer);
   combatSessionTimer = setTimeout(() => {
@@ -375,8 +615,9 @@ function noteCombatActivity(): void {
   }, COMBAT_SESSION_IDLE_MS);
 }
 
-logTabCombatBtn.addEventListener('click', () => switchLogTab('combat'));
-logTabChatBtn.addEventListener('click', () => switchLogTab('chat'));
+logTabCombatBtn.addEventListener('click', () => setLogTabVisible('combat', !combatTabVisible));
+logTabChatBtn.addEventListener('click', () => setLogTabVisible('chat', !chatTabVisible));
+updateLogTabsView();
 
 // Pressing Enter anywhere (outside a modal/another input) reveals and
 // focuses the chat box — matching the text game's own "press Enter to
@@ -386,9 +627,19 @@ logTabChatBtn.addEventListener('click', () => switchLogTab('chat'));
 // box isn't one of the ALL_MODALS.
 let chatInputFocused = false;
 function openChatInput(): void {
+  setLogTabVisible('chat', true);
   chatInput.hidden = false;
-  switchLogTab('chat');
   chatInput.focus();
+}
+// Pressing "/" does the same, but also pre-fills the "/" character (item
+// 9) — a player pressing it almost always means to type a command, so
+// it starts the input exactly where they'd type it themselves anyway.
+function openChatInputWithSlash(): void {
+  setLogTabVisible('chat', true);
+  chatInput.hidden = false;
+  chatInput.value = '/';
+  chatInput.focus();
+  chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
 }
 chatInput.addEventListener('focus', () => {
   chatInputFocused = true;
@@ -501,16 +752,37 @@ function updateStatusBar(): void {
   updateSleepOverlay();
 }
 
-function appendStatRow(container: HTMLDivElement, label: string, value: string | number): void {
+function appendStatRow(container: HTMLDivElement, label: string, value: string | number, description?: string): void {
   const labelEl = document.createElement('div');
   labelEl.className = 'stat-label';
   labelEl.textContent = label;
+  // Item 18: only a stat with a real description gets the "more info
+  // here" tooltip cursor — everything else (Race, Level, HP, Mana,
+  // Movement, ...) explicitly stays the default arrow rather than
+  // whatever a bare text node would otherwise pick up (an I-beam, in
+  // most browsers, since it reads as selectable text).
+  if (description) {
+    labelEl.title = description;
+    labelEl.style.cursor = 'help';
+  } else {
+    labelEl.style.cursor = 'default';
+  }
   const valueEl = document.createElement('div');
   valueEl.className = 'stat-value';
   valueEl.textContent = String(value);
   container.appendChild(labelEl);
   container.appendChild(valueEl);
 }
+
+const CHAR_SHEET_STAT_DESCRIPTIONS: Record<string, string> = {
+  Exp: 'Experience earned toward your next level. Each level requires level x 100 exp.',
+  Strength: 'Increases your base melee damage and your parry chance.',
+  Intelligence: 'No mechanical effect yet — reserved for future spellcasting.',
+  Wisdom: 'No mechanical effect yet — reserved for future use.',
+  Dexterity: 'Increases your dodge chance.',
+  Constitution: 'No mechanical effect yet — reserved for future use.',
+  'Consumed Exp': 'A count of body parts you have consumed (+5 each). Goblins reach Hobgoblin evolution at 300.',
+};
 
 function renderCharSheet(): void {
   if (!myProfile) return;
@@ -531,7 +803,7 @@ function renderCharSheet(): void {
     ['Constitution', myProfile.constitution],
     ['Consumed Exp', myProfile.consumeExp],
   ];
-  for (const [label, value] of rows) appendStatRow(charSheetBody, label, value);
+  for (const [label, value] of rows) appendStatRow(charSheetBody, label, value, CHAR_SHEET_STAT_DESCRIPTIONS[label]);
 }
 
 // There's no real per-level skill unlock system in this project (see
@@ -561,20 +833,45 @@ function renderSkillRow(skillName: string, valueText: string, notAcquired: boole
 
   const icon = document.createElement('span');
   icon.className = 'skill-icon';
-  icon.textContent = skillName.charAt(0).toUpperCase();
+  icon.textContent = skillIconLetter(skillName);
   icon.style.background = skillIconColor(skillName);
 
-  if (!notAcquired && isUsableSkill(skillName)) {
+  const usable = !notAcquired && isUsableSkill(skillName);
+  if (usable) {
     icon.draggable = true;
     icon.classList.add('draggable');
-    icon.title = 'Drag to the action bar to use on your selected target';
+    icon.title = 'Drag to the action bar (or double-click) to use on your selected target';
     icon.addEventListener('dragstart', (e) => {
       e.dataTransfer?.setData('text/plain', skillName);
     });
+    // Double-click drops it straight into the next free action-bar slot
+    // (item 12) — the same singleton-attack-slot rule the drag-and-drop
+    // path uses applies here too (see assignActionSlot).
+    icon.addEventListener('dblclick', () => {
+      const freeIndex = actionBarSkills.findIndex((s) => s === null);
+      const targetIndex = isAttackSkill(skillName)
+        ? (actionBarSkills.findIndex((s) => s !== null && isAttackSkill(s)) !== -1
+            ? actionBarSkills.findIndex((s) => s !== null && isAttackSkill(s))
+            : freeIndex)
+        : freeIndex;
+      if (targetIndex === -1) {
+        logCombatMessage('Your action bar is full.');
+        return;
+      }
+      assignActionSlot(targetIndex, skillName);
+      saveActionBar();
+    });
   }
+  icon.appendChild(createCooldownOverlay(skillName));
 
   const nameSpan = document.createElement('span');
   nameSpan.textContent = skillName;
+  // Hovering the NAME (not the drag-handle icon) shows a description
+  // tooltip (item 16) — the native `title` attribute is a small,
+  // no-component-needed tooltip; `cursor: help` signals "more info here"
+  // distinctly from the icon's own grab/default cursor.
+  nameSpan.title = SKILL_DESCRIPTIONS[skillName] ?? '';
+  nameSpan.style.cursor = 'help';
 
   labelEl.appendChild(icon);
   labelEl.appendChild(nameSpan);
@@ -650,6 +947,27 @@ function renderEquipment(): void {
   }
 }
 
+// Item-hover tooltip text (item 17) — native `title` attribute, same
+// no-component-needed approach as the Skills modal's name tooltip.
+const ITEM_DESCRIPTIONS: Record<string, string> = {
+  'bone dagger': 'A crude blade carved from bone. Equip it as a weapon for bonus damage and the dagger skill.',
+  'bone shield': 'A plated bone shield. Equip it for a chance to block incoming hits.',
+  torch: 'A carried light source. Equip it in place of a shield to see in the dark — burns out after 15 minutes of equipped use.',
+  'wild goblin ear': "A wild goblin's ear. Consume it for exp and a small chance of learning normal-monster resistance.",
+  'goblin ear': "A goblin's ear. Consume it for exp and a small chance of learning normal-monster resistance.",
+  'hobgoblin ear': "A hobgoblin's ear. Consume it for exp and a small chance of learning normal-monster resistance.",
+  'wild skeleton bone': "A wild skeleton's bone. Consume it for exp and a higher chance of learning undead-monster resistance.",
+  'skeleton bone': "A skeleton's bone. Consume it for exp and a higher chance of learning undead-monster resistance.",
+  'zombie finger': "A zombie's severed finger. Consume it for exp.",
+  'dragonborn scale': "A dragonborn's scale. Consume it for exp.",
+  'slime residue': "A slime's residue. Consume it for exp.",
+};
+
+function itemTooltip(item: string): string {
+  const description = ITEM_DESCRIPTIONS[item];
+  return description ? `${description}\n\nClick to use, right-click to consume.` : 'Click to use, right-click to consume.';
+}
+
 function renderInventory(): void {
   inventoryList.innerHTML = '';
   const items = myProfile?.inventory ?? [];
@@ -676,7 +994,7 @@ function renderInventory(): void {
     const li = document.createElement('li');
     li.textContent = indices.length > 1 ? `${item} x${indices.length}` : item;
     li.className = 'inventory-item';
-    li.title = 'Click to use, right-click to consume';
+    li.title = itemTooltip(item);
     // Every group has at least one index (it's seeded with one on
     // creation above), so this is always defined.
     li.addEventListener('click', () => useInventoryItem(indices[0]!));
@@ -1250,6 +1568,15 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
+  // "/" almost always means "I want to type a command" (item 9) — jump
+  // straight to Chat with the "/" already typed, rather than making the
+  // player open chat and type it themselves.
+  if (e.key === '/' && !inputCaptured) {
+    e.preventDefault();
+    openChatInputWithSlash();
+    return;
+  }
+
   const key = e.key.toLowerCase();
   if (key === 'c') {
     e.preventDefault();
@@ -1359,6 +1686,7 @@ class WorldScene extends Phaser.Scene {
   private playerMovementBar!: Phaser.GameObjects.Graphics;
   private playerWeaponSprite!: Phaser.GameObjects.Sprite;
   private playerShieldSprite!: Phaser.GameObjects.Sprite;
+  private playerTorchSprite!: Phaser.GameObjects.Sprite;
   private floorTile!: Phaser.GameObjects.TileSprite;
   private doorSprites: Phaser.GameObjects.Sprite[] = [];
   private race: Race = 'goblin';
@@ -1429,14 +1757,15 @@ class WorldScene extends Phaser.Scene {
   }
 
   preload(): void {
-    createGrassTexture(this, 'grass');
-    createStoneTexture(this, 'stone');
-    createConcreteTexture(this, 'concrete');
-    createDoorTexture(this, 'door');
-    createTreeSpritesheet(this);
-    createDaggerTexture(this);
-    createBoneShieldTexture(this);
-    createShopfrontTexture(this, 'shopfront');
+    this.load.svg('grass', '/grass-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    this.load.svg('stone', '/stone-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    this.load.svg('concrete', '/concrete-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    this.load.svg('door', '/door.svg', { width: 40, height: 48 });
+    this.load.svg(TREE_TEXTURE_KEY, '/tree.svg', { width: 48, height: 64 });
+    this.load.svg(DAGGER_TEXTURE_KEY, '/dagger.svg', { width: 16, height: 16 });
+    this.load.svg(BONE_SHIELD_TEXTURE_KEY, '/bone-shield.svg', { width: 16, height: 16 });
+    this.load.svg(TORCH_HELD_TEXTURE_KEY, '/torch.svg', { width: 16, height: 20 });
+    this.load.svg('shopfront', '/shopfront.svg', { width: 40, height: 36 });
     createWallTorchTexture(this);
     preloadCharacterSprites(this);
   }
@@ -1444,7 +1773,6 @@ class WorldScene extends Phaser.Scene {
   create(): void {
     createCharacterAnims(this);
     defineBodyPartFrames(this);
-    createTreeSwayAnim(this);
 
     this.player = this.add.sprite(0, 0, textureKeyFor('goblin'), idleFrameFor('goblin', 'down')).setScale(CHAR_SCALE);
     this.playerHpBar = this.add.graphics();
@@ -1452,6 +1780,7 @@ class WorldScene extends Phaser.Scene {
     this.playerMovementBar = this.add.graphics();
     this.playerWeaponSprite = this.add.sprite(0, 0, DAGGER_TEXTURE_KEY).setVisible(false).setDepth(1);
     this.playerShieldSprite = this.add.sprite(0, 0, BONE_SHIELD_TEXTURE_KEY).setVisible(false).setDepth(1);
+    this.playerTorchSprite = this.add.sprite(0, 0, TORCH_HELD_TEXTURE_KEY).setVisible(false).setDepth(1);
 
     // A 100x100 Great Plains is far too big to fit on screen at once —
     // the camera follows the player instead, clamped to each map's own
@@ -1472,6 +1801,20 @@ class WorldScene extends Phaser.Scene {
       if (inputCaptured) return;
       if (pointer.rightButtonDown()) this.handleRightClick(pointer);
       else if (pointer.leftButtonDown()) this.handleLeftClick(pointer);
+    });
+    // A sword cursor over an enemy (item 10) — monsters specifically, not
+    // other players or the friendly training dummy. Individual sprites
+    // (vendors, corpses) already get Phaser's own pointer cursor via
+    // `useHandCursor`; this is a manual check since monster sprites
+    // aren't `setInteractive` themselves (see findTargetableAt's own
+    // bounds-based hit-testing).
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      if (inputCaptured) {
+        this.game.canvas.style.cursor = '';
+        return;
+      }
+      const overEnemy = [...this.monsterSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
+      this.game.canvas.style.cursor = overEnemy ? SWORD_CURSOR : '';
     });
 
     // A window resize can cross the "map fits in the viewport" threshold
@@ -1574,6 +1917,7 @@ class WorldScene extends Phaser.Scene {
     if (!myProfile) return;
     this.updateOwnWeaponSprite(Boolean(myProfile.equipment.weapon));
     this.updateOwnShieldSprite(myProfile.equipment.shield === 'bone shield');
+    this.updateOwnTorchSprite(myProfile.equipment.shield === TORCH_ITEM);
   }
 
   // The local player's own weapon overlay uses the dedicated
@@ -1594,6 +1938,19 @@ class WorldScene extends Phaser.Scene {
   private updateOwnShieldSprite(hasShield: boolean): void {
     this.playerShieldSprite.setVisible(hasShield);
     this.repositionShieldSprite(this.playerShieldSprite, this.player, this.facing);
+  }
+
+  // A torch fills the same off-hand slot as a bone shield (see
+  // shared/lighting.ts) but is a completely different held item, so it
+  // gets its own overlay sprite/visibility rather than reusing the
+  // shield one — the two are mutually exclusive by construction (only
+  // one item can occupy the shield slot), but there's no reason to
+  // conflate them just because they share a slot. Reuses the shield's
+  // own off-hand positioning math (see repositionShieldSprite) since
+  // it's the same held position either way (item 21).
+  private updateOwnTorchSprite(hasTorch: boolean): void {
+    this.playerTorchSprite.setVisible(hasTorch);
+    this.repositionShieldSprite(this.playerTorchSprite, this.player, this.facing);
   }
 
   // Sleeping is a static 90-degree "lying down" rotation (no dedicated
@@ -1774,6 +2131,7 @@ class WorldScene extends Phaser.Scene {
     this.playerMovementBar.setPosition(this.player.x, this.player.y + HP_BAR_OFFSET_Y + (HP_BAR_HEIGHT + BAR_STACK_GAP) * 2);
     this.repositionWeaponSprite(this.playerWeaponSprite, this.player, this.facing);
     this.repositionShieldSprite(this.playerShieldSprite, this.player, this.facing);
+    this.repositionShieldSprite(this.playerTorchSprite, this.player, this.facing);
     for (const sprite of this.otherPlayers.values()) this.repositionBarFor(sprite);
     for (const sprite of this.npcSprites.values()) this.repositionBarFor(sprite);
     for (const sprite of this.monsterSprites.values()) this.repositionBarFor(sprite);
@@ -1786,6 +2144,8 @@ class WorldScene extends Phaser.Scene {
     if (weaponSprite) this.repositionWeaponSprite(weaponSprite, sprite, (sprite.getData('facing') as Facing) ?? 'down');
     const shieldSprite = sprite.getData('shieldSprite') as Phaser.GameObjects.Sprite | undefined;
     if (shieldSprite) this.repositionShieldSprite(shieldSprite, sprite, (sprite.getData('facing') as Facing) ?? 'down');
+    const torchSprite = sprite.getData('torchSprite') as Phaser.GameObjects.Sprite | undefined;
+    if (torchSprite) this.repositionShieldSprite(torchSprite, sprite, (sprite.getData('facing') as Facing) ?? 'down');
   }
 
   // Own hp/mana/movement bars are a 3-bar stack (item request: show all
@@ -1871,10 +2231,24 @@ class WorldScene extends Phaser.Scene {
     this.repositionShieldSprite(shieldSprite, sprite, facing);
   }
 
+  // Same shape as ensureShieldSprite, for a torch instead (item 21) — the
+  // same off-hand slot, a different held item, so it's its own overlay
+  // rather than reusing the shield one (see updateOwnTorchSprite).
+  private ensureTorchSprite(sprite: Phaser.GameObjects.Sprite, hasTorch: boolean, facing: Facing): void {
+    let torchSprite = sprite.getData('torchSprite') as Phaser.GameObjects.Sprite | undefined;
+    if (!torchSprite) {
+      torchSprite = this.add.sprite(sprite.x, sprite.y, TORCH_HELD_TEXTURE_KEY).setDepth(1);
+      sprite.setData('torchSprite', torchSprite);
+    }
+    torchSprite.setVisible(hasTorch);
+    this.repositionShieldSprite(torchSprite, sprite, facing);
+  }
+
   private destroyEntitySprite(sprite: Phaser.GameObjects.Sprite): void {
     (sprite.getData('hpBar') as Phaser.GameObjects.Graphics | undefined)?.destroy();
     (sprite.getData('weaponSprite') as Phaser.GameObjects.Sprite | undefined)?.destroy();
     (sprite.getData('shieldSprite') as Phaser.GameObjects.Sprite | undefined)?.destroy();
+    (sprite.getData('torchSprite') as Phaser.GameObjects.Sprite | undefined)?.destroy();
     sprite.destroy();
   }
 
@@ -2015,8 +2389,20 @@ class WorldScene extends Phaser.Scene {
     if (mapName === 'Great Plains') {
       for (const { row, col } of treePositionsFor(mapName)) {
         const pos = this.tilePosition(row, col);
-        const sprite = this.add.sprite(pos.x, pos.y, TREE_TEXTURE_KEY, 0).setOrigin(0.5, 0.85).setDepth(-0.5);
-        sprite.play(TREE_SWAY_ANIM_KEY);
+        const sprite = this.add.sprite(pos.x, pos.y, TREE_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
+        // A gentle sway tween (a whole crown swaying in a breeze) instead
+        // of a multi-frame animation — the tree is a single static image
+        // asset now (see assets/tree.svg), and a small back-and-forth
+        // rotation reads the same way a sway spritesheet did. Randomized
+        // start/duration per tree so they don't all sway in lockstep.
+        this.tweens.add({
+          targets: sprite,
+          angle: { from: -2, to: 2 },
+          duration: 3200 + Math.random() * 1600,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
         this.treeSprites.push(sprite);
       }
     }
@@ -2135,6 +2521,7 @@ class WorldScene extends Phaser.Scene {
       this.ensureHpBar(sprite, p.hp, p.maxHp);
       this.ensureWeaponSprite(sprite, Boolean(p.equipment.weapon), (sprite.getData('facing') as Facing) ?? 'down');
       this.ensureShieldSprite(sprite, p.equipment.shield === 'bone shield', (sprite.getData('facing') as Facing) ?? 'down');
+      this.ensureTorchSprite(sprite, p.equipment.shield === TORCH_ITEM, (sprite.getData('facing') as Facing) ?? 'down');
       this.applyRestPose(sprite, p.restState, CHAR_SCALE);
       if (this.targetKind === 'player' && this.targetId === p.username) updateTargetPanel(p.username, p.level, p.hp, p.maxHp);
     }
@@ -2381,6 +2768,10 @@ class WorldScene extends Phaser.Scene {
         if (!ack.ok) {
           this.isMoving = false;
           this.setIdle();
+          if (ack.outOfMovement) {
+            setLogTabVisible('combat', true);
+            logCombatMessage(ack.message ?? "You're out of movement and need to rest.");
+          }
           return;
         }
 

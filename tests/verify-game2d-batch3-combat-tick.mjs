@@ -56,6 +56,11 @@ function teleport(username, map, row, col) {
   return execSync(`docker exec game2d-postgres psql -U game2d -d game2d -c "${sql}"`).toString().trim();
 }
 
+function setMovement(username, movement) {
+  const sql = `UPDATE players SET movement=${movement} WHERE username='${username}';`;
+  return execSync(`docker exec game2d-postgres psql -U game2d -d game2d -c "${sql}"`).toString().trim();
+}
+
 async function main() {
   // === Test 1: engaging combat is tick-gated, not resolved per click —
   // the shared combat tick runs on its own fixed ~3s cadence regardless
@@ -202,8 +207,10 @@ async function main() {
     }
   }
 
-  // === Test 4: terrain-based movement cost — grass (Great Plains) costs
-  // 3, stone (Labyrinth) costs 2, per step ===
+  // === Test 4: setting-based movement cost — outside (Great Plains)
+  // costs 1, inside (Labyrinth) costs 0.5, per step. (Revised down from
+  // an original 3/2 terrain-based formula — players were burning through
+  // almost their whole movement pool in a few dozen steps.) ===
   {
     const username = `GtwoMoveCost${randomLetters(3)}`;
     const token = await registerOnly('goblin', username);
@@ -214,8 +221,8 @@ async function main() {
 
     const grassAck = await new Promise((resolve) => socket.emit('move', 'south', resolve));
     const grassCost = startMovement - grassAck.player.movement;
-    console.log(`  movement before grass step: ${startMovement}, after: ${grassAck.player.movement} (cost ${grassCost})`);
-    assert(grassCost === 3, 'a step on Great Plains grass costs exactly 3 movement');
+    console.log(`  movement before outside step: ${startMovement}, after: ${grassAck.player.movement} (cost ${grassCost})`);
+    assert(grassCost === 1, 'a step on outside ground (Great Plains) costs exactly 1 movement');
 
     teleport(username, 'Labyrinth', 30, 30);
     await sleep(200);
@@ -223,10 +230,29 @@ async function main() {
     const movementBeforeStone = sync2.player.movement;
     const stoneAck = await new Promise((resolve) => s2.emit('move', 'north', resolve));
     const stoneCost = movementBeforeStone - stoneAck.player.movement;
-    console.log(`  movement before stone step: ${movementBeforeStone}, after: ${stoneAck.player.movement} (cost ${stoneCost})`);
-    assert(stoneCost === 2, 'a step on Labyrinth stone costs exactly 2 movement');
+    console.log(`  movement before inside step: ${movementBeforeStone}, after: ${stoneAck.player.movement} (cost ${stoneCost})`);
+    assert(stoneCost === 0.5, 'a step on inside ground (Labyrinth) costs exactly 0.5 movement');
     socket.close();
     s2.close();
+  }
+
+  // === Test 5: movement exhaustion — a player with less movement than
+  // their current ground costs is refused the move, with the dedicated
+  // outOfMovement flag set (item 8) ===
+  {
+    const username = `GtwoNoMove${randomLetters(3)}`;
+    const token = await registerOnly('goblin', username);
+    teleport(username, 'Great Plains', 50, 50);
+    await sleep(200);
+    setMovement(username, 0.4); // less than the 1-movement cost of an outside step
+    await sleep(200);
+
+    const { socket } = await connectSocket(token);
+    const ack = await new Promise((resolve) => socket.emit('move', 'south', resolve));
+    console.log('  move at 0.4 movement ->', ack.ok, ack.message, ack.outOfMovement);
+    assert(!ack.ok, 'a move is refused when movement is below the current ground\'s cost');
+    assert(ack.outOfMovement === true, 'the refusal is flagged as outOfMovement specifically');
+    socket.close();
   }
 
   console.log('\nDone.');

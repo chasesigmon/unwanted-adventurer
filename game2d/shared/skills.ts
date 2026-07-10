@@ -46,6 +46,18 @@ export const ENHANCED_DURABILITY_SKILL = 'enhanced durability'; // skeleton: +5%
 // but a real active attack rather than a passive damage reduction.
 export const BONE_FINGER_STRIKE_SKILL = 'bone finger strike';
 
+// A skill with an entry here can't be re-queued until this long (wall-
+// clock ms) after it was last used — checked server-side (see
+// game.gateway.ts's engageInDirection) and rendered client-side as a
+// darkened, progressively-clearing overlay in both the Skills modal and
+// the action bar (item 23; see main.ts's updateCooldownOverlays). A
+// skill with no entry here has no cooldown at all. Glare's 2-combat-round
+// figure matches MONSTER_TICK_INTERVAL_MS (3000ms) — kept as a literal
+// here since shared/ can't import a server-only constant.
+export const SKILL_COOLDOWN_MS: Partial<Record<string, number>> = {
+  [GLARE_SKILL]: 2 * 3000,
+};
+
 export const RACE_INNATE_SKILLS: Record<Race, string[]> = {
   goblin: [INFRAVISION_SKILL],
   skeleton: [GLARE_SKILL, ENHANCED_DURABILITY_SKILL],

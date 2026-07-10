@@ -15,12 +15,10 @@ export interface MapExit {
   toCol: number;
 }
 
-// "inside" (Labyrinth) vs. "outside" (everywhere else) — pure
-// flavor/classification here (unlike the text game's own GameMap.ts,
-// where "inside" alone drives movement cost). This project's cost is
-// driven by terrain instead (see MOVEMENT_COST_FOR_TERRAIN below), since
-// Floro/Kortho are outside but built of stone, not grass, and are meant
-// to cost the same as being inside.
+// "inside" (Labyrinth) vs. "outside" (everywhere else) — drives per-step
+// movement cost (see MOVEMENT_COST_FOR_SETTING below); terrain is pure
+// flavor/classification (what the ground looks/sounds like), independent
+// of cost.
 export type MapSetting = 'inside' | 'outside';
 export type MapTerrain = 'stone' | 'grass';
 
@@ -33,16 +31,17 @@ export interface MapDefinition {
   exits: MapExit[];
 }
 
-// Per-step movement-point cost, purely by terrain — stone (Labyrinth,
-// and Floro/Kortho's town streets) costs the same whether you're
-// nominally "inside" or "outside"; open grass (Great Plains) costs more.
-export const MOVEMENT_COST_FOR_TERRAIN: Record<MapTerrain, number> = {
-  stone: 2,
-  grass: 3,
+// Per-step movement-point cost, by setting — a fractional cost (players
+// were burning through almost their whole movement pool in just a few
+// dozen steps at the old 2/3-per-step rates, especially on the 100-tile
+// Great Plains).
+export const MOVEMENT_COST_FOR_SETTING: Record<MapSetting, number> = {
+  inside: 0.5,
+  outside: 1,
 };
 
 export function movementCostFor(mapName: MapName): number {
-  return MOVEMENT_COST_FOR_TERRAIN[getMap(mapName).terrain];
+  return MOVEMENT_COST_FOR_SETTING[getMap(mapName).setting];
 }
 
 const GREAT_PLAINS_SIZE = 100;

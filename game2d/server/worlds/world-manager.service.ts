@@ -159,6 +159,7 @@ export class WorldManagerService {
         mimicableRaces: state.mimicableRaces,
         mimicForm: state.mimicForm,
         eatBrainsReadyAtTick: state.eatBrainsReadyAtTick,
+        skillCooldowns: state.skillCooldowns,
       });
     }
 

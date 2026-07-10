@@ -48,6 +48,12 @@ export interface PlayerSnapshot {
   // WorldTimePayload.tick — lets the client gray the button out instead
   // of letting it be clicked and fail (see main.ts's updateEatBrainsButton).
   eatBrainsReadyAtTick: number;
+  // Per-skill cooldowns (currently just Glare — see shared/skills.ts's
+  // SKILL_COOLDOWN_MS) as an epoch-ms "ready at" timestamp, keyed by
+  // skill name; a skill with no entry here has no cooldown gate at all.
+  // Wall-clock, not tick-based, so the client can render a countdown/wipe
+  // (item 23) without needing to know the server's own tick counter.
+  skillCooldowns: Record<string, number>;
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
@@ -176,6 +182,12 @@ export interface MoveAck {
   // enter the Labyrinth.") — purely cosmetic, the client doesn't have to
   // show it.
   message?: string;
+  // Set specifically when ok is false because the player doesn't have
+  // enough movement left to afford a step on their current ground — a
+  // dedicated flag (rather than string-matching `message`) so the client
+  // can reliably focus the Combat tab and flag it as a "need rest"
+  // moment (item 8) instead of treating it like any other blocked move.
+  outOfMovement?: boolean;
 }
 
 export interface KickedPayload {
@@ -364,6 +376,9 @@ export interface SocketData {
   // (resets to a fresh torch on reconnect, same tradeoff as restState).
   torchRemainingMs: number;
   torchLitAt: number | null;
+  // See PlayerSnapshot's own doc comment — same shape, never persisted
+  // (resets on reconnect, same tradeoff as restState/torchRemainingMs).
+  skillCooldowns: Record<string, number>;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

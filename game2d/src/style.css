@@ -279,11 +279,15 @@ body {
   height: 220px;
   display: flex;
   flex-direction: column;
-  /* Drag-resize from the bottom-right corner (native browser handle) —
-     `overflow: hidden` (rather than the default `visible`) is required
-     for `resize` to actually take effect. */
-  resize: both;
   overflow: hidden;
+  /* A custom-driven handle (see #log-resize-handle/main.ts's
+     setupLogPanelResize), not the native CSS `resize: both` — this panel
+     is anchored to the bottom-left of the screen, and the native resize
+     box only reliably grows away from whichever edges are anchored in
+     every browser; drag math we control ourselves works the same in
+     every direction regardless of anchor edge (this is what "resize only
+     seemed to work horizontally" was: growing height while bottom-
+     anchored isn't a universally consistent native behavior). */
   min-width: 260px;
   min-height: 120px;
   max-width: 90vw;
@@ -298,8 +302,35 @@ body {
 }
 
 #log-panel.collapsed {
-  resize: none;
   height: auto;
+}
+
+#log-panel.collapsed #log-resize-handle {
+  display: none;
+}
+
+#log-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  touch-action: none;
+  /* A simple diagonal-grip affordance, drawn with layered gradients
+     instead of an image asset — three short diagonal strokes fading
+     toward the corner. */
+  background:
+    linear-gradient(135deg, transparent 46%, #999 46%, #999 54%, transparent 54%) 4px 4px / 4px 4px no-repeat,
+    linear-gradient(135deg, transparent 46%, #999 46%, #999 54%, transparent 54%) 8px 8px / 4px 4px no-repeat,
+    linear-gradient(135deg, transparent 46%, #999 46%, #999 54%, transparent 54%) 12px 12px / 4px 4px no-repeat;
+}
+
+#log-resize-handle:hover {
+  background:
+    linear-gradient(135deg, transparent 46%, #f0c040 46%, #f0c040 54%, transparent 54%) 4px 4px / 4px 4px no-repeat,
+    linear-gradient(135deg, transparent 46%, #f0c040 46%, #f0c040 54%, transparent 54%) 8px 8px / 4px 4px no-repeat,
+    linear-gradient(135deg, transparent 46%, #f0c040 46%, #f0c040 54%, transparent 54%) 12px 12px / 4px 4px no-repeat;
 }
 
 .log-view .log-line.level-up {
@@ -569,6 +600,13 @@ body {
   flex-shrink: 0;
 }
 
+#shop-greeting {
+  font-size: 12px;
+  font-style: italic;
+  color: #a8a090;
+  margin-bottom: 10px;
+}
+
 #shop-gold-line {
   font-size: 13px;
   color: #f0c040;
@@ -772,6 +810,16 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 4px;
   box-sizing: border-box;
+  position: relative;
+  overflow: hidden;
+}
+
+.action-slot.filled[draggable='true'] {
+  cursor: grab;
+}
+
+.action-slot.filled[draggable='true']:active {
+  cursor: grabbing;
 }
 
 .action-slot.drag-over {
@@ -810,6 +858,14 @@ body {
   font-weight: bold;
   color: #f0e8d0;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  /* A passive icon's single letter is still selectable text by default,
+     which is what was showing an I-beam cursor over it (item 15) — it
+     isn't draggable, so it shouldn't look text-editable either. The
+     .draggable variant below overrides both properties. */
+  cursor: default;
+  user-select: none;
+  position: relative;
+  overflow: hidden;
 }
 
 .skill-icon.draggable {
@@ -819,6 +875,19 @@ body {
 
 .skill-icon.draggable:active {
   cursor: grabbing;
+}
+
+/* ---------- Cooldown overlay (item 23) — a wipe that shrinks from full
+   coverage down to nothing as the cooldown elapses, shared shape between
+   the Skills modal's icon and the action-bar slot. Angle is driven
+   inline per-frame (see main.ts's updateCooldownOverlays); the gradient
+   itself always covers the "elapsed" wedge with a dark scrim. ---------- */
+
+.cooldown-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  pointer-events: none;
 }
 
 /* ---------- Day/night overlay ---------- */

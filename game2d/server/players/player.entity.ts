@@ -62,10 +62,12 @@ export class Player {
   @Column({ name: 'max_mana', type: 'int', default: 100 })
   maxMana!: number;
 
-  @Column({ type: 'int', default: 100 })
+  // double precision, not int — movement cost is fractional (0.5/step
+  // inside, see shared/maps.ts's movementCostFor).
+  @Column({ type: 'double precision', default: 100 })
   movement!: number;
 
-  @Column({ name: 'max_movement', type: 'int', default: 100 })
+  @Column({ name: 'max_movement', type: 'double precision', default: 100 })
   maxMovement!: number;
 
   @Column({ type: 'int', default: 1 })

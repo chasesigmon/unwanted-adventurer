@@ -23,8 +23,10 @@ CREATE TABLE IF NOT EXISTS players (
   max_hp INTEGER NOT NULL DEFAULT 100,
   mana INTEGER NOT NULL DEFAULT 100,
   max_mana INTEGER NOT NULL DEFAULT 100,
-  movement INTEGER NOT NULL DEFAULT 100,
-  max_movement INTEGER NOT NULL DEFAULT 100,
+  -- DOUBLE PRECISION, not INTEGER — movement cost is fractional (0.5/step
+  -- inside, see game2d/shared/maps.ts's movementCostFor).
+  movement DOUBLE PRECISION NOT NULL DEFAULT 100,
+  max_movement DOUBLE PRECISION NOT NULL DEFAULT 100,
   level INTEGER NOT NULL DEFAULT 1,
   exp INTEGER NOT NULL DEFAULT 0,
   skills JSONB NOT NULL DEFAULT '{"punch": 1}',

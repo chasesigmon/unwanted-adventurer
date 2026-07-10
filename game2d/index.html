@@ -74,6 +74,7 @@
           <div id="combat-log" class="panel-body log-view"></div>
           <div id="chat-log" class="panel-body log-view" hidden></div>
           <input id="chat-input" type="text" placeholder="Press Enter to chat..." autocomplete="off" hidden />
+          <div id="log-resize-handle" title="Drag to resize"></div>
         </div>
 
         <div id="corner-buttons">
@@ -156,6 +157,7 @@
           <div class="modal-box">
             <button type="button" class="modal-close">&times;</button>
             <h2 id="shop-modal-title">Shop</h2>
+            <div id="shop-greeting">I serve any and all with coin! Don't forget your torches for night in the wilderness!</div>
             <div id="shop-gold-line"></div>
             <ul id="shop-item-list" class="inventory-list"></ul>
           </div>
@@ -167,7 +169,7 @@
             <h2>Prompt</h2>
             <label class="autopilot-field">
               prompt:
-              <input id="autopilot-input" type="text" placeholder="Roam around and kill wild goblins by punching them" autocomplete="off" />
+              <input id="autopilot-input" type="text" placeholder="ex: kill wild goblins" autocomplete="off" />
             </label>
           </div>
         </div>

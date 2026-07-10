@@ -48,6 +48,7 @@ export {
   GLARE_SKILL,
   ENHANCED_DURABILITY_SKILL,
   BONE_FINGER_STRIKE_SKILL,
+  SKILL_COOLDOWN_MS,
 } from '../../shared/skills.js';
 
 export const STARTING_ATTRIBUTE = 1;
