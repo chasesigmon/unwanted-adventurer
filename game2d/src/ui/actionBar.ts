@@ -1,0 +1,148 @@
+// The action bar (2x10 slots) — a skill icon from the Skills modal can be
+// dragged (or double-clicked) into any slot; a filled slot is then
+// clickable, using that skill on the currently selected target — see
+// WorldScene.useTargetedSkill, the single place that interprets what each
+// skill name actually does.
+import { activeScene, myProfile } from '../state.js';
+import { createCooldownOverlay, isAttackSkill, skillIconColor, skillIconLetter, updateCooldownOverlay } from './skillMeta.js';
+
+export const ACTION_BAR_SLOT_COUNT = 20;
+const actionBar = document.getElementById('action-bar') as HTMLDivElement;
+const actionSlots: HTMLDivElement[] = [];
+export const actionBarSkills: Array<string | null> = new Array(ACTION_BAR_SLOT_COUNT).fill(null);
+
+function renderActionSlot(index: number): void {
+  // Always called with an index this same module just created below, so
+  // the slot is guaranteed to exist.
+  const slot = actionSlots[index]!;
+  const skillName = actionBarSkills[index];
+  slot.classList.toggle('filled', skillName !== null);
+  slot.draggable = skillName !== null;
+  const overlay = slot.querySelector<HTMLElement>('.cooldown-overlay')!;
+  if (skillName) {
+    slot.textContent = skillIconLetter(skillName);
+    slot.appendChild(overlay); // textContent= above wipes children too — re-append
+    slot.style.background = skillIconColor(skillName);
+    slot.title = `${skillName} (click to use on your selected target, drag off to remove)`;
+    overlay.dataset.skill = skillName;
+  } else {
+    slot.textContent = '';
+    slot.appendChild(overlay);
+    slot.style.background = '';
+    slot.title = '';
+    delete overlay.dataset.skill;
+  }
+  updateCooldownOverlay(overlay);
+}
+
+// Persisted per-username in localStorage so a slotted loadout survives a
+// reload/reconnect — purely a client-side convenience, the server has no
+// idea the action bar exists at all.
+function actionBarStorageKey(username: string): string {
+  return `game2d:actionBar:${username}`;
+}
+
+export function saveActionBar(): void {
+  if (!myProfile) return;
+  try {
+    localStorage.setItem(actionBarStorageKey(myProfile.username), JSON.stringify(actionBarSkills));
+  } catch {
+    /* localStorage unavailable (private browsing etc.) — not worth surfacing */
+  }
+}
+
+let actionBarLoadedForUsername: string | null = null;
+export function loadActionBarOnce(username: string): void {
+  if (actionBarLoadedForUsername === username) return;
+  actionBarLoadedForUsername = username;
+  try {
+    const raw = localStorage.getItem(actionBarStorageKey(username));
+    if (!raw) return;
+    const saved = JSON.parse(raw) as unknown;
+    if (!Array.isArray(saved)) return;
+    for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
+      const skillName = saved[i];
+      actionBarSkills[i] = typeof skillName === 'string' ? skillName : null;
+      renderActionSlot(i);
+    }
+  } catch {
+    /* corrupt/missing data — just leave the bar empty */
+  }
+}
+
+// Custom MIME type carrying which action-bar slot a drag started from
+// (if any) — set only when dragging FROM a slot (see the dragstart
+// handler below), never when dragging from the Skills modal — so the
+// drop handler can tell "rearranging within the bar" (clear the source
+// slot too) apart from "dragging a fresh copy in from the modal".
+const ACTION_SLOT_SOURCE_MIME = 'application/x-action-slot-index';
+
+export function assignActionSlot(index: number, skillName: string): void {
+  // Punch and dagger share one "Attack" slot — dropping either one bumps
+  // whichever OTHER slot currently holds the other, rather than allowing
+  // two at once.
+  if (isAttackSkill(skillName)) {
+    for (let j = 0; j < ACTION_BAR_SLOT_COUNT; j++) {
+      if (j !== index && actionBarSkills[j] !== null && isAttackSkill(actionBarSkills[j]!)) {
+        actionBarSkills[j] = null;
+        renderActionSlot(j);
+      }
+    }
+  }
+  actionBarSkills[index] = skillName;
+  renderActionSlot(index);
+}
+
+for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
+  const slot = document.createElement('div');
+  slot.className = 'action-slot';
+  slot.dataset.slotIndex = String(i);
+  slot.appendChild(createCooldownOverlay(''));
+  slot.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    slot.classList.add('drag-over');
+  });
+  slot.addEventListener('dragleave', () => slot.classList.remove('drag-over'));
+  slot.addEventListener('drop', (e) => {
+    e.preventDefault();
+    slot.classList.remove('drag-over');
+    const skillName = e.dataTransfer?.getData('text/plain');
+    if (!skillName) return;
+    const sourceIndexRaw = e.dataTransfer?.getData(ACTION_SLOT_SOURCE_MIME);
+    const sourceIndex = sourceIndexRaw ? Number(sourceIndexRaw) : null;
+
+    assignActionSlot(i, skillName);
+    // Dragging in from ANOTHER slot is a move, not a copy — clear
+    // wherever it came from (unless dropped back onto itself).
+    if (sourceIndex !== null && sourceIndex !== i && actionBarSkills[sourceIndex] === skillName) {
+      actionBarSkills[sourceIndex] = null;
+      renderActionSlot(sourceIndex);
+    }
+    saveActionBar();
+  });
+  // A filled slot is itself draggable — dropped anywhere that doesn't
+  // accept it (dropEffect stays 'none'), that's how you remove it from
+  // the bar entirely.
+  slot.addEventListener('dragstart', (e) => {
+    const skillName = actionBarSkills[i];
+    if (!skillName) {
+      e.preventDefault();
+      return;
+    }
+    e.dataTransfer?.setData('text/plain', skillName);
+    e.dataTransfer?.setData(ACTION_SLOT_SOURCE_MIME, String(i));
+  });
+  slot.addEventListener('dragend', (e) => {
+    if (e.dataTransfer?.dropEffect === 'none' && actionBarSkills[i] !== null) {
+      actionBarSkills[i] = null;
+      renderActionSlot(i);
+      saveActionBar();
+    }
+  });
+  slot.addEventListener('click', () => {
+    const skillName = actionBarSkills[i];
+    if (skillName) activeScene?.useTargetedSkill(skillName);
+  });
+  actionBar.appendChild(slot);
+  actionSlots.push(slot);
+}

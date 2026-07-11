@@ -275,15 +275,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return;
       }
 
-      let payload: Awaited<ReturnType<AuthService['verifySessionToken']>>;
+      let payload: Awaited<ReturnType<AuthService['verifyCharacterToken']>>;
       try {
-        payload = await this.authService.verifySessionToken(token);
+        // Rejects an account-level token (one that hasn't picked a
+        // character yet) just as reliably as an invalid one — the game
+        // socket only ever accepts a real character session.
+        payload = await this.authService.verifyCharacterToken(token);
       } catch {
         next(new Error('Invalid or expired session.'));
         return;
       }
 
-      const valid = await this.sessionStore.isSessionValid(payload.username, payload.sessionId);
+      const valid = await this.sessionStore.isSessionValid('character', payload.username, payload.sessionId);
       if (!valid) {
         next(new Error('Session expired or replaced elsewhere.'));
         return;
@@ -1070,6 +1073,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (durationMs === undefined) return;
     client.data.skillCooldowns = { ...client.data.skillCooldowns, [skill]: Date.now() + durationMs };
     this.worldManager.updateState(client.data.username, { skillCooldowns: client.data.skillCooldowns });
+    // Without this, the client's own myProfile.skillCooldowns only ever
+    // refreshed on the next full 'sync' (level-up, respawn, map change),
+    // which could be minutes away — the action bar/Skills modal cooldown
+    // wipe (item 5) silently never appeared in the meantime even though
+    // the cooldown was very much real server-side.
+    client.emit('sync', { player: this.snapshotFor(client) });
   }
 
   // Shared by punch/useSkill: throws the swing animation immediately

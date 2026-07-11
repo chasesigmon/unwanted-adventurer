@@ -3,16 +3,20 @@ import { ThrottlerGuard } from '@nestjs/throttler';
 
 import { AuthService } from './auth.service.js';
 import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import { credentialsSchema, registerCredentialsSchema, type CredentialsDto, type RegisterCredentialsDto } from './dto/credentials.dto.js';
+import { credentialsSchema, registerAccountSchema, type CredentialsDto, type RegisterAccountDto } from './dto/credentials.dto.js';
 
 @Controller('auth')
 @UseGuards(ThrottlerGuard)
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  // Registers an ACCOUNT — email/username/password only, no race and no
+  // character. The returned token is account-level; the client picks (or
+  // creates) a character next (see characters.controller.ts) before it
+  // ever gets a token the game socket will accept.
   @Post('register')
-  @UsePipes(new ZodValidationPipe(registerCredentialsSchema))
-  async register(@Body() body: RegisterCredentialsDto): Promise<{ ok: true; token: string }> {
+  @UsePipes(new ZodValidationPipe(registerAccountSchema))
+  async register(@Body() body: RegisterAccountDto): Promise<{ ok: true; token: string }> {
     const { token } = await this.authService.register(body);
     return { ok: true, token };
   }

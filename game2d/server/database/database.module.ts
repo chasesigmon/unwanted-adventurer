@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Player } from '../players/player.entity.js';
+import { Account } from '../accounts/account.entity.js';
 import type { AppConfig } from '../config/configuration.js';
 
 @Module({
@@ -11,7 +12,7 @@ import type { AppConfig } from '../config/configuration.js';
       useFactory: (configService: ConfigService<AppConfig, true>) => ({
         type: 'postgres' as const,
         url: configService.get('postgresUrl', { infer: true }),
-        entities: [Player],
+        entities: [Player, Account],
         // The table itself is created by docker/postgres/init-postgres.sql,
         // not by TypeORM — a traditional migration-style schema instead of
         // Mongoose-style auto-sync, since joined tables (inventory, guilds,

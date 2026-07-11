@@ -30,24 +30,29 @@ export class SessionStoreService {
     this.ttlSeconds = parseDurationToSeconds(configService.get('jwtExpiresIn', { infer: true }));
   }
 
-  private key(username: string): string {
-    return `game2d:session:${username.toLowerCase()}`;
+  // Namespaced by kind so an account's own login username can never
+  // collide with an unrelated character's name sharing the same string —
+  // account sessions and character sessions are otherwise independent
+  // (an account can have an active session with no character connected,
+  // and vice versa is meaningless but harmless).
+  private key(kind: 'account' | 'character', username: string): string {
+    return `game2d:session:${kind}:${username.toLowerCase()}`;
   }
 
-  async setActiveSession(username: string, sessionId: string): Promise<void> {
-    await this.redis.set(this.key(username), sessionId, 'EX', this.ttlSeconds);
+  async setActiveSession(kind: 'account' | 'character', username: string, sessionId: string): Promise<void> {
+    await this.redis.set(this.key(kind, username), sessionId, 'EX', this.ttlSeconds);
   }
 
-  async getActiveSession(username: string): Promise<string | null> {
-    return this.redis.get(this.key(username));
+  async getActiveSession(kind: 'account' | 'character', username: string): Promise<string | null> {
+    return this.redis.get(this.key(kind, username));
   }
 
-  async clearActiveSession(username: string): Promise<void> {
-    await this.redis.del(this.key(username));
+  async clearActiveSession(kind: 'account' | 'character', username: string): Promise<void> {
+    await this.redis.del(this.key(kind, username));
   }
 
-  async isSessionValid(username: string, sessionId: string): Promise<boolean> {
-    const current = await this.getActiveSession(username);
+  async isSessionValid(kind: 'account' | 'character', username: string, sessionId: string): Promise<boolean> {
+    const current = await this.getActiveSession(kind, username);
     return current !== null && current === sessionId;
   }
 }

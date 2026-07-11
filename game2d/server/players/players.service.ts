@@ -6,7 +6,7 @@ import type { MapName, Race } from '../../shared/constants.js';
 
 export interface NewPlayerInput {
   username: string;
-  passwordHash: string;
+  accountId: number;
   race: Race;
   map: MapName;
   row: number;
@@ -58,6 +58,13 @@ export class PlayersService {
 
   findByUsername(username: string): Promise<Player | null> {
     return this.playersRepo.findOneBy({ username });
+  }
+
+  // Every character belonging to one account (see characters.controller.ts's
+  // GET /characters) — ordered newest-first so a freshly created character
+  // shows up at the top of the select screen.
+  findByAccountId(accountId: number): Promise<Player[]> {
+    return this.playersRepo.find({ where: { accountId }, order: { createdAt: 'DESC' } });
   }
 
   async create(input: NewPlayerInput): Promise<Player> {

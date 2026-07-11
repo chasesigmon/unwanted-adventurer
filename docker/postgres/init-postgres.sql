@@ -1,15 +1,37 @@
--- game2d's players table. Position fields place a character back where
--- it left off; attribute/vital/level/skill fields back the combat system
--- (see game2d/server/combat/formulas.ts) — mirroring the text game's own
--- player.schema.ts conventions (starting attributes of 1, starting
--- hp/mana/movement of 100, a percent-learned skills map) even though this
--- project's combat is much smaller (one skill, no equipment). A real
--- relational schema (not just Mongo-style documents) since game2d expects
--- to grow joined tables later (e.g. inventory, guilds).
+-- game2d's accounts table — the login layer in FRONT of players/
+-- characters (see game2d/server/accounts/account.entity.ts and
+-- game2d/server/auth/auth.service.ts). An account authenticates with
+-- email/username/password; each of its characters is a row in `players`
+-- below, linked via players.account_id.
+CREATE TABLE IF NOT EXISTS accounts (
+  id SERIAL PRIMARY KEY,
+  email VARCHAR(254) NOT NULL UNIQUE,
+  username VARCHAR(16) NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS accounts_username_lower_idx ON accounts (lower(username));
+CREATE INDEX IF NOT EXISTS accounts_email_lower_idx ON accounts (lower(email));
+
+-- game2d's players table — one row per CHARACTER (an account may own
+-- several, see account_id below). Position fields place a character back
+-- where it left off; attribute/vital/level/skill fields back the combat
+-- system (see game2d/server/combat/formulas.ts) — mirroring the text
+-- game's own player.schema.ts conventions (starting attributes of 1,
+-- starting hp/mana/movement of 100, a percent-learned skills map) even
+-- though this project's combat is much smaller (one skill, no
+-- equipment). A real relational schema (not just Mongo-style documents)
+-- since game2d expects to grow joined tables later (e.g. inventory,
+-- guilds).
 CREATE TABLE IF NOT EXISTS players (
   id SERIAL PRIMARY KEY,
   username VARCHAR(16) NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL,
+  -- Nullable so any character row created before the account layer
+  -- existed stays valid, just not selectable through the new account
+  -- flow. A character no longer authenticates on its own (no more
+  -- password_hash here) — that happens once, at the account level.
+  account_id INTEGER REFERENCES accounts (id),
   race VARCHAR(16) NOT NULL DEFAULT 'goblin' CHECK (race IN ('goblin', 'skeleton', 'hobgoblin', 'zombie', 'dragonborn', 'slime')),
   -- Floro's 7 shop interiors (see game2d/shared/constants.ts's
   -- FLORO_SHOP_MAPS) are each their own map value too — "worlds of their
@@ -58,6 +80,8 @@ CREATE TABLE IF NOT EXISTS players (
 -- Case-insensitive username lookups (login/register) hit this instead of
 -- scanning the table.
 CREATE INDEX IF NOT EXISTS players_username_lower_idx ON players (lower(username));
+-- "List my characters" (see PlayersService.findByAccountId).
+CREATE INDEX IF NOT EXISTS players_account_id_idx ON players (account_id);
 
 -- Keeps updated_at current on every UPDATE, the traditional-SQL
 -- counterpart to Mongoose's { timestamps: true } schema option.

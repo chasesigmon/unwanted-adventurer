@@ -24,6 +24,15 @@ import type { EquipmentSlot } from '../shared/equipment.js';
 type GameClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 type AuthResponse = { ok: true; token: string } | { ok: false; error: string };
 
+export interface CharacterSummary {
+  name: string;
+  race: string;
+  level: number;
+  map: string;
+}
+type CharactersResponse = { ok: true; characters: CharacterSummary[] } | { ok: false; error: string };
+type CharacterResponse = { ok: true; character: CharacterSummary } | { ok: false; error: string };
+
 // Owns auth (HTTP) and the game socket — the same shape as the text
 // game's own NetworkManager, just talking to this project's much smaller
 // protocol (one event: "move").
@@ -53,14 +62,58 @@ export class NetworkManager extends EventTarget {
     return { token: data.token };
   }
 
-  async register(username: string, password: string, race: string): Promise<void> {
-    const { token } = await this.authFetch('/auth/register', { username, password, race });
+  // Registers an ACCOUNT (email/username/password, no race/character
+  // name) — the returned token is account-level and can't connect the
+  // game socket on its own; listCharacters/createCharacter/
+  // selectCharacter below are what get from here to an actual playable
+  // character.
+  async register(email: string, username: string, password: string): Promise<void> {
+    const { token } = await this.authFetch('/auth/register', { email, username, password });
     this.token = token;
   }
 
   async login(username: string, password: string): Promise<void> {
     const { token } = await this.authFetch('/auth/login', { username, password });
     this.token = token;
+  }
+
+  async listCharacters(): Promise<CharacterSummary[]> {
+    const res = await fetch(`${this.serverUrl}/characters`, {
+      headers: { Authorization: `Bearer ${this.token}` },
+    });
+    const data = (await res.json().catch(() => null)) as CharactersResponse | null;
+    if (!res.ok || !data || !data.ok) {
+      throw new Error(data && !data.ok ? data.error : 'Request failed.');
+    }
+    return data.characters;
+  }
+
+  async createCharacter(name: string, race: string): Promise<CharacterSummary> {
+    const res = await fetch(`${this.serverUrl}/characters`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+      body: JSON.stringify({ name, race }),
+    });
+    const data = (await res.json().catch(() => null)) as CharacterResponse | null;
+    if (!res.ok || !data || !data.ok) {
+      throw new Error(data && !data.ok ? data.error : 'Request failed.');
+    }
+    return data.character;
+  }
+
+  // Swaps the held account-level token for a character-level one — only
+  // after this does connectSocket() below have a token the game socket
+  // will actually accept.
+  async selectCharacter(name: string): Promise<void> {
+    const res = await fetch(`${this.serverUrl}/characters/${encodeURIComponent(name)}/select`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.token}` },
+    });
+    const data = (await res.json().catch(() => null)) as AuthResponse | null;
+    if (!res.ok || !data || !data.ok) {
+      throw new Error(data && !data.ok ? data.error : 'Request failed.');
+    }
+    this.token = data.token;
   }
 
   connectSocket(): void {

@@ -15,6 +15,10 @@
             <button type="button" id="tab-login" class="auth-tab active">Login</button>
             <button type="button" id="tab-register" class="auth-tab">Register</button>
           </div>
+          <label id="auth-email-label" hidden>
+            Email
+            <input id="auth-email" type="email" autocomplete="email" maxlength="254" />
+          </label>
           <label>
             Username
             <input id="auth-username" type="text" autocomplete="username" required minlength="2" maxlength="16" />
@@ -23,19 +27,37 @@
             Password
             <input id="auth-password" type="password" autocomplete="current-password" required minlength="8" />
           </label>
-          <label id="auth-race-label" hidden>
-            Race
-            <select id="auth-race">
-              <option value="goblin">Goblin</option>
-              <option value="skeleton">Skeleton</option>
-              <option value="zombie">Zombie</option>
-              <option value="dragonborn">Dragonborn</option>
-              <option value="slime">Slime</option>
-            </select>
-          </label>
           <div id="auth-error"></div>
           <button type="submit" id="auth-submit">Login</button>
         </form>
+      </div>
+
+      <div id="character-select-screen" hidden>
+        <div class="character-select-box">
+          <h1>Choose your character</h1>
+          <div id="character-select-error"></div>
+          <ul id="character-list"></ul>
+
+          <form id="create-character-form">
+            <h2>Create a new character</h2>
+            <label>
+              Name
+              <input id="new-character-name" type="text" required minlength="2" maxlength="16" />
+            </label>
+            <label>
+              Race
+              <select id="new-character-race">
+                <option value="goblin">Goblin</option>
+                <option value="skeleton">Skeleton</option>
+                <option value="zombie">Zombie</option>
+                <option value="dragonborn">Dragonborn</option>
+                <option value="slime">Slime</option>
+              </select>
+            </label>
+            <button type="submit" id="create-character-submit">Create &amp; play</button>
+          </form>
+          <button type="button" id="character-select-logout">Log out</button>
+        </div>
       </div>
 
       <div id="game-root" hidden>

@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule } from '@nestjs/throttler';
 
 import { PlayersModule } from '../players/players.module.js';
+import { AccountsModule } from '../accounts/accounts.module.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import { SessionStoreService } from './session-store.service.js';
@@ -13,6 +14,7 @@ import type { AppConfig } from '../config/configuration.js';
 @Module({
   imports: [
     PlayersModule,
+    AccountsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService<AppConfig, true>) => ({

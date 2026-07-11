@@ -48,6 +48,11 @@ export function movementCostFor(mapName: MapName): number {
 const GREAT_PLAINS_SIZE = 100;
 const LABYRINTH_SIZE = 60;
 const TOWN_SIZE = 50;
+// Exported so the client can decide which way a shop building's facade
+// should face (item 13) — a shop door west of the town's own center
+// column faces right/east (toward the main square), one east of it faces
+// left/west, purely by comparing its own exit's `col` to this.
+export const TOWN_MID_COL = Math.floor(TOWN_SIZE / 2);
 // "Very top middle" / "south middle" — floor(size / 2), the same
 // even-width convention the text game's own map exits use.
 const GREAT_PLAINS_MID_COL = Math.floor(GREAT_PLAINS_SIZE / 2);

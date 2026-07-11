@@ -20,8 +20,16 @@ export class Player {
   @Column({ type: 'varchar', length: 16, unique: true })
   username!: string;
 
-  @Column({ name: 'password_hash', type: 'text' })
-  passwordHash!: string;
+  // Which account owns this character (see accounts/account.entity.ts) —
+  // nullable so any character row created before this account layer
+  // existed stays valid, just not selectable through the new account
+  // flow. Login/auth no longer happens at the character level at all
+  // (see auth.service.ts's selectCharacter) — a character used to carry
+  // its own password_hash directly; that's gone now that the owning
+  // account is what authenticates.
+  @Index()
+  @Column({ name: 'account_id', type: 'int', nullable: true })
+  accountId!: number | null;
 
   @Column({ type: 'varchar', length: 16, default: 'goblin' })
   race!: Race;

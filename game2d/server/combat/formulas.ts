@@ -21,6 +21,7 @@ import {
   HOBGOBLIN_EVOLUTION_SKILLS,
   LESSER_NORMAL_MONSTER_RESISTANCE,
   LESSER_UNDEAD_MONSTER_RESISTANCE,
+  LESSER_FIRE_RESISTANCE,
   RACE_INNATE_SKILLS,
   BONE_FINGER_STRIKE_SKILL,
 } from '../../shared/skills.js';
@@ -329,6 +330,10 @@ const RESISTANCE_FOR_ITEM: Record<string, ResistanceGrant> = {
   'hobgoblin ear': { skill: LESSER_NORMAL_MONSTER_RESISTANCE, chance: 0.1 },
   'wild skeleton bone': { skill: LESSER_UNDEAD_MONSTER_RESISTANCE, chance: 0.2 },
   'skeleton bone': { skill: LESSER_UNDEAD_MONSTER_RESISTANCE, chance: 0.2 },
+  // Consuming (not equipping) a torch — right-click "force consume" in
+  // the inventory modal, since a torch is normally equippable — has a
+  // small 1% chance of teaching lesser fire resistance (item 9).
+  torch: { skill: LESSER_FIRE_RESISTANCE, chance: 0.01 },
 };
 
 export function resistanceGrantForItem(item: string): ResistanceGrant | undefined {

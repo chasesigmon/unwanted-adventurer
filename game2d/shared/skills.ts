@@ -24,7 +24,12 @@ export const HOBGOBLIN_EVOLUTION_SKILLS = [SECOND_ATTACK_SKILL, THIRD_ATTACK_SKI
 
 export const LESSER_NORMAL_MONSTER_RESISTANCE = 'lesser normal monster resistance';
 export const LESSER_UNDEAD_MONSTER_RESISTANCE = 'lesser undead monster resistance';
-export const RESISTANCE_SKILLS = [LESSER_NORMAL_MONSTER_RESISTANCE, LESSER_UNDEAD_MONSTER_RESISTANCE];
+// Granted by a small chance on consuming a torch (see combat/formulas.ts's
+// RESISTANCE_FOR_ITEM) rather than a body part — no fire-damage mechanic
+// exists yet for it to actually reduce, same "earnable now, mechanically
+// inert until there's fire damage to resist" status as a few other skills.
+export const LESSER_FIRE_RESISTANCE = 'lesser fire resistance';
+export const RESISTANCE_SKILLS = [LESSER_NORMAL_MONSTER_RESISTANCE, LESSER_UNDEAD_MONSTER_RESISTANCE, LESSER_FIRE_RESISTANCE];
 
 // --- Per-race innate skills — each granted at character creation
 // alongside the universal STARTING_SKILLS above, but starting at
