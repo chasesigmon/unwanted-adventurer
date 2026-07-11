@@ -1,4 +1,5 @@
 import type { MapName } from './constants.js';
+import { GRIMOAK_CASTLE_MAPS } from './constants.js';
 import { INFRAVISION_SKILL } from './skills.js';
 import { getMap } from './maps.js';
 
@@ -53,8 +54,11 @@ export const STATIC_LIGHT_SOURCES: Partial<Record<MapName, Array<{ row: number; 
 
 // Torch-lined halls, not just one lit stall — the WHOLE map is always
 // visible regardless of time of day or what the player's carrying/knows
-// (see main.ts's updateDarkFog/applyDaynightTint call sites).
-export const ALWAYS_LIT_MAPS: MapName[] = ['Labyrinth'];
+// (see main.ts's updateDarkFog/applyDaynightTint call sites). Every room
+// inside Grimoak Castle is included (item 1) — the day/night system
+// shouldn't apply indoors at all; "Grimoak Grounds" itself (outside) is
+// deliberately NOT included, it still has a normal day/night cycle.
+export const ALWAYS_LIT_MAPS: MapName[] = ['Labyrinth', ...GRIMOAK_CASTLE_MAPS];
 
 export function isAlwaysLit(mapName: MapName): boolean {
   return ALWAYS_LIT_MAPS.includes(mapName);
@@ -81,6 +85,21 @@ export function torchWallPositionsFor(mapName: MapName): Array<{ row: number; co
   }
   // Skip any tile that's actually a door/exit — a torch shouldn't sit on
   // top of the one way in or out.
+  return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
+}
+
+// A couple of fireplaces per castle room (item 6) — offset from the
+// center of the north wall rather than hand-placed, same "computed once
+// from the map's own size" reasoning as the wall torches above. Skips an
+// exit tile for the same reason.
+export function fireplacePositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
+  if (!(GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return [];
+  const def = getMap(mapName);
+  const row = 3;
+  const positions = [
+    { row, col: Math.round(def.cols * 0.25) },
+    { row, col: Math.round(def.cols * 0.75) },
+  ];
   return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
 }
 

@@ -24,7 +24,7 @@ import { SessionStoreService } from '../auth/session-store.service.js';
 import { ActiveConnectionsService } from '../auth/active-connections.service.js';
 import { SocketConnectionLimiterService } from '../rate-limit/socket-connection-limiter.service.js';
 import { CommandRateLimiter, type CommandRateLimiterOptions } from '../rate-limit/command-rate-limiter.js';
-import { getMap, movementCostFor } from '../../shared/maps.js';
+import { getMap, startingPositionFor } from '../../shared/maps.js';
 import { resolveMove } from '../worlds/resolveMove.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { STARTING_MAP, DIRECTIONS } from '../../shared/constants.js';
@@ -140,21 +140,13 @@ const TORCH_LIFETIME_MS = 15 * 60 * 1000;
 // A flat 30s interval (a setTimeout chain, not setInterval, purely so a
 // future tweak to re-introduce jitter would only touch scheduleStatTick)
 // heals hp/mana by one shared random percent of each stat's own max, the
-// percent range depending on restState. Movement regenerates separately
-// (see MOVEMENT_REGEN_PERCENT below) at a flat (not randomized) percent —
-// its own pacing knob, distinct from hp/mana, since it's the resource the
-// per-step movement cost (see shared/maps.ts) drains.
+// percent range depending on restState.
 const HOURS_PER_DAY = 24;
 const STAT_TICK_MS = 30_000;
 const HEAL_PERCENT_RANGE: Record<RestState, [number, number]> = {
   awake: [7, 10],
   resting: [9, 12],
   sleeping: [10, 15],
-};
-const MOVEMENT_REGEN_PERCENT: Record<RestState, number> = {
-  awake: 8,
-  resting: 11,
-  sleeping: 15,
 };
 const STAT_TICK_FLAVOR: Record<RestState, string> = {
   awake: 'You catch your breath',
@@ -315,8 +307,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
   // A shared random percent (of each stat's own max) heals hp and mana
   // together — the percent range depends on restState, same shape as the
-  // text game's own applyStatTick. Movement regenerates on its own flat
-  // (not randomized) percent instead (see MOVEMENT_REGEN_PERCENT).
+  // text game's own applyStatTick.
   private applyStatTick(client: GameSocket): void {
     if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
 
@@ -327,25 +318,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     const hp = healed(client.data.hp, client.data.maxHp, percent);
     const mana = healed(client.data.mana, client.data.maxMana, percent);
-    const movement = healed(client.data.movement, client.data.maxMovement, MOVEMENT_REGEN_PERCENT[client.data.restState]);
-    if (hp === client.data.hp && mana === client.data.mana && movement === client.data.movement) return;
+    if (hp === client.data.hp && mana === client.data.mana) return;
 
     client.data.hp = hp;
     client.data.mana = mana;
-    client.data.movement = movement;
-    this.worldManager.updateState(client.data.username, { hp, mana, movement });
+    this.worldManager.updateState(client.data.username, { hp, mana });
     void this.persistStats(client);
-    this.systemMessage(
-      client,
-      `${STAT_TICK_FLAVOR[client.data.restState]} and recover some hp/mana/movement.`
-    );
+    this.systemMessage(client, `${STAT_TICK_FLAVOR[client.data.restState]} and recover some hp/mana.`);
     client.emit('statTick', {
       hp: client.data.hp,
       maxHp: client.data.maxHp,
       mana: client.data.mana,
       maxMana: client.data.maxMana,
-      movement: client.data.movement,
-      maxMovement: client.data.maxMovement,
     });
   }
 
@@ -353,6 +337,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return {
       username: client.data.username,
       race: client.data.race,
+      gender: client.data.gender,
+      hairColor: client.data.hairColor,
+      skinTone: client.data.skinTone,
       map: client.data.map,
       row: client.data.row,
       col: client.data.col,
@@ -362,8 +349,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxHp: client.data.maxHp,
       mana: client.data.mana,
       maxMana: client.data.maxMana,
-      movement: client.data.movement,
-      maxMovement: client.data.maxMovement,
       strength: client.data.strength,
       intelligence: client.data.intelligence,
       wisdom: client.data.wisdom,
@@ -423,8 +408,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         maxHp: client.data.maxHp,
         mana: client.data.mana,
         maxMana: client.data.maxMana,
-        movement: client.data.movement,
-        maxMovement: client.data.maxMovement,
         strength: client.data.strength,
         intelligence: client.data.intelligence,
         wisdom: client.data.wisdom,
@@ -487,10 +470,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       client.data.constitution += LEVEL_UP_ATTRIBUTE_BONUS * levelsGained;
       client.data.maxHp += LEVEL_UP_VITAL_BONUS * levelsGained + HP_PER_CONSTITUTION * LEVEL_UP_ATTRIBUTE_BONUS * levelsGained;
       client.data.maxMana += LEVEL_UP_VITAL_BONUS * levelsGained;
-      client.data.maxMovement += LEVEL_UP_VITAL_BONUS * levelsGained;
       client.data.hp = client.data.maxHp;
       client.data.mana = client.data.maxMana;
-      client.data.movement = client.data.maxMovement;
     }
 
     this.worldManager.updateState(client.data.username, {
@@ -500,8 +481,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxHp: client.data.maxHp,
       mana: client.data.mana,
       maxMana: client.data.maxMana,
-      movement: client.data.movement,
-      maxMovement: client.data.maxMovement,
       strength: client.data.strength,
       intelligence: client.data.intelligence,
       wisdom: client.data.wisdom,
@@ -775,10 +754,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // back on their feet somewhere.
   private respawnDefeatedPlayer(targetClient: GameSocket): void {
     const previousMap = targetClient.data.map;
-    const startingMap = getMap(STARTING_MAP);
+    const spawn = startingPositionFor(STARTING_MAP);
     targetClient.data.map = STARTING_MAP;
-    targetClient.data.row = Math.floor(startingMap.rows / 2);
-    targetClient.data.col = Math.floor(startingMap.cols / 2);
+    targetClient.data.row = spawn.row;
+    targetClient.data.col = spawn.col;
     targetClient.data.hp = targetClient.data.maxHp;
 
     this.worldManager.updateState(targetClient.data.username, {
@@ -821,11 +800,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return;
     }
 
-    const startingMap = getMap(STARTING_MAP);
-    client.data.race = doc?.race ?? 'goblin';
+    const spawn = startingPositionFor(STARTING_MAP);
+    client.data.race = doc?.race ?? 'human';
+    client.data.gender = doc?.gender ?? null;
+    client.data.hairColor = doc?.hairColor ?? null;
+    client.data.skinTone = doc?.skinTone ?? null;
     client.data.map = doc?.map ?? STARTING_MAP;
-    client.data.row = doc?.row ?? Math.floor(startingMap.rows / 2);
-    client.data.col = doc?.col ?? Math.floor(startingMap.cols / 2);
+    client.data.row = doc?.row ?? spawn.row;
+    client.data.col = doc?.col ?? spawn.col;
     client.data.level = doc?.level ?? STARTING_LEVEL;
     client.data.exp = doc?.exp ?? STARTING_EXP;
     client.data.strength = doc?.strength ?? STARTING_ATTRIBUTE;
@@ -837,8 +819,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.maxHp = doc?.maxHp ?? STARTING_VITAL;
     client.data.mana = doc?.mana ?? STARTING_VITAL;
     client.data.maxMana = doc?.maxMana ?? STARTING_VITAL;
-    client.data.movement = doc?.movement ?? STARTING_VITAL;
-    client.data.maxMovement = doc?.maxMovement ?? STARTING_VITAL;
     client.data.skills = doc?.skills ?? startingSkills(client.data.race);
     // Backfills any race-innate skill an EXISTING account is still
     // missing (e.g. created before a registration bug — now fixed — used
@@ -875,6 +855,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
+      gender: client.data.gender,
+      hairColor: client.data.hairColor,
+      skinTone: client.data.skinTone,
       mapName: client.data.map,
       row: client.data.row,
       col: client.data.col,
@@ -884,8 +867,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxHp: client.data.maxHp,
       mana: client.data.mana,
       maxMana: client.data.maxMana,
-      movement: client.data.movement,
-      maxMovement: client.data.maxMovement,
       strength: client.data.strength,
       intelligence: client.data.intelligence,
       wisdom: client.data.wisdom,
@@ -945,20 +926,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, player: this.snapshotFor(client), message: 'Unknown direction.' };
     }
 
-    // Not enough movement left to afford even one step on the ground
-    // they're currently standing on (item 8) — refused outright, same as
-    // any other blocked move, rather than letting movement go negative.
-    // Checked against the DEPARTURE map's own cost, matching how the
-    // cost itself is charged (see the deduction further below).
-    if (client.data.movement < movementCostFor(client.data.map)) {
-      return {
-        ok: false,
-        player: this.snapshotFor(client),
-        message: "You're out of movement and need to rest.",
-        outOfMovement: true,
-      };
-    }
-
     this.wakeIfNeeded(client);
 
     const { username } = client.data;
@@ -991,13 +958,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.map = result.mapName;
     client.data.row = result.row;
     client.data.col = result.col;
-    // Cost is based on the room being LEFT, not the destination — matches
-    // the text game's own deductMovementCost. Terrain-driven (stone vs.
-    // grass), not "inside"/"outside", so Floro/Kortho's stone streets
-    // cost the same as the Labyrinth despite being "outside" (item 16).
-    client.data.movement = Math.max(0, client.data.movement - movementCostFor(previousMap));
-    this.worldManager.updateState(client.data.username, { movement: client.data.movement });
-    void this.persistStats(client);
 
     void this.persistPosition(client);
 
@@ -1795,7 +1755,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, inventory: client.data.inventory, gold: client.data.gold, message: `You buy a ${item.label} for ${item.price} gold.` };
   }
 
-  // Zombie-only: heals 20% hp/mana/movement and starts a 4-world-tick
+  // Zombie-only: heals 20% hp/mana and starts a 4-world-tick
   // (EAT_BRAINS_COOLDOWN_TICKS) cooldown — only offered on a corpse this
   // zombie itself landed the killing blow on (see corpse.killedBy, set at
   // spawn time), same reach rule as looting it.
@@ -1828,14 +1788,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.eatBrainsReadyAtTick = this.currentTick + EAT_BRAINS_COOLDOWN_TICKS;
     client.data.hp = Math.min(client.data.maxHp, client.data.hp + Math.round((client.data.maxHp * EAT_BRAINS_HEAL_PERCENT) / 100));
     client.data.mana = Math.min(client.data.maxMana, client.data.mana + Math.round((client.data.maxMana * EAT_BRAINS_HEAL_PERCENT) / 100));
-    client.data.movement = Math.min(
-      client.data.maxMovement,
-      client.data.movement + Math.round((client.data.maxMovement * EAT_BRAINS_HEAL_PERCENT) / 100)
-    );
     this.worldManager.updateState(client.data.username, {
       hp: client.data.hp,
       mana: client.data.mana,
-      movement: client.data.movement,
     });
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
@@ -1846,10 +1801,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxHp: client.data.maxHp,
       mana: client.data.mana,
       maxMana: client.data.maxMana,
-      movement: client.data.movement,
-      maxMovement: client.data.maxMovement,
       eatBrainsReadyAtTick: client.data.eatBrainsReadyAtTick,
-      message: `You eat the brains, restoring ${EAT_BRAINS_HEAL_PERCENT}% of your hp/mana/movement.`,
+      message: `You eat the brains, restoring ${EAT_BRAINS_HEAL_PERCENT}% of your hp/mana.`,
     };
   }
 
@@ -1883,7 +1836,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   private static readonly COMMANDS_HELP_TEXT = [
     'Available commands:',
     '/commands, /help - show this list',
-    "/sleep - lie down and close your eyes, recovering hp/mana/movement faster until you wake up (moving or attacking wakes you)",
+    "/sleep - lie down and close your eyes, recovering hp/mana faster until you wake up (moving or attacking wakes you)",
     '/rest, /sit - sit down to rest, recovering a bit faster than standing around',
     '/wake, /stand - get up from sleeping or resting',
     '/mimic [race] - slime only: with no argument, lists what you can mimic; with one, shifts your form to it',
@@ -2070,10 +2023,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     client.data.maxHp += HOBGOBLIN_STAT_BONUS;
     client.data.maxMana += HOBGOBLIN_STAT_BONUS;
-    client.data.maxMovement += HOBGOBLIN_STAT_BONUS;
     client.data.hp = client.data.maxHp;
     client.data.mana = client.data.maxMana;
-    client.data.movement = client.data.maxMovement;
 
     const newSkills: string[] = [];
     for (const skill of HOBGOBLIN_EVOLUTION_SKILLS) {
@@ -2095,10 +2046,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       constitution: client.data.constitution,
       maxHp: client.data.maxHp,
       maxMana: client.data.maxMana,
-      maxMovement: client.data.maxMovement,
       hp: client.data.hp,
       mana: client.data.mana,
-      movement: client.data.movement,
       skills: client.data.skills,
     });
     void this.persistStats(client);
@@ -2108,7 +2057,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       '**Your body twists and swells with dark power — you have evolved into a Hobgoblin!**',
       'Your level has reset to 1.',
       `Your attributes have increased by ${HOBGOBLIN_ATTRIBUTE_BONUS}.`,
-      `Your hp, mana, and movement have increased by ${HOBGOBLIN_STAT_BONUS} and been fully restored.`,
+      `Your hp and mana have increased by ${HOBGOBLIN_STAT_BONUS} and been fully restored.`,
       'Your consumed exp has reset to 0.',
     ];
     if (newSkills.length > 0) {
@@ -2126,17 +2075,29 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     const messages: string[] = [];
     const grant = resistanceGrantForItem(item);
-    if (grant && client.data.skills[grant.skill] === undefined && Math.random() < grant.chance) {
-      client.data.skills = { ...client.data.skills, [grant.skill]: RESISTANCE_SKILL_STARTING_PERCENT };
-      messages.push(`You have gained ${grant.skill} (${RESISTANCE_SKILL_STARTING_PERCENT}%)!`);
+    if (grant) {
+      if (client.data.skills[grant.skill] === undefined) {
+        if (Math.random() < grant.chance) {
+          client.data.skills = { ...client.data.skills, [grant.skill]: RESISTANCE_SKILL_STARTING_PERCENT };
+          messages.push(`You have gained ${grant.skill} (${RESISTANCE_SKILL_STARTING_PERCENT}%)!`);
+        }
+      } else {
+        // Item 1: consuming this kind of item again once the skill is
+        // already known used to just silently do nothing (besides the
+        // flat consumeExp) — no feedback at all that nothing new could
+        // come of it.
+        messages.push(`You have already learned ${grant.skill} from this kind of item!`);
+      }
     }
-    if (
-      item === 'bone dagger' &&
-      client.data.skills[BONE_FINGER_STRIKE_SKILL] === undefined &&
-      Math.random() < BONE_FINGER_STRIKE_GRANT_CHANCE
-    ) {
-      client.data.skills = { ...client.data.skills, [BONE_FINGER_STRIKE_SKILL]: STARTING_SKILL_PERCENT };
-      messages.push(`You have gained ${BONE_FINGER_STRIKE_SKILL} (${STARTING_SKILL_PERCENT}%)!`);
+    if (item === 'bone dagger') {
+      if (client.data.skills[BONE_FINGER_STRIKE_SKILL] === undefined) {
+        if (Math.random() < BONE_FINGER_STRIKE_GRANT_CHANCE) {
+          client.data.skills = { ...client.data.skills, [BONE_FINGER_STRIKE_SKILL]: STARTING_SKILL_PERCENT };
+          messages.push(`You have gained ${BONE_FINGER_STRIKE_SKILL} (${STARTING_SKILL_PERCENT}%)!`);
+        }
+      } else {
+        messages.push(`You have already learned ${BONE_FINGER_STRIKE_SKILL} from bone daggers!`);
+      }
     }
     // Checked after the resistance roll above so a body part that both
     // grants a resistance AND crosses the evolution threshold in the same

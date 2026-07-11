@@ -6,7 +6,8 @@
 // down/up/left/right, 8 columns per row: 4 walk frames then 4 attack
 // frames). No runtime horizontal flip anywhere — "right" is its own real
 // row baked into the PNG (a mirror of "left" applied at generation time).
-import type { Race, MonsterKind } from '../shared/constants.js';
+import type { Race, MonsterKind, Gender, HairColor, SkinTone } from '../shared/constants.js';
+import { GENDERS, HAIR_COLORS, SKIN_TONES } from '../shared/constants.js';
 
 export const FRAME_WIDTH = 110;
 export const FRAME_HEIGHT = 140;
@@ -22,10 +23,40 @@ const ROW_INDEX: Record<FacingGroup, number> = { down: 0, up: 1, left: 2, right:
 // fully created/playable, ready for whatever uses them next.
 export type DecorativeKind = 'ogre' | 'shopkeeper';
 
+// A human wizard's actual rendered appearance — gender x skin tone x hair
+// color, 18 combinations total, each its own fully-baked spritesheet (see
+// tools/gen-human-sprites.mjs). Baked per-combination rather than one
+// neutral sheet re-tinted client-side: skin and hair need two
+// INDEPENDENTLY colored regions on the same figure, and re-tinting would
+// need a second overlay sprite kept in perfect frame-by-frame lockstep
+// with the body at every single walk/punch/idle call site in WorldScene
+// — baking instead costs nothing extra to generate (the generator script
+// just loops) and needs zero new runtime machinery, matching the "one
+// texture key per fully-resolved look" shape every other race already
+// uses. See effectiveSpriteKind, the one place a Race turns into this.
+export type HumanSpriteKind = `human-${Gender}-${SkinTone}-${HairColor}`;
+
 // A "kind" is anything with its own spritesheet — a playable race
-// (including the evolved-only hobgoblin), a wild monster kind, or one of
-// the decorative-only kinds above.
-export type SpriteKind = Race | MonsterKind | DecorativeKind;
+// (including the evolved-only hobgoblin and the wizarding-school pivot's
+// 'human'), a wild monster kind, or one of the decorative-only kinds
+// above.
+export type SpriteKind = Race | MonsterKind | DecorativeKind | HumanSpriteKind;
+
+function buildHumanKeyMaps(): { textureKeys: Record<HumanSpriteKind, string>; sheetPaths: Record<HumanSpriteKind, string> } {
+  const textureKeys = {} as Record<HumanSpriteKind, string>;
+  const sheetPaths = {} as Record<HumanSpriteKind, string>;
+  for (const gender of GENDERS) {
+    for (const skinTone of SKIN_TONES) {
+      for (const hairColor of HAIR_COLORS) {
+        const key: HumanSpriteKind = `human-${gender}-${skinTone}-${hairColor}`;
+        textureKeys[key] = key;
+        sheetPaths[key] = `/${key}-spritesheet.png`;
+      }
+    }
+  }
+  return { textureKeys, sheetPaths };
+}
+const { textureKeys: HUMAN_TEXTURE_KEYS, sheetPaths: HUMAN_SHEET_PATHS } = buildHumanKeyMaps();
 
 const TEXTURE_KEYS: Record<SpriteKind, string> = {
   goblin: 'goblin',
@@ -34,10 +65,15 @@ const TEXTURE_KEYS: Record<SpriteKind, string> = {
   zombie: 'zombie',
   dragonborn: 'dragon-man',
   slime: 'slime',
+  // Bare 'human' (the Race value itself) is never used to render
+  // directly — effectiveSpriteKind always resolves the full gender/skin/
+  // hair composite key first. Present only to satisfy Record totality.
+  human: 'human-male-white-brown',
   'wild goblin': 'wild-goblin',
   'wild skeleton': 'wild-skeleton',
   ogre: 'ogre',
   shopkeeper: 'shopkeeper',
+  ...HUMAN_TEXTURE_KEYS,
 };
 const SHEET_PATHS: Record<SpriteKind, string> = {
   goblin: '/goblin-spritesheet.png',
@@ -46,11 +82,25 @@ const SHEET_PATHS: Record<SpriteKind, string> = {
   zombie: '/zombie-spritesheet.png',
   dragonborn: '/dragon-man-spritesheet.png',
   slime: '/slime-spritesheet.png',
+  human: '/human-male-white-brown-spritesheet.png',
   'wild goblin': '/wild-goblin-spritesheet.png',
   'wild skeleton': '/wild-skeleton-spritesheet.png',
   ogre: '/ogre-spritesheet.png',
   shopkeeper: '/shopkeeper-spritesheet.png',
+  ...HUMAN_SHEET_PATHS,
 };
+
+// The one place a character's Race turns into an actual render kind —
+// every other race maps to itself; 'human' resolves to its full gender/
+// skin/hair composite (see HumanSpriteKind above). Called wherever
+// WorldScene used to just use `race` directly for texture/animation
+// lookups.
+export function humanSpriteKindFor(gender: Gender | null, skinTone: SkinTone | null, hairColor: HairColor | null): HumanSpriteKind {
+  return `human-${gender ?? 'male'}-${skinTone ?? 'white'}-${hairColor ?? 'brown'}`;
+}
+export function effectiveSpriteKind(race: Race, gender: Gender | null, skinTone: SkinTone | null, hairColor: HairColor | null): SpriteKind {
+  return race === 'human' ? humanSpriteKindFor(gender, skinTone, hairColor) : race;
+}
 
 // The attack animation is always the same 4 frames (columns 4-7) — only
 // its NAME differs for a slime, which "slaps" rather than "punches"

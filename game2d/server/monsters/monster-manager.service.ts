@@ -1,7 +1,8 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
-import { getMap } from '../../shared/maps.js';
+import { getMap, isCastleExteriorBlocked } from '../../shared/maps.js';
 import { isTreeTile } from '../../shared/trees.js';
+import { fireplacePositionsFor } from '../../shared/lighting.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
 import { vendorsForMap } from '../worlds/vendors.js';
@@ -84,6 +85,8 @@ export class MonsterManagerService {
     if (row < 0 || row >= map.rows || col < 0 || col >= map.cols) return false;
     if (map.exits.some((e) => e.row === row && e.col === col)) return false;
     if (isTreeTile(mapName, row, col)) return false;
+    if (isCastleExteriorBlocked(mapName, row, col)) return false;
+    if (fireplacePositionsFor(mapName).some((p) => p.row === row && p.col === col)) return false;
     // Same "own tile + shopfront tile in front of it" collision shape as
     // WorldManagerService.isOccupied — a wandering/spawning monster
     // shouldn't stand inside the shop stall either.

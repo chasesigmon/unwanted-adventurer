@@ -7,7 +7,8 @@ import type { MapName, Direction } from '../../shared/constants.js';
 import type { PlayerSnapshot, MapStatePayload } from '../../shared/types.js';
 import type { PlayerState, MoveResult } from './types.js';
 import { isTreeTile } from '../../shared/trees.js';
-import { emitsLight } from '../../shared/lighting.js';
+import { emitsLight, fireplacePositionsFor } from '../../shared/lighting.js';
+import { isCastleExteriorBlocked } from '../../shared/maps.js';
 import { vendorsForMap } from './vendors.js';
 import { armorClassFor, armorEquipmentBonus } from '../combat/formulas.js';
 
@@ -76,6 +77,8 @@ export class WorldManagerService {
   // (and loot) one.
   private isOccupied(mapName: MapName, row: number, col: number, excludeUsername: string): boolean {
     if (isTreeTile(mapName, row, col)) return true;
+    if (isCastleExteriorBlocked(mapName, row, col)) return true;
+    if (fireplacePositionsFor(mapName).some((p) => p.row === row && p.col === col)) return true;
 
     const npcHit = NPCS.some((npc) => npc.map === mapName && npc.row === row && npc.col === col);
     if (npcHit) return true;
@@ -131,6 +134,9 @@ export class WorldManagerService {
       players.push({
         username,
         race: state.race,
+        gender: state.gender,
+        hairColor: state.hairColor,
+        skinTone: state.skinTone,
         map: state.mapName,
         row: state.row,
         col: state.col,
@@ -140,8 +146,6 @@ export class WorldManagerService {
         maxHp: state.maxHp,
         mana: state.mana,
         maxMana: state.maxMana,
-        movement: state.movement,
-        maxMovement: state.maxMovement,
         strength: state.strength,
         intelligence: state.intelligence,
         wisdom: state.wisdom,

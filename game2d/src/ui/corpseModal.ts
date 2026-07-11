@@ -170,8 +170,6 @@ corpseEatBrainsBtn.addEventListener('click', () => {
           maxHp: ack.maxHp ?? myProfile.maxHp,
           mana: ack.mana ?? myProfile.mana,
           maxMana: ack.maxMana ?? myProfile.maxMana,
-          movement: ack.movement ?? myProfile.movement,
-          maxMovement: ack.maxMovement ?? myProfile.maxMovement,
           eatBrainsReadyAtTick: ack.eatBrainsReadyAtTick ?? myProfile.eatBrainsReadyAtTick,
         });
         updateStatusBar();

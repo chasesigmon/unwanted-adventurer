@@ -19,7 +19,7 @@ CREATE INDEX IF NOT EXISTS accounts_email_lower_idx ON accounts (lower(email));
 -- where it left off; attribute/vital/level/skill fields back the combat
 -- system (see game2d/server/combat/formulas.ts) — mirroring the text
 -- game's own player.schema.ts conventions (starting attributes of 1,
--- starting hp/mana/movement of 100, a percent-learned skills map) even
+-- starting hp/mana of 100, a percent-learned skills map) even
 -- though this project's combat is much smaller (one skill, no
 -- equipment). A real relational schema (not just Mongo-style documents)
 -- since game2d expects to grow joined tables later (e.g. inventory,
@@ -32,14 +32,26 @@ CREATE TABLE IF NOT EXISTS players (
   -- flow. A character no longer authenticates on its own (no more
   -- password_hash here) — that happens once, at the account level.
   account_id INTEGER REFERENCES accounts (id),
-  race VARCHAR(16) NOT NULL DEFAULT 'goblin' CHECK (race IN ('goblin', 'skeleton', 'hobgoblin', 'zombie', 'dragonborn', 'slime')),
-  -- Floro's 7 shop interiors (see game2d/shared/constants.ts's
-  -- FLORO_SHOP_MAPS) are each their own map value too — "worlds of their
-  -- own" a player can be standing in, not just the 4 top-level areas.
-  map VARCHAR(32) NOT NULL DEFAULT 'Great Plains' CHECK (map IN (
+  -- 'human' is the wizarding-school pivot's only playable race — see
+  -- game2d/shared/constants.ts. The original 5 stay valid for existing
+  -- goblin-game characters.
+  race VARCHAR(16) NOT NULL DEFAULT 'goblin' CHECK (race IN ('goblin', 'skeleton', 'hobgoblin', 'zombie', 'dragonborn', 'slime', 'human')),
+  -- Human-only appearance (item 4) — null for every non-'human' race.
+  gender VARCHAR(8) CHECK (gender IN ('male', 'female')),
+  hair_color VARCHAR(16) CHECK (hair_color IN ('brown', 'blonde', 'black')),
+  skin_tone VARCHAR(16) CHECK (skin_tone IN ('white', 'tan', 'dark')),
+  -- Floro's 7 shop interiors and Grimoak Academy's castle rooms (see
+  -- game2d/shared/constants.ts's FLORO_SHOP_MAPS/GRIMOAK_CASTLE_MAPS) are
+  -- each their own map value too — "worlds of their own" a player can be
+  -- standing in, not just the top-level outer areas.
+  map VARCHAR(32) NOT NULL DEFAULT 'Grimoak Grounds' CHECK (map IN (
     'Great Plains', 'Labyrinth', 'Floro', 'Kortho',
     'Floro Blacksmith', 'Floro General Store', 'Floro Inn', 'Floro Bank',
-    'Floro Armorer', 'Floro Pet Salesman', 'Floro Jobs Office'
+    'Floro Armorer', 'Floro Pet Salesman', 'Floro Jobs Office',
+    'Grimoak Grounds', 'Grimoak Entrance Hall', 'Great Hall', 'Grand Staircase',
+    'First Floor Corridor', 'Dungeon Corridor', 'Elemental Casting', 'Shapecraft',
+    'Alchemy', 'Emberclaw Common Room', 'Duskwing Common Room',
+    'Thistledown Common Room', 'Starfall Common Room', 'Second Floor Corridor'
   )),
   "row" INTEGER NOT NULL,
   col INTEGER NOT NULL,
@@ -52,10 +64,6 @@ CREATE TABLE IF NOT EXISTS players (
   max_hp INTEGER NOT NULL DEFAULT 100,
   mana INTEGER NOT NULL DEFAULT 100,
   max_mana INTEGER NOT NULL DEFAULT 100,
-  -- DOUBLE PRECISION, not INTEGER — movement cost is fractional (0.5/step
-  -- inside, see game2d/shared/maps.ts's movementCostFor).
-  movement DOUBLE PRECISION NOT NULL DEFAULT 100,
-  max_movement DOUBLE PRECISION NOT NULL DEFAULT 100,
   level INTEGER NOT NULL DEFAULT 1,
   exp INTEGER NOT NULL DEFAULT 0,
   skills JSONB NOT NULL DEFAULT '{"punch": 1}',

@@ -18,7 +18,7 @@ import type {
   StatTickPayload,
   WorldTimePayload,
 } from '../shared/types.js';
-import type { Direction } from '../shared/constants.js';
+import type { Direction, Gender, HairColor, SkinTone } from '../shared/constants.js';
 import type { EquipmentSlot } from '../shared/equipment.js';
 
 type GameClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -27,6 +27,9 @@ type AuthResponse = { ok: true; token: string } | { ok: false; error: string };
 export interface CharacterSummary {
   name: string;
   race: string;
+  gender: Gender | null;
+  hairColor: HairColor | null;
+  skinTone: SkinTone | null;
   level: number;
   map: string;
 }
@@ -88,11 +91,11 @@ export class NetworkManager extends EventTarget {
     return data.characters;
   }
 
-  async createCharacter(name: string, race: string): Promise<CharacterSummary> {
+  async createCharacter(name: string, gender: Gender, hairColor: HairColor, skinTone: SkinTone): Promise<CharacterSummary> {
     const res = await fetch(`${this.serverUrl}/characters`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
-      body: JSON.stringify({ name, race }),
+      body: JSON.stringify({ name, gender, hairColor, skinTone }),
     });
     const data = (await res.json().catch(() => null)) as CharacterResponse | null;
     if (!res.ok || !data || !data.ok) {

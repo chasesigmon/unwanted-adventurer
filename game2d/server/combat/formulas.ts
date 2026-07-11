@@ -70,6 +70,14 @@ export const SKILL_GROWTH_CHANCE = 0.02;
 // RACE_INNATE_SKILLS) at MAX_SKILL_PERCENT — innate abilities are simply
 // there from birth, not something practiced up from scratch.
 export function startingSkills(race: Race): Record<string, number> {
+  // A human wizard starts with none of the old fantasy-race skill kit at
+  // all (item 7) — punch/dodge/parry/shield-block/dagger were designed
+  // for the goblin-game's melee combat, and are being fully replaced by a
+  // wizard-appropriate spell/skill system (not built yet). The original 5
+  // races are untouched — this only changes what a brand NEW human
+  // character starts with.
+  if (race === 'human') return {};
+
   const skills = Object.fromEntries(STARTING_SKILLS.map((skill) => [skill, STARTING_SKILL_PERCENT]));
   for (const skill of RACE_INNATE_SKILLS[race] ?? []) {
     skills[skill] = MAX_SKILL_PERCENT;

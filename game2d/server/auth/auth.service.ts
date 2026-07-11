@@ -8,7 +8,7 @@ import { AccountsService } from '../accounts/accounts.service.js';
 import { PlayersService } from '../players/players.service.js';
 import { SessionStoreService } from './session-store.service.js';
 import { ActiveConnectionsService } from './active-connections.service.js';
-import { getMap } from '../../shared/maps.js';
+import { startingPositionFor } from '../../shared/maps.js';
 import { STARTING_MAP } from '../../shared/constants.js';
 import { startingSkills } from '../combat/formulas.js';
 import type { AppConfig } from '../config/configuration.js';
@@ -38,6 +38,9 @@ export type AnySessionTokenPayload = AccountSessionTokenPayload | CharacterSessi
 export interface CharacterSummary {
   name: string;
   race: string;
+  gender: string | null;
+  hairColor: string | null;
+  skinTone: string | null;
   level: number;
   map: string;
 }
@@ -155,10 +158,21 @@ export class AuthService {
   async listCharacters(accountToken: string): Promise<CharacterSummary[]> {
     const { accountId } = await this.verifyAccountToken(accountToken);
     const characters = await this.playersService.findByAccountId(accountId);
-    return characters.map((c) => ({ name: c.username, race: c.race, level: c.level, map: c.map }));
+    return characters.map((c) => ({
+      name: c.username,
+      race: c.race,
+      gender: c.gender,
+      hairColor: c.hairColor,
+      skinTone: c.skinTone,
+      level: c.level,
+      map: c.map,
+    }));
   }
 
-  async createCharacter(accountToken: string, { name, race }: CreateCharacterDto): Promise<CharacterSummary> {
+  // Every new character is a human wizard (item 4) — race is no longer a
+  // player choice, just always 'human'; gender/hairColor/skinTone are
+  // the appearance choices that replace it.
+  async createCharacter(accountToken: string, { name, gender, hairColor, skinTone }: CreateCharacterDto): Promise<CharacterSummary> {
     const { accountId } = await this.verifyAccountToken(accountToken);
 
     const existing = await this.playersService.findByUsernameCaseInsensitive(name);
@@ -166,18 +180,30 @@ export class AuthService {
       throw new ConflictException('That character name is already taken.');
     }
 
-    const startingMap = getMap(STARTING_MAP);
+    const race = 'human' as const;
+    const spawn = startingPositionFor(STARTING_MAP);
     const player = await this.playersService.create({
       username: name,
       accountId,
       race,
+      gender,
+      hairColor,
+      skinTone,
       map: STARTING_MAP,
-      row: Math.floor(startingMap.rows / 2),
-      col: Math.floor(startingMap.cols / 2),
+      row: spawn.row,
+      col: spawn.col,
       skills: startingSkills(race),
     });
 
-    return { name: player.username, race: player.race, level: player.level, map: player.map };
+    return {
+      name: player.username,
+      race: player.race,
+      gender: player.gender,
+      hairColor: player.hairColor,
+      skinTone: player.skinTone,
+      level: player.level,
+      map: player.map,
+    };
   }
 
   // Picking a character from the select screen (or one just created) is

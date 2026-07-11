@@ -44,14 +44,28 @@
               Name
               <input id="new-character-name" type="text" required minlength="2" maxlength="16" />
             </label>
+            <div id="new-character-preview"></div>
             <label>
-              Race
-              <select id="new-character-race">
-                <option value="goblin">Goblin</option>
-                <option value="skeleton">Skeleton</option>
-                <option value="zombie">Zombie</option>
-                <option value="dragonborn">Dragonborn</option>
-                <option value="slime">Slime</option>
+              Gender
+              <select id="new-character-gender">
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+              </select>
+            </label>
+            <label>
+              Skin tone
+              <select id="new-character-skin">
+                <option value="white">Fair</option>
+                <option value="tan">Tan</option>
+                <option value="dark">Dark</option>
+              </select>
+            </label>
+            <label>
+              Hair color
+              <select id="new-character-hair">
+                <option value="brown">Brown</option>
+                <option value="blonde">Blonde</option>
+                <option value="black">Black</option>
               </select>
             </label>
             <button type="submit" id="create-character-submit">Create &amp; play</button>
@@ -77,7 +91,6 @@
             <span id="status-level"></span>
             <span id="status-hp"></span>
             <span id="status-mana"></span>
-            <span id="status-mv"></span>
             <span id="status-exp"></span>
             <span id="status-gold"></span>
           </div>

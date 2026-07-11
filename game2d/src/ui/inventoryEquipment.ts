@@ -7,6 +7,7 @@ import type { UseItemAck } from '../../shared/types.js';
 import { attachTooltip } from './tooltip.js';
 import { itemTooltip } from './skillMeta.js';
 import { logCombatMessage } from './log.js';
+import { showCenterToastLines } from './toast.js';
 import { equipmentBody, equipmentModal, inventoryList, inventoryModal, refreshOpenModals, registerModalOpenHandler, registerModalRefreshHandler } from './modalCore.js';
 
 // ---------- Inventory ----------
@@ -71,7 +72,14 @@ function applyUseItemAck(ack: UseItemAck): void {
   }
   const actionMessage = ack.action === 'equipped' ? 'You equip it.' : ack.action === 'unequipped' ? 'You remove it.' : 'You consume it.';
   logCombatMessage(actionMessage);
-  if (ack.message) logCombatMessage(ack.message, 'level-up');
+  if (ack.message) {
+    logCombatMessage(ack.message, 'level-up');
+    // Item 1: consuming an item only ever populates this message for a
+    // skill grant, an "already learned" notice, an evolution, or a
+    // mimic-learn — every one of those is toast-worthy, unlike the plain
+    // equip/unequip/consume action line above.
+    showCenterToastLines(ack.message);
+  }
 }
 
 // Left-click asks the server to decide consume-vs-equip — the client has

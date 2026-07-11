@@ -4,7 +4,7 @@
 // currently open (items 7 & 15).
 import { activeScene } from '../state.js';
 import { chatInputFocused, registerChatFocusListener } from './log.js';
-import { attachTooltip } from './tooltip.js';
+import { attachTooltip, hideCustomTooltip } from './tooltip.js';
 
 export const charSheetModal = document.getElementById('char-sheet-modal') as HTMLDivElement;
 export const charSheetUsername = document.getElementById('char-sheet-username') as HTMLHeadingElement;
@@ -125,6 +125,13 @@ export function refreshOpenModals(): void {
 export function hideModal(modal: HTMLDivElement): void {
   modal.hidden = true;
   if (modal === autopilotModal) autopilotInput.blur();
+  // Item 3: hiding a modal doesn't fire a 'mouseleave' on whatever was
+  // hovered inside it (the element can be removed from view without the
+  // cursor ever actually moving off it first) — without this, a tooltip
+  // shown just before the modal closed had no signal telling it to hide,
+  // and stuck around until the NEXT hover anywhere happened to retrigger
+  // it.
+  hideCustomTooltip();
 }
 
 export function closeAllModals(): void {

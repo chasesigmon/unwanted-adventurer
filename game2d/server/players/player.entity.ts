@@ -1,11 +1,11 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
-import { STARTING_MAP, type MapName, type Race } from '../../shared/constants.js';
+import { STARTING_MAP, type Gender, type HairColor, type MapName, type Race, type SkinTone } from '../../shared/constants.js';
 
 // Position fields place a character back where it left off; attribute/
 // vital/level/skill fields back the combat system (see
 // server/combat/formulas.ts) — mirroring the text game's own
 // player.schema.ts conventions (starting attributes of 1, starting
-// hp/mana/movement of 100, a percent-learned skills map) even though this
+// hp/mana of 100, a percent-learned skills map) even though this
 // project's combat is much smaller (one skill, no equipment/inventory).
 // A real Postgres table (not Mongo-style documents), since game2d expects
 // to grow joined tables later (inventory, guilds, ...) — the table itself
@@ -33,6 +33,19 @@ export class Player {
 
   @Column({ type: 'varchar', length: 16, default: 'goblin' })
   race!: Race;
+
+  // Human-only customization (item 4) — null for every non-'human' race.
+  // Combined with gender, these pick which base spritesheet (male/
+  // female) and which 2 tint overlays (skin, hair) render this character
+  // — see characterSprites.ts.
+  @Column({ type: 'varchar', length: 8, nullable: true })
+  gender!: Gender | null;
+
+  @Column({ name: 'hair_color', type: 'varchar', length: 16, nullable: true })
+  hairColor!: HairColor | null;
+
+  @Column({ name: 'skin_tone', type: 'varchar', length: 16, nullable: true })
+  skinTone!: SkinTone | null;
 
   @Column({ type: 'varchar', length: 32, default: STARTING_MAP })
   map!: MapName;
@@ -69,14 +82,6 @@ export class Player {
 
   @Column({ name: 'max_mana', type: 'int', default: 100 })
   maxMana!: number;
-
-  // double precision, not int — movement cost is fractional (0.5/step
-  // inside, see shared/maps.ts's movementCostFor).
-  @Column({ type: 'double precision', default: 100 })
-  movement!: number;
-
-  @Column({ name: 'max_movement', type: 'double precision', default: 100 })
-  maxMovement!: number;
 
   @Column({ type: 'int', default: 1 })
   level!: number;

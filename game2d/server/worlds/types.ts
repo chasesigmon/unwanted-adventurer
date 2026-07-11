@@ -1,4 +1,4 @@
-import type { MapName, MonsterKind, Race } from '../../shared/constants.js';
+import type { Gender, HairColor, MapName, MonsterKind, Race, SkinTone } from '../../shared/constants.js';
 import type { RestState } from '../../shared/types.js';
 import type { Attributes } from '../combat/formulas.js';
 
@@ -14,14 +14,15 @@ export interface Location {
 // them without a separate lookup.
 export interface PlayerState extends Location, Attributes {
   race: Race;
+  gender: Gender | null;
+  hairColor: HairColor | null;
+  skinTone: SkinTone | null;
   level: number;
   exp: number;
   hp: number;
   maxHp: number;
   mana: number;
   maxMana: number;
-  movement: number;
-  maxMovement: number;
   skills: Record<string, number>;
   inventory: string[];
   equipment: Record<string, string>;

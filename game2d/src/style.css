@@ -212,6 +212,23 @@ body {
   gap: 10px;
 }
 
+/* A live preview (item 4) — cropped to just the down-facing idle frame
+   of whichever gender/skin/hair spritesheet is currently selected, via a
+   plain background-position crop rather than a canvas (the sheet's very
+   first frame is always that idle pose, at 0,0 — see
+   characterSprites.ts's idleFrameFor). */
+#new-character-preview {
+  align-self: center;
+  width: 110px;
+  height: 140px;
+  background-repeat: no-repeat;
+  background-position: 0 0;
+  image-rendering: pixelated;
+  border: 1px solid #444;
+  border-radius: 4px;
+  background-color: #0d0d13;
+}
+
 #create-character-form label {
   display: flex;
   flex-direction: column;
@@ -261,6 +278,40 @@ body {
 #character-select-logout:hover {
   color: #eee;
   border-color: #888;
+}
+
+/* ---------- Center-screen skill/spell toasts (item 1) ---------- */
+
+#center-toast-container {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.center-toast {
+  background: rgba(10, 10, 16, 0.72);
+  border: 1px solid rgba(240, 192, 64, 0.4);
+  color: #f0c040;
+  font-size: 15px;
+  padding: 10px 20px;
+  border-radius: 6px;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.4s ease, transform 0.4s ease;
+  transform: translateY(6px);
+  white-space: pre-wrap;
+}
+
+.center-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 /* ---------- Game root ---------- */
@@ -393,10 +444,6 @@ body {
 
 #status-mana {
   color: #6b9fd4;
-}
-
-#status-mv {
-  color: #d4c26b;
 }
 
 #status-exp {
@@ -809,6 +856,35 @@ body {
   border-radius: 4px;
   padding: 5px 10px;
   color: #ccc;
+}
+
+.world-map-select {
+  background: #0d0d13;
+  border: 1px solid #555;
+  color: #eee;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  width: 100%;
+}
+
+/* item 1: a plain text/line tree stands in for a real visual map "for
+   now" — box-drawing characters over a monospace face read cleanly
+   enough without any graphics library. */
+.world-map-tree {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #ccc;
+  background: #1e1e2a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 12px 14px;
+  margin: 0;
+  overflow-x: auto;
+  white-space: pre;
 }
 
 /* ---------- Corpse loot modal ---------- */

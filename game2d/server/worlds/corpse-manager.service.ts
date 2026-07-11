@@ -21,6 +21,10 @@ const BODY_PART_LABEL: Record<Race | MonsterKind, string> = {
   zombie: 'zombie finger',
   dragonborn: 'dragonborn scale',
   slime: 'slime residue',
+  // No combat/death system exists for a human wizard corpse yet, but the
+  // lookup must stay total over Race — a plausible placeholder rather
+  // than a runtime crash if this is ever reached.
+  human: 'lock of hair',
   'wild goblin': 'wild goblin ear',
   'wild skeleton': 'wild skeleton bone',
 };

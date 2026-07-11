@@ -2,12 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 import { Player } from './player.entity.js';
-import type { MapName, Race } from '../../shared/constants.js';
+import type { Gender, HairColor, MapName, Race, SkinTone } from '../../shared/constants.js';
 
 export interface NewPlayerInput {
   username: string;
   accountId: number;
   race: Race;
+  // Only meaningful (and only ever provided) for race: 'human'.
+  gender?: Gender;
+  hairColor?: HairColor;
+  skinTone?: SkinTone;
   map: MapName;
   row: number;
   col: number;
@@ -25,8 +29,6 @@ export interface PlayerStatsUpdate {
   maxHp?: number;
   mana?: number;
   maxMana?: number;
-  movement?: number;
-  maxMovement?: number;
   strength?: number;
   intelligence?: number;
   wisdom?: number;

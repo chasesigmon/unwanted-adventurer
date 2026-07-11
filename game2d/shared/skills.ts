@@ -72,4 +72,8 @@ export const RACE_INNATE_SKILLS: Record<Race, string[]> = {
   // Hobgoblin is evolution-only (never a starting race) — its own extra
   // skills are granted separately, see HOBGOBLIN_EVOLUTION_SKILLS.
   hobgoblin: [],
+  // No innate ability yet — a human wizard's own spellcasting skills are
+  // future work (no magic system exists yet); for now they start with
+  // just the universal kit like everyone else.
+  human: [],
 };

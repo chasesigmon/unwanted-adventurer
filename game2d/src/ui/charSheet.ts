@@ -29,7 +29,6 @@ export function renderCharSheet(): void {
     ['Exp', myProfile.exp],
     ['HP', `${myProfile.hp}/${myProfile.maxHp}`],
     ['Mana', `${myProfile.mana}/${myProfile.maxMana}`],
-    ['Movement', `${myProfile.movement}/${myProfile.maxMovement}`],
     ['Strength', myProfile.strength],
     ['Intelligence', myProfile.intelligence],
     ['Wisdom', myProfile.wisdom],

@@ -1,5 +1,5 @@
 import type { Server, Socket } from 'socket.io';
-import type { MapName, Race, Direction, MonsterKind, MonsterClass } from './constants.js';
+import type { Gender, HairColor, MapName, Race, SkinTone, Direction, MonsterKind, MonsterClass } from './constants.js';
 import type { EquipmentSlot } from './equipment.js';
 
 // Never persisted across sessions (a fresh connection always starts
@@ -10,6 +10,10 @@ export type RestState = 'awake' | 'resting' | 'sleeping';
 export interface PlayerSnapshot {
   username: string;
   race: Race;
+  // Human-only appearance (item 4) — null for every other race.
+  gender: Gender | null;
+  hairColor: HairColor | null;
+  skinTone: SkinTone | null;
   map: MapName;
   row: number;
   col: number;
@@ -19,8 +23,6 @@ export interface PlayerSnapshot {
   maxHp: number;
   mana: number;
   maxMana: number;
-  movement: number;
-  maxMovement: number;
   strength: number;
   intelligence: number;
   wisdom: number;
@@ -207,12 +209,6 @@ export interface MoveAck {
   // enter the Labyrinth.") — purely cosmetic, the client doesn't have to
   // show it.
   message?: string;
-  // Set specifically when ok is false because the player doesn't have
-  // enough movement left to afford a step on their current ground — a
-  // dedicated flag (rather than string-matching `message`) so the client
-  // can reliably focus the Combat tab and flag it as a "need rest"
-  // moment (item 8) instead of treating it like any other blocked move.
-  outOfMovement?: boolean;
 }
 
 export interface KickedPayload {
@@ -243,8 +239,6 @@ export interface EatBrainsAck {
   maxHp?: number;
   mana?: number;
   maxMana?: number;
-  movement?: number;
-  maxMovement?: number;
   // Missing here used to mean the client's own cooldown gate (see
   // main.ts's updateEatBrainsButton) never actually learned the new
   // cooldown until an unrelated 'sync' happened to arrive later — eating
@@ -298,8 +292,6 @@ export interface StatTickPayload {
   maxHp: number;
   mana: number;
   maxMana: number;
-  movement: number;
-  maxMovement: number;
 }
 
 // Broadcast to every connected socket (not just one map's room) whenever
@@ -344,7 +336,7 @@ export interface ClientToServerEvents {
   // itself is removed once its last item is taken.
   lootItem: (payload: { corpseId: string; itemIndex: number }, ack: (res: LootAck) => void) => void;
   buyItem: (payload: { vendorId: string; itemLabel: string }, ack: (res: BuyAck) => void) => void;
-  // Zombie-only: heals 20% hp/mana/movement, see game.gateway.ts's
+  // Zombie-only: heals 20% hp/mana, see game.gateway.ts's
   // EAT_BRAINS_COOLDOWN_TICKS for the cooldown this starts.
   eatBrains: (corpseId: string, ack: (res: EatBrainsAck) => void) => void;
   // Monster-corpse-only "sacrifice it to the gods" — see
@@ -373,6 +365,9 @@ export type InterServerEvents = Record<string, never>;
 export interface SocketData {
   username: string;
   race: Race;
+  gender: Gender | null;
+  hairColor: HairColor | null;
+  skinTone: SkinTone | null;
   map: MapName;
   row: number;
   col: number;
@@ -387,8 +382,6 @@ export interface SocketData {
   maxHp: number;
   mana: number;
   maxMana: number;
-  movement: number;
-  maxMovement: number;
   skills: Record<string, number>;
   inventory: string[];
   equipment: Record<string, string>;
