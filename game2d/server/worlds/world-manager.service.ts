@@ -7,10 +7,10 @@ import type { MapName, Direction } from '../../shared/constants.js';
 import type { PlayerSnapshot, MapStatePayload } from '../../shared/types.js';
 import type { PlayerState, MoveResult } from './types.js';
 import { isTreeTile } from '../../shared/trees.js';
-import { emitsLight, isFireplaceBlocked, isChairBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
+import { emitsLight, isFireplaceBlocked, isBenchBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
 import { isCastleExteriorBlocked, isMoatBlocked } from '../../shared/maps.js';
 import { vendorsForMap } from './vendors.js';
-import { teachersForMap, deskPositionFor } from './teachers.js';
+import { teachersForMap, teacherDeskFootprintFor } from './teachers.js';
 import { isPodiumBlocked } from '../../shared/spells.js';
 import { armorClassFor, armorEquipmentBonus } from '../combat/formulas.js';
 
@@ -82,7 +82,7 @@ export class WorldManagerService {
     if (isCastleExteriorBlocked(mapName, row, col)) return true;
     if (isMoatBlocked(mapName, row, col)) return true;
     if (isFireplaceBlocked(mapName, row, col)) return true;
-    if (isChairBlocked(mapName, row, col)) return true;
+    if (isBenchBlocked(mapName, row, col)) return true;
     if (studentDeskPositionsFor(mapName).some((p) => p.row === row && p.col === col)) return true;
 
     const npcHit = NPCS.some((npc) => npc.map === mapName && npc.row === row && npc.col === col);
@@ -97,12 +97,14 @@ export class WorldManagerService {
     const vendorHit = vendorsForMap(mapName).some((v) => (v.row === row && v.col === col) || (v.row + 1 === row && v.col === col));
     if (vendorHit) return true;
 
-    // A teacher blocks BOTH its own tile and its desk's (unlike a
-    // vendor's purely decorative shopfront — see teachers.ts).
-    const teacherHit = teachersForMap(mapName).some((t) => {
-      const desk = deskPositionFor(t);
-      return (t.row === row && t.col === col) || (desk.row === row && desk.col === col);
-    });
+    // A teacher blocks its own tile AND its desk's ENTIRE footprint
+    // (a follow-up ask fixed the desk's own collision, which used to
+    // only cover its single anchor tile even though the sprite itself is
+    // visibly wider/taller — see teacherDeskFootprintFor) — unlike a
+    // vendor's purely decorative shopfront.
+    const teacherHit = teachersForMap(mapName).some(
+      (t) => (t.row === row && t.col === col) || teacherDeskFootprintFor(t).some((d) => d.row === row && d.col === col)
+    );
     if (teacherHit) return true;
 
     // Both classroom spellbook podiums — a follow-up ask to give them
@@ -180,7 +182,7 @@ export class WorldManagerService {
         // shared/lighting.ts's emitsLight).
         hasLight: emitsLight(state.equipment) || state.wandLit,
         wandLit: state.wandLit,
-        quickMovementActive: state.quickMovementActive,
+        celeritasActive: state.celeritasActive,
         gold: state.gold,
         mimicableRaces: state.mimicableRaces,
         mimicForm: state.mimicForm,

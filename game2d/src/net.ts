@@ -14,9 +14,11 @@ import type {
   SacrificeAck,
   ReadLucemBookAck,
   ReadIrrigoBookAck,
-  ReadQuickMovementBookAck,
+  ReadCeleritasBookAck,
+  ReadAugueBookAck,
   CanteenActionAck,
   CastSpellAck,
+  AugueTargetPayload,
   UseItemAck,
   ChatPayload,
   WhoAck,
@@ -383,13 +385,13 @@ export class NetworkManager extends EventTarget {
     });
   }
 
-  readQuickMovementBook(): Promise<ReadQuickMovementBookAck> {
+  readCeleritasBook(): Promise<ReadCeleritasBookAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
         reject(new Error('Not connected.'));
         return;
       }
-      this.socket.emit('readQuickMovementBook', (res) => {
+      this.socket.emit('readCeleritasBook', (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });
@@ -412,13 +414,41 @@ export class NetworkManager extends EventTarget {
     });
   }
 
-  castQuickMovement(): Promise<CastSpellAck> {
+  castCeleritas(): Promise<CastSpellAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
         reject(new Error('Not connected.'));
         return;
       }
-      this.socket.emit('castQuickMovement', (res) => {
+      this.socket.emit('castCeleritas', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  readAugueBook(): Promise<ReadAugueBookAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('readAugueBook', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // Augue (a later follow-up ask) needs a target, unlike lucem/celeritas
+  // above — see WorldScene's useTargetedSkill.
+  castAugue(target: AugueTargetPayload): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castAugue', target, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });
@@ -437,6 +467,21 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('who', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // ===== TESTING OVERRIDE — REMOVE AFTER TESTING ===== bound to the '~'
+  // key (see WorldScene's create()) — restores mana to full.
+  cheatFullMana(): Promise<SyncPayload> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('cheatFullMana', (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

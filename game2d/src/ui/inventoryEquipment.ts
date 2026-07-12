@@ -153,6 +153,19 @@ function drinkInventoryItem(index: number): void {
 registerModalOpenHandler(inventoryModal, renderInventory);
 registerModalRefreshHandler(inventoryModal, renderInventory);
 
+// "Clicking anywhere on the inventory modal should also de-select the
+// item" (a follow-up ask) — the individual item rows already handle
+// their own click (target/toggle/clear-and-use, see renderInventory
+// above), so this only needs to catch everything ELSE: the modal-box's
+// own padding, the "Empty" placeholder, the dark backdrop outside it.
+// Checked via closest() during the same bubbling click rather than a
+// second listener race, so a click that DID land on a row never
+// double-fires against what that row's own handler just decided.
+inventoryModal.addEventListener('click', (e) => {
+  if ((e.target as HTMLElement).closest('.inventory-item')) return;
+  activeScene?.clearItemTarget();
+});
+
 // ---------- Equipment ----------
 
 // A slot with something equipped gets a small 'x' next to it — built by

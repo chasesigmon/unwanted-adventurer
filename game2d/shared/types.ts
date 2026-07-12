@@ -53,12 +53,12 @@ export interface PlayerSnapshot {
   // slime appearance. No mechanical effect yet, purely cosmetic.
   mimicableRaces: (Race | MonsterKind)[];
   mimicForm: (Race | MonsterKind) | null;
-  // Whether the quick movement spell is currently active for THIS player
+  // Whether the celeritas spell is currently active for THIS player
   // (a follow-up ask) — same "wand toggle" shape as wandLit below, boosts
   // their own move speed by ~10% while on (see WorldScene's
   // effectiveMoveCooldownMs); auto-expires after spellDurationMs, same as
   // lucem.
-  quickMovementActive: boolean;
+  celeritasActive: boolean;
   // Zombie-only Eat Brains cooldown, in the same world-tick units as
   // WorldTimePayload.tick — lets the client gray the button out instead
   // of letting it be clicked and fail (see main.ts's updateEatBrainsButton).
@@ -316,27 +316,50 @@ export interface ReadIrrigoBookAck {
   message?: string;
 }
 
-// Utilization's second podium (a follow-up ask), teaching quick movement —
+// Utilization's second podium (a follow-up ask), teaching celeritas —
 // same shape as ReadLucemBookAck.
-export interface ReadQuickMovementBookAck {
+export interface ReadCeleritasBookAck {
   ok: boolean;
   skills?: Record<string, number>;
-  quickMovementBookReadyAtTick?: number;
+  celeritasBookReadyAtTick?: number;
   message?: string;
 }
 
-// Lucem/quick movement's own ack-based cast (a follow-up ask, replacing
+// The Offense classroom's own podium (a follow-up ask), teaching augue —
+// same shape as ReadLucemBookAck.
+export interface ReadAugueBookAck {
+  ok: boolean;
+  skills?: Record<string, number>;
+  augueBookReadyAtTick?: number;
+  message?: string;
+}
+
+// Lucem/celeritas's own ack-based cast (a follow-up ask, replacing
 // lucem's old fire-and-forget '/lucem' chat command so the client can
 // toast the result even with a modal open — see WorldScene's
 // useTargetedSkill). Both are no-target toggles with identical mechanics
 // (mana cost, percent-chance success, 2%-per-cast growth, real-time
-// duration scaling with skill%), so one ack shape covers either.
+// duration scaling with skill%), so one ack shape covers either. Augue (a
+// later follow-up ask) reuses this same shape for its own pre-flight
+// rejections (not learned/on cooldown/out of range) — its actual hit
+// result broadcasts through the ordinary 'combat' event instead (see
+// game.gateway.ts's handleCastAugue), same as every other attack.
 export interface CastSpellAck {
   ok: boolean;
   active?: boolean;
   mana?: number;
   skills?: Record<string, number>;
   message?: string;
+}
+
+// Augue's own target (a follow-up ask) — the only kind of target this
+// game currently offers is a wild monster (imps included), but this
+// mirrors CombatEventPayload's own targetKind shape so extending to
+// player/npc targets later is just relaxing a server-side guard, not a
+// payload-shape change.
+export interface AugueTargetPayload {
+  targetKind: 'player' | 'npc' | 'monster';
+  targetId: string;
 }
 
 // Drink/pour/irrigo (items 7 & 8's follow-up asks) — all act on a single
@@ -440,13 +463,21 @@ export interface ClientToServerEvents {
   // irrigo instead; see game.gateway.ts's handleReadIrrigoBook.
   readIrrigoBook: (ack: (res: ReadIrrigoBookAck) => void) => void;
   // Utilization's second podium — same shape again, teaching quick
-  // movement; see game.gateway.ts's handleReadQuickMovementBook.
-  readQuickMovementBook: (ack: (res: ReadQuickMovementBookAck) => void) => void;
+  // movement; see game.gateway.ts's handleReadCeleritasBook.
+  readCeleritasBook: (ack: (res: ReadCeleritasBookAck) => void) => void;
+  // The Offense classroom's own podium (a follow-up ask) — same shape
+  // again, teaching augue instead; see game.gateway.ts's
+  // handleReadAugueBook.
+  readAugueBook: (ack: (res: ReadAugueBookAck) => void) => void;
   // No-target toggles (a follow-up ask, replacing the old '/lucem' chat
   // command so the result can be toasted even with a modal open) — see
-  // game.gateway.ts's handleCastLucem/handleCastQuickMovement.
+  // game.gateway.ts's handleCastLucem/handleCastCeleritas.
   castLucem: (ack: (res: CastSpellAck) => void) => void;
-  castQuickMovement: (ack: (res: CastSpellAck) => void) => void;
+  castCeleritas: (ack: (res: CastSpellAck) => void) => void;
+  // Augue (a later follow-up ask) — unlike the two toggles above, this
+  // one needs a target (the only kind this game currently offers is a
+  // wild monster); see game.gateway.ts's handleCastAugue.
+  castAugue: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
   // Drink/pour/irrigo (items 7 & 8's follow-up asks) — all take the
   // targeted inventory item's index (see WorldScene's targetItemIndex).
   drinkItem: (itemIndex: number, ack: (res: CanteenActionAck) => void) => void;
@@ -468,6 +499,11 @@ export interface ClientToServerEvents {
   // caps and rebroadcasts to the sender's own map room only.
   chat: (message: string) => void;
   who: (ack: (res: WhoAck) => void) => void;
+  // ===== TESTING OVERRIDE — REMOVE AFTER TESTING ===== "add a 'cheat'
+  // hotkey... pressing it should recover my mana to 100%. This will go
+  // away after testing." Bound to the '~' key client-side (see
+  // WorldScene's create()); see game.gateway.ts's handleCheatFullMana.
+  cheatFullMana: (ack: (res: SyncPayload) => void) => void;
 }
 
 export type InterServerEvents = Record<string, never>;
@@ -528,16 +564,18 @@ export interface SocketData {
   wandLit: boolean;
   wandLitAt: number | null;
   // Quick movement's own toggle (a follow-up ask) — same shape as
-  // wandLit/wandLitAt above, see PlayerSnapshot's quickMovementActive.
-  quickMovementActive: boolean;
-  quickMovementActiveAt: number | null;
+  // wandLit/wandLitAt above, see PlayerSnapshot's celeritasActive.
+  celeritasActive: boolean;
+  celeritasActiveAt: number | null;
   // A 2-stat-tick cooldown gate on reading the lucem spellbook (item 8),
   // same shape/units as eatBrainsReadyAtTick above.
   lucemBookReadyAtTick: number;
   // Same idea, for the Elemental Casting classroom's irrigo podium.
   irrigoBookReadyAtTick: number;
-  // Same idea again, for Utilization's second podium (quick movement).
-  quickMovementBookReadyAtTick: number;
+  // Same idea again, for Utilization's second podium (celeritas).
+  celeritasBookReadyAtTick: number;
+  // Same idea again, for the Offense classroom's own podium (augue).
+  augueBookReadyAtTick: number;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

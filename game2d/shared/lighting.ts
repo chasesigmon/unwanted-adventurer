@@ -198,25 +198,31 @@ export function studentDeskPositionsFor(mapName: MapName): Array<{ row: number; 
   return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
 }
 
-// A small plus-shaped cluster of 4 chairs around the room's own center —
-// a social gathering spot (a follow-up ask), Entrance-Hall-and-common-
-// room-only (not classrooms, which already have their own student desks).
-// Offset far enough from the center that players can still stand and
-// mingle between them, and clear of every fireplace position above
-// (those sit much closer to the top/bottom walls, see topRow/bottomRow).
-export function chairPositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
+// A small square-formation cluster of 4 benches around the room's own
+// center — a social gathering spot (a follow-up ask upgraded these from
+// plain chairs to benches, spread a little further apart than before),
+// Entrance-Hall-and-common-room-only (not classrooms, which already have
+// their own student desks). Each bench's own `angle` (a Phaser rotation
+// in degrees, clockwise) points its backrest AWAY from the center and its
+// seat INWARD, toward the other three — "facing each other" — assuming
+// the bench texture itself is drawn with its backrest on its own north
+// edge by default (see tools/gen-bench.mjs). Offset far enough from the
+// center that players can still stand and mingle between them, and clear
+// of every fireplace position above (those sit much closer to the
+// top/bottom walls, see topRow/bottomRow).
+export function benchPositionsFor(mapName: MapName): Array<{ row: number; col: number; angle: number }> {
   const isEntranceHall = mapName === 'Grimoak Entrance Hall';
   const isCommonRoom = (COMMON_ROOM_MAPS as readonly string[]).includes(mapName);
   if (!isEntranceHall && !isCommonRoom) return [];
   const def = getMap(mapName);
   const midRow = Math.floor(def.rows / 2);
   const midCol = Math.floor(def.cols / 2);
-  const offset = 3;
+  const offset = 4;
   const positions = [
-    { row: midRow - offset, col: midCol },
-    { row: midRow + offset, col: midCol },
-    { row: midRow, col: midCol - offset },
-    { row: midRow, col: midCol + offset },
+    { row: midRow - offset, col: midCol, angle: 0 }, // north of center, faces south
+    { row: midRow + offset, col: midCol, angle: 180 }, // south of center, faces north
+    { row: midRow, col: midCol - offset, angle: 270 }, // west of center, faces east
+    { row: midRow, col: midCol + offset, angle: 90 }, // east of center, faces west
   ];
   return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
 }
@@ -225,17 +231,23 @@ export function chairPositionsFor(mapName: MapName): Array<{ row: number; col: n
 // correction — the flame sprite's art visually rises well above its
 // anchor tile, see WorldScene's origin(0.5, 0.85), so blocking only the
 // base tile let a player stand one tile north and appear to be standing
-// inside the fire). Both server collision checks (world-manager.service.ts,
-// monster-manager.service.ts) should use this instead of checking
-// fireplacePositionsFor directly.
+// inside the fire). A further follow-up ask widened this to the sides
+// too ("collision... only at the bottom, you can walk through it from
+// the top or the sides") — the fireplace art (80x88px, ~2.5x2.75 tiles
+// at full scale) is wider than the single anchor column, so the block
+// now covers a full 3-wide, 2-tall footprint (one tile either side of
+// the anchor column, the anchor row and the one above it) rather than
+// just a 1-wide strip. Both server collision checks (world-manager.
+// service.ts, monster-manager.service.ts) should use this instead of
+// checking fireplacePositionsFor directly.
 export function isFireplaceBlocked(mapName: MapName, row: number, col: number): boolean {
-  return fireplacePositionsFor(mapName).some((p) => (p.row === row || p.row - 1 === row) && p.col === col);
+  return fireplacePositionsFor(mapName).some((p) => (row === p.row || row === p.row - 1) && Math.abs(col - p.col) <= 1);
 }
 
-// A chair's own tile only — no oversized sprite art to account for the
+// A bench's own tile only — no oversized sprite art to account for the
 // way a fireplace's flame does, so no extra tile above it needed.
-export function isChairBlocked(mapName: MapName, row: number, col: number): boolean {
-  return chairPositionsFor(mapName).some((p) => p.row === row && p.col === col);
+export function isBenchBlocked(mapName: MapName, row: number, col: number): boolean {
+  return benchPositionsFor(mapName).some((p) => p.row === row && p.col === col);
 }
 
 export function isWithinRadius(row: number, col: number, sourceRow: number, sourceCol: number, radiusTiles: number): boolean {

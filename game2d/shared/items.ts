@@ -20,3 +20,38 @@ export const FILLABLE_ITEMS: readonly string[] = [CANTEEN_ITEM];
 export function isFillableItem(item: string): boolean {
   return FILLABLE_ITEMS.includes(item);
 }
+
+// Mana crystals (a follow-up ask: "monsters are no longer going to drop
+// body parts, instead a monster is going to now drop a mana crystal of
+// varying level (1 to 5) depending on the level of the monster") —
+// lootable, stay in the inventory, no mechanical use yet ("these will
+// have a use later on"). Every wild monster is still MONSTER_LEVEL (1)
+// today (see server/monsters/monster.ts), so in practice every drop is
+// currently a lesser mana crystal — this is written to scale correctly
+// the moment monster levels actually vary.
+export const MANA_CRYSTAL_LABELS = [
+  'lesser mana crystal',
+  'minor mana crystal',
+  'mana crystal',
+  'greater mana crystal',
+  'superior mana crystal',
+] as const;
+export type ManaCrystalLabel = (typeof MANA_CRYSTAL_LABELS)[number];
+
+// Clamps to the 1-5 range this array actually covers (a level-6+ monster
+// still just drops the top tier, not an out-of-bounds crash) and floors
+// anything below 1 up to the lesser tier.
+export function manaCrystalForLevel(level: number): ManaCrystalLabel {
+  const index = Math.min(MANA_CRYSTAL_LABELS.length, Math.max(1, Math.round(level))) - 1;
+  return MANA_CRYSTAL_LABELS[index]!;
+}
+
+// Guards the ordinary click-to-use/right-click-to-consume inventory flow
+// away from mana crystals (same "not touchable through the generic path"
+// treatment isFillableItem's own canteen guard already gets) — with no
+// mechanical use defined yet, letting a stray click quietly consume one
+// for the flat CONSUME_EXP_PER_ITEM bonus would burn it before that
+// future use exists.
+export function isManaCrystal(item: string): boolean {
+  return (MANA_CRYSTAL_LABELS as readonly string[]).includes(item);
+}

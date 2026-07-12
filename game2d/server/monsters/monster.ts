@@ -126,11 +126,13 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     monsterClass: 'normal',
     homeMap: 'Grimoak Grounds',
     // 40 of them, spread across the whole grounds outside the castle (a
-    // follow-up ask) — real stats/spawn tuning/kill rewards are still to
-    // come, so startingHp/expReward below are just reasonable holding
-    // values, not a balanced figure yet.
+    // follow-up ask). 30 hp (a later follow-up ask) — expReward feeds the
+    // SAME expGainFor() ratio formula every other monster kill already
+    // uses (see game.gateway.ts's resolveHitOnMonster), so a player can
+    // already level up from imp kills with no separate leveling logic
+    // needed.
     maxCount: 40,
-    startingHp: 12,
+    startingHp: 30,
     expReward: 4,
     // Paces back and forth within 3 tiles of wherever it spawned (a
     // follow-up ask), rather than roaming the whole map the way a wild

@@ -50,8 +50,8 @@ CREATE TABLE IF NOT EXISTS players (
     'Floro Armorer', 'Floro Pet Salesman', 'Floro Jobs Office',
     'Grimoak Grounds', 'Grimoak Entrance Hall', 'Great Hall',
     'Thistledown Common Room', 'Duskwing Common Room', 'Emberclaw Common Room',
-    'Starfall Common Room', 'Elemental Casting', 'Defense', 'Summoning',
-    'Utilization', 'Offense'
+    'Starfall Common Room', 'Elemental Casting Classroom', 'Defense Classroom', 'Summoning Classroom',
+    'Utility Classroom', 'Offense Classroom'
   )),
   "row" INTEGER NOT NULL,
   col INTEGER NOT NULL,

@@ -23,12 +23,13 @@ import {
   GLARE_SKILL,
   LUCEM_SKILL,
   IRRIGO_SKILL,
-  QUICK_MOVEMENT_SKILL,
+  CELERITAS_SKILL,
+  AUGUE_SKILL,
   DRINK_SKILL,
   POUR_SKILL,
   SKILL_COOLDOWN_MS,
 } from '../../shared/skills.js';
-import { CANTEEN_CAPACITY, isFillableItem } from '../../shared/items.js';
+import { CANTEEN_CAPACITY, isFillableItem, isManaCrystal } from '../../shared/items.js';
 import { myProfile } from '../state.js';
 
 // A shared red for every "Attack" (A-icon) skill — they already collapse
@@ -89,7 +90,8 @@ export function isUsableSkill(skillName: string): boolean {
     skillName === REVERT_SKILL ||
     skillName === LUCEM_SKILL ||
     skillName === IRRIGO_SKILL ||
-    skillName === QUICK_MOVEMENT_SKILL ||
+    skillName === CELERITAS_SKILL ||
+    skillName === AUGUE_SKILL ||
     skillName === DRINK_SKILL ||
     skillName === POUR_SKILL
   );
@@ -126,7 +128,8 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
     'A separate active attack, earnable by chance from consuming bone daggers. Deals 1.5x your normal hit damage, scaling further with skill percent.',
   [LUCEM_SKILL]: "No target needed — lights or extinguishes your equipped wand's tip, granting a light source like a torch would.",
   [IRRIGO_SKILL]: 'Fills a targeted container (a canteen) with water. Select it in your inventory first, then click this. Costs mana; requires a wand equipped.',
-  [QUICK_MOVEMENT_SKILL]: 'No target needed — quickens your own footsteps by about 10% for a time. Costs mana; lasts longer the higher your skill.',
+  [CELERITAS_SKILL]: 'No target needed — quickens your own footsteps by about 10% for a time. Costs mana; lasts longer the higher your skill.',
+  [AUGUE_SKILL]: 'Hurls a bolt of flame at your selected target (a monster) from up to 7 tiles away. Deals 10 damage; has its own cooldown.',
   [DRINK_SKILL]: 'Takes a drink from a targeted container (a canteen). Select it in your inventory first, then click this.',
   [POUR_SKILL]: 'Empties out a targeted container (a canteen). Select it in your inventory first, then click this.',
 };
@@ -137,7 +140,7 @@ export const ITEM_DESCRIPTIONS: Record<string, string> = {
   'bone dagger': 'A crude blade carved from bone. Equip it as a weapon for bonus damage and the dagger skill.',
   'bone shield': 'A plated bone shield. Equip it for a chance to block incoming hits.',
   torch: 'A carried light source. Equip it in place of a shield to see in the dark — burns out after 15 minutes of equipped use.',
-  wand: "A basic wooden wand. Equip it in place of a weapon to cast spells — for now, just lucem (learnable in the Utilization classroom).",
+  wand: "A basic wooden wand. Equip it in place of a weapon to cast spells — for now, just lucem (learnable in the Utility Classroom).",
   'wild goblin ear': "A wild goblin's ear. Consume it for exp and a small chance of learning normal-monster resistance.",
   'goblin ear': "A goblin's ear. Consume it for exp and a small chance of learning normal-monster resistance.",
   'hobgoblin ear': "A hobgoblin's ear. Consume it for exp and a small chance of learning normal-monster resistance.",
@@ -147,11 +150,17 @@ export const ITEM_DESCRIPTIONS: Record<string, string> = {
   'dragonborn scale': "A dragonborn's scale. Consume it for exp.",
   'slime residue': "A slime's residue. Consume it for exp.",
   canteen: `Holds up to ${CANTEEN_CAPACITY} drinks of water. Click to target it, then use drink, pour out, or irrigo from your action bar.`,
+  'lesser mana crystal': 'A dim, roughly-cut crystal — a monster\'s drop, replacing body parts (a follow-up ask). No use yet; hold onto it.',
+  'minor mana crystal': 'A faintly glowing crystal, a step up from the lesser tier. No use yet; hold onto it.',
+  'mana crystal': 'A steadily glowing crystal. No use yet; hold onto it.',
+  'greater mana crystal': 'A brightly glowing crystal, dense with power. No use yet; hold onto it.',
+  'superior mana crystal': 'A brilliant, near-blinding crystal — the rarest tier. No use yet; hold onto it.',
 };
 
 export function itemTooltip(item: string): string {
   const description = ITEM_DESCRIPTIONS[item];
   if (isFillableItem(item)) return description ?? 'Click to target it, then act on it from your action bar.';
+  if (isManaCrystal(item)) return description ?? 'No use yet; hold onto it.';
   return description ? `${description}\n\nClick to use, right-click to consume.` : 'Click to use, right-click to consume.';
 }
 

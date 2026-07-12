@@ -91,6 +91,7 @@ import type { Monster } from '../monsters/monster.js';
 import type { AppConfig } from '../config/configuration.js';
 import type {
   PlayerSnapshot,
+  SyncPayload,
   GameServer,
   GameSocket,
   CombatEventPayload,
@@ -102,29 +103,45 @@ import type {
   MoveAck,
   ReadLucemBookAck,
   ReadIrrigoBookAck,
-  ReadQuickMovementBookAck,
+  ReadCeleritasBookAck,
+  ReadAugueBookAck,
   CanteenActionAck,
   CastSpellAck,
+  AugueTargetPayload,
 } from '../../shared/types.js';
 import { TOWN_MAPS } from '../../shared/constants.js';
-import { emitsLight, TORCH_ITEM, timeOfDayLabel, isWithinLightRadius, isWithinShopReach } from '../../shared/lighting.js';
+import { emitsLight, TORCH_ITEM, timeOfDayLabel, isWithinLightRadius, isWithinShopReach, isWithinRadius } from '../../shared/lighting.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
-import { LUCEM_SKILL, IRRIGO_SKILL, QUICK_MOVEMENT_SKILL } from '../../shared/skills.js';
+import { LUCEM_SKILL, IRRIGO_SKILL, CELERITAS_SKILL, AUGUE_SKILL } from '../../shared/skills.js';
 import {
   LUCEM_BOOK_MAP,
   LUCEM_BOOK_POSITION,
   IRRIGO_BOOK_MAP,
   IRRIGO_BOOK_POSITION,
-  QUICK_MOVEMENT_BOOK_MAP,
-  QUICK_MOVEMENT_BOOK_POSITION,
+  CELERITAS_BOOK_MAP,
+  CELERITAS_BOOK_POSITION,
+  AUGUE_BOOK_MAP,
+  AUGUE_BOOK_POSITION,
 } from '../../shared/spells.js';
-import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem } from '../../shared/items.js';
+import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem, manaCrystalForLevel, isManaCrystal } from '../../shared/items.js';
 import { MONSTER_KINDS } from '../../shared/constants.js';
 import type { Direction, MapName, MonsterClass, MonsterKind, Race } from '../../shared/constants.js';
 
 const directionSchema = z.enum(DIRECTIONS);
 const equipmentSlotSchema = z.enum(EQUIPMENT_SLOTS);
 const useSkillSchema = z.object({ direction: directionSchema, skill: z.string() });
+const augueTargetSchema = z.object({ targetKind: z.enum(['player', 'npc', 'monster']), targetId: z.string() });
+
+// ===================== TESTING OVERRIDE — REMOVE AFTER TESTING =====================
+// "For now make it so that learning skills happens immediately 100% for
+// testing purposes, this is going to go back to the original formula
+// later." Flip this back to `false` (or delete it and the `? 1 :` ternary
+// at each *_BOOK_LEARN_CHANCE call site below) to restore the normal
+// 10%-per-read roll. See also the matching client-side testing hotkey
+// (WorldScene's '~' key -> network.cheatFullMana) for the OTHER active
+// testing change from this same request.
+const TESTING_INSTANT_PODIUM_LEARN = true;
+// ====================================================================================
 
 // One player's ongoing fight — engageCombat creates/refreshes one of
 // these instead of resolving a hit immediately; combatTick is the only
@@ -160,16 +177,16 @@ const LUCEM_CAST_MANA_COST = 10;
 const LUCEM_UPKEEP_MANA_COST = 3;
 // A follow-up ask's success formula — (skill percent + this, capped at
 // MAX_SKILL_PERCENT) is the % chance a cast actually takes hold. Shared by
-// every timed spell (lucem, irrigo, quick movement) so "irrigo should have
+// every timed spell (lucem, irrigo, celeritas) so "irrigo should have
 // the same chance of succeeding... that lucem does" (a later follow-up
 // ask) is automatically true rather than a second formula to keep in
 // sync.
 const SPELL_CAST_SUCCESS_BONUS = 10;
-// How long a timed spell (lucem, quick movement) stays active once cast,
+// How long a timed spell (lucem, celeritas) stays active once cast,
 // real-world — a later follow-up ask ("lucem should last 3 minutes...
 // before it goes out"), scaling up toward double that as skill% climbs to
 // MAX_SKILL_PERCENT (see spellDurationMs). Checked once per global stat
-// tick (see checkLucemExpiry/checkQuickMovementExpiry), the same
+// tick (see checkLucemExpiry/checkCeleritasExpiry), the same
 // "periodic check, not its own timer" shape as a torch's own burnout.
 const SPELL_DURATION_BASE_MS = 3 * 60 * 1000;
 function spellDurationMs(skillPercent: number): number {
@@ -187,9 +204,18 @@ const IRRIGO_CAST_MANA_COST = 10;
 // Utilization's second podium (a later follow-up ask), teaching quick
 // movement — same shape/mana cost/success formula as lucem, just no wand
 // requirement (a self-buff, not tied to a carried light source).
-const QUICK_MOVEMENT_BOOK_COOLDOWN_TICKS = 2;
-const QUICK_MOVEMENT_BOOK_LEARN_CHANCE = 0.1;
-const QUICK_MOVEMENT_CAST_MANA_COST = 10;
+const CELERITAS_BOOK_COOLDOWN_TICKS = 2;
+const CELERITAS_BOOK_LEARN_CHANCE = 0.1;
+const CELERITAS_CAST_MANA_COST = 10;
+// The Offense classroom's own podium (a later follow-up ask), teaching
+// augue — a targeted fireball, unlike lucem/irrigo/celeritas above. No
+// mana cost (not requested); its own cooldown lives in shared/skills.ts's
+// SKILL_COOLDOWN_MS (checked the same generic way Glare's is, see
+// handleCastAugue) instead of a bespoke constant here.
+const AUGUE_BOOK_COOLDOWN_TICKS = 2;
+const AUGUE_BOOK_LEARN_CHANCE = 0.1;
+const AUGUE_DAMAGE = 10;
+const AUGUE_RANGE_TILES = 7;
 // Skeleton-only "Glare" — measured in COMBAT ticks (see combatTickCount
 // below), the same ~3s cadence hits themselves land on, NOT the slow
 // 30-40s world tick Eat Brains uses above. Only applied when a skeleton
@@ -374,7 +400,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.applyStatTick(socket as GameSocket);
       this.checkTorchBurnout(socket as GameSocket);
       this.checkLucemExpiry(socket as GameSocket);
-      this.checkQuickMovementExpiry(socket as GameSocket);
+      this.checkCeleritasExpiry(socket as GameSocket);
     }
     this.scheduleStatTick();
   }
@@ -460,7 +486,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       restState: client.data.restState,
       hasLight: emitsLight(client.data.equipment) || client.data.wandLit,
       wandLit: client.data.wandLit,
-      quickMovementActive: client.data.quickMovementActive,
+      celeritasActive: client.data.celeritasActive,
       gold: client.data.gold,
       mimicableRaces: client.data.mimicableRaces,
       mimicForm: client.data.mimicForm,
@@ -767,17 +793,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.systemMessage(client, 'Your wand flickers out — the light spell has run its course.');
   }
 
-  // Same idea again, for quick movement — no other player sees this
+  // Same idea again, for celeritas — no other player sees this
   // toggle (unlike wandLit's hasLight), so no map:state broadcast needed.
-  private checkQuickMovementExpiry(client: GameSocket): void {
+  private checkCeleritasExpiry(client: GameSocket): void {
     if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
-    if (!client.data.quickMovementActive || client.data.quickMovementActiveAt === null) return;
-    const skillPercent = client.data.skills[QUICK_MOVEMENT_SKILL] ?? STARTING_SKILL_PERCENT;
-    if (Date.now() - client.data.quickMovementActiveAt < spellDurationMs(skillPercent)) return;
+    if (!client.data.celeritasActive || client.data.celeritasActiveAt === null) return;
+    const skillPercent = client.data.skills[CELERITAS_SKILL] ?? STARTING_SKILL_PERCENT;
+    if (Date.now() - client.data.celeritasActiveAt < spellDurationMs(skillPercent)) return;
 
-    client.data.quickMovementActive = false;
-    client.data.quickMovementActiveAt = null;
-    this.worldManager.updateState(client.data.username, { quickMovementActive: false });
+    client.data.celeritasActive = false;
+    client.data.celeritasActiveAt = null;
+    this.worldManager.updateState(client.data.username, { celeritasActive: false });
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     this.systemMessage(client, 'The spring leaves your step as the spell wears off.');
@@ -1004,12 +1030,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // starts unlit; same tradeoff as restState.
     client.data.wandLit = false;
     client.data.wandLitAt = null;
-    // Same tradeoff again — quick movement never carries over either.
-    client.data.quickMovementActive = false;
-    client.data.quickMovementActiveAt = null;
+    // Same tradeoff again — celeritas never carries over either.
+    client.data.celeritasActive = false;
+    client.data.celeritasActiveAt = null;
     client.data.lucemBookReadyAtTick = 0;
     client.data.irrigoBookReadyAtTick = 0;
-    client.data.quickMovementBookReadyAtTick = 0;
+    client.data.celeritasBookReadyAtTick = 0;
+    client.data.augueBookReadyAtTick = 0;
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
@@ -1044,7 +1071,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       skillCooldowns: client.data.skillCooldowns,
       deathCount: client.data.deathCount,
       wandLit: client.data.wandLit,
-      quickMovementActive: client.data.quickMovementActive,
+      celeritasActive: client.data.celeritasActive,
     });
     void client.join(client.data.map);
 
@@ -1381,7 +1408,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // message stands in for it instead.
       expGained = grantResult.message ? undefined : rawExpGained;
       if (grantResult.message) growthMessages.push(grantResult.message);
-      const items = [bodyPartLabelFor(monster.kind), ...monster.carriedItems];
+      // A mana crystal instead of a body part now (a follow-up ask) —
+      // scaled to the monster's own level (see manaCrystalForLevel);
+      // lootable, no mechanical use yet.
+      const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
       this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username);
       this.playerCombat.delete(client.data.username);
     }
@@ -1999,7 +2029,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       };
     }
 
-    if (Math.random() < LUCEM_BOOK_LEARN_CHANCE) {
+    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : LUCEM_BOOK_LEARN_CHANCE)) {
       client.data.skills = { ...client.data.skills, [LUCEM_SKILL]: STARTING_SKILL_PERCENT };
       this.worldManager.updateState(client.data.username, { skills: client.data.skills });
       void this.persistStats(client);
@@ -2044,7 +2074,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       };
     }
 
-    if (Math.random() < IRRIGO_BOOK_LEARN_CHANCE) {
+    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : IRRIGO_BOOK_LEARN_CHANCE)) {
       client.data.skills = { ...client.data.skills, [IRRIGO_SKILL]: STARTING_SKILL_PERCENT };
       this.worldManager.updateState(client.data.username, { skills: client.data.skills });
       void this.persistStats(client);
@@ -2067,47 +2097,173 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // Utilization's second podium (a later follow-up ask) — identical
   // shape to handleReadLucemBook/handleReadIrrigoBook, teaching quick
   // movement instead.
-  @SubscribeMessage('readQuickMovementBook')
-  handleReadQuickMovementBook(@ConnectedSocket() client: GameSocket): ReadQuickMovementBookAck {
-    if (client.data.map !== QUICK_MOVEMENT_BOOK_MAP) {
+  @SubscribeMessage('readCeleritasBook')
+  handleReadCeleritasBook(@ConnectedSocket() client: GameSocket): ReadCeleritasBookAck {
+    if (client.data.map !== CELERITAS_BOOK_MAP) {
       return { ok: false, message: "There's no spellbook here." };
     }
-    if (!this.isWithinLootReach(client, QUICK_MOVEMENT_BOOK_POSITION.row, QUICK_MOVEMENT_BOOK_POSITION.col)) {
+    if (!this.isWithinLootReach(client, CELERITAS_BOOK_POSITION.row, CELERITAS_BOOK_POSITION.col)) {
       return { ok: false, message: "You're too far away to reach the book." };
     }
-    if (this.currentTick < client.data.quickMovementBookReadyAtTick) {
-      const hoursLeft = client.data.quickMovementBookReadyAtTick - this.currentTick;
+    if (this.currentTick < client.data.celeritasBookReadyAtTick) {
+      const hoursLeft = client.data.celeritasBookReadyAtTick - this.currentTick;
       return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
     }
-    client.data.quickMovementBookReadyAtTick = this.currentTick + QUICK_MOVEMENT_BOOK_COOLDOWN_TICKS;
+    client.data.celeritasBookReadyAtTick = this.currentTick + CELERITAS_BOOK_COOLDOWN_TICKS;
 
-    if (client.data.skills[QUICK_MOVEMENT_SKILL] !== undefined) {
+    if (client.data.skills[CELERITAS_SKILL] !== undefined) {
       return {
         ok: true,
         skills: client.data.skills,
-        quickMovementBookReadyAtTick: client.data.quickMovementBookReadyAtTick,
+        celeritasBookReadyAtTick: client.data.celeritasBookReadyAtTick,
         message: 'You already know how to quicken your steps.',
       };
     }
 
-    if (Math.random() < QUICK_MOVEMENT_BOOK_LEARN_CHANCE) {
-      client.data.skills = { ...client.data.skills, [QUICK_MOVEMENT_SKILL]: STARTING_SKILL_PERCENT };
+    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : CELERITAS_BOOK_LEARN_CHANCE)) {
+      client.data.skills = { ...client.data.skills, [CELERITAS_SKILL]: STARTING_SKILL_PERCENT };
       this.worldManager.updateState(client.data.username, { skills: client.data.skills });
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
       return {
         ok: true,
         skills: client.data.skills,
-        quickMovementBookReadyAtTick: client.data.quickMovementBookReadyAtTick,
-        message: 'The words swim into focus — you have learned quick movement!',
+        celeritasBookReadyAtTick: client.data.celeritasBookReadyAtTick,
+        message: 'The words swim into focus — you have learned celeritas!',
       };
     }
 
     return {
       ok: true,
-      quickMovementBookReadyAtTick: client.data.quickMovementBookReadyAtTick,
+      celeritasBookReadyAtTick: client.data.celeritasBookReadyAtTick,
       message: 'You pore over the pages, but nothing clicks yet.',
     };
+  }
+
+  // The Offense classroom's own podium (a later follow-up ask) —
+  // identical shape to handleReadLucemBook/handleReadCeleritasBook,
+  // teaching augue instead.
+  @SubscribeMessage('readAugueBook')
+  handleReadAugueBook(@ConnectedSocket() client: GameSocket): ReadAugueBookAck {
+    if (client.data.map !== AUGUE_BOOK_MAP) {
+      return { ok: false, message: "There's no spellbook here." };
+    }
+    if (!this.isWithinLootReach(client, AUGUE_BOOK_POSITION.row, AUGUE_BOOK_POSITION.col)) {
+      return { ok: false, message: "You're too far away to reach the book." };
+    }
+    if (this.currentTick < client.data.augueBookReadyAtTick) {
+      const hoursLeft = client.data.augueBookReadyAtTick - this.currentTick;
+      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
+    }
+    client.data.augueBookReadyAtTick = this.currentTick + AUGUE_BOOK_COOLDOWN_TICKS;
+
+    if (client.data.skills[AUGUE_SKILL] !== undefined) {
+      return {
+        ok: true,
+        skills: client.data.skills,
+        augueBookReadyAtTick: client.data.augueBookReadyAtTick,
+        message: 'You already know how to conjure augue.',
+      };
+    }
+
+    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : AUGUE_BOOK_LEARN_CHANCE)) {
+      client.data.skills = { ...client.data.skills, [AUGUE_SKILL]: STARTING_SKILL_PERCENT };
+      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      return {
+        ok: true,
+        skills: client.data.skills,
+        augueBookReadyAtTick: client.data.augueBookReadyAtTick,
+        message: 'The words swim into focus — you have learned augue!',
+      };
+    }
+
+    return {
+      ok: true,
+      augueBookReadyAtTick: client.data.augueBookReadyAtTick,
+      message: 'You pore over the pages, but nothing clicks yet.',
+    };
+  }
+
+  // Augue (a later follow-up ask) — a targeted fireball, unlike lucem/
+  // irrigo/celeritas's no-target-or-item-targeted shape. Requires the
+  // skill, an off-cooldown state (see SKILL_COOLDOWN_MS), and a monster
+  // target within AUGUE_RANGE_TILES — the only kind of target this game
+  // currently offers is a wild monster (imps included). Deals a flat
+  // AUGUE_DAMAGE; no melee counter-attack (a ranged hit doesn't provoke
+  // one). Reuses resolveHitOnMonster's own death-handling shape (exp
+  // grant, mana-crystal drop, emitCombat broadcast) rather than
+  // duplicating it under a different name.
+  @SubscribeMessage('castAugue')
+  handleCastAugue(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    if (client.data.skills[AUGUE_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the augue spell yet." };
+    }
+    const cooldownUntil = client.data.skillCooldowns[AUGUE_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Augue is still recharging (${secondsLeft}s left).` };
+    }
+    const parsed = augueTargetSchema.safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid target.' };
+    }
+    if (parsed.data.targetKind !== 'monster') {
+      return { ok: false, message: "Augue can only target a monster right now — that's the only kind of target you can select." };
+    }
+    const monster = this.monsterManager.getMonster(parsed.data.targetId);
+    if (!monster || monster.mapName !== client.data.map) {
+      return { ok: false, message: 'Your target is no longer here.' };
+    }
+    if (!isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, AUGUE_RANGE_TILES)) {
+      return { ok: false, message: "You're too far away to hit that with augue." };
+    }
+
+    this.startSkillCooldown(client, AUGUE_SKILL);
+    const result = this.monsterManager.applyDamage(monster.id, AUGUE_DAMAGE);
+    if (!result) {
+      return { ok: false, message: 'Your target is no longer here.' };
+    }
+
+    const growthMessages: string[] = [];
+    const growth = this.maybeGrowSkill(client, AUGUE_SKILL);
+    if (growth) growthMessages.push(growth);
+
+    let expGained: number | undefined;
+    let leveledUp = false;
+    if (result.died) {
+      const rawExpGained = expGainFor(monster.expReward, client.data.level, monster.level);
+      const grantResult = this.grantExp(client, rawExpGained);
+      leveledUp = grantResult.leveledUp;
+      expGained = grantResult.message ? undefined : rawExpGained;
+      if (grantResult.message) growthMessages.push(grantResult.message);
+      const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
+      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username);
+      this.playerCombat.delete(client.data.username);
+    }
+
+    const message = result.died
+      ? `${client.data.username}'s augue engulfs the ${monster.kind} in flame for ${AUGUE_DAMAGE} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
+      : `${client.data.username}'s augue engulfs the ${monster.kind} in flame for ${AUGUE_DAMAGE} damage.`;
+
+    void this.persistStats(client);
+    this.emitCombat(client, {
+      targetKind: 'monster',
+      target: monster.id,
+      targetLabel: monster.kind,
+      damage: AUGUE_DAMAGE,
+      targetHp: result.monster.hp,
+      targetMaxHp: monster.maxHp,
+      targetDied: result.died,
+      expGained,
+      leveledUp,
+      message,
+      growthMessages,
+    });
+    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+
+    return { ok: true, skills: client.data.skills, message };
   }
 
   // Drink/pour/irrigo (items 7 & 8's follow-up asks) all act on a single
@@ -2414,53 +2570,53 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // While active, boosts the caster's own movement speed by ~10% (see
   // WorldScene's effectiveMoveCooldownMs) for spellDurationMs, scaling up
   // with skill% the same way lucem's own duration does.
-  private handleQuickMovementCommand(client: GameSocket): CastSpellAck {
-    if (client.data.skills[QUICK_MOVEMENT_SKILL] === undefined) {
-      const message = "You don't know the quick movement spell yet.";
+  private handleCeleritasCommand(client: GameSocket): CastSpellAck {
+    if (client.data.skills[CELERITAS_SKILL] === undefined) {
+      const message = "You don't know the celeritas spell yet.";
       this.systemMessage(client, message);
       return { ok: false, message };
     }
 
     let message: string;
-    if (!client.data.quickMovementActive) {
-      if (client.data.mana < QUICK_MOVEMENT_CAST_MANA_COST) {
-        const insufficientMana = `You don't have enough mana to cast quick movement (${QUICK_MOVEMENT_CAST_MANA_COST} needed).`;
+    if (!client.data.celeritasActive) {
+      if (client.data.mana < CELERITAS_CAST_MANA_COST) {
+        const insufficientMana = `You don't have enough mana to cast celeritas (${CELERITAS_CAST_MANA_COST} needed).`;
         this.systemMessage(client, insufficientMana);
         return { ok: false, message: insufficientMana };
       }
-      client.data.mana -= QUICK_MOVEMENT_CAST_MANA_COST;
-      const skillPercent = client.data.skills[QUICK_MOVEMENT_SKILL] ?? STARTING_SKILL_PERCENT;
+      client.data.mana -= CELERITAS_CAST_MANA_COST;
+      const skillPercent = client.data.skills[CELERITAS_SKILL] ?? STARTING_SKILL_PERCENT;
       const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS);
       if (Math.random() * 100 < successChance) {
-        client.data.quickMovementActive = true;
-        client.data.quickMovementActiveAt = Date.now();
+        client.data.celeritasActive = true;
+        client.data.celeritasActiveAt = Date.now();
         message = 'Your feet feel lighter — you move with a spring in your step.';
       } else {
         message = 'You fumble the incantation and nothing happens.';
       }
     } else {
-      client.data.quickMovementActive = false;
-      client.data.quickMovementActiveAt = null;
+      client.data.celeritasActive = false;
+      client.data.celeritasActiveAt = null;
       message = 'The spring leaves your step.';
     }
 
-    const growth = this.maybeGrowSkill(client, QUICK_MOVEMENT_SKILL);
+    const growth = this.maybeGrowSkill(client, CELERITAS_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, {
       mana: client.data.mana,
       skills: client.data.skills,
-      quickMovementActive: client.data.quickMovementActive,
+      celeritasActive: client.data.celeritasActive,
     });
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     this.systemMessage(client, message);
-    return { ok: true, active: client.data.quickMovementActive, mana: client.data.mana, skills: client.data.skills, message };
+    return { ok: true, active: client.data.celeritasActive, mana: client.data.mana, skills: client.data.skills, message };
   }
 
-  @SubscribeMessage('castQuickMovement')
-  handleCastQuickMovement(@ConnectedSocket() client: GameSocket): CastSpellAck {
-    return this.handleQuickMovementCommand(client);
+  @SubscribeMessage('castCeleritas')
+  handleCastCeleritas(@ConnectedSocket() client: GameSocket): CastSpellAck {
+    return this.handleCeleritasCommand(client);
   }
 
   private handleTimeCommand(client: GameSocket): void {
@@ -2534,6 +2690,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   @SubscribeMessage('who')
   handleWho(): { players: Array<{ username: string; map: MapName; level: number }> } {
     return { players: this.worldManager.getAllPlayers() };
+  }
+
+  // ===== TESTING OVERRIDE — REMOVE AFTER TESTING ===== "add a 'cheat'
+  // hotkey... pressing it should recover my mana to 100%. This will go
+  // away after testing." Bound to the '~' key client-side (see
+  // WorldScene's create()).
+  @SubscribeMessage('cheatFullMana')
+  handleCheatFullMana(@ConnectedSocket() client: GameSocket): SyncPayload {
+    client.data.mana = client.data.maxMana;
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana });
+    void this.persistStats(client);
+    return { player: this.snapshotFor(client) };
   }
 
   // One-way, one-time — reaching HOBGOBLIN_EVOLUTION_CXP consumed body
@@ -2707,6 +2875,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (isFillableItem(item)) {
       return { ok: false, message: 'Target it, then use drink, pour out, or irrigo from your action bar.' };
     }
+    if (isManaCrystal(item)) {
+      return { ok: false, message: "It hums faintly, but doesn't do anything yet. Hold onto it." };
+    }
 
     const inventory = [...client.data.inventory];
     inventory.splice(itemIndex, 1);
@@ -2742,6 +2913,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (isFillableItem(item)) {
       return { ok: false, message: 'Target it, then use drink, pour out, or irrigo from your action bar.' };
+    }
+    if (isManaCrystal(item)) {
+      return { ok: false, message: "It hums faintly, but doesn't do anything yet. Hold onto it." };
     }
 
     const inventory = [...client.data.inventory];

@@ -37,7 +37,8 @@ import {
   INFRAVISION_SKILL,
   LUCEM_SKILL,
   IRRIGO_SKILL,
-  QUICK_MOVEMENT_SKILL,
+  CELERITAS_SKILL,
+  AUGUE_SKILL,
   DRINK_SKILL,
   POUR_SKILL,
 } from '../../shared/skills.js';
@@ -54,7 +55,7 @@ import {
   torchWallPositionsFor,
   fireplacePositionsFor,
   studentDeskPositionsFor,
-  chairPositionsFor,
+  benchPositionsFor,
 } from '../../shared/lighting.js';
 import { MONSTER_KINDS, FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS } from '../../shared/constants.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
@@ -65,9 +66,12 @@ import {
   IRRIGO_BOOK_MAP,
   IRRIGO_BOOK_POSITION,
   IRRIGO_BOOK_LABEL,
-  QUICK_MOVEMENT_BOOK_MAP,
-  QUICK_MOVEMENT_BOOK_POSITION,
-  QUICK_MOVEMENT_BOOK_LABEL,
+  CELERITAS_BOOK_MAP,
+  CELERITAS_BOOK_POSITION,
+  CELERITAS_BOOK_LABEL,
+  AUGUE_BOOK_MAP,
+  AUGUE_BOOK_POSITION,
+  AUGUE_BOOK_LABEL,
 } from '../../shared/spells.js';
 import type { MapName, Race, Direction, MonsterKind, Gender, HairColor, SkinTone } from '../../shared/constants.js';
 import type {
@@ -94,7 +98,7 @@ import {
   CHAR_SCALE,
   CLASSROOM_DESK_TEXTURE_KEY,
   SPELLBOOK_PODIUM_TEXTURE_KEY,
-  CHAIR_TEXTURE_KEY,
+  BENCH_TEXTURE_KEY,
   CLASSROOM_ZOOM,
   CORPSE_SCALE,
   CROW_TEXTURE_KEY,
@@ -186,9 +190,10 @@ export class WorldScene extends Phaser.Scene {
   // desk texture the teacher's own desk uses (see teacherDeskSprites),
   // just placed at studentDeskPositionsFor's fixed positions instead.
   private studentDeskSprites: Phaser.GameObjects.Sprite[] = [];
-  // A social gathering spot's chairs (a follow-up ask) — Entrance Hall and
-  // common-room-only, see shared/lighting.ts's chairPositionsFor.
-  private chairSprites: Phaser.GameObjects.Sprite[] = [];
+  // A social gathering spot's benches (a follow-up ask upgraded these
+  // from plain chairs) — Entrance Hall and common-room-only, see
+  // shared/lighting.ts's benchPositionsFor.
+  private benchSprites: Phaser.GameObjects.Sprite[] = [];
   // The Utilization classroom's clickable spellbook podium (item 8) —
   // only ever populated while rendering that one map.
   private spellbookPodiumSprite: Phaser.GameObjects.Sprite | null = null;
@@ -197,9 +202,12 @@ export class WorldScene extends Phaser.Scene {
   private irrigoPodiumSprite: Phaser.GameObjects.Sprite | null = null;
   // Utilization's SECOND podium (a follow-up ask), teaching quick
   // movement — stands right next to spellbookPodiumSprite.
-  private quickMovementPodiumSprite: Phaser.GameObjects.Sprite | null = null;
+  private celeritasPodiumSprite: Phaser.GameObjects.Sprite | null = null;
+  // The Offense classroom's own podium (a later follow-up ask), teaching
+  // augue.
+  private auguePodiumSprite: Phaser.GameObjects.Sprite | null = null;
   // Each podium's own small floating label (item 8's follow-up ask) —
-  // tracked in lockstep with the 3 podium sprites above purely so
+  // tracked in lockstep with the 4 podium sprites above purely so
   // map-transition cleanup destroys them together.
   private podiumLabelSprites: Phaser.GameObjects.Text[] = [];
   private race: Race = 'goblin';
@@ -313,7 +321,7 @@ export class WorldScene extends Phaser.Scene {
     this.load.image(STAIRS_TEXTURE_KEY, '/stairs.png');
     this.load.image(CLASSROOM_DESK_TEXTURE_KEY, '/classroom-desk.png');
     this.load.image(SPELLBOOK_PODIUM_TEXTURE_KEY, '/spellbook-podium.png');
-    this.load.image(CHAIR_TEXTURE_KEY, '/chair.png');
+    this.load.image(BENCH_TEXTURE_KEY, '/bench.png');
     createWallTorchTexture(this);
     preloadCharacterSprites(this);
   }
@@ -345,6 +353,20 @@ export class WorldScene extends Phaser.Scene {
     };
     this.cursorKeys = keyboard.createCursorKeys();
 
+    // ===== TESTING OVERRIDE — REMOVE AFTER TESTING ===== "add a 'cheat'
+    // hotkey, which will be the tilde '~' key. Pressing it should recover
+    // my mana to 100%. This will go away after testing." Delete this
+    // whole keydown listener (and net.ts's cheatFullMana/game.gateway.ts's
+    // handleCheatFullMana) once testing wraps up.
+    keyboard.on('keydown-BACKTICK', () => {
+      if (isInputCaptured()) return;
+      void this.network.cheatFullMana().then((sync) => {
+        setMyProfile(sync.player);
+        this.updateOwnBars();
+        logCombatMessage('[cheat] Mana restored to full.');
+      });
+    });
+
     this.input.mouse?.disableContextMenu();
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       if (isInputCaptured()) return;
@@ -366,7 +388,8 @@ export class WorldScene extends Phaser.Scene {
       const overPodium =
         Boolean(this.spellbookPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
         Boolean(this.irrigoPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
-        Boolean(this.quickMovementPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY));
+        Boolean(this.celeritasPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
+        Boolean(this.auguePodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY));
       // A teacher's own `useHandCursor` (set on their sprite below) never
       // actually showed — this SAME pointermove handler fires on every
       // mouse move and unconditionally reset the cursor back to '' right
@@ -1330,19 +1353,21 @@ export class WorldScene extends Phaser.Scene {
     this.studentDeskSprites = [];
     for (const { row, col } of studentDeskPositionsFor(mapName)) {
       const pos = this.tilePosition(row, col);
-      const desk = this.add.sprite(pos.x, pos.y, CLASSROOM_DESK_TEXTURE_KEY).setOrigin(0.5, 0.85).setScale(0.7).setDepth(-0.5);
+      const desk = this.add.sprite(pos.x, pos.y, CLASSROOM_DESK_TEXTURE_KEY).setOrigin(0.5, 0.85).setScale(0.55).setDepth(-0.5);
       this.studentDeskSprites.push(desk);
     }
 
-    // A small social gathering spot's chairs (a follow-up ask) —
-    // Entrance Hall and common-room-only, furniture only, no click
-    // handler, collision is server-side (see isChairBlocked).
-    for (const sprite of this.chairSprites) sprite.destroy();
-    this.chairSprites = [];
-    for (const { row, col } of chairPositionsFor(mapName)) {
+    // A small social gathering spot's benches (a follow-up ask upgraded
+    // these from plain chairs) — Entrance Hall and common-room-only,
+    // furniture only, no click handler, collision is server-side (see
+    // isBenchBlocked). Each one's own `angle` (see benchPositionsFor)
+    // rotates it to face inward, toward the other three.
+    for (const sprite of this.benchSprites) sprite.destroy();
+    this.benchSprites = [];
+    for (const { row, col, angle } of benchPositionsFor(mapName)) {
       const pos = this.tilePosition(row, col);
-      const chair = this.add.sprite(pos.x, pos.y, CHAIR_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
-      this.chairSprites.push(chair);
+      const bench = this.add.sprite(pos.x, pos.y, BENCH_TEXTURE_KEY).setOrigin(0.5, 0.85).setAngle(angle).setDepth(-0.5);
+      this.benchSprites.push(bench);
     }
 
     // The classroom spellbook podiums (item 8, item 9's follow-up ask) —
@@ -1365,12 +1390,21 @@ export class WorldScene extends Phaser.Scene {
     );
     // Utilization's second podium (a follow-up ask), teaching quick
     // movement — same mechanic, standing right next to the lucem one.
-    this.quickMovementPodiumSprite = this.renderSpellPodium(
-      this.quickMovementPodiumSprite,
+    this.celeritasPodiumSprite = this.renderSpellPodium(
+      this.celeritasPodiumSprite,
       mapName,
-      QUICK_MOVEMENT_BOOK_MAP,
-      QUICK_MOVEMENT_BOOK_POSITION,
-      () => this.network.readQuickMovementBook()
+      CELERITAS_BOOK_MAP,
+      CELERITAS_BOOK_POSITION,
+      () => this.network.readCeleritasBook()
+    );
+    // The Offense classroom's own podium (a later follow-up ask), teaching
+    // augue.
+    this.auguePodiumSprite = this.renderSpellPodium(
+      this.auguePodiumSprite,
+      mapName,
+      AUGUE_BOOK_MAP,
+      AUGUE_BOOK_POSITION,
+      () => this.network.readAugueBook()
     );
 
     // A small floating label above each podium (a follow-up ask) —
@@ -1380,13 +1414,14 @@ export class WorldScene extends Phaser.Scene {
     const podiumLabels: Array<{ map: MapName; position: { row: number; col: number }; label: string }> = [
       { map: LUCEM_BOOK_MAP, position: LUCEM_BOOK_POSITION, label: LUCEM_BOOK_LABEL },
       { map: IRRIGO_BOOK_MAP, position: IRRIGO_BOOK_POSITION, label: IRRIGO_BOOK_LABEL },
-      { map: QUICK_MOVEMENT_BOOK_MAP, position: QUICK_MOVEMENT_BOOK_POSITION, label: QUICK_MOVEMENT_BOOK_LABEL },
+      { map: CELERITAS_BOOK_MAP, position: CELERITAS_BOOK_POSITION, label: CELERITAS_BOOK_LABEL },
+      { map: AUGUE_BOOK_MAP, position: AUGUE_BOOK_POSITION, label: AUGUE_BOOK_LABEL },
     ];
     for (const { map, position, label } of podiumLabels) {
       if (mapName !== map) continue;
       const pos = this.tilePosition(position.row, position.col);
       const text = this.add
-        .text(pos.x, pos.y - 34, label, { fontSize: '11px', color: '#d8c888', fontStyle: 'italic' })
+        .text(pos.x, pos.y - 30, label, { fontSize: '8px', color: '#d8c888', fontStyle: 'italic' })
         .setOrigin(0.5, 1)
         .setDepth(-0.4);
       this.podiumLabelSprites.push(text);
@@ -1701,13 +1736,11 @@ export class WorldScene extends Phaser.Scene {
       const sprite = this.add.sprite(pos.x, pos.y, textureKeyFor('teacher'), idleFrameFor('teacher', 'down')).setScale(CHAR_SCALE).setInteractive();
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
-        // Just the subject + the standard instruction (a follow-up ask,
-        // dropping the earlier "Welcome to <room>" framing) — the subject
-        // is the classroom's own name, minus a leading "Elemental " where
-        // present, so Elemental Casting's teacher says "Casting..." while
-        // every single-word classroom says its own name outright.
-        const subject = t.map.split(' ').pop();
-        this.showTeacherTooltip(sprite, `${subject}. Please study from the podium.`);
+        // A fixed, generic line (a later follow-up ask dropped the
+        // earlier per-classroom "<Subject>. Please study from the
+        // podium." framing entirely, now that Utilization's classroom has
+        // TWO podiums — "podiums" plural reads correctly everywhere).
+        this.showTeacherTooltip(sprite, 'Please study from the podiums.');
       });
       this.teacherSprites.set(t.id, sprite);
     }
@@ -2075,15 +2108,15 @@ export class WorldScene extends Phaser.Scene {
 
   // Quick movement's own ~10% move-speed boost (a follow-up ask) — the
   // server is the actual authority on whether the spell is active
-  // (myProfile.quickMovementActive, kept in sync via 'sync'); this just
+  // (myProfile.celeritasActive, kept in sync via 'sync'); this just
   // shortens the client-side key-repeat throttle/slide-tween duration
   // that already governs how fast movement FEELS, same value used for
   // both (see the constant's own MOVE_COOLDOWN_MS doc comment).
   private effectiveMoveCooldownMs(): number {
-    return myProfile?.quickMovementActive ? Math.round(MOVE_COOLDOWN_MS * 0.9) : MOVE_COOLDOWN_MS;
+    return myProfile?.celeritasActive ? Math.round(MOVE_COOLDOWN_MS * 0.9) : MOVE_COOLDOWN_MS;
   }
 
-  // Lucem/quick movement's own ack-based cast (a later follow-up ask,
+  // Lucem/celeritas's own ack-based cast (a later follow-up ask,
   // replacing the old fire-and-forget '/lucem' chat command) — always
   // toasts the result on top of the normal combat-log line, same reason
   // as irrigo above: casting from the action bar with a modal open
@@ -2120,7 +2153,7 @@ export class WorldScene extends Phaser.Scene {
       openChatInputWithText('/mimic ');
       return;
     }
-    // Lucem/quick movement are no-target toggles too (item 11: "the
+    // Lucem/celeritas are no-target toggles too (item 11: "the
     // player would simply click on it to either create light on the wand
     // or to remove light") — ack-based (a later follow-up ask) rather
     // than driving a chat command, so the result can be toasted even
@@ -2129,8 +2162,8 @@ export class WorldScene extends Phaser.Scene {
       this.castToggleSpell(() => this.network.castLucem());
       return;
     }
-    if (skillName === QUICK_MOVEMENT_SKILL) {
-      this.castToggleSpell(() => this.network.castQuickMovement());
+    if (skillName === CELERITAS_SKILL) {
+      this.castToggleSpell(() => this.network.castCeleritas());
       return;
     }
     // Drink/pour/irrigo (items 7, 8 & 11's follow-up asks) act on a
@@ -2145,6 +2178,21 @@ export class WorldScene extends Phaser.Scene {
 
     if (!this.targetKind || !this.targetId) {
       logCombatMessage('Select a target first (left-click a player or monster).');
+      return;
+    }
+    // Augue (a later follow-up ask) is a RANGED spell (up to 7 tiles, see
+    // game.gateway.ts's AUGUE_RANGE_TILES) — unlike every skill below,
+    // which is melee and walks the player into contact range first (see
+    // tryEngage), this resolves immediately server-side with no walking
+    // involved. The actual hit result (damage, hp bar, log line) arrives
+    // through the ordinary 'combat' broadcast (see applyCombatEvent),
+    // same as any other attack — this only needs to surface a pre-flight
+    // rejection (not learned/on cooldown/out of range) that only the
+    // caster would otherwise see.
+    if (skillName === AUGUE_SKILL) {
+      void this.network.castAugue({ targetKind: this.targetKind, targetId: this.targetId }).then((ack) => {
+        if (!ack.ok && ack.message) showCenterToast(ack.message);
+      });
       return;
     }
     if (skillName === PUNCH_SKILL && myProfile?.equipment.weapon) {

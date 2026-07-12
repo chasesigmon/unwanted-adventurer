@@ -77,7 +77,17 @@ export const IRRIGO_SKILL = 'irrigo';
 // cast" shape as lucem/irrigo. While active, boosts the caster's own
 // movement speed by about 10%; lasts the same real-time duration as
 // lucem (see game.gateway.ts's spellDurationMs), scaling up with skill%.
-export const QUICK_MOVEMENT_SKILL = 'quick movement';
+export const CELERITAS_SKILL = 'celeritas';
+
+// A follow-up ask's fireball spell — learned the same podium way (10%
+// chance per read, a second Offense classroom podium, see
+// handleReadAugueBook), but a targeted ATTACK unlike the 3 no-target/
+// item-targeted spells above: requires selecting a monster target (see
+// WorldScene's targetKind/targetId — the only kind of target this game
+// currently offers is a wild monster, imps included) within
+// AUGUE_RANGE_TILES, deals a flat AUGUE_DAMAGE, and has its own cooldown
+// (see SKILL_COOLDOWN_MS below).
+export const AUGUE_SKILL = 'augue';
 
 // Basic actions every human wizard starts knowing outright (item 7) —
 // not practiced up or learned from a podium, just part of the universal
@@ -96,6 +106,10 @@ export const POUR_SKILL = 'pour out';
 // here since shared/ can't import a server-only constant.
 export const SKILL_COOLDOWN_MS: Partial<Record<string, number>> = {
   [GLARE_SKILL]: 2 * 3000,
+  // "A cooldown of 1 combat tick" (a follow-up ask) — same literal
+  // MONSTER_TICK_INTERVAL_MS figure as Glare above, for the same reason
+  // (shared/ can't import a server-only constant).
+  [AUGUE_SKILL]: 1 * 3000,
 };
 
 export const RACE_INNATE_SKILLS: Record<Race, string[]> = {

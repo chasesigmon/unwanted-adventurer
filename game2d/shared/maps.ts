@@ -190,6 +190,19 @@ export function isMoatBlocked(mapName: MapName, row: number, col: number): boole
   return true;
 }
 
+// The moat's own full rectangular footprint (the water ring itself PLUS
+// the walkable courtyard it encloses between the ring and the castle
+// walls) — used to keep wild monster spawning (imps, a follow-up ask:
+// "they should only spawn on any of the areas outside/surrounding the
+// mote") off of the courtyard entirely, not just off the water tiles
+// isMoatBlocked itself blocks movement onto. Deliberately NOT used for
+// player movement — the courtyard/bridge stay normal walkable ground for
+// a player crossing to the castle door.
+export function isWithinMoatFootprint(mapName: MapName, row: number, col: number): boolean {
+  if (mapName !== 'Grimoak Grounds') return false;
+  return row >= MOAT_OUTER_TOP && row <= MOAT_OUTER_BOTTOM && col >= MOAT_OUTER_LEFT && col <= MOAT_OUTER_RIGHT;
+}
+
 // Just outside the moat's own outer edge, in front of the bridge — a new
 // player has to actually cross the bridge to reach the castle door now,
 // rather than spawning right next to it.
@@ -214,17 +227,27 @@ export function startingPositionFor(mapName: MapName): { row: number; col: numbe
 // Staircase) get their own larger footprints.
 const ROOM_ROWS = 40;
 const ROOM_COLS = 56;
-const ROOM_MID_ROW = Math.floor(ROOM_ROWS / 2);
-const ROOM_MID_COL = Math.floor(ROOM_COLS / 2);
 
 // Classrooms specifically (not the dorm-style common rooms) got shrunk to
 // a third of the standard room footprint — see src/game/mapRender.ts's
 // CLASSROOM_ZOOM, which zooms the camera in to compensate so these still
-// "fill up the whole screen" despite the smaller grid.
+// "fill up the whole screen" despite the smaller grid. Still derived from
+// the ORIGINAL ROOM_ROWS/COLS above, not the shrunk COMMON_ROOM_ROWS/COLS
+// below — a later follow-up ask shrunk the house common rooms further
+// (25%, matching the Entrance Hall's own earlier reduction) without
+// touching classroom size at all.
 export const CLASSROOM_ROWS = Math.round(ROOM_ROWS / 3);
 export const CLASSROOM_COLS = Math.round(ROOM_COLS / 3);
 export const CLASSROOM_MID_ROW = Math.floor(CLASSROOM_ROWS / 2);
 export const CLASSROOM_MID_COL = Math.floor(CLASSROOM_COLS / 2);
+
+// The 4 house common rooms, 25% smaller than the standard ROOM_ROWS/COLS
+// footprint above (a follow-up ask: "like the entrance hall," which took
+// the same 25% cut — see ENTRANCE_ROWS/COLS below).
+const COMMON_ROOM_ROWS = Math.round(ROOM_ROWS * 0.75);
+const COMMON_ROOM_COLS = Math.round(ROOM_COLS * 0.75);
+const COMMON_ROOM_MID_ROW = Math.floor(COMMON_ROOM_ROWS / 2);
+const COMMON_ROOM_MID_COL = Math.floor(COMMON_ROOM_COLS / 2);
 
 // Reduced by 25% from the original 48x70 (a follow-up ask).
 const ENTRANCE_ROWS = 36;
@@ -245,30 +268,30 @@ const GREAT_HALL_MID_ROW = Math.floor(GREAT_HALL_ROWS / 2);
 // instead (a follow-up ask: "only the classrooms should be to the
 // north") — see ENTRANCE_EAST_DOORS/ENTRANCE_WEST_DOORS below.
 const ENTRANCE_NORTH_DOORS: Array<{ col: number; name: MapName }> = [
-  { col: 9, name: 'Elemental Casting' },
-  { col: 18, name: 'Defense' },
-  { col: 27, name: 'Summoning' },
-  { col: 35, name: 'Utilization' },
-  { col: 44, name: 'Offense' },
+  { col: 9, name: 'Elemental Casting Classroom' },
+  { col: 18, name: 'Defense Classroom' },
+  { col: 27, name: 'Summoning Classroom' },
+  { col: 35, name: 'Utility Classroom' },
+  { col: 44, name: 'Offense Classroom' },
 ];
 
 // The house common rooms (plus Great Hall, already east) — spread across
 // the Entrance Hall's east and west walls instead of the north one, which
 // is now classrooms-only (a follow-up ask). Each entry's own `toRow`
 // carries the row the door lands on INSIDE that room (Great Hall keeps
-// its own distinct GREAT_HALL_MID_ROW; every common room is the standard
-// ROOM_MID_ROW), so both this array and each room's own reciprocal exit
-// (see commonRoomOffEntranceHall/GREAT_HALL/THISTLEDOWN_COMMON_ROOM
+// its own distinct GREAT_HALL_MID_ROW; every common room is the shrunk
+// COMMON_ROOM_MID_ROW), so both this array and each room's own reciprocal
+// exit (see commonRoomOffEntranceHall/GREAT_HALL/THISTLEDOWN_COMMON_ROOM
 // below) stay derived from one shared source instead of duplicating
 // literals on both sides of the door.
 const ENTRANCE_EAST_DOORS: Array<{ row: number; name: MapName; toRow: number }> = [
   { row: 12, name: 'Great Hall', toRow: GREAT_HALL_MID_ROW },
-  { row: 24, name: 'Duskwing Common Room', toRow: ROOM_MID_ROW },
+  { row: 24, name: 'Duskwing Common Room', toRow: COMMON_ROOM_MID_ROW },
 ];
 const ENTRANCE_WEST_DOORS: Array<{ row: number; name: MapName; toRow: number }> = [
-  { row: 9, name: 'Thistledown Common Room', toRow: ROOM_MID_ROW },
-  { row: 18, name: 'Emberclaw Common Room', toRow: ROOM_MID_ROW },
-  { row: 27, name: 'Starfall Common Room', toRow: ROOM_MID_ROW },
+  { row: 9, name: 'Thistledown Common Room', toRow: COMMON_ROOM_MID_ROW },
+  { row: 18, name: 'Emberclaw Common Room', toRow: COMMON_ROOM_MID_ROW },
+  { row: 27, name: 'Starfall Common Room', toRow: COMMON_ROOM_MID_ROW },
 ];
 
 const ENTRANCE_HALL: MapDefinition = {
@@ -299,7 +322,7 @@ const ENTRANCE_HALL: MapDefinition = {
       direction: 'west' as const,
       toMap: name,
       toRow,
-      toCol: ROOM_COLS - 1,
+      toCol: COMMON_ROOM_COLS - 1,
     })),
     ...ENTRANCE_NORTH_DOORS.map(({ col, name }) => ({
       row: 0,
@@ -316,7 +339,7 @@ const ENTRANCE_HALL: MapDefinition = {
 // through its own south wall — same reciprocal-exit tile pair pattern as
 // every other room in this file, built generically since the classrooms
 // are otherwise identical (only their name/door column differ). House
-// common rooms (bigger, ROOM_ROWS/COLS) use their own dedicated
+// common rooms (bigger, COMMON_ROOM_ROWS/COLS) use their own dedicated
 // definitions below since they also carry lore/flavor comments, but
 // follow the exact same door math.
 function classroomOffEntranceHall(name: MapName): MapDefinition {
@@ -358,13 +381,13 @@ const GREAT_HALL: MapDefinition = {
 
 const THISTLEDOWN_COMMON_ROOM: MapDefinition = {
   name: 'Thistledown Common Room',
-  rows: ROOM_ROWS,
-  cols: ROOM_COLS,
+  rows: COMMON_ROOM_ROWS,
+  cols: COMMON_ROOM_COLS,
   terrain: 'stone',
   exits: [
     {
-      row: ROOM_MID_ROW,
-      col: ROOM_COLS - 1,
+      row: COMMON_ROOM_MID_ROW,
+      col: COMMON_ROOM_COLS - 1,
       direction: 'east',
       toMap: 'Grimoak Entrance Hall',
       toRow: ENTRANCE_WEST_DOORS.find((d) => d.name === 'Thistledown Common Room')!.row,
@@ -377,23 +400,24 @@ const THISTLEDOWN_COMMON_ROOM: MapDefinition = {
 // wall (a follow-up ask: "only the classrooms should be to the north"),
 // instead of the removed Grand Staircase/Dungeon Corridor hub rooms. Kept
 // as their own dedicated definitions (rather than classroomOffEntranceHall,
-// which is classroom-sized) since these are ROOM_ROWS/COLS, the bigger
-// footprint. `side` picks which of the Entrance Hall's own door lists to
-// look the room's door row up in, and mirrors which of the room's OWN
-// walls the reciprocal exit sits on (its far wall from that side, same
-// "walk in one side, out the door on the way back" shape everywhere else
-// in this file uses).
+// which is classroom-sized) since these are COMMON_ROOM_ROWS/COLS, a
+// different (now smaller, see its own doc comment) footprint. `side`
+// picks which of the Entrance Hall's own door lists to look the room's
+// door row up in, and mirrors which of the room's OWN walls the
+// reciprocal exit sits on (its far wall from that side, same "walk in
+// one side, out the door on the way back" shape everywhere else in this
+// file uses).
 function commonRoomOffEntranceHall(name: MapName, side: 'east' | 'west'): MapDefinition {
   const entranceDoor = (side === 'west' ? ENTRANCE_WEST_DOORS : ENTRANCE_EAST_DOORS).find((d) => d.name === name)!;
   return {
     name,
-    rows: ROOM_ROWS,
-    cols: ROOM_COLS,
+    rows: COMMON_ROOM_ROWS,
+    cols: COMMON_ROOM_COLS,
     terrain: 'stone',
     exits: [
       {
-        row: ROOM_MID_ROW,
-        col: side === 'east' ? 0 : ROOM_COLS - 1,
+        row: COMMON_ROOM_MID_ROW,
+        col: side === 'east' ? 0 : COMMON_ROOM_COLS - 1,
         direction: side === 'east' ? 'west' : 'east',
         toMap: 'Grimoak Entrance Hall',
         toRow: entranceDoor.row,
@@ -415,13 +439,15 @@ const STARFALL_COMMON_ROOM = commonRoomOffEntranceHall('Starfall Common Room', '
 const DUSKWING_COMMON_ROOM = commonRoomOffEntranceHall('Duskwing Common Room', 'east');
 
 // The 5 classrooms named in the request — Elemental Casting, Defense,
-// Summoning, Utilization, Offense — the only classrooms in the castle
-// now, all connected directly to the Entrance Hall.
-const ELEMENTAL_CASTING = classroomOffEntranceHall('Elemental Casting');
-const DEFENSE = classroomOffEntranceHall('Defense');
-const SUMMONING = classroomOffEntranceHall('Summoning');
-const UTILIZATION = classroomOffEntranceHall('Utilization');
-const OFFENSE = classroomOffEntranceHall('Offense');
+// Summoning, Utility (renamed from Utilization — a follow-up ask),
+// Offense, each with an explicit "Classroom" suffix (another follow-up
+// ask) — the only classrooms in the castle now, all connected directly
+// to the Entrance Hall.
+const ELEMENTAL_CASTING = classroomOffEntranceHall('Elemental Casting Classroom');
+const DEFENSE = classroomOffEntranceHall('Defense Classroom');
+const SUMMONING = classroomOffEntranceHall('Summoning Classroom');
+const UTILIZATION = classroomOffEntranceHall('Utility Classroom');
+const OFFENSE = classroomOffEntranceHall('Offense Classroom');
 
 export const MAPS: Record<MapName, MapDefinition> = {
   'Great Plains': {
@@ -539,11 +565,11 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Duskwing Common Room': DUSKWING_COMMON_ROOM,
   'Emberclaw Common Room': EMBERCLAW_COMMON_ROOM,
   'Starfall Common Room': STARFALL_COMMON_ROOM,
-  'Elemental Casting': ELEMENTAL_CASTING,
-  Defense: DEFENSE,
-  Summoning: SUMMONING,
-  Utilization: UTILIZATION,
-  Offense: OFFENSE,
+  'Elemental Casting Classroom': ELEMENTAL_CASTING,
+  'Defense Classroom': DEFENSE,
+  'Summoning Classroom': SUMMONING,
+  'Utility Classroom': UTILIZATION,
+  'Offense Classroom': OFFENSE,
 };
 
 export function getMap(name: MapName): MapDefinition {

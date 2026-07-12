@@ -59,11 +59,11 @@ export const GRIMOAK_CASTLE_MAPS = [
   'Duskwing Common Room',
   'Emberclaw Common Room',
   'Starfall Common Room',
-  'Elemental Casting',
-  'Defense',
-  'Summoning',
-  'Utilization',
-  'Offense',
+  'Elemental Casting Classroom',
+  'Defense Classroom',
+  'Summoning Classroom',
+  'Utility Classroom',
+  'Offense Classroom',
 ] as const;
 
 // Classroom-sized rooms (a follow-up ask: "a third of the size" of the
@@ -73,14 +73,25 @@ export const GRIMOAK_CASTLE_MAPS = [
 // footprint still fills the screen (see mapRender.ts's CLASSROOM_ZOOM);
 // the house common rooms/Great Hall/Entrance Hall stay at the standard
 // size/zoom.
-export const CLASSROOM_MAPS = ['Elemental Casting', 'Defense', 'Summoning', 'Utilization', 'Offense'] as const;
+// A follow-up ask renamed Utilization to Utility, and every classroom now
+// carries an explicit "Classroom" suffix (another follow-up ask, "so it
+// reads clearly everywhere") — these ARE the map's real MapName now, not
+// just a display label, so every door/teacher/podium reference below
+// uses the full "<Subject> Classroom" string.
+export const CLASSROOM_MAPS = [
+  'Elemental Casting Classroom',
+  'Defense Classroom',
+  'Summoning Classroom',
+  'Utility Classroom',
+  'Offense Classroom',
+] as const;
 
 // The 4 house common rooms — standard ROOM_ROWS/COLS-sized, unlike the
 // shrunk classrooms above. Used to give them the same "closer to the
 // walls, chairs in the center" treatment as the Entrance Hall (a
 // follow-up ask: "common rooms right now should look very similar to
 // entrance hall" — see shared/lighting.ts's fireplacePositionsFor/
-// chairPositionsFor).
+// benchPositionsFor).
 export const COMMON_ROOM_MAPS = ['Thistledown Common Room', 'Duskwing Common Room', 'Emberclaw Common Room', 'Starfall Common Room'] as const;
 
 export const MAP_NAMES = [

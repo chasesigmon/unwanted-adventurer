@@ -10,11 +10,11 @@ import type { TeacherSnapshot } from '../../shared/types.js';
 // decorative). Never move, never despawn, not a combat target and not
 // (yet) clickable — purely a placed NPC + furniture piece for now.
 export const TEACHERS: TeacherSnapshot[] = [
-  { id: 'elemental-casting-teacher', name: 'Professor Ashgrove', map: 'Elemental Casting', row: 2, col: 9 },
-  { id: 'defense-teacher', name: 'Professor Vantor', map: 'Defense', row: 2, col: 9 },
-  { id: 'summoning-teacher', name: 'Professor Nyx', map: 'Summoning', row: 2, col: 9 },
-  { id: 'utilization-teacher', name: 'Professor Wren', map: 'Utilization', row: 2, col: 9 },
-  { id: 'offense-teacher', name: 'Professor Kastellan', map: 'Offense', row: 2, col: 9 },
+  { id: 'elemental-casting-teacher', name: 'Professor Ashgrove', map: 'Elemental Casting Classroom', row: 2, col: 9 },
+  { id: 'defense-teacher', name: 'Professor Vantor', map: 'Defense Classroom', row: 2, col: 9 },
+  { id: 'summoning-teacher', name: 'Professor Nyx', map: 'Summoning Classroom', row: 2, col: 9 },
+  { id: 'utilization-teacher', name: 'Professor Wren', map: 'Utility Classroom', row: 2, col: 9 },
+  { id: 'offense-teacher', name: 'Professor Kastellan', map: 'Offense Classroom', row: 2, col: 9 },
 ];
 
 export function teachersForMap(mapName: MapName): TeacherSnapshot[] {
@@ -24,4 +24,22 @@ export function teachersForMap(mapName: MapName): TeacherSnapshot[] {
 // The desk sits directly in front of (one tile south of) the teacher.
 export function deskPositionFor(teacher: TeacherSnapshot): { row: number; col: number } {
   return { row: teacher.row + 1, col: teacher.col };
+}
+
+// The desk sprite's own art is visually wider/taller than the single
+// anchor tile deskPositionFor returns (a follow-up ask: "add collision
+// for the ENTIRE teacher's desk... right now you can walk through it
+// from the top or the sides") — a 3-wide, 2-tall footprint centered on
+// and just above the anchor tile, matching the sprite's own real
+// width/height at its render scale (see WorldScene's teacher-desk
+// setOrigin(0.5, 0.85), which puts most of its height above the anchor).
+export function teacherDeskFootprintFor(teacher: TeacherSnapshot): Array<{ row: number; col: number }> {
+  const anchor = deskPositionFor(teacher);
+  const tiles: Array<{ row: number; col: number }> = [];
+  for (const dRow of [-1, 0]) {
+    for (const dCol of [-1, 0, 1]) {
+      tiles.push({ row: anchor.row + dRow, col: anchor.col + dCol });
+    }
+  }
+  return tiles;
 }

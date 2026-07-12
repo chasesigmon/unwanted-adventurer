@@ -1,12 +1,12 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
-import { getMap, isCastleExteriorBlocked, isMoatBlocked } from '../../shared/maps.js';
+import { getMap, isCastleExteriorBlocked, isMoatBlocked, isWithinMoatFootprint } from '../../shared/maps.js';
 import { isTreeTile } from '../../shared/trees.js';
-import { isFireplaceBlocked, isChairBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
+import { isFireplaceBlocked, isBenchBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
 import { vendorsForMap } from '../worlds/vendors.js';
-import { teachersForMap, deskPositionFor } from '../worlds/teachers.js';
+import { teachersForMap, teacherDeskFootprintFor } from '../worlds/teachers.js';
 import { isPodiumBlocked } from '../../shared/spells.js';
 import type { MapName } from '../../shared/constants.js';
 import type { MonsterSnapshot } from '../../shared/types.js';
@@ -90,17 +90,16 @@ export class MonsterManagerService {
     if (isCastleExteriorBlocked(mapName, row, col)) return false;
     if (isMoatBlocked(mapName, row, col)) return false;
     if (isFireplaceBlocked(mapName, row, col)) return false;
-    if (isChairBlocked(mapName, row, col)) return false;
+    if (isBenchBlocked(mapName, row, col)) return false;
     if (studentDeskPositionsFor(mapName).some((p) => p.row === row && p.col === col)) return false;
     // Same "own tile + shopfront tile in front of it" collision shape as
     // WorldManagerService.isOccupied — a wandering/spawning monster
     // shouldn't stand inside the shop stall either.
     if (vendorsForMap(mapName).some((v) => (v.row === row && v.col === col) || (v.row + 1 === row && v.col === col))) return false;
     if (
-      teachersForMap(mapName).some((t) => {
-        const desk = deskPositionFor(t);
-        return (t.row === row && t.col === col) || (desk.row === row && desk.col === col);
-      })
+      teachersForMap(mapName).some(
+        (t) => (t.row === row && t.col === col) || teacherDeskFootprintFor(t).some((d) => d.row === row && d.col === col)
+      )
     )
       return false;
     if (isPodiumBlocked(mapName, row, col)) return false;
@@ -131,6 +130,13 @@ export class MonsterManagerService {
     for (let attempt = 0; attempt < 60; attempt++) {
       const row = Math.floor(Math.random() * map.rows);
       const col = Math.floor(Math.random() * map.cols);
+      // The moat's own rectangular footprint (ring + the courtyard it
+      // encloses) is off-limits for spawning (a follow-up ask: imps
+      // "should only spawn on any of the areas outside/surrounding the
+      // mote") — the courtyard itself is still normal walkable ground
+      // for a PLAYER crossing to the castle door, so this only applies
+      // to spawn placement, not isFree's own movement-collision check.
+      if (isWithinMoatFootprint(mapName, row, col)) continue;
       if (this.isFree(mapName, row, col) && this.isFarEnoughFromOthers(mapName, row, col)) return { row, col };
     }
     // The map's too crowded to satisfy the spacing preference within
@@ -138,6 +144,7 @@ export class MonsterManagerService {
     for (let attempt = 0; attempt < 60; attempt++) {
       const row = Math.floor(Math.random() * map.rows);
       const col = Math.floor(Math.random() * map.cols);
+      if (isWithinMoatFootprint(mapName, row, col)) continue;
       if (this.isFree(mapName, row, col)) return { row, col };
     }
     return null;
