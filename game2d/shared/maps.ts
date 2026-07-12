@@ -111,26 +111,17 @@ function floroShopDoorExits(): MapExit[] {
 // on the matching door tile the other side). See the published world
 // sketch for the full room directory this phase-1 set implements.
 
-// Sized to comfortably fit the castle exterior at its new 5x-scaled
-// footprint (item 2: CASTLE_EXTERIOR_TILE_HEIGHT tall, bottom-anchored at
-// the door) with room to spare above it and a good stretch of grounds
-// below/around for the courtyard/lake/pitch sketched for later.
-const GRIMOAK_GROUNDS_SIZE = 180;
-// Not centered anymore now that the castle needs so much headroom above
-// it — see GRIMOAK_GROUNDS_SPAWN/startingPositionFor below, which replaced
-// the old "just spawn at floor(rows/2)" convenience trick.
-export const CASTLE_DOOR_ON_GROUNDS = { row: 130, col: 90 };
-// One tile south of the door — "just outside the castle entrance."
-export const GRIMOAK_GROUNDS_SPAWN = { row: CASTLE_DOOR_ON_GROUNDS.row + 1, col: CASTLE_DOOR_ON_GROUNDS.col };
-
-// Where a brand new (or respawning) character appears on a given map —
-// only Grimoak Grounds has an explicit spawn point (its door is no longer
-// centered); everything else still falls back to the map's own center.
-export function startingPositionFor(mapName: MapName): { row: number; col: number } {
-  if (mapName === 'Grimoak Grounds') return GRIMOAK_GROUNDS_SPAWN;
-  const map = getMap(mapName);
-  return { row: Math.floor(map.rows / 2), col: Math.floor(map.cols / 2) };
-}
+// Shrunk to about 2/3 smaller (a follow-up ask) from the old 180 — the
+// tightest square that still comfortably fits the castle (60 tiles wide)
+// PLUS a full moat ring around it with a real margin on every side (see
+// MOAT_BUFFER_TILES/MOAT_WIDTH_TILES/MOAT_OUTER_BANK_TILES below); going
+// all the way down to a literal 1/3 (60) would leave the moat with
+// nowhere to sit outside the castle's own footprint.
+const GRIMOAK_GROUNDS_SIZE = 80;
+// Centered horizontally; positioned to leave enough headroom north of the
+// castle (and south of it, for the moat + bridge + a spawn point OUTSIDE
+// the moat) — see GRIMOAK_GROUNDS_SPAWN/startingPositionFor below.
+export const CASTLE_DOOR_ON_GROUNDS = { row: 55, col: 40 };
 
 // The castle exterior's own footprint in tiles (item 5's collision) —
 // derived from its raw asset size (1920x672px, see
@@ -158,6 +149,61 @@ export function isCastleExteriorBlocked(mapName: MapName, row: number, col: numb
   return row >= top && row <= bottom && col >= left && col <= right;
 }
 
+// ---------- The moat + bridge (a follow-up ask: "add a mote that goes
+// around it with a bridge in the front that allows access across the
+// mote") — a rectangular ring standing off from the castle's own
+// footprint by MOAT_BUFFER_TILES, MOAT_WIDTH_TILES wide, with a single
+// gap in its south (front) side that the bridge crosses. Blocks movement
+// everywhere except that bridge gap, so reaching the castle door actually
+// requires using it. ----------
+const MOAT_BUFFER_TILES = 4; // clear ground between the castle's walls and the moat's inner edge
+const MOAT_WIDTH_TILES = 3;
+const BRIDGE_HALF_WIDTH_TILES = 2; // a 5-tile-wide bridge
+
+// Exported too — the client needs these same inner-edge coordinates to
+// know exactly where to stop drawing the moat's water (see WorldScene's
+// renderMap, which draws the ring as outer-rect-minus-inner-rect, same
+// shape as isMoatBlocked below).
+export const MOAT_INNER_LEFT = CASTLE_DOOR_ON_GROUNDS.col - Math.floor(CASTLE_FOOTPRINT_WIDTH_TILES / 2) - MOAT_BUFFER_TILES;
+export const MOAT_INNER_RIGHT = CASTLE_DOOR_ON_GROUNDS.col + Math.floor(CASTLE_FOOTPRINT_WIDTH_TILES / 2) + MOAT_BUFFER_TILES;
+export const MOAT_INNER_TOP = CASTLE_DOOR_ON_GROUNDS.row - CASTLE_FOOTPRINT_HEIGHT_TILES - MOAT_BUFFER_TILES;
+export const MOAT_INNER_BOTTOM = CASTLE_DOOR_ON_GROUNDS.row + MOAT_BUFFER_TILES;
+export const MOAT_OUTER_LEFT = MOAT_INNER_LEFT - MOAT_WIDTH_TILES;
+export const MOAT_OUTER_RIGHT = MOAT_INNER_RIGHT + MOAT_WIDTH_TILES;
+export const MOAT_OUTER_TOP = MOAT_INNER_TOP - MOAT_WIDTH_TILES;
+export const MOAT_OUTER_BOTTOM = MOAT_INNER_BOTTOM + MOAT_WIDTH_TILES;
+export const BRIDGE_COL_LEFT = CASTLE_DOOR_ON_GROUNDS.col - BRIDGE_HALF_WIDTH_TILES;
+export const BRIDGE_COL_RIGHT = CASTLE_DOOR_ON_GROUNDS.col + BRIDGE_HALF_WIDTH_TILES;
+
+export function isBridgeTile(mapName: MapName, row: number, col: number): boolean {
+  if (mapName !== 'Grimoak Grounds') return false;
+  return row >= MOAT_INNER_BOTTOM && row <= MOAT_OUTER_BOTTOM && col >= BRIDGE_COL_LEFT && col <= BRIDGE_COL_RIGHT;
+}
+
+export function isMoatBlocked(mapName: MapName, row: number, col: number): boolean {
+  if (mapName !== 'Grimoak Grounds') return false;
+  const inOuter = row >= MOAT_OUTER_TOP && row <= MOAT_OUTER_BOTTOM && col >= MOAT_OUTER_LEFT && col <= MOAT_OUTER_RIGHT;
+  if (!inOuter) return false;
+  const inInner = row >= MOAT_INNER_TOP && row <= MOAT_INNER_BOTTOM && col >= MOAT_INNER_LEFT && col <= MOAT_INNER_RIGHT;
+  if (inInner) return false;
+  if (isBridgeTile(mapName, row, col)) return false;
+  return true;
+}
+
+// Just outside the moat's own outer edge, in front of the bridge — a new
+// player has to actually cross the bridge to reach the castle door now,
+// rather than spawning right next to it.
+export const GRIMOAK_GROUNDS_SPAWN = { row: MOAT_OUTER_BOTTOM + 1, col: CASTLE_DOOR_ON_GROUNDS.col };
+
+// Where a brand new (or respawning) character appears on a given map —
+// only Grimoak Grounds has an explicit spawn point (its door is no longer
+// centered); everything else still falls back to the map's own center.
+export function startingPositionFor(mapName: MapName): { row: number; col: number } {
+  if (mapName === 'Grimoak Grounds') return GRIMOAK_GROUNDS_SPAWN;
+  const map = getMap(mapName);
+  return { row: Math.floor(map.rows / 2), col: Math.floor(map.cols / 2) };
+}
+
 // Every castle interior is sized to comfortably exceed any real browser
 // viewport at TILE_SIZE(32)px/tile (item 5: "fullscreen," not floating in
 // a small box the camera centers with empty space around it — see
@@ -175,10 +221,10 @@ const ROOM_MID_COL = Math.floor(ROOM_COLS / 2);
 // a third of the standard room footprint — see src/game/mapRender.ts's
 // CLASSROOM_ZOOM, which zooms the camera in to compensate so these still
 // "fill up the whole screen" despite the smaller grid.
-const CLASSROOM_ROWS = Math.round(ROOM_ROWS / 3);
-const CLASSROOM_COLS = Math.round(ROOM_COLS / 3);
-const CLASSROOM_MID_ROW = Math.floor(CLASSROOM_ROWS / 2);
-const CLASSROOM_MID_COL = Math.floor(CLASSROOM_COLS / 2);
+export const CLASSROOM_ROWS = Math.round(ROOM_ROWS / 3);
+export const CLASSROOM_COLS = Math.round(ROOM_COLS / 3);
+export const CLASSROOM_MID_ROW = Math.floor(CLASSROOM_ROWS / 2);
+export const CLASSROOM_MID_COL = Math.floor(CLASSROOM_COLS / 2);
 
 const ENTRANCE_ROWS = 48;
 const ENTRANCE_COLS = 70;

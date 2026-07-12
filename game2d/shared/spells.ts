@@ -1,3 +1,5 @@
+import { CLASSROOM_MID_COL } from './maps.js';
+
 // Spell definitions for the wizarding-school pivot — pure name/description
 // data for now ("they will be implemented later functionally"), same
 // "data lives in shared/, mechanics come later" status a few skills
@@ -27,9 +29,12 @@ export function spellDefinition(name: string): SpellDefinition | undefined {
   return SPELLS.find((s) => s.name === name);
 }
 
-// The Utilization classroom's spellbook podium (item 8) — shared so the
-// client (where to render/click the podium sprite) and the server (the
-// reach check in game.gateway.ts's handleReadLucemBook) always agree on
-// where it actually is.
+// The Utilization classroom's spellbook podium — shared so the client
+// (where to render/click the podium sprite, and to block movement onto
+// it) and the server (the reach check in game.gateway.ts's
+// handleReadLucemBook) always agree on where it actually is. Centered on
+// the room (CLASSROOM_MID_COL), a few rows south of the teacher (row 2)
+// and desk (row 3) it stands in front of — a follow-up correction from
+// an earlier off-center placement.
 export const LUCEM_BOOK_MAP = 'Utilization' as const;
-export const LUCEM_BOOK_POSITION = { row: 6, col: 5 };
+export const LUCEM_BOOK_POSITION = { row: 6, col: CLASSROOM_MID_COL };

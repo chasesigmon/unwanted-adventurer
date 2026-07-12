@@ -1041,6 +1041,20 @@ body {
   pointer-events: none;
 }
 
+/* Left of the World label (a follow-up ask) — same look, a slightly
+   dimmer color since it's secondary info next to the map name. */
+#world-time-label {
+  background: rgba(10, 10, 16, 0.75);
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 14px;
+  font-weight: bold;
+  color: #a8b8d0;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Logout, right of the world label (item 16) — same corner-button look
    as the map/inventory/etc. buttons in the opposite corner. */
 #logout-btn {

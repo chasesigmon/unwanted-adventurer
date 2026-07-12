@@ -130,6 +130,17 @@ export function fireplacePositionsFor(mapName: MapName): Array<{ row: number; co
   return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
 }
 
+// A fireplace's own tile AND the tile directly above it (a follow-up
+// correction — the flame sprite's art visually rises well above its
+// anchor tile, see WorldScene's origin(0.5, 0.85), so blocking only the
+// base tile let a player stand one tile north and appear to be standing
+// inside the fire). Both server collision checks (world-manager.service.ts,
+// monster-manager.service.ts) should use this instead of checking
+// fireplacePositionsFor directly.
+export function isFireplaceBlocked(mapName: MapName, row: number, col: number): boolean {
+  return fireplacePositionsFor(mapName).some((p) => (p.row === row || p.row - 1 === row) && p.col === col);
+}
+
 export function isWithinRadius(row: number, col: number, sourceRow: number, sourceCol: number, radiusTiles: number): boolean {
   return Math.abs(row - sourceRow) <= radiusTiles && Math.abs(col - sourceCol) <= radiusTiles;
 }

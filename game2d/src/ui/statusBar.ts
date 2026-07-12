@@ -3,6 +3,7 @@
 // dark-fog overlays that sit on top of the Phaser canvas.
 import { myProfile, network } from '../state.js';
 import type { MapName } from '../../shared/constants.js';
+import { timeOfDayLabel } from '../../shared/lighting.js';
 import { setupCollapsible } from './collapsible.js';
 
 const statusBarPanel = document.getElementById('status-bar') as HTMLDivElement;
@@ -13,6 +14,7 @@ const statusMana = document.getElementById('status-mana') as HTMLSpanElement;
 const statusExp = document.getElementById('status-exp') as HTMLSpanElement;
 const statusGold = document.getElementById('status-gold') as HTMLSpanElement;
 const worldLabel = document.getElementById('world-label') as HTMLDivElement;
+const worldTimeLabel = document.getElementById('world-time-label') as HTMLDivElement;
 const logoutBtn = document.getElementById('logout-btn') as HTMLButtonElement;
 const sleepOverlay = document.getElementById('sleep-overlay') as HTMLDivElement;
 const daynightOverlay = document.getElementById('daynight-overlay') as HTMLDivElement;
@@ -30,6 +32,14 @@ logoutBtn.addEventListener('click', () => {
 
 export function updateWorldLabel(mapName: MapName): void {
   worldLabel.textContent = mapName;
+}
+
+// Left of the World label (a follow-up ask) — same "HH:00 (label)" format
+// the /time command's own reply uses (see game.gateway.ts's
+// handleTimeCommand), kept live via WorldScene's handleWorldTime.
+export function updateWorldTimeLabel(hour: number): void {
+  const hh = String(hour).padStart(2, '0');
+  worldTimeLabel.textContent = `${hh}:00 (${timeOfDayLabel(hour)})`;
 }
 
 export function updateStatusBar(): void {

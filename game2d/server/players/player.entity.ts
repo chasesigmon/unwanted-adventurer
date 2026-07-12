@@ -71,6 +71,11 @@ export class Player {
   @Column({ type: 'int', default: 1 })
   constitution!: number;
 
+  // No mechanical effect yet — reserved for future use, deliberately not
+  // wired into anything (level-up bonuses, combat formulas, ...) yet.
+  @Column({ type: 'int', default: 1 })
+  luck!: number;
+
   @Column({ type: 'int', default: 100 })
   hp!: number;
 

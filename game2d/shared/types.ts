@@ -28,6 +28,9 @@ export interface PlayerSnapshot {
   wisdom: number;
   dexterity: number;
   constitution: number;
+  // Starts at 1 like every other attribute — no mechanical effect yet,
+  // reserved for future use (see server/combat/formulas.ts's Attributes).
+  luck: number;
   skills: Record<string, number>;
   inventory: string[];
   equipment: Record<string, string>;
@@ -412,6 +415,7 @@ export interface SocketData {
   wisdom: number;
   dexterity: number;
   constitution: number;
+  luck: number;
   hp: number;
   maxHp: number;
   mana: number;

@@ -9,6 +9,7 @@ const CHAR_SHEET_STAT_DESCRIPTIONS: Record<string, string> = {
   Wisdom: 'No mechanical effect yet — reserved for future use.',
   Dexterity: 'Increases your dodge chance and your Armor Class a little.',
   Constitution: 'Increases your max hp and (with a shield equipped) your shield-block chance.',
+  Luck: 'No mechanical effect yet — reserved for future use.',
   'Consumed Exp': 'A count of body parts you have consumed (+5 each). Goblins reach Hobgoblin evolution at 300.',
   'Armor Class':
     'A base of 10, plus a small dexterity bonus and +5 while a bone shield is equipped. Flatly reduces incoming damage a little on every hit that lands.',
@@ -34,6 +35,7 @@ export function renderCharSheet(): void {
     ['Wisdom', myProfile.wisdom],
     ['Dexterity', myProfile.dexterity],
     ['Constitution', myProfile.constitution],
+    ['Luck', myProfile.luck],
     ['Armor Class', myProfile.armorClass],
     ['Consumed Exp', myProfile.consumeExp],
     ['Deaths', `${myProfile.deathCount}/${CONDEATH_LIMIT_CLIENT}`],

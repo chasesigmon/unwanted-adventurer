@@ -2,7 +2,7 @@
 // preview of skills this character could still acquire down their
 // current path.
 import { myProfile } from '../state.js';
-import { STARTING_SKILLS, HOBGOBLIN_EVOLUTION_SKILLS, RESISTANCE_SKILLS } from '../../shared/skills.js';
+import { LUCEM_SKILL } from '../../shared/skills.js';
 import { attachTooltip } from './tooltip.js';
 import { SKILL_DESCRIPTIONS, createCooldownOverlay, isAttackSkill, isUsableSkill, skillIconColor, skillIconLetter } from './skillMeta.js';
 import { actionBarSkills, assignActionSlot, saveActionBar } from './actionBar.js';
@@ -10,21 +10,19 @@ import { logCombatMessage } from './log.js';
 import { registerModalOpenHandler, registerModalRefreshHandler, skillsBody, skillsModal, skillsShowAllToggle } from './modalCore.js';
 
 // There's no real per-level skill unlock system in this project — skills
-// are granted at creation, on evolving, or by chance on consuming a body
-// part, never gated behind a specific character level. "Show All" instead
-// previews every skill this character could ever still acquire down their
-// current path (their base kit, the Hobgoblin-exclusive skills if they
-// haven't evolved yet, and the resistance skills), so the player can see
-// what's left to earn.
+// are granted at creation or by chance on some interaction, never gated
+// behind a specific character level. "Show All" previews every skill this
+// character could still acquire, so the player can see what's left to
+// earn. The old goblin-game skill pool (starting kit, Hobgoblin evolution,
+// monster-part resistances) was removed here — this project's playable
+// race is exclusively human now (see shared/constants.ts's RACES doc
+// comment), so none of that applies to any character that can actually
+// exist anymore. Lucem (learnable at the Utilization classroom's
+// spellbook podium) is the one skill currently worth previewing this way.
 let showAllSkills = false;
 
 function acquirableSkillPool(): string[] {
-  const pool = new Set(STARTING_SKILLS);
-  if (myProfile?.race !== 'hobgoblin') {
-    for (const skill of HOBGOBLIN_EVOLUTION_SKILLS) pool.add(skill);
-  }
-  for (const skill of RESISTANCE_SKILLS) pool.add(skill);
-  return [...pool];
+  return [LUCEM_SKILL];
 }
 
 // A skill row with a small icon to the left of its name — built by hand

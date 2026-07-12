@@ -376,6 +376,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       wisdom: client.data.wisdom,
       dexterity: client.data.dexterity,
       constitution: client.data.constitution,
+      luck: client.data.luck,
       skills: client.data.skills,
       inventory: client.data.inventory,
       equipment: client.data.equipment,
@@ -408,6 +409,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       wisdom: client.data.wisdom,
       dexterity: client.data.dexterity,
       constitution: client.data.constitution,
+      luck: client.data.luck,
     };
   }
 
@@ -436,6 +438,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         wisdom: client.data.wisdom,
         dexterity: client.data.dexterity,
         constitution: client.data.constitution,
+        luck: client.data.luck,
         level: client.data.level,
         exp: client.data.exp,
         skills: client.data.skills,
@@ -838,6 +841,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.wisdom = doc?.wisdom ?? STARTING_ATTRIBUTE;
     client.data.dexterity = doc?.dexterity ?? STARTING_ATTRIBUTE;
     client.data.constitution = doc?.constitution ?? STARTING_ATTRIBUTE;
+    client.data.luck = doc?.luck ?? STARTING_ATTRIBUTE;
     client.data.hp = doc?.hp ?? STARTING_VITAL;
     client.data.maxHp = doc?.maxHp ?? STARTING_VITAL;
     client.data.mana = doc?.mana ?? STARTING_VITAL;
@@ -899,6 +903,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       wisdom: client.data.wisdom,
       dexterity: client.data.dexterity,
       constitution: client.data.constitution,
+      luck: client.data.luck,
       skills: client.data.skills,
       inventory: client.data.inventory,
       equipment: client.data.equipment,
@@ -1337,6 +1342,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       wisdom: STARTING_ATTRIBUTE,
       dexterity: STARTING_ATTRIBUTE,
       constitution: STARTING_ATTRIBUTE,
+      luck: STARTING_ATTRIBUTE,
     };
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
@@ -1847,8 +1853,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: "You're too far away to reach the book." };
     }
     if (this.currentTick < client.data.lucemBookReadyAtTick) {
-      const ticksLeft = client.data.lucemBookReadyAtTick - this.currentTick;
-      return { ok: false, message: `You need a moment before reading again (${ticksLeft} more world tick${ticksLeft === 1 ? '' : 's'}).` };
+      // A world tick and an in-game hour are the same unit (see
+      // globalStatTick, which advances both by exactly 1 together), so
+      // this is showing real hours, not a made-up "tick" concept.
+      const hoursLeft = client.data.lucemBookReadyAtTick - this.currentTick;
+      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
     }
     client.data.lucemBookReadyAtTick = this.currentTick + LUCEM_BOOK_COOLDOWN_TICKS;
 

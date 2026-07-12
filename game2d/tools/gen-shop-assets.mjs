@@ -166,51 +166,11 @@ function buildShopBuildingFrame() {
   return grid;
 }
 
-// ---------- Wooden door (item 12) — a standalone reinforced plank door
-// used as every shop's entrance, 2 frames (closed / ajar) on one sheet.
-// ----------
-
-const DOOR_COLS = 8;
-const DOOR_ROWS = 10;
-
-const PLANK_LIGHT = 0x6b4423;
-const PLANK_DARK = 0x4a2f18;
-const IRON_BAND = 0x555555;
-const IRON_BAND_DARK = 0x3a3a3a;
-const OUTER_FRAME = 0x2f1d0f;
-const AJAR_SHADOW = 0x1a0f08;
-
-function buildDoorFrame(ajar) {
-  const grid = createGrid(DOOR_COLS, DOOR_ROWS);
-  grid.fillRect(0, 0, DOOR_COLS, DOOR_ROWS, OUTER_FRAME);
-  grid.fillRect(1, 1, DOOR_COLS - 2, DOOR_ROWS - 2, PLANK_LIGHT);
-  // Vertical plank seams.
-  for (let x = 2; x < DOOR_COLS - 1; x += 2) grid.fillRect(x, 1, 1, DOOR_ROWS - 2, PLANK_DARK);
-  // Iron reinforcement bands.
-  grid.fillRect(1, 2, DOOR_COLS - 2, 1, IRON_BAND);
-  grid.fillRect(1, 2, DOOR_COLS - 2, 1, IRON_BAND);
-  grid.fillRect(1, 7, DOOR_COLS - 2, 1, IRON_BAND);
-  grid.set(1, 3, IRON_BAND_DARK);
-  grid.set(1, 8, IRON_BAND_DARK);
-  // Doorknob.
-  grid.set(DOOR_COLS - 2, Math.floor(DOOR_ROWS / 2), OUTER_FRAME);
-
-  if (ajar) {
-    // A dark sliver down the hinge edge suggests the door standing
-    // slightly open rather than flush shut.
-    grid.fillRect(0, 0, 1, DOOR_ROWS, AJAR_SHADOW);
-    grid.fillRect(1, 0, 1, DOOR_ROWS, PLANK_DARK);
-  }
-
-  return grid;
-}
-
-// ---------- Generate + write both spritesheets ----------
+// ---------- Generate + write the shop building spritesheet ----------
+// (The wooden-door spritesheet this file used to also generate has been
+// replaced by a single unified door texture — see tools/gen-grand-door.mjs
+// — used everywhere a door renders now, shops included.)
 
 const facingRight = buildShopBuildingFrame();
 const facingLeft = mirrorGridHorizontally(facingRight, BUILDING_COLS, BUILDING_ROWS);
 rasterizeSpritesheet([facingRight, facingLeft], BUILDING_COLS, BUILDING_ROWS, join(ASSETS_DIR, 'shop-building-spritesheet.png'));
-
-const doorClosed = buildDoorFrame(false);
-const doorAjar = buildDoorFrame(true);
-rasterizeSpritesheet([doorClosed, doorAjar], DOOR_COLS, DOOR_ROWS, join(ASSETS_DIR, 'wooden-door-spritesheet.png'));

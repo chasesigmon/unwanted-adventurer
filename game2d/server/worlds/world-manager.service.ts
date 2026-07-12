@@ -7,10 +7,11 @@ import type { MapName, Direction } from '../../shared/constants.js';
 import type { PlayerSnapshot, MapStatePayload } from '../../shared/types.js';
 import type { PlayerState, MoveResult } from './types.js';
 import { isTreeTile } from '../../shared/trees.js';
-import { emitsLight, fireplacePositionsFor } from '../../shared/lighting.js';
-import { isCastleExteriorBlocked } from '../../shared/maps.js';
+import { emitsLight, isFireplaceBlocked } from '../../shared/lighting.js';
+import { isCastleExteriorBlocked, isMoatBlocked } from '../../shared/maps.js';
 import { vendorsForMap } from './vendors.js';
 import { teachersForMap, deskPositionFor } from './teachers.js';
+import { LUCEM_BOOK_MAP, LUCEM_BOOK_POSITION } from '../../shared/spells.js';
 import { armorClassFor, armorEquipmentBonus } from '../combat/formulas.js';
 
 // A much smaller version of the text game's own WorldManagerService — no
@@ -79,7 +80,8 @@ export class WorldManagerService {
   private isOccupied(mapName: MapName, row: number, col: number, excludeUsername: string): boolean {
     if (isTreeTile(mapName, row, col)) return true;
     if (isCastleExteriorBlocked(mapName, row, col)) return true;
-    if (fireplacePositionsFor(mapName).some((p) => p.row === row && p.col === col)) return true;
+    if (isMoatBlocked(mapName, row, col)) return true;
+    if (isFireplaceBlocked(mapName, row, col)) return true;
 
     const npcHit = NPCS.some((npc) => npc.map === mapName && npc.row === row && npc.col === col);
     if (npcHit) return true;
@@ -100,6 +102,10 @@ export class WorldManagerService {
       return (t.row === row && t.col === col) || (desk.row === row && desk.col === col);
     });
     if (teacherHit) return true;
+
+    // The Utilization classroom's spellbook podium — a follow-up ask to
+    // give it collision too.
+    if (mapName === LUCEM_BOOK_MAP && row === LUCEM_BOOK_POSITION.row && col === LUCEM_BOOK_POSITION.col) return true;
 
     for (const [username, state] of this.playerLocation) {
       if (username === excludeUsername) continue;
@@ -160,6 +166,7 @@ export class WorldManagerService {
         wisdom: state.wisdom,
         dexterity: state.dexterity,
         constitution: state.constitution,
+        luck: state.luck,
         skills: state.skills,
         inventory: state.inventory,
         equipment: state.equipment,

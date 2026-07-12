@@ -1,12 +1,13 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
-import { getMap, isCastleExteriorBlocked } from '../../shared/maps.js';
+import { getMap, isCastleExteriorBlocked, isMoatBlocked } from '../../shared/maps.js';
 import { isTreeTile } from '../../shared/trees.js';
-import { fireplacePositionsFor } from '../../shared/lighting.js';
+import { isFireplaceBlocked } from '../../shared/lighting.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
 import { vendorsForMap } from '../worlds/vendors.js';
 import { teachersForMap, deskPositionFor } from '../worlds/teachers.js';
+import { LUCEM_BOOK_MAP, LUCEM_BOOK_POSITION } from '../../shared/spells.js';
 import type { MapName } from '../../shared/constants.js';
 import type { MonsterSnapshot } from '../../shared/types.js';
 
@@ -87,7 +88,8 @@ export class MonsterManagerService {
     if (map.exits.some((e) => e.row === row && e.col === col)) return false;
     if (isTreeTile(mapName, row, col)) return false;
     if (isCastleExteriorBlocked(mapName, row, col)) return false;
-    if (fireplacePositionsFor(mapName).some((p) => p.row === row && p.col === col)) return false;
+    if (isMoatBlocked(mapName, row, col)) return false;
+    if (isFireplaceBlocked(mapName, row, col)) return false;
     // Same "own tile + shopfront tile in front of it" collision shape as
     // WorldManagerService.isOccupied — a wandering/spawning monster
     // shouldn't stand inside the shop stall either.
@@ -99,6 +101,7 @@ export class MonsterManagerService {
       })
     )
       return false;
+    if (mapName === LUCEM_BOOK_MAP && row === LUCEM_BOOK_POSITION.row && col === LUCEM_BOOK_POSITION.col) return false;
     for (const m of this.monsters.values()) {
       if (m.mapName === mapName && m.row === row && m.col === col) return false;
     }
@@ -162,6 +165,7 @@ export class MonsterManagerService {
       wisdom: MONSTER_BASE_ATTRIBUTE,
       dexterity: MONSTER_BASE_ATTRIBUTE,
       constitution: MONSTER_BASE_ATTRIBUTE,
+      luck: MONSTER_BASE_ATTRIBUTE,
       carriedItems,
       skills: skillsForCarriedItems(carriedItems),
     };

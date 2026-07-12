@@ -97,6 +97,11 @@ export interface Attributes {
   wisdom: number;
   dexterity: number;
   constitution: number;
+  // Starts at STARTING_ATTRIBUTE like every other stat — no mechanical
+  // effect yet, deliberately: what it does is future work, not decided
+  // yet, so nothing here should grow it (level-up/evolution bonuses are
+  // intentionally NOT extended to include it).
+  luck: number;
 }
 
 export interface CombatantStats extends Attributes {
