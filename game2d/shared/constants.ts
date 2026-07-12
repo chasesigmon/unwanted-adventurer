@@ -70,6 +70,16 @@ export const GRIMOAK_CASTLE_MAPS = [
   // same automatic wall torches every other castle room does (see
   // shared/lighting.ts's ALWAYS_LIT_MAPS/torchWallPositionsFor).
   'Caverna Secretissima',
+  // The 4 house Dorms rooms (a later follow-up ask) — same "always lit,
+  // stone floor, grouped under the Grimoak world in the map modal"
+  // treatment as every other castle interior; explicitly excluded from
+  // fireplacePositionsFor's own default 4-fireplace layout though (a
+  // small bedroom doesn't need them — see that function's own early
+  // return, same as Caverna Secretissima).
+  'Thistledown Dorms',
+  'Duskwing Dorms',
+  'Emberclaw Dorms',
+  'Starfall Dorms',
 ] as const;
 
 // Classroom-sized rooms (a follow-up ask: "a third of the size" of the
@@ -99,6 +109,14 @@ export const CLASSROOM_MAPS = [
 // entrance hall" — see shared/lighting.ts's fireplacePositionsFor/
 // benchPositionsFor).
 export const COMMON_ROOM_MAPS = ['Thistledown Common Room', 'Duskwing Common Room', 'Emberclaw Common Room', 'Starfall Common Room'] as const;
+
+// A small "Dorms" room off each house common room (a later follow-up
+// ask) — 5 beds apiece (see shared/lighting.ts's bedPositionsFor). Named
+// after their own common room, same convention as the rest of the
+// castle's per-house naming — already part of GRIMOAK_CASTLE_MAPS above
+// (and so MAP_NAMES below); listed again here just for bedPositionsFor's
+// own convenient lookup.
+export const DORM_MAPS = ['Thistledown Dorms', 'Duskwing Dorms', 'Emberclaw Dorms', 'Starfall Dorms'] as const;
 
 export const MAP_NAMES = [
   'Great Plains',

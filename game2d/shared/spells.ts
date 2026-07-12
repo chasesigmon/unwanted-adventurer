@@ -17,15 +17,14 @@ export interface SpellDefinition {
 export const SPELLS: SpellDefinition[] = [
   { name: 'resera', description: 'Unlocks locks and doors.' },
   { name: 'lucem', description: 'Illuminates light from your wand, or puts it out.' },
-  { name: 'levare', description: 'Levitates objects.' },
   { name: 'figo', description: 'Fixes broken objects.' },
-  { name: 'volatio', description: 'Summons objects to you.' },
   { name: 'exarme', description: "A disarming charm — knocks a weapon from its target's grip." },
   { name: 'scutum', description: 'Conjures a protective shield.' },
   { name: 'stupefaciunt', description: 'Stuns a target.' },
   { name: 'irrigo', description: 'Fills a targeted container — a cup, bowl, canteen, well, or hole — with water.' },
   { name: 'celeritas', description: 'Quickens your own footsteps for a time.' },
   { name: 'augue', description: 'Hurls a bolt of flame at a target.' },
+  { name: 'murus lapideus', description: 'Summons a stone block to absorb hits and draw aggro.' },
 ];
 
 export function spellDefinition(name: string): SpellDefinition | undefined {
@@ -68,6 +67,28 @@ export const AUGUE_BOOK_MAP = 'Offense Classroom' as const;
 export const AUGUE_BOOK_POSITION = { row: 6, col: CLASSROOM_MID_COL };
 export const AUGUE_BOOK_LABEL = 'Secrets of the flame';
 
+// Offense's second and third podiums (a later follow-up ask), teaching
+// stupefaciunt and exarme — offset the same way Utility's own extra
+// podiums are.
+export const STUPEFACIUNT_BOOK_MAP = 'Offense Classroom' as const;
+export const STUPEFACIUNT_BOOK_POSITION = { row: AUGUE_BOOK_POSITION.row, col: AUGUE_BOOK_POSITION.col + 3 };
+export const STUPEFACIUNT_BOOK_LABEL = 'Secrets of the still';
+export const EXARME_BOOK_MAP = 'Offense Classroom' as const;
+export const EXARME_BOOK_POSITION = { row: AUGUE_BOOK_POSITION.row, col: AUGUE_BOOK_POSITION.col + 6 };
+export const EXARME_BOOK_LABEL = 'Secrets of the clumsy';
+
+// The Defense classroom's own podium (a later follow-up ask), teaching
+// scutum.
+export const SCUTUM_BOOK_MAP = 'Defense Classroom' as const;
+export const SCUTUM_BOOK_POSITION = { row: 6, col: CLASSROOM_MID_COL };
+export const SCUTUM_BOOK_LABEL = 'Secrets of the shield';
+
+// The Summoning classroom's own podium (a later follow-up ask), teaching
+// murus lapideus.
+export const MURUS_LAPIDEUS_BOOK_MAP = 'Summoning Classroom' as const;
+export const MURUS_LAPIDEUS_BOOK_POSITION = { row: 6, col: CLASSROOM_MID_COL };
+export const MURUS_LAPIDEUS_BOOK_LABEL = 'Secrets of the stone';
+
 // True if (mapName, row, col) is any classroom podium's own tile — a
 // single shared collision check (a follow-up ask: "add collision for the
 // podiums," plural) so both server collision checkers (world-manager.
@@ -79,6 +100,10 @@ export function isPodiumBlocked(mapName: MapName, row: number, col: number): boo
   if (mapName === CELERITAS_BOOK_MAP && row === CELERITAS_BOOK_POSITION.row && col === CELERITAS_BOOK_POSITION.col) return true;
   if (mapName === AUGUE_BOOK_MAP && row === AUGUE_BOOK_POSITION.row && col === AUGUE_BOOK_POSITION.col) return true;
   if (mapName === RESERA_BOOK_MAP && row === RESERA_BOOK_POSITION.row && col === RESERA_BOOK_POSITION.col) return true;
+  if (mapName === STUPEFACIUNT_BOOK_MAP && row === STUPEFACIUNT_BOOK_POSITION.row && col === STUPEFACIUNT_BOOK_POSITION.col) return true;
+  if (mapName === EXARME_BOOK_MAP && row === EXARME_BOOK_POSITION.row && col === EXARME_BOOK_POSITION.col) return true;
+  if (mapName === SCUTUM_BOOK_MAP && row === SCUTUM_BOOK_POSITION.row && col === SCUTUM_BOOK_POSITION.col) return true;
+  if (mapName === MURUS_LAPIDEUS_BOOK_MAP && row === MURUS_LAPIDEUS_BOOK_POSITION.row && col === MURUS_LAPIDEUS_BOOK_POSITION.col) return true;
   return false;
 }
 

@@ -8,7 +8,11 @@ import { affectsBody, affectsModal, registerModalOpenHandler, registerModalRefre
 
 interface ActiveAffect {
   label: string;
-  expiresAt: number;
+  // Absent for a state with no fixed expiry (sleeping/resting — a later
+  // follow-up ask: "while sleeping or resting or sitting also show in the
+  // affects window the respective message") — rendered with no
+  // countdown at all rather than a fake one.
+  expiresAt?: number;
 }
 
 function activeAffects(): ActiveAffect[] {
@@ -17,6 +21,17 @@ function activeAffects(): ActiveAffect[] {
   if (myProfile.wandLit && myProfile.wandLitUntil) affects.push({ label: 'Lucem', expiresAt: myProfile.wandLitUntil });
   if (myProfile.celeritasActive && myProfile.celeritasActiveUntil) {
     affects.push({ label: 'Celeritas', expiresAt: myProfile.celeritasActiveUntil });
+  }
+  if (myProfile.scutumActive && myProfile.scutumActiveUntil) {
+    affects.push({ label: 'Scutum', expiresAt: myProfile.scutumActiveUntil });
+  }
+  // A later follow-up ask — restState has no fixed duration at all (the
+  // player wakes/stands up whenever they choose), so these never carry an
+  // expiresAt.
+  if (myProfile.restState === 'sleeping') {
+    affects.push({ label: myProfile.sleepingInBed ? 'Sleeping in a bed' : 'Sleeping' });
+  } else if (myProfile.restState === 'resting') {
+    affects.push({ label: 'Resting' });
   }
   return affects;
 }
@@ -45,7 +60,7 @@ export function renderAffects(): void {
     labelEl.textContent = label;
     const valueEl = document.createElement('div');
     valueEl.className = 'stat-value';
-    valueEl.textContent = formatRemaining(expiresAt);
+    valueEl.textContent = expiresAt !== undefined ? formatRemaining(expiresAt) : '';
     affectsBody.appendChild(labelEl);
     affectsBody.appendChild(valueEl);
   }

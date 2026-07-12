@@ -247,14 +247,26 @@ const ENTRANCE_COLS = 53;
 const ENTRANCE_MID_ROW = Math.floor(ENTRANCE_ROWS / 2);
 const ENTRANCE_MID_COL = Math.floor(ENTRANCE_COLS / 2);
 
-// The 4 house common rooms AND the Great Hall now match the Entrance
-// Hall's own size exactly (a follow-up ask: "reduce the size of the
-// great hall and common rooms to be the same as the entrance hall") —
-// previously their own separate (bigger) footprints.
-const COMMON_ROOM_ROWS = ENTRANCE_ROWS;
-const COMMON_ROOM_COLS = ENTRANCE_COLS;
+// The Great Hall still matches the Entrance Hall's own size exactly (a
+// follow-up ask: "reduce the size of the great hall and common rooms to
+// be the same as the entrance hall"), but the 4 house common rooms got
+// shrunk FURTHER still by a later follow-up ask ("reduce the size of
+// each common room by 25%") — no longer tied to the Entrance Hall's own
+// footprint at all.
+const COMMON_ROOM_ROWS = Math.round(ENTRANCE_ROWS * 0.75);
+const COMMON_ROOM_COLS = Math.round(ENTRANCE_COLS * 0.75);
 const COMMON_ROOM_MID_ROW = Math.floor(COMMON_ROOM_ROWS / 2);
 const COMMON_ROOM_MID_COL = Math.floor(COMMON_ROOM_COLS / 2);
+
+// Each common room's own "Dorms" room (a later follow-up ask) — "1/5 the
+// size of the common room," read as 1/5 the AREA (so the room keeps a
+// normal-looking rectangular shape for 5 evenly-spaced beds, rather than
+// a sliver in one dimension) — a linear scale factor of sqrt(1/5) on
+// each side.
+const DORM_ROOM_SCALE = Math.sqrt(0.2);
+const DORM_ROOM_ROWS = Math.round(COMMON_ROOM_ROWS * DORM_ROOM_SCALE);
+const DORM_ROOM_COLS = Math.round(COMMON_ROOM_COLS * DORM_ROOM_SCALE);
+const DORM_ROOM_MID_COL = Math.floor(DORM_ROOM_COLS / 2);
 
 const GREAT_HALL_ROWS = ENTRANCE_ROWS;
 const GREAT_HALL_COLS = ENTRANCE_COLS;
@@ -439,6 +451,41 @@ const EMBERCLAW_COMMON_ROOM = commonRoomOffEntranceHall('Emberclaw Common Room',
 const STARFALL_COMMON_ROOM = commonRoomOffEntranceHall('Starfall Common Room', 'west');
 const DUSKWING_COMMON_ROOM = commonRoomOffEntranceHall('Duskwing Common Room', 'east');
 
+// Each common room's own Dorms room (a later follow-up ask) — reached
+// through a NEW door on the common room's own north wall (its east/west
+// walls are already spoken for by the Entrance Hall exit above), 5 beds
+// inside (see shared/lighting.ts's bedPositionsFor).
+function dormsFor(name: MapName, commonRoom: MapDefinition): MapDefinition {
+  commonRoom.exits.push({
+    row: 0,
+    col: COMMON_ROOM_MID_COL,
+    direction: 'north',
+    toMap: name,
+    toRow: DORM_ROOM_ROWS - 1,
+    toCol: DORM_ROOM_MID_COL,
+  });
+  return {
+    name,
+    rows: DORM_ROOM_ROWS,
+    cols: DORM_ROOM_COLS,
+    terrain: 'stone',
+    exits: [
+      {
+        row: DORM_ROOM_ROWS - 1,
+        col: DORM_ROOM_MID_COL,
+        direction: 'south',
+        toMap: commonRoom.name,
+        toRow: 0,
+        toCol: COMMON_ROOM_MID_COL,
+      },
+    ],
+  };
+}
+const THISTLEDOWN_DORMS = dormsFor('Thistledown Dorms', THISTLEDOWN_COMMON_ROOM);
+const EMBERCLAW_DORMS = dormsFor('Emberclaw Dorms', EMBERCLAW_COMMON_ROOM);
+const STARFALL_DORMS = dormsFor('Starfall Dorms', STARFALL_COMMON_ROOM);
+const DUSKWING_DORMS = dormsFor('Duskwing Dorms', DUSKWING_COMMON_ROOM);
+
 // The 5 classrooms named in the request — Elemental Casting, Defense,
 // Summoning, Utility (renamed from Utilization — a follow-up ask),
 // Offense, each with an explicit "Classroom" suffix (another follow-up
@@ -452,16 +499,24 @@ const OFFENSE = classroomOffEntranceHall('Offense Classroom');
 
 // The secret bonus room (a follow-up ask) — a small locked room "behind
 // the teacher" in the Utility Classroom, reached through its own
-// previously-unused north wall (row 0), directly above the teacher's own
-// column (CLASSROOM_MID_COL, same column the teacher stands in — see
-// server/worlds/teachers.ts). Same footprint as any other classroom
-// (CLASSROOM_ROWS/COLS) — small, holds just a treasure chest and a few
-// automatic wall torches (see shared/lighting.ts's ALWAYS_LIT_MAPS). The
+// previously-unused north wall (row 0). Same footprint as any other
+// classroom (CLASSROOM_ROWS/COLS) — small, holds just a treasure chest
+// and a few automatic wall torches (see shared/lighting.ts's
+// ALWAYS_LIT_MAPS). Offset left of the room's own wall torch (a follow-up
+// ask: "move the door... left of the torch" — torchWallPositionsFor
+// places one at col WALL_TORCH_SPACING=6) rather than centered under the
+// teacher, so it reads as a distinct, deliberately-placed door rather
+// than architecturally identical to the teacher's own desk column. The
 // door itself is LOCKED per-player (see shared/constants.ts's MapName and
 // game.gateway.ts's handleMove, which gates the actual transition on
 // client.data.secretDoorUnlocked) — resolveMove/this reciprocal exit pair
 // just describe WHERE the door leads, not whether it's currently passable.
-export const CAVERNA_SECRET_DOOR_POSITION = { row: 0, col: CLASSROOM_MID_COL };
+export const CAVERNA_SECRET_DOOR_POSITION = { row: 0, col: 4 };
+// The reciprocal tile on the SECRET ROOM's own side of that same door —
+// a separate constant (rather than reusing CLASSROOM_MID_COL inline)
+// purely so game.gateway.ts's handleCastResera can recognize "the secret
+// door" from either side without hardcoding its position twice.
+export const CAVERNA_SECRET_DOOR_INSIDE_POSITION = { row: CLASSROOM_ROWS - 1, col: CLASSROOM_MID_COL };
 const CAVERNA_SECRETISSIMA: MapDefinition = {
   name: 'Caverna Secretissima',
   rows: CLASSROOM_ROWS,
@@ -469,8 +524,8 @@ const CAVERNA_SECRETISSIMA: MapDefinition = {
   terrain: 'stone',
   exits: [
     {
-      row: CLASSROOM_ROWS - 1,
-      col: CLASSROOM_MID_COL,
+      row: CAVERNA_SECRET_DOOR_INSIDE_POSITION.row,
+      col: CAVERNA_SECRET_DOOR_INSIDE_POSITION.col,
       direction: 'south',
       toMap: 'Utility Classroom',
       toRow: CAVERNA_SECRET_DOOR_POSITION.row + 1,
@@ -483,8 +538,8 @@ UTILIZATION.exits.push({
   col: CAVERNA_SECRET_DOOR_POSITION.col,
   direction: 'north',
   toMap: 'Caverna Secretissima',
-  toRow: CLASSROOM_ROWS - 1,
-  toCol: CLASSROOM_MID_COL,
+  toRow: CAVERNA_SECRET_DOOR_INSIDE_POSITION.row,
+  toCol: CAVERNA_SECRET_DOOR_INSIDE_POSITION.col,
 });
 
 // The treasure chest (a follow-up ask) — dead center of the room, well
@@ -610,6 +665,10 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Duskwing Common Room': DUSKWING_COMMON_ROOM,
   'Emberclaw Common Room': EMBERCLAW_COMMON_ROOM,
   'Starfall Common Room': STARFALL_COMMON_ROOM,
+  'Thistledown Dorms': THISTLEDOWN_DORMS,
+  'Duskwing Dorms': DUSKWING_DORMS,
+  'Emberclaw Dorms': EMBERCLAW_DORMS,
+  'Starfall Dorms': STARFALL_DORMS,
   'Elemental Casting Classroom': ELEMENTAL_CASTING,
   'Defense Classroom': DEFENSE,
   'Summoning Classroom': SUMMONING,

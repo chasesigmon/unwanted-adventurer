@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import {
   ConnectedSocket,
   MessageBody,
@@ -24,10 +25,16 @@ import { SessionStoreService } from '../auth/session-store.service.js';
 import { ActiveConnectionsService } from '../auth/active-connections.service.js';
 import { SocketConnectionLimiterService } from '../rate-limit/socket-connection-limiter.service.js';
 import { CommandRateLimiter, type CommandRateLimiterOptions } from '../rate-limit/command-rate-limiter.js';
-import { getMap, startingPositionFor, CAVERNA_CHEST_POSITION, CAVERNA_SECRET_DOOR_POSITION } from '../../shared/maps.js';
+import {
+  getMap,
+  startingPositionFor,
+  CAVERNA_CHEST_POSITION,
+  CAVERNA_SECRET_DOOR_POSITION,
+  CAVERNA_SECRET_DOOR_INSIDE_POSITION,
+} from '../../shared/maps.js';
 import { resolveMove } from '../worlds/resolveMove.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
-import { STARTING_MAP, DIRECTIONS } from '../../shared/constants.js';
+import { STARTING_MAP, DIRECTIONS, MAP_NAMES } from '../../shared/constants.js';
 import {
   type CombatantStats,
   PUNCH_SKILL,
@@ -112,12 +119,36 @@ import type {
   CastReseraAck,
   OpenChestAck,
   TakeChestItemAck,
-  LockTarget,
+  ReadSpellBookAck,
+  MapStatePayload,
+  StoneBlockSnapshot,
+  TileTargetPayload,
 } from '../../shared/types.js';
 import { TOWN_MAPS } from '../../shared/constants.js';
-import { emitsLight, TORCH_ITEM, timeOfDayLabel, isWithinLightRadius, isWithinShopReach, isWithinRadius } from '../../shared/lighting.js';
+import {
+  emitsLight,
+  TORCH_ITEM,
+  timeOfDayLabel,
+  isWithinLightRadius,
+  isWithinShopReach,
+  isWithinRadius,
+  isBedBlocked,
+  BED_REACH_TILES,
+} from '../../shared/lighting.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
-import { LUCEM_SKILL, IRRIGO_SKILL, CELERITAS_SKILL, AUGUE_SKILL, WAND_BOLT_SKILL, RESERA_SKILL } from '../../shared/skills.js';
+import {
+  LUCEM_SKILL,
+  IRRIGO_SKILL,
+  CELERITAS_SKILL,
+  AUGUE_SKILL,
+  WAND_BOLT_SKILL,
+  RESERA_SKILL,
+  SPELL_ATTACK_RANGE_TILES,
+  STUPEFACIUNT_SKILL,
+  EXARME_SKILL,
+  SCUTUM_SKILL,
+  MURUS_LAPIDEUS_SKILL,
+} from '../../shared/skills.js';
 import {
   LUCEM_BOOK_MAP,
   LUCEM_BOOK_POSITION,
@@ -129,6 +160,14 @@ import {
   AUGUE_BOOK_POSITION,
   RESERA_BOOK_MAP,
   RESERA_BOOK_POSITION,
+  STUPEFACIUNT_BOOK_MAP,
+  STUPEFACIUNT_BOOK_POSITION,
+  EXARME_BOOK_MAP,
+  EXARME_BOOK_POSITION,
+  SCUTUM_BOOK_MAP,
+  SCUTUM_BOOK_POSITION,
+  MURUS_LAPIDEUS_BOOK_MAP,
+  MURUS_LAPIDEUS_BOOK_POSITION,
 } from '../../shared/spells.js';
 import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem, manaCrystalForLevel, isManaCrystal } from '../../shared/items.js';
 import { MONSTER_KINDS } from '../../shared/constants.js';
@@ -185,7 +224,8 @@ const LUCEM_BOOK_LEARN_CHANCE = 0.1;
 // follow-up ask). While it stays lit, it keeps draining a smaller amount
 // every global stat tick (see globalStatTick) — same "recoverable through
 // normal means" tradeoff every other mana/hp cost in this project has.
-const LUCEM_CAST_MANA_COST = 10;
+// "Lucem should cost 5 mana" (a later follow-up ask, down from 10).
+const LUCEM_CAST_MANA_COST = 5;
 const LUCEM_UPKEEP_MANA_COST = 3;
 // A follow-up ask's success formula — (skill percent + this, capped at
 // MAX_SKILL_PERCENT) is the % chance a cast actually takes hold. Shared by
@@ -212,13 +252,15 @@ const IRRIGO_BOOK_LEARN_CHANCE = 0.1;
 // whether it succeeds in filling something or not (an already-full
 // target still counts as "you tried," same as a missed punch still costs
 // nothing extra but the attempt itself was real).
-const IRRIGO_CAST_MANA_COST = 10;
+// "Irrigo should cost 5 mana" (a later follow-up ask, down from 10).
+const IRRIGO_CAST_MANA_COST = 5;
 // Utilization's second podium (a later follow-up ask), teaching quick
 // movement — same shape/mana cost/success formula as lucem, just no wand
 // requirement (a self-buff, not tied to a carried light source).
 const CELERITAS_BOOK_COOLDOWN_TICKS = 2;
 const CELERITAS_BOOK_LEARN_CHANCE = 0.1;
-const CELERITAS_CAST_MANA_COST = 10;
+// "Celeritas should cost 7 mana" (a later follow-up ask, down from 10).
+const CELERITAS_CAST_MANA_COST = 7;
 // The Offense classroom's own podium (a later follow-up ask), teaching
 // augue — a targeted fireball, unlike lucem/irrigo/celeritas above. No
 // mana cost (not requested); its own cooldown lives in shared/skills.ts's
@@ -227,14 +269,14 @@ const CELERITAS_CAST_MANA_COST = 10;
 const AUGUE_BOOK_COOLDOWN_TICKS = 2;
 const AUGUE_BOOK_LEARN_CHANCE = 0.1;
 const AUGUE_DAMAGE = 10;
-const AUGUE_RANGE_TILES = 7;
+const AUGUE_RANGE_TILES = SPELL_ATTACK_RANGE_TILES;
 // The wand's own ranged basic attack (a follow-up ask) — flat damage
 // (like the punch formula's base, but simplified), resolved every
 // combat tick same as any other queued attack (see combatTick's own
 // WAND_BOLT_SKILL branch), no cooldown of its own beyond that natural
 // ~3s cadence.
 const WAND_BOLT_DAMAGE = 5;
-const WAND_BOLT_RANGE_TILES = 7;
+const WAND_BOLT_RANGE_TILES = SPELL_ATTACK_RANGE_TILES;
 // The Utility Classroom's third podium (a later follow-up ask), teaching
 // resera — same learn-chance shape as the other podiums. Costs mana like
 // every other cast (not explicitly requested, but consistent with lucem/
@@ -243,6 +285,38 @@ const WAND_BOLT_RANGE_TILES = 7;
 const RESERA_BOOK_COOLDOWN_TICKS = 2;
 const RESERA_BOOK_LEARN_CHANCE = 0.1;
 const RESERA_CAST_MANA_COST = 10;
+// Offense's second/third podiums, Defense's own podium, and Summoning's
+// own podium (a later follow-up ask) — same learn-chance shape as every
+// other podium. "Both spells [stupefaciunt/exarme] should cost 10 mana"/
+// "the spell [scutum] should cost 10 mana" — one shared constant since
+// all three (and murus lapideus, see below) land on the exact same figure.
+const STUPEFACIUNT_BOOK_COOLDOWN_TICKS = 2;
+const STUPEFACIUNT_BOOK_LEARN_CHANCE = 0.1;
+const EXARME_BOOK_COOLDOWN_TICKS = 2;
+const EXARME_BOOK_LEARN_CHANCE = 0.1;
+const SCUTUM_BOOK_COOLDOWN_TICKS = 2;
+const SCUTUM_BOOK_LEARN_CHANCE = 0.1;
+const SPELL_ATTACK_MANA_COST = 10;
+// "Cause them to be stunned in place for 2 combat ticks."
+const STUPEFACIUNT_STUN_TICKS = 2;
+// "Lasts for 1 minute" (scutum's own shield duration — a FIXED duration,
+// unlike lucem/celeritas's skill%-scaling spellDurationMs, since nothing
+// asked for scutum to scale with skill).
+const SCUTUM_DURATION_MS = 60 * 1000;
+// Summoning's own podium (a later follow-up ask), teaching murus
+// lapideus — same learn-chance shape as the others.
+const MURUS_LAPIDEUS_BOOK_COOLDOWN_TICKS = 2;
+const MURUS_LAPIDEUS_BOOK_LEARN_CHANCE = 0.1;
+// "Range of 10 feet" — a tile-based distance, same unit every other reach
+// check here uses despite the flavor-text "feet."
+const MURUS_LAPIDEUS_RANGE_TILES = 10;
+const MURUS_LAPIDEUS_HP = 20;
+// "Lasts for 20 seconds or until destroyed by a monster."
+const MURUS_LAPIDEUS_DURATION_MS = 20 * 1000;
+// "Takes 1 reduced damage from an enemy since it is a stone and is
+// defensive" — subtracted from whatever a monster's own hit would be
+// (see MonsterManagerService's stone-block damager callback above).
+const MURUS_LAPIDEUS_DAMAGE_REDUCTION = 1;
 // Skeleton-only "Glare" — measured in COMBAT ticks (see combatTickCount
 // below), the same ~3s cadence hits themselves land on, NOT the slow
 // 30-40s world tick Eat Brains uses above. Only applied when a skeleton
@@ -355,6 +429,25 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const loc = this.worldManager.getLocation(username);
       return loc ? { mapName: loc.mapName, row: loc.row, col: loc.col } : undefined;
     });
+    // Murus lapideus (a later follow-up ask) — same callback-injection
+    // reasoning as the two above, since GameGateway (not
+    // MonsterManagerService) owns the stone-block registry.
+    this.monsterManager.setStoneBlockCallbacks(
+      (id) => {
+        const block = this.stoneBlocks.get(id);
+        return block ? { mapName: block.mapName, row: block.row, col: block.col } : undefined;
+      },
+      (id, amount) => {
+        const block = this.stoneBlocks.get(id);
+        if (!block) return undefined;
+        block.hp = Math.max(0, block.hp - Math.max(0, amount - MURUS_LAPIDEUS_DAMAGE_REDUCTION));
+        if (block.hp <= 0) {
+          this.stoneBlocks.delete(id);
+          return 0;
+        }
+        return block.hp;
+      }
+    );
     this.monsterManager.spawnInitial();
 
     setInterval(() => {
@@ -363,9 +456,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.monsterManager.wanderAll(this.combatTickCount);
       this.monsterManager.respawnBelowMax();
       const expiredCorpseMaps = this.corpseManager.removeExpired();
-      const mapsToBroadcast = new Set<MapName>([...ACTIVE_MONSTER_MAPS, ...expiredCorpseMaps]);
+      const stoneBlockMaps = this.removeExpiredStoneBlocks();
+      const mapsToBroadcast = new Set<MapName>([...ACTIVE_MONSTER_MAPS, ...expiredCorpseMaps, ...stoneBlockMaps]);
       for (const mapName of mapsToBroadcast) {
-        this.server.to(mapName).emit('map:state', this.worldManager.getMapState(mapName));
+        this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
       }
     }, MONSTER_TICK_INTERVAL_MS);
 
@@ -428,6 +522,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.checkTorchBurnout(socket as GameSocket);
       this.checkLucemExpiry(socket as GameSocket);
       this.checkCeleritasExpiry(socket as GameSocket);
+      this.checkScutumExpiry(socket as GameSocket);
     }
     this.scheduleStatTick();
   }
@@ -439,7 +534,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
 
     const [min, max] = HEAL_PERCENT_RANGE[client.data.restState];
-    const percent = min + Math.random() * (max - min);
+    let percent = min + Math.random() * (max - min);
+    // "An extra 15% of gains on top of the normal sleep gains" for
+    // sleeping in an actual Dorms bed rather than just on the floor (a
+    // later follow-up ask).
+    if (client.data.restState === 'sleeping' && client.data.sleepingInBed) {
+      percent *= 1.15;
+    }
     const healed = (current: number, statMax: number, healPercent: number) =>
       Math.min(statMax, current + Math.round((healPercent / 100) * statMax));
 
@@ -473,7 +574,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (wandJustWentOut) {
       this.systemMessage(client, "Your wand flickers out — you're out of mana to sustain it.");
       client.emit('sync', { player: this.snapshotFor(client) });
-      this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     }
     client.emit('statTick', {
       hp: client.data.hp,
@@ -511,11 +612,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       equipment: client.data.equipment,
       consumeExp: client.data.consumeExp,
       restState: client.data.restState,
+      sleepingInBed: client.data.sleepingInBed,
       hasLight: emitsLight(client.data.equipment) || client.data.wandLit,
       wandLit: client.data.wandLit,
       celeritasActive: client.data.celeritasActive,
+      scutumActive: client.data.scutumActive,
       wandLitUntil: client.data.wandLitUntil,
       celeritasActiveUntil: client.data.celeritasActiveUntil,
+      scutumActiveUntil: client.data.scutumActiveUntil,
       gold: client.data.gold,
       mimicableRaces: client.data.mimicableRaces,
       mimicForm: client.data.mimicForm,
@@ -527,6 +631,49 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       secretDoorUnlocked: client.data.secretDoorUnlocked,
       secretChestUnlocked: client.data.secretChestUnlocked,
     };
+  }
+
+  // Murus lapideus (a later follow-up ask) — tracked entirely here rather
+  // than in WorldManagerService/MonsterManagerService, since it's neither
+  // a player nor a wild monster; keyed by its own id.
+  private stoneBlocks = new Map<
+    string,
+    { id: string; ownerUsername: string; mapName: MapName; row: number; col: number; hp: number; maxHp: number; expiresAt: number }
+  >();
+
+  private stoneBlockSnapshotsForMap(mapName: MapName): StoneBlockSnapshot[] {
+    const snapshots: StoneBlockSnapshot[] = [];
+    for (const b of this.stoneBlocks.values()) {
+      if (b.mapName !== mapName) continue;
+      snapshots.push({ id: b.id, map: b.mapName, row: b.row, col: b.col, hp: b.hp, maxHp: b.maxHp });
+    }
+    return snapshots;
+  }
+
+  // Every map:state broadcast (25+ call sites) goes through here now
+  // (a later follow-up ask added stone blocks, which
+  // WorldManagerService.getMapState has no way to know about) so none of
+  // them need updating individually.
+  private mapStateFor(mapName: MapName): MapStatePayload {
+    const state = this.worldManager.getMapState(mapName);
+    state.stoneBlocks = this.stoneBlockSnapshotsForMap(mapName);
+    return state;
+  }
+
+  // "Lasts for 20 seconds or until destroyed by a monster" — the
+  // destroyed-early case is handled by the stone-block damager callback
+  // above (deletes on hp<=0); this just catches the timeout case, once
+  // per combat tick same cadence as CorpseManagerService.removeExpired.
+  private removeExpiredStoneBlocks(): Set<MapName> {
+    const changedMaps = new Set<MapName>();
+    const now = Date.now();
+    for (const [id, block] of this.stoneBlocks) {
+      if (now >= block.expiresAt) {
+        this.stoneBlocks.delete(id);
+        changedMaps.add(block.mapName);
+      }
+    }
+    return changedMaps;
   }
 
   // Simplified stand-in for the text game's full 8-slot town-guard
@@ -804,7 +951,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     this.worldManager.updateState(client.data.username, { equipment: client.data.equipment });
     void this.persistStats(client);
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     client.emit('sync', { player: this.snapshotFor(client) });
     this.systemMessage(client, 'Your torch burns out and crumbles to ash.');
   }
@@ -822,7 +969,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.wandLitUntil = null;
     this.worldManager.updateState(client.data.username, { wandLit: false });
     void this.persistStats(client);
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     client.emit('sync', { player: this.snapshotFor(client) });
     this.systemMessage(client, 'Your wand flickers out — the light spell has run its course.');
   }
@@ -840,6 +987,23 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     this.systemMessage(client, 'The spring leaves your step as the spell wears off.');
+  }
+
+  // Scutum (a later follow-up ask) — same periodic-expiry shape as
+  // lucem/celeritas above, but there's no manual toggle-off: it just runs
+  // for its own fixed duration (SCUTUM_DURATION_MS) and then wears off on
+  // its own.
+  private checkScutumExpiry(client: GameSocket): void {
+    if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
+    if (!client.data.scutumActive || client.data.scutumActiveUntil === null) return;
+    if (Date.now() < client.data.scutumActiveUntil) return;
+
+    client.data.scutumActive = false;
+    client.data.scutumActiveUntil = null;
+    this.worldManager.updateState(client.data.username, { scutumActive: false });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, 'Your shimmering shield fades away.');
   }
 
   // A monster/dummy that survives a punch fights back — a flat punch
@@ -1047,6 +1211,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // Never persisted — a fresh connection always starts awake, same as
     // the text game's own restState.
     client.data.restState = 'awake';
+    client.data.sleepingInBed = false;
     // Never persisted either — a fresh connection always starts off
     // cooldown.
     client.data.eatBrainsReadyAtTick = 0;
@@ -1066,11 +1231,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // Same tradeoff again — celeritas never carries over either.
     client.data.celeritasActive = false;
     client.data.celeritasActiveUntil = null;
+    // Same tradeoff again — scutum never carries over either.
+    client.data.scutumActive = false;
+    client.data.scutumActiveUntil = null;
     client.data.lucemBookReadyAtTick = 0;
     client.data.irrigoBookReadyAtTick = 0;
     client.data.celeritasBookReadyAtTick = 0;
     client.data.augueBookReadyAtTick = 0;
     client.data.reseraBookReadyAtTick = 0;
+    client.data.stupefaciuntBookReadyAtTick = 0;
+    client.data.exarmeBookReadyAtTick = 0;
+    client.data.scutumBookReadyAtTick = 0;
+    client.data.murusLapideusBookReadyAtTick = 0;
     // The secret room system (a follow-up ask) — persisted, unlike the
     // cooldowns above; loaded straight from the player doc, defaulting to
     // false for any character that predates this feature (every existing
@@ -1113,6 +1285,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       deathCount: client.data.deathCount,
       wandLit: client.data.wandLit,
       celeritasActive: client.data.celeritasActive,
+      scutumActive: client.data.scutumActive,
     });
     void client.join(client.data.map);
 
@@ -1122,7 +1295,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // otherwise a fresh connection sits at the client's own "unknown yet"
     // default (see main.ts's worldTimeKnown) for up to that long.
     client.emit('worldTime', { hour: this.worldHour, tick: this.currentTick });
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
   }
 
   async handleDisconnect(client: GameSocket): Promise<void> {
@@ -1136,7 +1309,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.worldManager.removePlayer(username);
 
     if (map) {
-      this.server.to(map).emit('map:state', this.worldManager.getMapState(map));
+      this.server.to(map).emit('map:state', this.mapStateFor(map));
     }
   }
 
@@ -1200,9 +1373,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (result.transitioned) {
       void client.leave(previousMap);
       void client.join(result.mapName);
-      this.server.to(previousMap).emit('map:state', this.worldManager.getMapState(previousMap));
+      this.server.to(previousMap).emit('map:state', this.mapStateFor(previousMap));
     }
-    this.server.to(result.mapName).emit('map:state', this.worldManager.getMapState(result.mapName));
+    this.server.to(result.mapName).emit('map:state', this.mapStateFor(result.mapName));
 
     const message = result.transitioned ? `You enter ${result.mapName}.` : undefined;
     return { ok: true, player: this.snapshotFor(client), message };
@@ -1300,6 +1473,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.monsterManager.setAggro(parsed.data.targetId, client.data.username, this.combatTickCount);
     }
     return { ok: true };
+  }
+
+  // The 'x' hotkey (a later follow-up ask) — clears whatever combat
+  // session (melee, via engageCombat, or ranged, via
+  // handleEngageRangedAttack) is currently armed, whichever it is. Purely
+  // stops the automatic every-tick attack loop; doesn't touch the
+  // player's own target selection (client-side only).
+  @SubscribeMessage('disengage')
+  handleDisengage(@ConnectedSocket() client: GameSocket): void {
+    this.playerCombat.delete(client.data.username);
   }
 
   // Starts a skill's cooldown (item 22) — only skills with an entry in
@@ -1510,7 +1693,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         message,
         skill: WAND_BOLT_SKILL,
       });
-      this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
       return;
     }
 
@@ -1550,7 +1733,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         message,
         skill: WAND_BOLT_SKILL,
       });
-      this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
       return;
     }
 
@@ -1671,7 +1854,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message,
       growthMessages,
     });
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
   }
 
   // Anywhere on a map that isn't a wall/exit tile and isn't already
@@ -1843,7 +2026,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message,
       growthMessages,
     });
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
   }
 
   // Same skillName dispatch as resolveHitOnMonster/resolveHitOnNpc, for
@@ -1992,9 +2175,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       growthMessages,
     });
 
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     if (died) {
-      this.server.to(targetClient.data.map).emit('map:state', this.worldManager.getMapState(targetClient.data.map));
+      this.server.to(targetClient.data.map).emit('map:state', this.mapStateFor(targetClient.data.map));
     }
   }
 
@@ -2047,7 +2230,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
     void this.persistStats(client);
 
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
 
     return { ok: true, inventory: client.data.inventory };
   }
@@ -2081,7 +2264,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.worldManager.updateState(client.data.username, { gold: client.data.gold });
     void this.persistStats(client);
 
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
 
     return { ok: true, gold: client.data.gold, message: `You sacrifice the ${corpse.kind} corpse to the gods, receiving ${goldReward} gold.` };
   }
@@ -2132,7 +2315,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
     void this.persistStats(client);
 
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
 
     return { ok: true, inventory: client.data.inventory };
   }
@@ -2471,21 +2654,47 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[RESERA_SKILL] === undefined) {
       return { ok: false, message: "You don't know the resera spell yet." };
     }
-    const parsed = z.object({ target: z.enum(['secret-door', 'caverna-chest']) }).safeParse(payload);
+    const parsed = z
+      .object({
+        target: z.object({
+          kind: z.enum(['door', 'chest']),
+          map: z.enum(MAP_NAMES),
+          row: z.number(),
+          col: z.number(),
+        }),
+      })
+      .safeParse(payload);
     if (!parsed.success) {
       return { ok: false, message: 'Invalid target.' };
     }
-    const target: LockTarget = parsed.data.target;
-    const alreadyUnlocked = target === 'secret-door' ? client.data.secretDoorUnlocked : client.data.secretChestUnlocked;
+    const { kind, map, row, col } = parsed.data.target;
+
+    // Every door in the castle is clickable/resera-able now (a follow-up
+    // ask: "make all doors... targetable"), but only the secret room's
+    // own door + chest are REAL lockable objects — resolved against the
+    // server's own small registry rather than trusting the client's
+    // `kind` label, same "the server decides, the client just shows what
+    // it says" shape as every other cast here.
+    const isSecretDoor =
+      kind === 'door' &&
+      ((map === RESERA_BOOK_MAP && row === CAVERNA_SECRET_DOOR_POSITION.row && col === CAVERNA_SECRET_DOOR_POSITION.col) ||
+        (map === 'Caverna Secretissima' && row === CAVERNA_SECRET_DOOR_INSIDE_POSITION.row && col === CAVERNA_SECRET_DOOR_INSIDE_POSITION.col));
+    const isChest = kind === 'chest' && map === 'Caverna Secretissima' && row === CAVERNA_CHEST_POSITION.row && col === CAVERNA_CHEST_POSITION.col;
+
+    if (!isSecretDoor && !isChest) {
+      return { ok: false, message: kind === 'door' ? "This door isn't locked." : "This isn't locked." };
+    }
+
+    const alreadyUnlocked = isSecretDoor ? client.data.secretDoorUnlocked : client.data.secretChestUnlocked;
     if (alreadyUnlocked) {
       return { ok: false, message: `That's already unlocked.` };
     }
-    // Both lockable objects live in/around the same room — reach-gated
-    // the same way a podium/vendor/corpse is, from wherever the object
-    // itself actually is.
-    const targetPosition = target === 'secret-door' ? CAVERNA_SECRET_DOOR_POSITION : CAVERNA_CHEST_POSITION;
-    const targetMap = target === 'secret-door' ? RESERA_BOOK_MAP : 'Caverna Secretissima';
-    if (client.data.map !== targetMap || !this.isWithinLootReach(client, targetPosition.row, targetPosition.col)) {
+    // Reach-gated from wherever the player is actually standing — the
+    // door has two valid tiles (one per side, see above), the chest just
+    // the one.
+    const reachRow = isSecretDoor ? row : CAVERNA_CHEST_POSITION.row;
+    const reachCol = isSecretDoor ? col : CAVERNA_CHEST_POSITION.col;
+    if (client.data.map !== map || !this.isWithinLootReach(client, reachRow, reachCol)) {
       return { ok: false, message: "You're too far away to reach that." };
     }
     if (client.data.mana < RESERA_CAST_MANA_COST) {
@@ -2498,7 +2707,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     let message: string;
     if (Math.random() * 100 < successChance) {
-      if (target === 'secret-door') {
+      if (isSecretDoor) {
         client.data.secretDoorUnlocked = true;
         message = 'The lock clicks open — the door is unlocked.';
       } else {
@@ -2509,6 +2718,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message = 'You fumble the incantation and nothing happens.';
     }
 
+    // Resera grows with practice on every cast, success or fail (a later
+    // follow-up ask, item 18 — applies to every spell, not just this one).
     const growth = this.maybeGrowSkill(client, RESERA_SKILL);
     if (growth) message = `${message} ${growth}`;
 
@@ -2562,6 +2773,32 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // one). Reuses resolveHitOnMonster's own death-handling shape (exp
   // grant, mana-crystal drop, emitCombat broadcast) rather than
   // duplicating it under a different name.
+  // A later follow-up ask: "attacking a monster with augue should make
+  // the player also begin auto attacking" — augue itself is a single hit
+  // on its own cooldown, so this keeps the fight going in the meantime
+  // with whatever basic attack the player actually has: a wand-wielder
+  // keeps zapping at the same range augue just used (see
+  // handleEngageRangedAttack's own session shape), otherwise it's the
+  // ordinary melee auto-attack, which patiently waits out an aggro'd
+  // monster's own approach rather than disengaging while it's still
+  // closing distance (see combatTick's monsterStillChasing check).
+  private startAutoAttackAfterSpell(client: GameSocket, targetKind: CombatSession['targetKind'], targetId: string): void {
+    if (targetKind === 'monster') {
+      this.monsterManager.setAggro(targetId, client.data.username, this.combatTickCount);
+    }
+    if (client.data.equipment.weapon === WAND_ITEM) {
+      this.playerCombat.set(client.data.username, {
+        targetKind,
+        targetId,
+        skill: WAND_BOLT_SKILL,
+        missedTicks: 0,
+        range: WAND_BOLT_RANGE_TILES,
+      });
+    } else {
+      this.playerCombat.set(client.data.username, { targetKind, targetId, skill: this.attackGrowthSkill(client), missedTicks: 0 });
+    }
+  }
+
   @SubscribeMessage('castAugue')
   handleCastAugue(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     if (client.data.skills[AUGUE_SKILL] === undefined) {
@@ -2592,6 +2829,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
 
       this.startSkillCooldown(client, AUGUE_SKILL);
+      this.startAutoAttackAfterSpell(client, 'npc', npc.id);
       npc.hp = Math.max(0, npc.hp - AUGUE_DAMAGE);
       const died = npc.hp <= 0;
       const label = npc.label ?? 'training dummy';
@@ -2628,7 +2866,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         growthMessages,
         skill: AUGUE_SKILL,
       });
-      this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
       return { ok: true, skills: client.data.skills, message };
     }
     if (parsed.data.targetKind !== 'monster') {
@@ -2643,6 +2881,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     this.startSkillCooldown(client, AUGUE_SKILL);
+    this.startAutoAttackAfterSpell(client, 'monster', monster.id);
     const result = this.monsterManager.applyDamage(monster.id, AUGUE_DAMAGE);
     if (!result) {
       return { ok: false, message: 'Your target is no longer here.' };
@@ -2684,9 +2923,385 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       growthMessages,
       skill: AUGUE_SKILL,
     });
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
 
     return { ok: true, skills: client.data.skills, message };
+  }
+
+  // Offense's second podium (a later follow-up ask), teaching
+  // stupefaciunt — same read-a-podium shape as every earlier one.
+  @SubscribeMessage('readStupefaciuntBook')
+  handleReadStupefaciuntBook(@ConnectedSocket() client: GameSocket): ReadSpellBookAck {
+    if (client.data.map !== STUPEFACIUNT_BOOK_MAP) {
+      return { ok: false, message: "There's no spellbook here." };
+    }
+    if (!this.isWithinLootReach(client, STUPEFACIUNT_BOOK_POSITION.row, STUPEFACIUNT_BOOK_POSITION.col)) {
+      return { ok: false, message: "You're too far away to reach the book." };
+    }
+    if (this.currentTick < client.data.stupefaciuntBookReadyAtTick) {
+      const hoursLeft = client.data.stupefaciuntBookReadyAtTick - this.currentTick;
+      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
+    }
+    client.data.stupefaciuntBookReadyAtTick = this.currentTick + STUPEFACIUNT_BOOK_COOLDOWN_TICKS;
+
+    if (client.data.skills[STUPEFACIUNT_SKILL] !== undefined) {
+      return { ok: true, skills: client.data.skills, message: 'You already know how to conjure stupefaciunt.' };
+    }
+    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : STUPEFACIUNT_BOOK_LEARN_CHANCE)) {
+      client.data.skills = { ...client.data.skills, [STUPEFACIUNT_SKILL]: STARTING_SKILL_PERCENT };
+      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      return { ok: true, skills: client.data.skills, message: 'The words swim into focus — you have learned stupefaciunt!' };
+    }
+    return { ok: true, message: 'You pore over the pages, but nothing clicks yet.' };
+  }
+
+  // Offense's third podium (a later follow-up ask), teaching exarme —
+  // same shape again.
+  @SubscribeMessage('readExarmeBook')
+  handleReadExarmeBook(@ConnectedSocket() client: GameSocket): ReadSpellBookAck {
+    if (client.data.map !== EXARME_BOOK_MAP) {
+      return { ok: false, message: "There's no spellbook here." };
+    }
+    if (!this.isWithinLootReach(client, EXARME_BOOK_POSITION.row, EXARME_BOOK_POSITION.col)) {
+      return { ok: false, message: "You're too far away to reach the book." };
+    }
+    if (this.currentTick < client.data.exarmeBookReadyAtTick) {
+      const hoursLeft = client.data.exarmeBookReadyAtTick - this.currentTick;
+      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
+    }
+    client.data.exarmeBookReadyAtTick = this.currentTick + EXARME_BOOK_COOLDOWN_TICKS;
+
+    if (client.data.skills[EXARME_SKILL] !== undefined) {
+      return { ok: true, skills: client.data.skills, message: 'You already know how to conjure exarme.' };
+    }
+    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : EXARME_BOOK_LEARN_CHANCE)) {
+      client.data.skills = { ...client.data.skills, [EXARME_SKILL]: STARTING_SKILL_PERCENT };
+      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      return { ok: true, skills: client.data.skills, message: 'The words swim into focus — you have learned exarme!' };
+    }
+    return { ok: true, message: 'You pore over the pages, but nothing clicks yet.' };
+  }
+
+  // Stupefaciunt (a later follow-up ask) — a targeted stun, same
+  // range/target shape as augue but no damage: 2 combat ticks of
+  // MonsterManagerService-level stun (can't move OR act — see
+  // wanderAll/stepTowardAggroTarget's own early-return) instead. No
+  // success-chance roll (same as augue) — deterministic once in range,
+  // gated only by mana and its own cooldown.
+  @SubscribeMessage('castStupefaciunt')
+  handleCastStupefaciunt(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    if (client.data.skills[STUPEFACIUNT_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the stupefaciunt spell yet." };
+    }
+    const cooldownUntil = client.data.skillCooldowns[STUPEFACIUNT_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Stupefaciunt is still recharging (${secondsLeft}s left).` };
+    }
+    const parsed = augueTargetSchema.safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid target.' };
+    }
+    if (client.data.mana < SPELL_ATTACK_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast stupefaciunt (${SPELL_ATTACK_MANA_COST} needed).` };
+    }
+
+    if (parsed.data.targetKind === 'npc') {
+      const npc = NPCS.find((n) => n.id === parsed.data.targetId);
+      if (!npc || npc.map !== client.data.map) {
+        return { ok: false, message: 'Your target is no longer here.' };
+      }
+      if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, SPELL_ATTACK_RANGE_TILES)) {
+        return { ok: false, message: "You're too far away to hit that with stupefaciunt." };
+      }
+      client.data.mana -= SPELL_ATTACK_MANA_COST;
+      this.startSkillCooldown(client, STUPEFACIUNT_SKILL);
+      const label = npc.label ?? 'training dummy';
+      const growth = this.maybeGrowSkill(client, STUPEFACIUNT_SKILL);
+      const message = `${client.data.username} stuns the ${label} in place!${growth ? ` ${growth}` : ''}`;
+      this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      this.systemMessage(client, message);
+      return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+    }
+    if (parsed.data.targetKind !== 'monster') {
+      return { ok: false, message: 'Stupefaciunt can only target a monster or scarecrow right now.' };
+    }
+    const monster = this.monsterManager.getMonster(parsed.data.targetId);
+    if (!monster || monster.mapName !== client.data.map) {
+      return { ok: false, message: 'Your target is no longer here.' };
+    }
+    if (!isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, SPELL_ATTACK_RANGE_TILES)) {
+      return { ok: false, message: "You're too far away to hit that with stupefaciunt." };
+    }
+
+    client.data.mana -= SPELL_ATTACK_MANA_COST;
+    this.startSkillCooldown(client, STUPEFACIUNT_SKILL);
+    this.monsterManager.stun(monster.id, this.combatTickCount + STUPEFACIUNT_STUN_TICKS);
+    const growth = this.maybeGrowSkill(client, STUPEFACIUNT_SKILL);
+    const message = `${client.data.username}'s stupefaciunt freezes the ${monster.kind} in place!${growth ? ` ${growth}` : ''}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+  }
+
+  // Exarme (a later follow-up ask) — a targeted disarm: a monster
+  // carrying a weapon-like item (the same "dagger" heuristic
+  // skillsForCarriedItems already uses to grant the dagger skill) loses
+  // it into the caster's own inventory and its dagger skill along with
+  // it; a monster with nothing to disarm just reports as much. Same
+  // range/no-success-roll shape as stupefaciunt above.
+  @SubscribeMessage('castExarme')
+  handleCastExarme(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    if (client.data.skills[EXARME_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the exarme spell yet." };
+    }
+    const cooldownUntil = client.data.skillCooldowns[EXARME_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Exarme is still recharging (${secondsLeft}s left).` };
+    }
+    const parsed = augueTargetSchema.safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid target.' };
+    }
+    if (client.data.mana < SPELL_ATTACK_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast exarme (${SPELL_ATTACK_MANA_COST} needed).` };
+    }
+    if (parsed.data.targetKind === 'npc') {
+      const npc = NPCS.find((n) => n.id === parsed.data.targetId);
+      if (!npc || npc.map !== client.data.map) {
+        return { ok: false, message: 'Your target is no longer here.' };
+      }
+      if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, SPELL_ATTACK_RANGE_TILES)) {
+        return { ok: false, message: "You're too far away to hit that with exarme." };
+      }
+      client.data.mana -= SPELL_ATTACK_MANA_COST;
+      this.startSkillCooldown(client, EXARME_SKILL);
+      const growth = this.maybeGrowSkill(client, EXARME_SKILL);
+      const label = npc.label ?? 'training dummy';
+      const message = `The ${label} isn't wielding a weapon.${growth ? ` ${growth}` : ''}`;
+      this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      this.systemMessage(client, message);
+      return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+    }
+    if (parsed.data.targetKind !== 'monster') {
+      return { ok: false, message: 'Exarme can only target a monster or scarecrow right now.' };
+    }
+    const monster = this.monsterManager.getMonster(parsed.data.targetId);
+    if (!monster || monster.mapName !== client.data.map) {
+      return { ok: false, message: 'Your target is no longer here.' };
+    }
+    if (!isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, SPELL_ATTACK_RANGE_TILES)) {
+      return { ok: false, message: "You're too far away to hit that with exarme." };
+    }
+
+    client.data.mana -= SPELL_ATTACK_MANA_COST;
+    this.startSkillCooldown(client, EXARME_SKILL);
+    const weaponIndex = monster.carriedItems.findIndex((item) => item.toLowerCase().includes('dagger'));
+    let message: string;
+    if (weaponIndex === -1) {
+      message = `The ${monster.kind} isn't wielding a weapon.`;
+    } else {
+      const [weapon] = monster.carriedItems.splice(weaponIndex, 1);
+      delete monster.skills[DAGGER_SKILL];
+      client.data.inventory = [...client.data.inventory, weapon!];
+      this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+      message = `${client.data.username}'s exarme knocks the ${weapon} from the ${monster.kind}'s grip!`;
+    }
+    const growth = this.maybeGrowSkill(client, EXARME_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+  }
+
+  // Defense's own podium (a later follow-up ask), teaching scutum — same
+  // read-a-podium shape as every earlier one.
+  @SubscribeMessage('readScutumBook')
+  handleReadScutumBook(@ConnectedSocket() client: GameSocket): ReadSpellBookAck {
+    if (client.data.map !== SCUTUM_BOOK_MAP) {
+      return { ok: false, message: "There's no spellbook here." };
+    }
+    if (!this.isWithinLootReach(client, SCUTUM_BOOK_POSITION.row, SCUTUM_BOOK_POSITION.col)) {
+      return { ok: false, message: "You're too far away to reach the book." };
+    }
+    if (this.currentTick < client.data.scutumBookReadyAtTick) {
+      const hoursLeft = client.data.scutumBookReadyAtTick - this.currentTick;
+      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
+    }
+    client.data.scutumBookReadyAtTick = this.currentTick + SCUTUM_BOOK_COOLDOWN_TICKS;
+
+    if (client.data.skills[SCUTUM_SKILL] !== undefined) {
+      return { ok: true, skills: client.data.skills, message: 'You already know how to conjure scutum.' };
+    }
+    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : SCUTUM_BOOK_LEARN_CHANCE)) {
+      client.data.skills = { ...client.data.skills, [SCUTUM_SKILL]: STARTING_SKILL_PERCENT };
+      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      return { ok: true, skills: client.data.skills, message: 'The words swim into focus — you have learned scutum!' };
+    }
+    return { ok: true, message: 'You pore over the pages, but nothing clicks yet.' };
+  }
+
+  // Scutum (a later follow-up ask) — a fixed-duration self-buff, unlike
+  // lucem/celeritas: always ON for SCUTUM_DURATION_MS once cast (no
+  // manual toggle-off — see checkScutumExpiry for how it wears off on its
+  // own), driving a blue-sphere visual for every nearby player (see
+  // WorldScene's updateScutumVisual) and the Affects modal's own
+  // countdown. No success-chance roll — deterministic once known and
+  // affordable, gated only by its own cooldown.
+  @SubscribeMessage('castScutum')
+  handleCastScutum(@ConnectedSocket() client: GameSocket): CastSpellAck {
+    if (client.data.skills[SCUTUM_SKILL] === undefined) {
+      const message = "You don't know the scutum spell yet.";
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+    const cooldownUntil = client.data.skillCooldowns[SCUTUM_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      const message = `Scutum is still recharging (${secondsLeft}s left).`;
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+    if (client.data.mana < SPELL_ATTACK_MANA_COST) {
+      const message = `You don't have enough mana to cast scutum (${SPELL_ATTACK_MANA_COST} needed).`;
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+
+    client.data.mana -= SPELL_ATTACK_MANA_COST;
+    this.startSkillCooldown(client, SCUTUM_SKILL);
+    client.data.scutumActive = true;
+    client.data.scutumActiveUntil = Date.now() + SCUTUM_DURATION_MS;
+    let message = 'A shimmering shield surrounds you.';
+
+    const growth = this.maybeGrowSkill(client, SCUTUM_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills, scutumActive: true });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    this.systemMessage(client, message);
+    return { ok: true, active: true, mana: client.data.mana, skills: client.data.skills, message };
+  }
+
+  // Summoning's own podium (a later follow-up ask), teaching murus
+  // lapideus — same read-a-podium shape as every earlier one.
+  @SubscribeMessage('readMurusLapideusBook')
+  handleReadMurusLapideusBook(@ConnectedSocket() client: GameSocket): ReadSpellBookAck {
+    if (client.data.map !== MURUS_LAPIDEUS_BOOK_MAP) {
+      return { ok: false, message: "There's no spellbook here." };
+    }
+    if (!this.isWithinLootReach(client, MURUS_LAPIDEUS_BOOK_POSITION.row, MURUS_LAPIDEUS_BOOK_POSITION.col)) {
+      return { ok: false, message: "You're too far away to reach the book." };
+    }
+    if (this.currentTick < client.data.murusLapideusBookReadyAtTick) {
+      const hoursLeft = client.data.murusLapideusBookReadyAtTick - this.currentTick;
+      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
+    }
+    client.data.murusLapideusBookReadyAtTick = this.currentTick + MURUS_LAPIDEUS_BOOK_COOLDOWN_TICKS;
+
+    if (client.data.skills[MURUS_LAPIDEUS_SKILL] !== undefined) {
+      return { ok: true, skills: client.data.skills, message: 'You already know how to conjure murus lapideus.' };
+    }
+    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : MURUS_LAPIDEUS_BOOK_LEARN_CHANCE)) {
+      client.data.skills = { ...client.data.skills, [MURUS_LAPIDEUS_SKILL]: STARTING_SKILL_PERCENT };
+      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      return { ok: true, skills: client.data.skills, message: 'The words swim into focus — you have learned murus lapideus!' };
+    }
+    return { ok: true, message: 'You pore over the pages, but nothing clicks yet.' };
+  }
+
+  // Murus lapideus (a later follow-up ask) — "click the spell, then click
+  // a spot on the map" (see WorldScene's own murusLapideusTargeting flow);
+  // the server just receives the final {row, col} and validates it. Draws
+  // aggro from whichever monster is currently chasing the caster (see
+  // MonsterManagerService.findMonsterAggroedOnto/redirectAggroToStoneBlock)
+  // — harmless no-op if nothing's aggro'd onto them.
+  @SubscribeMessage('castMurusLapideus')
+  handleCastMurusLapideus(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    if (client.data.skills[MURUS_LAPIDEUS_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the murus lapideus spell yet." };
+    }
+    const cooldownUntil = client.data.skillCooldowns[MURUS_LAPIDEUS_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Murus lapideus is still recharging (${secondsLeft}s left).` };
+    }
+    const parsed = z.object({ row: z.number(), col: z.number() }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid target.' };
+    }
+    const { row, col } = parsed.data;
+    const map = getMap(client.data.map);
+    if (row < 0 || row >= map.rows || col < 0 || col >= map.cols) {
+      return { ok: false, message: "That's not a valid spot." };
+    }
+    if (!isWithinRadius(client.data.row, client.data.col, row, col, MURUS_LAPIDEUS_RANGE_TILES)) {
+      return { ok: false, message: "That's too far away." };
+    }
+    const occupied =
+      this.worldManager.isPlayerAt(client.data.map, row, col) ||
+      this.monsterManager.isOccupied(client.data.map, row, col) ||
+      NPCS.some((n) => n.map === client.data.map && n.row === row && n.col === col) ||
+      [...this.stoneBlocks.values()].some((b) => b.mapName === client.data.map && b.row === row && b.col === col);
+    if (occupied) {
+      return { ok: false, message: "There's already something there." };
+    }
+    if (client.data.mana < SPELL_ATTACK_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast murus lapideus (${SPELL_ATTACK_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= SPELL_ATTACK_MANA_COST;
+    this.startSkillCooldown(client, MURUS_LAPIDEUS_SKILL);
+
+    const id = randomUUID();
+    this.stoneBlocks.set(id, {
+      id,
+      ownerUsername: client.data.username,
+      mapName: client.data.map,
+      row,
+      col,
+      hp: MURUS_LAPIDEUS_HP,
+      maxHp: MURUS_LAPIDEUS_HP,
+      expiresAt: Date.now() + MURUS_LAPIDEUS_DURATION_MS,
+    });
+
+    const aggroedMonster = this.monsterManager.findMonsterAggroedOnto(client.data.username);
+    if (aggroedMonster) {
+      this.monsterManager.redirectAggroToStoneBlock(aggroedMonster.id, id, this.combatTickCount);
+    }
+
+    const growth = this.maybeGrowSkill(client, MURUS_LAPIDEUS_SKILL);
+    let message = 'A block of stone rises from the ground, eyes blinking open.';
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    this.systemMessage(client, message);
+    return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
   }
 
   // Drink/pour/irrigo (items 7 & 8's follow-up asks) all act on a single
@@ -2881,7 +3496,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.worldManager.updateState(client.data.username, { mimicForm });
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
   }
 
   private handleMimicCommand(client: GameSocket, rawTarget: string): void {
@@ -2977,7 +3592,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.worldManager.updateState(client.data.username, { wandLit: client.data.wandLit, mana: client.data.mana, skills: client.data.skills });
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     this.systemMessage(client, message);
     return { ok: true, active: client.data.wandLit, mana: client.data.mana, skills: client.data.skills, message };
   }
@@ -3061,6 +3676,30 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
   }
 
+  // A Dorms bed (a later follow-up ask) — same sleeping restState as
+  // '/sleep' above, just with the extra 15% heal bonus (see
+  // applyStatTick) and its own Affects wording. The client already
+  // gated the confirmation modal on being within 3 tiles (see
+  // WorldScene's bed click handler); this re-validates both the reach
+  // AND that (row, col) is actually a real bed before trusting it.
+  @SubscribeMessage('sleepInBed')
+  handleSleepInBed(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): { ok: boolean; message?: string } {
+    const parsed = z.object({ row: z.number(), col: z.number() }).safeParse(payload);
+    if (!parsed.success) return { ok: false, message: 'Invalid bed.' };
+    const { row, col } = parsed.data;
+    if (!isBedBlocked(client.data.map, row, col)) {
+      return { ok: false, message: "That's not a bed." };
+    }
+    if (!isWithinRadius(client.data.row, client.data.col, row, col, BED_REACH_TILES)) {
+      return { ok: false, message: "You're too far away to use that bed." };
+    }
+    client.data.sleepingInBed = true;
+    this.setRestState(client, 'sleeping');
+    const message = "You climb into bed and drift off to sleep. You won't see anything until you wake up.";
+    this.systemMessage(client, message);
+    return { ok: true, message };
+  }
+
   // Toggles resting <-> awake ("sit" is just an alias, same as the text
   // game — there's no separate sit state).
   private handleRestCommand(client: GameSocket): void {
@@ -3087,6 +3726,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
   private setRestState(client: GameSocket, restState: RestState): void {
     client.data.restState = restState;
+    // Sleeping in a Dorms bed (a later follow-up ask) only applies while
+    // actually sleeping — waking up OR sitting down to rest instead both
+    // drop it, regardless of which command triggered the transition
+    // (every path funnels through here).
+    if (restState !== 'sleeping') client.data.sleepingInBed = false;
     this.worldManager.updateState(client.data.username, { restState });
     // The client's own map:state handling filters its own entry out of
     // the players list (see main.ts's applyMapState) — a targeted 'sync'
@@ -3094,7 +3738,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // overlay, on top of the broadcast every OTHER player in the room
     // needs to see the sleeper's sprite change.
     client.emit('sync', { player: this.snapshotFor(client) });
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
   }
 
   // Moving or attacking always wakes/stands a player up first (a
@@ -3261,7 +3905,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       mimicableRaces: client.data.mimicableRaces,
     });
     void this.persistStats(client);
-    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
 
     return {
       ok: true,

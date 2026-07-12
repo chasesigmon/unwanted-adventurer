@@ -4,7 +4,8 @@
 // WorldScene.useTargetedSkill, the single place that interprets what each
 // skill name actually does.
 import { activeScene, myProfile } from '../state.js';
-import { createCooldownOverlay, isAttackSkill, skillIconColor, skillIconLetter, updateCooldownOverlay } from './skillMeta.js';
+import { createCooldownOverlay, isAttackSkill, skillIconColor, updateCooldownOverlay } from './skillMeta.js';
+import { skillIconGlyphUrl } from './skillIcons.js';
 
 export const ACTION_BAR_SLOT_COUNT = 20;
 const actionBar = document.getElementById('action-bar') as HTMLDivElement;
@@ -20,15 +21,20 @@ function renderActionSlot(index: number): void {
   slot.draggable = skillName !== null;
   const overlay = slot.querySelector<HTMLElement>('.cooldown-overlay')!;
   if (skillName) {
-    slot.textContent = skillIconLetter(skillName);
+    slot.textContent = '';
     slot.appendChild(overlay); // textContent= above wipes children too — re-append
     slot.style.background = skillIconColor(skillName);
+    slot.style.backgroundImage = skillIconGlyphUrl(skillName);
+    slot.style.backgroundSize = '60%';
+    slot.style.backgroundRepeat = 'no-repeat';
+    slot.style.backgroundPosition = 'center';
     slot.title = `${skillName} (click to use on your selected target, drag off to remove)`;
     overlay.dataset.skill = skillName;
   } else {
     slot.textContent = '';
     slot.appendChild(overlay);
     slot.style.background = '';
+    slot.style.backgroundImage = '';
     slot.title = '';
     delete overlay.dataset.skill;
   }

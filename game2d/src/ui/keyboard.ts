@@ -93,6 +93,12 @@ export function initGlobalKeyboardShortcuts(): void {
     } else if (key === 'p') {
       e.preventDefault();
       toggleAutopilotModal();
+    } else if (key === 'x') {
+      // A later follow-up ask: "make the player stop auto attacking" —
+      // stops whatever combat session (melee or ranged) is currently
+      // armed, without needing a modal open at all.
+      e.preventDefault();
+      activeScene?.stopAutoAttack();
     }
   });
 }

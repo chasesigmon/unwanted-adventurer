@@ -55,6 +55,11 @@ export const affectsBody = document.getElementById('affects-body') as HTMLDivEle
 export const chestModal = document.getElementById('chest-modal') as HTMLDivElement;
 export const chestModalTitle = document.getElementById('chest-modal-title') as HTMLHeadingElement;
 export const chestItemList = document.getElementById('chest-item-list') as HTMLUListElement;
+// A Dorms bed's own sleep-confirmation prompt (a later follow-up ask) —
+// plain Yes/No, no list.
+export const bedModal = document.getElementById('bed-modal') as HTMLDivElement;
+export const bedSleepYesBtn = document.getElementById('bed-sleep-yes') as HTMLButtonElement;
+export const bedSleepNoBtn = document.getElementById('bed-sleep-no') as HTMLButtonElement;
 
 export const ALL_MODALS = [
   charSheetModal,
@@ -69,6 +74,7 @@ export const ALL_MODALS = [
   targetInfoModal,
   autopilotModal,
   chestModal,
+  bedModal,
 ];
 
 // None of these six visually obstruct the map and none has a text input

@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS players (
     'Grimoak Grounds', 'Grimoak Entrance Hall', 'Great Hall',
     'Thistledown Common Room', 'Duskwing Common Room', 'Emberclaw Common Room',
     'Starfall Common Room', 'Elemental Casting Classroom', 'Defense Classroom', 'Summoning Classroom',
-    'Utility Classroom', 'Offense Classroom', 'Caverna Secretissima'
+    'Utility Classroom', 'Offense Classroom', 'Caverna Secretissima',
+    'Thistledown Dorms', 'Duskwing Dorms', 'Emberclaw Dorms', 'Starfall Dorms'
   )),
   "row" INTEGER NOT NULL,
   col INTEGER NOT NULL,

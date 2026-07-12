@@ -26,6 +26,10 @@ import {
   CELERITAS_SKILL,
   AUGUE_SKILL,
   RESERA_SKILL,
+  STUPEFACIUNT_SKILL,
+  EXARME_SKILL,
+  SCUTUM_SKILL,
+  MURUS_LAPIDEUS_SKILL,
   DRINK_SKILL,
   POUR_SKILL,
   SKILL_COOLDOWN_MS,
@@ -94,13 +98,13 @@ export function isUsableSkill(skillName: string): boolean {
     skillName === CELERITAS_SKILL ||
     skillName === AUGUE_SKILL ||
     skillName === RESERA_SKILL ||
+    skillName === STUPEFACIUNT_SKILL ||
+    skillName === EXARME_SKILL ||
+    skillName === SCUTUM_SKILL ||
+    skillName === MURUS_LAPIDEUS_SKILL ||
     skillName === DRINK_SKILL ||
     skillName === POUR_SKILL
   );
-}
-
-export function skillIconLetter(skillName: string): string {
-  return isAttackSkill(skillName) ? 'A' : skillName.charAt(0).toUpperCase();
 }
 
 // Short mechanical/flavor blurbs for the Skills modal's name-hover
@@ -133,6 +137,11 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
   [CELERITAS_SKILL]: 'No target needed — quickens your own footsteps by about 10% for a time. Costs mana; lasts longer the higher your skill.',
   [AUGUE_SKILL]: 'Hurls a bolt of flame at your selected target (a monster) from up to 7 tiles away. Deals 10 damage; has its own cooldown.',
   [RESERA_SKILL]: 'Unlocks a targeted door or chest. Left-click the door/chest first, then use this. Costs mana; chance of success scales with skill percent.',
+  [STUPEFACIUNT_SKILL]: 'Stuns your selected target (a monster) in place for 2 combat ticks, from up to 7 tiles away. Costs 10 mana; has its own cooldown.',
+  [EXARME_SKILL]: "Disarms your selected target's weapon (a monster) into your own inventory, from up to 7 tiles away. Costs 10 mana; has its own cooldown.",
+  [SCUTUM_SKILL]: 'No target needed — surrounds you with a protective shield for 1 minute. Costs 10 mana; has its own cooldown.',
+  [MURUS_LAPIDEUS_SKILL]:
+    'Click this, then click a spot on the map within 10 feet — summons a stone block ally there that draws monster aggro and absorbs hits. Costs 10 mana; has its own cooldown.',
   [DRINK_SKILL]: 'Takes a drink from a targeted container (a canteen). Select it in your inventory first, then click this.',
   [POUR_SKILL]: 'Empties out a targeted container (a canteen). Select it in your inventory first, then click this.',
 };

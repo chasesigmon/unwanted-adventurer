@@ -1008,6 +1008,40 @@ body {
   background: #6a4f24;
 }
 
+/* ---------- Bed sleep-confirmation modal (a later follow-up ask) ---------- */
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+#bed-sleep-yes,
+#bed-sleep-no {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid #3f7a56;
+  color: #eee;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  border-radius: 4px;
+  background: #2a4d3a;
+}
+
+#bed-sleep-yes:hover {
+  background: #386a4c;
+}
+
+#bed-sleep-no {
+  background: #4d2a2a;
+  border-color: #7a3f3f;
+}
+
+#bed-sleep-no:hover {
+  background: #6a3838;
+}
+
 /* ---------- Autopilot prompt modal ---------- */
 
 .autopilot-field {

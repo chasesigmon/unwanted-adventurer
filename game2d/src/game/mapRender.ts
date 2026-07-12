@@ -96,6 +96,12 @@ export const BOLT_TEXTURE_KEY = 'bolt';
 // shared/maps.ts's CAVERNA_CHEST_POSITION.
 export const CHEST_LOCKED_TEXTURE_KEY = 'chest-locked';
 export const CHEST_UNLOCKED_TEXTURE_KEY = 'chest-unlocked';
+// Murus lapideus's own summoned stone block (a later follow-up ask) —
+// see WorldScene's stoneBlockSprites.
+export const STONE_BLOCK_TEXTURE_KEY = 'stone-block';
+// A Dorms room's own beds (a later follow-up ask) — see
+// shared/lighting.ts's bedPositionsFor.
+export const BED_TEXTURE_KEY = 'bed';
 
 export const CHAR_SCALE = 0.275;
 export const CORPSE_SCALE = 0.35;
@@ -140,6 +146,30 @@ const FEATHER_CURSOR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" h
   </g>
 </svg>`;
 export const FEATHER_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(FEATHER_CURSOR_SVG)}") 12 12, pointer`;
+
+// A brass key cursor for doors/the treasure chest (a later follow-up
+// ask) — same hand-rolled inline SVG treatment as the sword/feather
+// cursors above, shown while hovering anything resera-targetable.
+const KEY_CURSOR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <g transform="rotate(-35 12 12)">
+    <circle cx="7" cy="7" r="4.2" fill="none" stroke="#d4af37" stroke-width="2.2"/>
+    <circle cx="7" cy="7" r="1.4" fill="#2a2a2a"/>
+    <rect x="9.8" y="6.1" width="10" height="1.8" rx="0.4" fill="#d4af37"/>
+    <rect x="15.5" y="7.9" width="1.8" height="2.6" fill="#d4af37"/>
+    <rect x="18" y="7.9" width="1.8" height="3.6" fill="#d4af37"/>
+  </g>
+</svg>`;
+export const KEY_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(KEY_CURSOR_SVG)}") 12 12, pointer`;
+
+// A "zZz" sleep cursor for the Dorms rooms' own beds (a later follow-up
+// ask) — three drowsy stacked z's, same hand-rolled inline SVG treatment
+// as the cursors above.
+const SLEEP_CURSOR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <text x="1" y="10" font-family="sans-serif" font-size="7" font-weight="bold" fill="#bcd7ff" stroke="#1a2a40" stroke-width="0.5">z</text>
+  <text x="7" y="16" font-family="sans-serif" font-size="9" font-weight="bold" fill="#bcd7ff" stroke="#1a2a40" stroke-width="0.5">Z</text>
+  <text x="14" y="22" font-family="sans-serif" font-size="7" font-weight="bold" fill="#bcd7ff" stroke="#1a2a40" stroke-width="0.5">z</text>
+</svg>`;
+export const SLEEP_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(SLEEP_CURSOR_SVG)}") 12 12, pointer`;
 
 // Facing IS the sheet's own row now — down/up/left/right are each real,
 // fully distinct frames (see characterSprites.ts), not a 3-row sheet with

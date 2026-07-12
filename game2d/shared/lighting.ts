@@ -1,5 +1,5 @@
 import type { MapName } from './constants.js';
-import { GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS, COMMON_ROOM_MAPS } from './constants.js';
+import { GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS, COMMON_ROOM_MAPS, DORM_MAPS } from './constants.js';
 import { INFRAVISION_SKILL } from './skills.js';
 import { getMap, CASTLE_DOOR_ON_GROUNDS, MOAT_INNER_LEFT, MOAT_INNER_RIGHT, MOAT_INNER_TOP, MOAT_INNER_BOTTOM } from './maps.js';
 
@@ -47,6 +47,12 @@ export const LUCEM_LIGHT_RADIUS_TILES = Math.round(LIGHT_RADIUS_TILES * 1.25);
 // own constant so widening the light radius above doesn't also widen how
 // far away you can shop from.
 export const SHOP_REACH_TILES = 2;
+
+// "Within 3 feet of the bed" (a later follow-up ask) — shared so the
+// client's own pre-flight reach check (before even opening the sleep
+// confirmation modal) and the server's re-validation in
+// handleSleepInBed always agree on the figure.
+export const BED_REACH_TILES = 3;
 
 export const TORCH_ITEM = 'torch';
 
@@ -149,6 +155,10 @@ export function fireplacePositionsFor(mapName: MapName): Array<{ row: number; co
   // torchWallPositionsFor) and a treasure chest, no fireplaces cluttering
   // it up.
   if (mapName === 'Caverna Secretissima') return [];
+  // The Dorms rooms (a later follow-up ask) are small bedrooms with just
+  // 5 beds — no fireplaces to clutter them up, same bare-room treatment
+  // as the secret room above.
+  if ((DORM_MAPS as readonly string[]).includes(mapName)) return [];
   if (!(GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return [];
   const def = getMap(mapName);
   const isClassroom = (CLASSROOM_MAPS as readonly string[]).includes(mapName);
@@ -253,6 +263,27 @@ export function isFireplaceBlocked(mapName: MapName, row: number, col: number): 
 // way a fireplace's flame does, so no extra tile above it needed.
 export function isBenchBlocked(mapName: MapName, row: number, col: number): boolean {
   return benchPositionsFor(mapName).some((p) => p.row === row && p.col === col);
+}
+
+// The Dorms rooms' own 5 beds (a later follow-up ask) — evenly spaced
+// along one row, well clear of the room's own door (see
+// dormsOffCommonRoom in shared/maps.ts).
+export function bedPositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
+  if (!(DORM_MAPS as readonly string[]).includes(mapName)) return [];
+  const def = getMap(mapName);
+  const row = Math.floor(def.rows / 2);
+  const margin = 2;
+  const usableCols = def.cols - margin * 2 - 1;
+  const positions: Array<{ row: number; col: number }> = [];
+  for (let i = 0; i < 5; i++) {
+    const col = margin + Math.round((i * usableCols) / 4);
+    positions.push({ row, col });
+  }
+  return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
+}
+
+export function isBedBlocked(mapName: MapName, row: number, col: number): boolean {
+  return bedPositionsFor(mapName).some((p) => p.row === row && p.col === col);
 }
 
 export function isWithinRadius(row: number, col: number, sourceRow: number, sourceCol: number, radiusTiles: number): boolean {

@@ -13,6 +13,13 @@ import type { Race } from './constants.js';
 export const STARTING_SKILL_PERCENT = 10;
 export const MAX_SKILL_PERCENT = 100;
 
+// Shared by every ranged targeted-attack spell (augue, the wand's own
+// ranged auto-attack, stupefaciunt, exarme — "the same range as augue")
+// so both the server's own reach check and the client's own
+// walk-into-range logic (see WorldScene's tryRangedAction) always agree
+// on the figure without duplicating "7" in five different places.
+export const SPELL_ATTACK_RANGE_TILES = 7;
+
 export const PUNCH_SKILL = 'punch';
 export const DODGE_SKILL = 'dodge';
 export const PARRY_SKILL = 'parry';
@@ -114,6 +121,28 @@ export const AUGUE_SKILL = 'augue';
 export const DRINK_SKILL = 'drink';
 export const POUR_SKILL = 'pour out';
 
+// The Offense Classroom's second and third podiums (a later follow-up
+// ask) — same targeted-attack shape as augue (a monster target within
+// range), but stupefaciunt stuns instead of dealing damage, and exarme
+// disarms a weapon into the caster's own inventory instead. See
+// game.gateway.ts's handleCastStupefaciunt/handleCastExarme.
+export const STUPEFACIUNT_SKILL = 'stupefaciunt';
+export const EXARME_SKILL = 'exarme';
+
+// The Defense Classroom's own podium (a later follow-up ask) — a no-
+// target toggle-like buff (always ON for its own fixed duration once
+// cast, unlike lucem/celeritas which can be turned back off early) that
+// shields the caster from a portion of incoming damage for a time. See
+// game.gateway.ts's handleCastScutum.
+export const SCUTUM_SKILL = 'scutum';
+
+// The Summoning Classroom's own podium (a later follow-up ask) — a
+// click-a-tile-on-the-map targeted spell (unlike every other spell here,
+// which targets a player/npc/monster/door/chest/inventory item) that
+// summons a temporary, defensive stone-block ally. See
+// game.gateway.ts's handleCastMurusLapideus.
+export const MURUS_LAPIDEUS_SKILL = 'murus lapideus';
+
 // A skill with an entry here can't be re-queued until this long (wall-
 // clock ms) after it was last used — checked server-side (see
 // game.gateway.ts's engageInDirection) and rendered client-side as a
@@ -128,6 +157,14 @@ export const SKILL_COOLDOWN_MS: Partial<Record<string, number>> = {
   // MONSTER_TICK_INTERVAL_MS figure as Glare above, for the same reason
   // (shared/ can't import a server-only constant).
   [AUGUE_SKILL]: 1 * 3000,
+  // "Both spells should have a 3 combat tick cooldown" (a later follow-up
+  // ask) — same literal-MONSTER_TICK_INTERVAL_MS reasoning as above.
+  [STUPEFACIUNT_SKILL]: 3 * 3000,
+  [EXARME_SKILL]: 3 * 3000,
+  // "A cooldown of 2 minutes" (a later follow-up ask).
+  [SCUTUM_SKILL]: 2 * 60 * 1000,
+  // "A cooldown of 40 seconds" (a later follow-up ask).
+  [MURUS_LAPIDEUS_SKILL]: 40 * 1000,
 };
 
 export const RACE_INNATE_SKILLS: Record<Race, string[]> = {

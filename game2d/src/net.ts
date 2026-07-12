@@ -21,6 +21,8 @@ import type {
   OpenChestAck,
   TakeChestItemAck,
   LockTarget,
+  ReadSpellBookAck,
+  TileTargetPayload,
   CanteenActionAck,
   CastSpellAck,
   AugueTargetPayload,
@@ -525,6 +527,129 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('takeChestItem', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // The 'x' hotkey (a later follow-up ask) — no ack needed, same
+  // fire-and-forget shape as chat/punch.
+  disengage(): void {
+    this.socket?.emit('disengage');
+  }
+
+  readStupefaciuntBook(): Promise<ReadSpellBookAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('readStupefaciuntBook', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castStupefaciunt(target: AugueTargetPayload): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castStupefaciunt', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  readExarmeBook(): Promise<ReadSpellBookAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('readExarmeBook', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castExarme(target: AugueTargetPayload): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castExarme', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  readScutumBook(): Promise<ReadSpellBookAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('readScutumBook', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castScutum(): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castScutum', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  readMurusLapideusBook(): Promise<ReadSpellBookAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('readMurusLapideusBook', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castMurusLapideus(target: TileTargetPayload): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castMurusLapideus', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  sleepInBed(target: TileTargetPayload): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('sleepInBed', target, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

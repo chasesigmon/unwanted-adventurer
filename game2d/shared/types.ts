@@ -40,6 +40,13 @@ export interface PlayerSnapshot {
   equipment: Record<string, string>;
   consumeExp: number;
   restState: RestState;
+  // Whether this player is sleeping in a Dorms bed specifically (a later
+  // follow-up ask), not just on the floor — grants an extra 15% on top of
+  // the normal sleep heal (see game.gateway.ts's applyStatTick) and shows
+  // "Sleeping in a bed" instead of plain "Sleeping" in the Affects modal.
+  // Optional for the same reason as wandLitUntil/mapUnlocked above — only
+  // the OWNING client's own snapshot ever needs it.
+  sleepingInBed?: boolean;
   // Whether THIS player currently EMITS light (a carried torch) that a
   // nearby ally could benefit from — infravision is deliberately excluded
   // (personal vision, not light emitted into the world); see
@@ -69,6 +76,15 @@ export interface PlayerSnapshot {
   // see snapshotFor, the one place that actually populates it.
   wandLitUntil?: number | null;
   celeritasActiveUntil?: number | null;
+  // Scutum (a later follow-up ask) — a fixed-duration self-shield, unlike
+  // lucem/celeritas which the player toggles back off early: always ON
+  // for its own full duration once cast. Same absolute-expiry-timestamp
+  // shape as wandLitUntil/celeritasActiveUntil above, for the Affects
+  // modal's own countdown; scutumActive itself drives the blue-sphere
+  // visual (see WorldScene's updateScutumVisual) and a damage-reduction
+  // check server-side (see resolveHitOnPlayer).
+  scutumActive: boolean;
+  scutumActiveUntil?: number | null;
   // Zombie-only Eat Brains cooldown, in the same world-tick units as
   // WorldTimePayload.tick — lets the client gray the button out instead
   // of letting it be clicked and fail (see main.ts's updateEatBrainsButton).
@@ -223,6 +239,19 @@ export interface TeacherSnapshot {
   col: number;
 }
 
+// Murus lapideus (a later follow-up ask) — a temporary, defensive summon
+// standing wherever the caster clicked; rendered like an NPC (a health
+// bar, no other UI) but tracked entirely in GameGateway (see
+// mapStateFor), not WorldManagerService/MonsterManagerService.
+export interface StoneBlockSnapshot {
+  id: string;
+  map: MapName;
+  row: number;
+  col: number;
+  hp: number;
+  maxHp: number;
+}
+
 export interface MapStatePayload {
   mapName: MapName;
   players: PlayerSnapshot[];
@@ -231,6 +260,7 @@ export interface MapStatePayload {
   corpses: CorpseSnapshot[];
   vendors: VendorSnapshot[];
   teachers: TeacherSnapshot[];
+  stoneBlocks: StoneBlockSnapshot[];
 }
 
 // Broadcast to a map's room whenever a punch actually lands on a target
@@ -411,10 +441,21 @@ export interface ReadReseraBookAck {
   message?: string;
 }
 
-// Resera's own two lockable targets (a follow-up ask: "make all doors and
-// treasure chests targetable" — scoped today to the one door/chest the
-// secret room actually has, see WorldScene's lockTarget).
-export type LockTarget = 'secret-door' | 'caverna-chest';
+// Resera's own targetable objects (a follow-up ask: "make all doors and
+// treasure chests targetable") — identifies WHICH door/chest by its own
+// map+position rather than a fixed enum, since every door in the castle
+// is now clickable/resera-able (see WorldScene's renderMap door-click
+// wiring), not just the one the secret room actually has. The server
+// resolves this against its own small registry of REAL lockable objects
+// (today, just the secret door + its chest — see game.gateway.ts's
+// handleCastResera) and rejects anything else with a "not locked" message
+// rather than trusting the client's `kind` label.
+export interface LockTarget {
+  kind: 'door' | 'chest';
+  map: MapName;
+  row: number;
+  col: number;
+}
 
 // Resera's own ack-based cast — same percent-chance-success/growth shape
 // as lucem/celeritas/augue, but on success sets a per-player persisted
@@ -424,6 +465,25 @@ export interface CastReseraAck {
   ok: boolean;
   skills?: Record<string, number>;
   message?: string;
+}
+
+// A later follow-up ask added 4 more podiums (stupefaciunt, exarme,
+// scutum, murus lapideus) — same read-a-podium shape every earlier one
+// uses, just without a bespoke per-spell readyAtTick field (dead data —
+// no client call site ever read those either, see e.g.
+// ReadReseraBookAck.reseraBookReadyAtTick). Reused for all 4.
+export interface ReadSpellBookAck {
+  ok: boolean;
+  skills?: Record<string, number>;
+  message?: string;
+}
+
+// Murus lapideus (a later follow-up ask) targets a MAP TILE, not a
+// player/npc/monster/door/chest — "click the spell, then click a spot on
+// the map."
+export interface TileTargetPayload {
+  row: number;
+  col: number;
 }
 
 // The secret room's treasure chest (a follow-up ask) — `items` is either
@@ -556,6 +616,13 @@ export interface ClientToServerEvents {
   // shape again, teaching resera instead; see game.gateway.ts's
   // handleReadReseraBook.
   readReseraBook: (ack: (res: ReadReseraBookAck) => void) => void;
+  // Offense's second and third podiums, Defense's own podium, and
+  // Summoning's own podium (a later follow-up ask) — same read-a-podium
+  // shape as every one above.
+  readStupefaciuntBook: (ack: (res: ReadSpellBookAck) => void) => void;
+  readExarmeBook: (ack: (res: ReadSpellBookAck) => void) => void;
+  readScutumBook: (ack: (res: ReadSpellBookAck) => void) => void;
+  readMurusLapideusBook: (ack: (res: ReadSpellBookAck) => void) => void;
   // No-target toggles (a follow-up ask, replacing the old '/lucem' chat
   // command so the result can be toasted even with a modal open) — see
   // game.gateway.ts's handleCastLucem/handleCastCeleritas.
@@ -573,6 +640,12 @@ export interface ClientToServerEvents {
   // (no wand equipped, target out of range) can be shown right away
   // instead of silently doing nothing until the session quietly times out.
   engageRangedAttack: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  // The 'x' hotkey (a later follow-up ask: "make the player stop auto
+  // attacking") — clears whatever playerCombat session (melee OR ranged)
+  // is currently armed. No payload/ack needed, same fire-and-forget shape
+  // as chat/punch; the player's own target SELECTION is untouched, only
+  // the automatic every-tick attack loop stops.
+  disengage: () => void;
   // Resera (a later follow-up ask) — a targeted utility spell, not a
   // toggle or attack; see game.gateway.ts's handleCastResera.
   castResera: (payload: { target: LockTarget }, ack: (res: CastReseraAck) => void) => void;
@@ -580,6 +653,20 @@ export interface ClientToServerEvents {
   // game.gateway.ts's handleOpenChest/handleTakeChestItem.
   openChest: (ack: (res: OpenChestAck) => void) => void;
   takeChestItem: (ack: (res: TakeChestItemAck) => void) => void;
+  // Stupefaciunt/exarme (a later follow-up ask) — same targeted-attack
+  // shape as augue (see game.gateway.ts's handleCastStupefaciunt/
+  // handleCastExarme).
+  castStupefaciunt: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  castExarme: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  // Scutum (a later follow-up ask) — no target, a timed self-buff like
+  // lucem/celeritas; see game.gateway.ts's handleCastScutum.
+  castScutum: (ack: (res: CastSpellAck) => void) => void;
+  // Murus lapideus (a later follow-up ask) — targets a map tile, not an
+  // entity; see game.gateway.ts's handleCastMurusLapideus.
+  castMurusLapideus: (payload: TileTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  // A Dorms bed (a later follow-up ask) — targets a specific bed tile;
+  // see game.gateway.ts's handleSleepInBed.
+  sleepInBed: (payload: TileTargetPayload, ack: (res: { ok: boolean; message?: string }) => void) => void;
   // Drink/pour/irrigo (items 7 & 8's follow-up asks) — all take the
   // targeted inventory item's index (see WorldScene's targetItemIndex).
   drinkItem: (itemIndex: number, ack: (res: CanteenActionAck) => void) => void;
@@ -637,6 +724,9 @@ export interface SocketData {
   equipment: Record<string, string>;
   consumeExp: number;
   restState: RestState;
+  // See PlayerSnapshot's own doc comment — never persisted, resets to
+  // false on reconnect same as restState itself.
+  sleepingInBed: boolean;
   gold: number;
   mimicableRaces: (Race | MonsterKind)[];
   mimicForm: (Race | MonsterKind) | null;
@@ -669,6 +759,11 @@ export interface SocketData {
   // wandLit/wandLitUntil above, see PlayerSnapshot's celeritasActive.
   celeritasActive: boolean;
   celeritasActiveUntil: number | null;
+  // Scutum's own toggle (a later follow-up ask) — see PlayerSnapshot's
+  // scutumActive; always ON for its own full duration once cast (no
+  // manual toggle-off, unlike lucem/celeritas).
+  scutumActive: boolean;
+  scutumActiveUntil: number | null;
   // A 2-stat-tick cooldown gate on reading the lucem spellbook (item 8),
   // same shape/units as eatBrainsReadyAtTick above.
   lucemBookReadyAtTick: number;
@@ -680,6 +775,12 @@ export interface SocketData {
   augueBookReadyAtTick: number;
   // Same idea again, for the Utility classroom's third podium (resera).
   reseraBookReadyAtTick: number;
+  // Same idea again, for Offense's second/third podiums, Defense's own
+  // podium, and Summoning's own podium (a later follow-up ask).
+  stupefaciuntBookReadyAtTick: number;
+  exarmeBookReadyAtTick: number;
+  scutumBookReadyAtTick: number;
+  murusLapideusBookReadyAtTick: number;
   // The secret room system (a follow-up ask) — persisted; loaded from the
   // player doc on connect. See the DB column's own comment
   // (docker/postgres/init-postgres.sql) for what each one means.

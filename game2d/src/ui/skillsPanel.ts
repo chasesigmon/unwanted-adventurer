@@ -2,9 +2,20 @@
 // preview of skills this character could still acquire down their
 // current path.
 import { myProfile } from '../state.js';
-import { LUCEM_SKILL, IRRIGO_SKILL, CELERITAS_SKILL, AUGUE_SKILL, RESERA_SKILL } from '../../shared/skills.js';
+import {
+  LUCEM_SKILL,
+  IRRIGO_SKILL,
+  CELERITAS_SKILL,
+  AUGUE_SKILL,
+  RESERA_SKILL,
+  STUPEFACIUNT_SKILL,
+  EXARME_SKILL,
+  SCUTUM_SKILL,
+  MURUS_LAPIDEUS_SKILL,
+} from '../../shared/skills.js';
 import { attachTooltip } from './tooltip.js';
-import { SKILL_DESCRIPTIONS, createCooldownOverlay, isAttackSkill, isUsableSkill, skillIconColor, skillIconLetter } from './skillMeta.js';
+import { SKILL_DESCRIPTIONS, createCooldownOverlay, isAttackSkill, isUsableSkill, skillIconColor } from './skillMeta.js';
+import { skillIconGlyphUrl } from './skillIcons.js';
 import { actionBarSkills, assignActionSlot, saveActionBar } from './actionBar.js';
 import { logCombatMessage } from './log.js';
 import { registerModalOpenHandler, registerModalRefreshHandler, skillsBody, skillsModal, skillsShowAllToggle } from './modalCore.js';
@@ -23,7 +34,17 @@ import { registerModalOpenHandler, registerModalRefreshHandler, skillsBody, skil
 let showAllSkills = false;
 
 function acquirableSkillPool(): string[] {
-  return [LUCEM_SKILL, IRRIGO_SKILL, CELERITAS_SKILL, AUGUE_SKILL, RESERA_SKILL];
+  return [
+    LUCEM_SKILL,
+    IRRIGO_SKILL,
+    CELERITAS_SKILL,
+    AUGUE_SKILL,
+    RESERA_SKILL,
+    STUPEFACIUNT_SKILL,
+    EXARME_SKILL,
+    SCUTUM_SKILL,
+    MURUS_LAPIDEUS_SKILL,
+  ];
 }
 
 // A skill row with a small icon to the left of its name — built by hand
@@ -35,8 +56,11 @@ function renderSkillRow(skillName: string, valueText: string, notAcquired: boole
 
   const icon = document.createElement('span');
   icon.className = 'skill-icon';
-  icon.textContent = skillIconLetter(skillName);
   icon.style.background = skillIconColor(skillName);
+  icon.style.backgroundImage = skillIconGlyphUrl(skillName);
+  icon.style.backgroundSize = '65%';
+  icon.style.backgroundRepeat = 'no-repeat';
+  icon.style.backgroundPosition = 'center';
 
   const usable = !notAcquired && isUsableSkill(skillName);
   if (usable) {

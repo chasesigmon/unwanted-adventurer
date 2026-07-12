@@ -46,6 +46,11 @@ export interface Monster extends CombatantStats {
   // wanderAll doesn't need a species lookup on every tick) — undefined
   // means "wander freely," same as before this feature existed.
   patrolRangeTiles?: number;
+  // Stupefaciunt (a later follow-up ask) — a combat-tick number; while
+  // currentTick is below this, the monster can't move or act at all (see
+  // MonsterManagerService.isStunned/stun). Undefined (the common case)
+  // means "not currently stunned."
+  stunUntilTick?: number;
 }
 
 export interface CarriedItemRoll {

@@ -7,7 +7,7 @@ import type { MapName, Direction } from '../../shared/constants.js';
 import type { PlayerSnapshot, MapStatePayload } from '../../shared/types.js';
 import type { PlayerState, MoveResult } from './types.js';
 import { isTreeTile } from '../../shared/trees.js';
-import { emitsLight, isFireplaceBlocked, isBenchBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
+import { emitsLight, isFireplaceBlocked, isBenchBlocked, isBedBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
 import { isCastleExteriorBlocked, isMoatBlocked } from '../../shared/maps.js';
 import { vendorsForMap } from './vendors.js';
 import { teachersForMap, teacherDeskFootprintFor } from './teachers.js';
@@ -83,6 +83,7 @@ export class WorldManagerService {
     if (isMoatBlocked(mapName, row, col)) return true;
     if (isFireplaceBlocked(mapName, row, col)) return true;
     if (isBenchBlocked(mapName, row, col)) return true;
+    if (isBedBlocked(mapName, row, col)) return true;
     if (studentDeskPositionsFor(mapName).some((p) => p.row === row && p.col === col)) return true;
 
     const npcHit = NPCS.some((npc) => npc.map === mapName && npc.row === row && npc.col === col);
@@ -184,6 +185,7 @@ export class WorldManagerService {
         hasLight: emitsLight(state.equipment) || state.wandLit,
         wandLit: state.wandLit,
         celeritasActive: state.celeritasActive,
+        scutumActive: state.scutumActive,
         gold: state.gold,
         mimicableRaces: state.mimicableRaces,
         mimicForm: state.mimicForm,
@@ -199,6 +201,10 @@ export class WorldManagerService {
     const corpses = this.corpseManager.getSnapshotsForMap(mapName);
     const vendors = vendorsForMap(mapName);
     const teachers = teachersForMap(mapName);
-    return { mapName, players, npcs, monsters, corpses, vendors, teachers };
+    // Murus lapideus's own stone blocks (a later follow-up ask) live
+    // entirely in GameGateway, not here — always empty at this layer;
+    // GameGateway's mapStateFor wraps every call site to fill in the
+    // real values afterward.
+    return { mapName, players, npcs, monsters, corpses, vendors, teachers, stoneBlocks: [] };
   }
 }

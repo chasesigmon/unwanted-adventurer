@@ -43,6 +43,10 @@ export interface PlayerState extends Location, Attributes {
   // (it's a personal move-speed buff, not emitted light), but it's still
   // part of PlayerSnapshot's shape, so it lives here too.
   celeritasActive: boolean;
+  // Scutum's own toggle (a later follow-up ask) — needed here too since
+  // its blue-sphere visual has to be visible to every OTHER nearby player
+  // as well, not just the caster's own Affects modal.
+  scutumActive: boolean;
   canteenDrinks: number;
 }
 

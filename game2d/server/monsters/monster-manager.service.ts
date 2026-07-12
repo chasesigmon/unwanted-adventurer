@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import { getMap, isCastleExteriorBlocked, isMoatBlocked, isWithinMoatFootprint } from '../../shared/maps.js';
 import { isTreeTile } from '../../shared/trees.js';
-import { isFireplaceBlocked, isBenchBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
+import { isFireplaceBlocked, isBenchBlocked, isBedBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
 import { vendorsForMap } from '../worlds/vendors.js';
@@ -13,6 +13,14 @@ import type { MonsterSnapshot } from '../../shared/types.js';
 
 export type OccupancyChecker = (mapName: MapName, row: number, col: number) => boolean;
 export type PlayerLocator = (username: string) => { mapName: MapName; row: number; col: number } | undefined;
+// Murus lapideus (a later follow-up ask) — set by GameGateway (which owns
+// the stone-block registry), same callback-injection reasoning as
+// PlayerLocator above.
+export type StoneBlockLocator = (id: string) => { mapName: MapName; row: number; col: number } | undefined;
+// Returns the stone block's REMAINING hp after the hit, or undefined if
+// it no longer exists (already destroyed/expired) — lets
+// stepTowardAggroTarget know whether to keep chasing it.
+export type StoneBlockDamager = (id: string, amount: number) => number | undefined;
 
 // A much smaller version of the text game's own monster-manager.service.ts
 // — no engaged-in-combat tracking (a punch here is a single instant
@@ -70,6 +78,49 @@ export class MonsterManagerService {
     this.aggro.delete(monsterId);
   }
 
+  // Murus lapideus (a later follow-up ask): "It should draw aggro from a
+  // monster that is currently aggro toward the player" — redirects
+  // whichever monster is chasing this username onto the stone block
+  // instead (mutually exclusive with player aggro; see
+  // stepTowardAggroTarget, which checks this map FIRST).
+  private stoneBlockAggro = new Map<string, { stoneBlockId: string; lastContactTick: number }>();
+  private locateStoneBlock: StoneBlockLocator = () => undefined;
+  private damageStoneBlock: StoneBlockDamager = () => undefined;
+  private static readonly MONSTER_VS_STONE_BLOCK_DAMAGE = 5;
+
+  setStoneBlockCallbacks(locator: StoneBlockLocator, damager: StoneBlockDamager): void {
+    this.locateStoneBlock = locator;
+    this.damageStoneBlock = damager;
+  }
+
+  // Finds ONE monster currently aggro'd onto this player (any one is
+  // fine — "a monster" singular, not all of them) — used by
+  // handleCastMurusLapideus to know whether there's anything to redirect.
+  findMonsterAggroedOnto(username: string): Monster | undefined {
+    for (const [monsterId, entry] of this.aggro) {
+      if (entry.targetUsername === username) return this.monsters.get(monsterId);
+    }
+    return undefined;
+  }
+
+  redirectAggroToStoneBlock(monsterId: string, stoneBlockId: string, tick: number): void {
+    this.aggro.delete(monsterId);
+    this.stoneBlockAggro.set(monsterId, { stoneBlockId, lastContactTick: tick });
+  }
+
+  // Stupefaciunt (a later follow-up ask) — stunned in place, can't move
+  // OR act (see wanderAll/stepTowardAggroTarget's own early-return) until
+  // currentTick reaches untilTick.
+  stun(monsterId: string, untilTick: number): void {
+    const monster = this.monsters.get(monsterId);
+    if (monster) monster.stunUntilTick = untilTick;
+  }
+
+  isStunned(monsterId: string, currentTick: number): boolean {
+    const monster = this.monsters.get(monsterId);
+    return monster?.stunUntilTick !== undefined && currentTick < monster.stunUntilTick;
+  }
+
   spawnInitial(): void {
     for (const species of MONSTER_SPECIES) {
       for (let i = 0; i < species.maxCount; i++) this.spawnOne(species);
@@ -91,6 +142,7 @@ export class MonsterManagerService {
     if (isMoatBlocked(mapName, row, col)) return false;
     if (isFireplaceBlocked(mapName, row, col)) return false;
     if (isBenchBlocked(mapName, row, col)) return false;
+    if (isBedBlocked(mapName, row, col)) return false;
     if (studentDeskPositionsFor(mapName).some((p) => p.row === row && p.col === col)) return false;
     // Same "own tile + shopfront tile in front of it" collision shape as
     // WorldManagerService.isOccupied — a wandering/spawning monster
@@ -208,6 +260,9 @@ export class MonsterManagerService {
     const deltas = Object.values(DIRECTION_DELTAS);
     const changedMaps = new Set<MapName>();
     for (const monster of this.monsters.values()) {
+      // Stupefaciunt (a later follow-up ask) — stunned monsters don't
+      // wander OR chase this tick at all.
+      if (monster.stunUntilTick !== undefined && currentTick < monster.stunUntilTick) continue;
       if (this.stepTowardAggroTarget(monster, currentTick, changedMaps)) continue;
 
       if (monster.patrolRangeTiles !== undefined) {
@@ -262,6 +317,33 @@ export class MonsterManagerService {
   // its aggro just expire) — false means "fall through to normal random
   // wander" (no aggro at all, or the target's gone and aggro just cleared).
   private stepTowardAggroTarget(monster: Monster, currentTick: number, changedMaps: Set<MapName>): boolean {
+    // Murus lapideus (a later follow-up ask) — a stone-block redirect
+    // takes priority over ordinary player aggro (mutually exclusive, see
+    // redirectAggroToStoneBlock); once adjacent, the monster autonomously
+    // wears it down each tick instead of "standing and fighting" (which
+    // only ever meant "wait for the PLAYER's own combat tick to resolve a
+    // hit" — a stone block isn't a player, so this resolves the hit here
+    // directly).
+    const stoneAggro = this.stoneBlockAggro.get(monster.id);
+    if (stoneAggro) {
+      const target = this.locateStoneBlock(stoneAggro.stoneBlockId);
+      if (!target || target.mapName !== monster.mapName) {
+        this.stoneBlockAggro.delete(monster.id);
+        return false;
+      }
+      const dRow = target.row - monster.row;
+      const dCol = target.col - monster.col;
+      if (Math.abs(dRow) <= 1 && Math.abs(dCol) <= 1) {
+        const remainingHp = this.damageStoneBlock(stoneAggro.stoneBlockId, MonsterManagerService.MONSTER_VS_STONE_BLOCK_DAMAGE);
+        if (remainingHp === undefined || remainingHp <= 0) this.stoneBlockAggro.delete(monster.id);
+        return true;
+      }
+      if (this.stepToward(monster, target.row, target.col, changedMaps)) {
+        stoneAggro.lastContactTick = currentTick;
+      }
+      return true;
+    }
+
     const aggro = this.aggro.get(monster.id);
     if (!aggro) return false;
 
@@ -284,17 +366,92 @@ export class MonsterManagerService {
       return true;
     }
 
-    // Greedy chase: close whichever axis has the bigger gap first.
+    this.stepToward(monster, target.row, target.col, changedMaps);
+    return true;
+  }
+
+  // Shared by both aggro-chase branches above — greedy chase toward
+  // (targetRow, targetCol), closing whichever axis has the bigger gap
+  // first (cheap, correct on open ground); if that's blocked, tries the
+  // OTHER axis; only when BOTH are blocked (a follow-up ask: "smart
+  // movement... to navigate around an obstacle" — e.g. Grimoak Grounds'
+  // own moat) does this fall back to a bounded BFS for an actual route
+  // around whatever's in the way. Returns true if it actually moved.
+  private stepToward(monster: Monster, targetRow: number, targetCol: number, changedMaps: Set<MapName>): boolean {
+    const dRow = targetRow - monster.row;
+    const dCol = targetCol - monster.col;
     const stepRow = Math.abs(dRow) >= Math.abs(dCol) ? Math.sign(dRow) : 0;
     const stepCol = stepRow === 0 ? Math.sign(dCol) : 0;
-    const nextRow = monster.row + stepRow;
-    const nextCol = monster.col + stepCol;
+    let nextRow = monster.row + stepRow;
+    let nextCol = monster.col + stepCol;
+    if (!this.isFree(monster.mapName, nextRow, nextCol)) {
+      const altRow = stepRow === 0 && dRow !== 0 ? monster.row + Math.sign(dRow) : monster.row;
+      const altCol = stepCol === 0 && dCol !== 0 ? monster.col + Math.sign(dCol) : monster.col;
+      if ((altRow !== monster.row || altCol !== monster.col) && this.isFree(monster.mapName, altRow, altCol)) {
+        nextRow = altRow;
+        nextCol = altCol;
+      } else {
+        const step = this.findNextStepToward(monster.mapName, monster.row, monster.col, targetRow, targetCol);
+        if (!step) return false; // no route found within budget — stand still this tick
+        nextRow = step.row;
+        nextCol = step.col;
+      }
+    }
     if (this.isFree(monster.mapName, nextRow, nextCol)) {
       monster.row = nextRow;
       monster.col = nextCol;
       changedMaps.add(monster.mapName);
+      return true;
     }
-    return true;
+    return false;
+  }
+
+  // A bounded breadth-first search for the FIRST step of a shortest route
+  // from (fromRow, fromCol) to anywhere adjacent to (targetRow, targetCol)
+  // — capped at PATHFIND_NODE_BUDGET explored tiles so a monster on the
+  // far side of a big obstacle just gives up and stands still that tick
+  // rather than scanning the whole map every single tick it's stuck.
+  private static readonly PATHFIND_NODE_BUDGET = 300;
+
+  private findNextStepToward(
+    mapName: MapName,
+    fromRow: number,
+    fromCol: number,
+    targetRow: number,
+    targetCol: number
+  ): { row: number; col: number } | null {
+    const deltas = Object.values(DIRECTION_DELTAS);
+    const visited = new Set<string>([`${fromRow},${fromCol}`]);
+    const queue: Array<{ row: number; col: number; firstStep: { row: number; col: number } }> = [];
+    for (const d of deltas) {
+      const row = fromRow + d.dr;
+      const col = fromCol + d.dc;
+      if (!this.isFree(mapName, row, col)) continue;
+      const key = `${row},${col}`;
+      if (visited.has(key)) continue;
+      visited.add(key);
+      queue.push({ row, col, firstStep: { row, col } });
+    }
+
+    let head = 0;
+    let explored = 0;
+    while (head < queue.length && explored < MonsterManagerService.PATHFIND_NODE_BUDGET) {
+      const current = queue[head++]!;
+      explored++;
+      if (Math.abs(current.row - targetRow) <= 1 && Math.abs(current.col - targetCol) <= 1) {
+        return current.firstStep;
+      }
+      for (const d of deltas) {
+        const row = current.row + d.dr;
+        const col = current.col + d.dc;
+        const key = `${row},${col}`;
+        if (visited.has(key)) continue;
+        if (!this.isFree(mapName, row, col)) continue;
+        visited.add(key);
+        queue.push({ row, col, firstStep: current.firstStep });
+      }
+    }
+    return null;
   }
 
   getMonster(id: string): Monster | undefined {

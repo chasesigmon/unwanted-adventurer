@@ -78,11 +78,20 @@ export const INFRAVISION_MAX_NIGHT_OPACITY = nightDarknessForHour(21);
 let currentNightDarkness = 0;
 export function updateDaynightOverlay(hour: number): void {
   currentNightDarkness = nightDarknessForHour(hour);
-  applyDaynightTint(false);
+  applyDaynightTint(false, false);
 }
 
-export function applyDaynightTint(hasFullVision: boolean): void {
-  const darkness = hasFullVision ? Math.min(currentNightDarkness, INFRAVISION_MAX_NIGHT_OPACITY) : currentNightDarkness;
+// A follow-up ask: "the night/day effect should only happen outside —
+// inside the castle it should stay the same lighting all the time." Two
+// SEPARATE reasons darkness can be reduced, not one conflated boolean:
+// `alwaysLit` (a torch/fireplace-lit interior — shared/lighting.ts's
+// isAlwaysLit) zeroes the tint out completely regardless of the hour,
+// while `hasInfravision` (a goblin's own innate night vision, still
+// outdoors) only CAPS it at a dim-but-not-black level — the previous
+// single-boolean version wrongly capped (rather than zeroed) the castle's
+// own tint too, leaving a faint night-time overlay indoors.
+export function applyDaynightTint(alwaysLit: boolean, hasInfravision: boolean): void {
+  const darkness = alwaysLit ? 0 : hasInfravision ? Math.min(currentNightDarkness, INFRAVISION_MAX_NIGHT_OPACITY) : currentNightDarkness;
   daynightOverlay.style.background = `rgba(5, 5, 20, ${darkness.toFixed(3)})`;
 }
 
