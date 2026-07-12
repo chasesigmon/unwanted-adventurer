@@ -118,6 +118,7 @@
           <button type="button" id="map-btn" class="corner-btn" title="Map (m)">🗺️</button>
           <button type="button" id="equipment-btn" class="corner-btn" title="Equipment (e)">🗡️</button>
           <button type="button" id="skills-btn" class="corner-btn" title="Skills (k)">⭐</button>
+          <button type="button" id="spells-btn" class="corner-btn" title="Spells (l)">🪄</button>
           <button type="button" id="autopilot-btn" class="corner-btn" title="Prompt (p)">💬</button>
           <button type="button" id="inventory-btn" class="corner-btn" title="Inventory (i)">🎒</button>
           <button type="button" id="char-sheet-btn" class="corner-btn" title="Character sheet (c)">📜</button>
@@ -145,6 +146,14 @@
             <h2>Skills</h2>
             <button type="button" id="skills-show-all-toggle" class="secondary-btn">Show All</button>
             <div id="skills-body" class="modal-stats"></div>
+          </div>
+        </div>
+
+        <div id="spells-modal" class="modal" hidden>
+          <div class="modal-box">
+            <button type="button" class="modal-close">&times;</button>
+            <h2>Spells</h2>
+            <div id="spells-body" class="spell-list"></div>
           </div>
         </div>
 

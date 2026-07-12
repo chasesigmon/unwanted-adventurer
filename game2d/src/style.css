@@ -719,6 +719,34 @@ body {
   text-align: right;
 }
 
+.spell-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.spell-row {
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2a2a3a;
+}
+
+.spell-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.spell-name {
+  color: #f0c040;
+  font-weight: 600;
+  text-transform: capitalize;
+  margin-bottom: 2px;
+}
+
+.spell-description {
+  color: #ccc;
+}
+
 .equipment-value {
   display: flex;
   align-items: center;

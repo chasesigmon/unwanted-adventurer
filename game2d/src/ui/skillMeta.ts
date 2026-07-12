@@ -21,6 +21,7 @@ import {
   ENHANCED_DURABILITY_SKILL,
   BONE_FINGER_STRIKE_SKILL,
   GLARE_SKILL,
+  LUCEM_SKILL,
   SKILL_COOLDOWN_MS,
 } from '../../shared/skills.js';
 import { myProfile } from '../state.js';
@@ -80,7 +81,8 @@ export function isUsableSkill(skillName: string): boolean {
     skillName === BONE_FINGER_STRIKE_SKILL ||
     skillName === GLARE_SKILL ||
     skillName === MIMIC_SKILL ||
-    skillName === REVERT_SKILL
+    skillName === REVERT_SKILL ||
+    skillName === LUCEM_SKILL
   );
 }
 
@@ -113,6 +115,7 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
   [ENHANCED_DURABILITY_SKILL]: 'Skeleton-only: passively tougher armor (future work — no armor system yet).',
   [BONE_FINGER_STRIKE_SKILL]:
     'A separate active attack, earnable by chance from consuming bone daggers. Deals 1.5x your normal hit damage, scaling further with skill percent.',
+  [LUCEM_SKILL]: "No target needed — lights or extinguishes your equipped wand's tip, granting a light source like a torch would.",
 };
 
 // Item-hover tooltip text — native `title` attribute replaced by
@@ -121,6 +124,7 @@ export const ITEM_DESCRIPTIONS: Record<string, string> = {
   'bone dagger': 'A crude blade carved from bone. Equip it as a weapon for bonus damage and the dagger skill.',
   'bone shield': 'A plated bone shield. Equip it for a chance to block incoming hits.',
   torch: 'A carried light source. Equip it in place of a shield to see in the dark — burns out after 15 minutes of equipped use.',
+  wand: "A basic wooden wand. Equip it in place of a weapon to cast spells — for now, just lucem (learnable in the Utilization classroom).",
   'wild goblin ear': "A wild goblin's ear. Consume it for exp and a small chance of learning normal-monster resistance.",
   'goblin ear': "A goblin's ear. Consume it for exp and a small chance of learning normal-monster resistance.",
   'hobgoblin ear': "A hobgoblin's ear. Consume it for exp and a small chance of learning normal-monster resistance.",

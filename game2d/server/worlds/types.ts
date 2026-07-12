@@ -34,6 +34,10 @@ export interface PlayerState extends Location, Attributes {
   eatBrainsReadyAtTick: number;
   skillCooldowns: Record<string, number>;
   deathCount: number;
+  // The lucem spell's toggle (see shared/types.ts's PlayerSnapshot) —
+  // needed here too so getMapState's hasLight calc (see
+  // world-manager.service.ts) can factor it in for OTHER players' benefit.
+  wandLit: boolean;
 }
 
 export type MoveResult =

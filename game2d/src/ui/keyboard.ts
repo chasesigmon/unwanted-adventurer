@@ -2,7 +2,7 @@
 // Enter/"/" to open chat, and Escape (item 8: closes whatever modal is
 // open, in addition to its prior "stop autopilot" behavior).
 import { activeScene } from '../state.js';
-import { isInputCaptured, ALL_MODALS, autopilotModal, charSheetModal, closeAllModals, equipmentModal, inventoryModal, mapModal, skillsModal, toggleModal } from './modalCore.js';
+import { isInputCaptured, ALL_MODALS, autopilotModal, charSheetModal, closeAllModals, equipmentModal, inventoryModal, mapModal, skillsModal, spellsModal, toggleModal } from './modalCore.js';
 import { openChatInput, openChatInputWithSlash } from './log.js';
 import { dismissAutopilotModal, toggleAutopilotModal } from './autopilotModal.js';
 
@@ -59,6 +59,9 @@ export function initGlobalKeyboardShortcuts(): void {
     } else if (key === 'k') {
       e.preventDefault();
       toggleModal(skillsModal);
+    } else if (key === 'l') {
+      e.preventDefault();
+      toggleModal(spellsModal);
     } else if (key === 'e') {
       e.preventDefault();
       toggleModal(equipmentModal);

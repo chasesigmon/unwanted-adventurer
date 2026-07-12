@@ -21,7 +21,7 @@ const ROW_INDEX: Record<FacingGroup, number> = { down: 0, up: 1, left: 2, right:
 // Kinds with a spritesheet but no gameplay hookup yet (no playable race,
 // no spawned monster) — assets exist and their walk/attack anims are
 // fully created/playable, ready for whatever uses them next.
-export type DecorativeKind = 'ogre' | 'shopkeeper';
+export type DecorativeKind = 'ogre' | 'shopkeeper' | 'teacher';
 
 // A human wizard's actual rendered appearance — gender x skin tone x hair
 // color, 18 combinations total, each its own fully-baked spritesheet (see
@@ -73,6 +73,7 @@ const TEXTURE_KEYS: Record<SpriteKind, string> = {
   'wild skeleton': 'wild-skeleton',
   ogre: 'ogre',
   shopkeeper: 'shopkeeper',
+  teacher: 'teacher',
   ...HUMAN_TEXTURE_KEYS,
 };
 const SHEET_PATHS: Record<SpriteKind, string> = {
@@ -87,6 +88,7 @@ const SHEET_PATHS: Record<SpriteKind, string> = {
   'wild skeleton': '/wild-skeleton-spritesheet.png',
   ogre: '/ogre-spritesheet.png',
   shopkeeper: '/shopkeeper-spritesheet.png',
+  teacher: '/teacher-spritesheet.png',
   ...HUMAN_SHEET_PATHS,
 };
 

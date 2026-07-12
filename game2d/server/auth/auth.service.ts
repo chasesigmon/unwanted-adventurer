@@ -10,6 +10,7 @@ import { SessionStoreService } from './session-store.service.js';
 import { ActiveConnectionsService } from './active-connections.service.js';
 import { startingPositionFor } from '../../shared/maps.js';
 import { STARTING_MAP } from '../../shared/constants.js';
+import { WAND_ITEM } from '../../shared/equipment.js';
 import { startingSkills } from '../combat/formulas.js';
 import type { AppConfig } from '../config/configuration.js';
 import type { CredentialsDto, RegisterAccountDto, CreateCharacterDto } from './dto/credentials.dto.js';
@@ -193,6 +194,10 @@ export class AuthService {
       row: spawn.row,
       col: spawn.col,
       skills: startingSkills(race),
+      // Every young witch/wizard starts with a basic wooden wand (item 9)
+      // — unequipped in their inventory, not auto-equipped, same as every
+      // other starting item convention in this project.
+      inventory: [WAND_ITEM],
     });
 
     return {

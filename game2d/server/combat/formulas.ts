@@ -3,7 +3,7 @@
 // down to this project's smaller scope (one active attack — punch — but
 // now with equipment, resistances, and dodge/parry/shield-block ported
 // from the text game).
-import { type EquipmentSlot } from '../../shared/equipment.js';
+import { type EquipmentSlot, WAND_ITEM } from '../../shared/equipment.js';
 import type { MonsterClass, Race } from '../../shared/constants.js';
 export { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, type EquipmentSlot } from '../../shared/equipment.js';
 import {
@@ -178,6 +178,9 @@ export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
   // Carried in the off-hand, same slot a shield would use — a light
   // source, not armor, but this project only has the one off-hand slot.
   torch: 'shield',
+  // Same slot a bone dagger would use — a wand and a dagger are mutually
+  // exclusive, matching a wizard's actual hand.
+  [WAND_ITEM]: 'weapon',
 };
 
 // Flat damage bonus while a given item is equipped in its slot — matches

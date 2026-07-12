@@ -23,6 +23,12 @@ export const EQUIPMENT_SLOTS = [
 ] as const;
 export type EquipmentSlot = (typeof EQUIPMENT_SLOTS)[number];
 
+// A wand fills the same 'weapon' slot a bone dagger would (see
+// combat/formulas.ts's EQUIPMENT_SLOT_FOR_ITEM) — mutually exclusive with
+// carrying a dagger, matching a wizard's actual hand. Every new character
+// starts with one (see auth.service.ts's createCharacter).
+export const WAND_ITEM = 'wand';
+
 export const EQUIPMENT_SLOT_LABELS: Record<EquipmentSlot, string> = {
   head: 'Head',
   mask: 'Mask',

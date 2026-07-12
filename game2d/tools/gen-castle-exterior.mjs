@@ -77,8 +77,14 @@ const WINDOW_LIT = 0xf0c060;
 const WINDOW_DARK = 0x1a1710;
 const DOOR = 0x2a1d12;
 
+// Widened per correction: "5 times wider... don't stretch it, just add more
+// buildings and towers" — ROWS (and therefore the render scale applied to
+// it client-side) is UNCHANGED from the original single-keep design; only
+// COLS grows, filled with genuinely distinct additional towers/wings
+// rather than the original artwork being scaled up. 320 = 5x the old
+// COLS(64), i.e. "5 times wider."
 const CELL = 6;
-const COLS = 64;
+const COLS = 320;
 const ROWS = 112;
 
 function drawTowerSpire(grid, left, width, roofTopY, roofBaseY) {
@@ -106,34 +112,72 @@ function drawMasonryLines(grid, left, width, top, bottom) {
   }
 }
 
+// A spired tower — used for both the two new outermost towers (tallest,
+// capping the whole complex) and the original two inner towers flanking
+// the keep (unchanged proportions from the original design).
+function drawTower(grid, left, width, spireTop, bodyTop, bottom) {
+  drawTowerSpire(grid, left, width, spireTop, bodyTop);
+  grid.fillRect(left, bodyTop, width, bottom - bodyTop, STONE);
+  drawMasonryLines(grid, left, width, bodyTop, bottom);
+  drawWindowGrid(grid, left, width, bodyTop + 4, bottom, 5, 10);
+  grid.fillRect(left - 1, bottom, width + 2, 4, STONE_DARK);
+}
+
+// A lower flat-roofed wing (dormitory/hall block) — new "more buildings"
+// content flanking the original keep+towers, shorter than everything else
+// so the skyline reads as one sprawling complex, not a repeated tower.
+function drawWing(grid, left, width, top, bottom) {
+  for (let x = left; x < left + width; x += 6) {
+    grid.fillRect(x, top, 3, 3, STONE);
+  }
+  grid.fillRect(left, top + 3, width, bottom - (top + 3), STONE_LIGHT);
+  drawMasonryLines(grid, left, width, top + 6, bottom);
+  drawWindowGrid(grid, left, width, top + 8, bottom, 6, 9);
+  grid.fillRect(left - 1, bottom, width + 2, 3, STONE_DARK);
+}
+
 function buildCastle() {
   const grid = createGrid(COLS, ROWS);
+  const bottom = ROWS - 4;
 
-  // ---- Two flanking towers (taller than the keep) ----
-  const towerWidth = 14;
-  const leftTowerX = 2;
-  const rightTowerX = COLS - 2 - towerWidth;
+  // ---- Two new outer towers, the tallest structures, capping each end ----
+  const outerTowerWidth = 16;
+  const outerTowerLeft = 2;
+  const outerTowerRight = COLS - 2 - outerTowerWidth;
+  drawTower(grid, outerTowerLeft, outerTowerWidth, 4, 22, bottom);
+  drawTower(grid, outerTowerRight, outerTowerWidth, 4, 22, bottom);
+
+  // ---- Two new wings per side (lower blocks) between the outer towers
+  // and the original inner towers ----
+  const wingWidth = 30;
+  const wingTop = 54;
+  const leftWing1 = outerTowerLeft + outerTowerWidth + 2;
+  const leftWing2 = leftWing1 + wingWidth + 2;
+  drawWing(grid, leftWing1, wingWidth, wingTop, bottom);
+  drawWing(grid, leftWing2, wingWidth, wingTop, bottom);
+  const rightWing1 = outerTowerRight - 2 - wingWidth;
+  const rightWing2 = rightWing1 - wingWidth - 2;
+  drawWing(grid, rightWing1, wingWidth, wingTop, bottom);
+  drawWing(grid, rightWing2, wingWidth, wingTop, bottom);
+
+  // ---- The original two inner towers, unchanged proportions, now
+  // flanking the keep further inward ----
+  const innerTowerWidth = 14;
+  const leftTowerX = leftWing2 + wingWidth + 2;
+  const rightTowerX = rightWing2 - 2 - innerTowerWidth;
   const towerTop = 6;
   const towerBodyTop = 20;
-  const towerBottom = ROWS - 4;
+  drawTower(grid, leftTowerX, innerTowerWidth, towerTop, towerBodyTop, bottom);
+  drawTower(grid, rightTowerX, innerTowerWidth, towerTop, towerBodyTop, bottom);
 
-  drawTowerSpire(grid, leftTowerX, towerWidth, towerTop, towerBodyTop);
-  drawTowerSpire(grid, rightTowerX, towerWidth, towerTop, towerBodyTop);
-  grid.fillRect(leftTowerX, towerBodyTop, towerWidth, towerBottom - towerBodyTop, STONE);
-  grid.fillRect(rightTowerX, towerBodyTop, towerWidth, towerBottom - towerBodyTop, STONE);
-  drawMasonryLines(grid, leftTowerX, towerWidth, towerBodyTop, towerBottom);
-  drawMasonryLines(grid, rightTowerX, towerWidth, towerBodyTop, towerBottom);
-  drawWindowGrid(grid, leftTowerX, towerWidth, towerBodyTop + 4, towerBottom, 5, 10);
-  drawWindowGrid(grid, rightTowerX, towerWidth, towerBodyTop + 4, towerBottom, 5, 10);
-  // Tower base foundation, a shade darker.
-  grid.fillRect(leftTowerX - 1, towerBottom, towerWidth + 2, 4, STONE_DARK);
-  grid.fillRect(rightTowerX - 1, towerBottom, towerWidth + 2, 4, STONE_DARK);
-
-  // ---- Central keep (shorter than the towers, crenellated top) ----
-  const keepLeft = leftTowerX + towerWidth + 2;
+  // ---- Central keep (shorter than the towers, crenellated top) —
+  // unchanged from the original design, just re-centered in the new,
+  // wider canvas so the door still lines up with the sprite's horizontal
+  // center (see WorldScene's origin(0.5, 1) anchor). ----
+  const keepLeft = leftTowerX + innerTowerWidth + 2;
   const keepWidth = rightTowerX - keepLeft - 2;
   const keepTop = 34;
-  const keepBottom = ROWS - 4;
+  const keepBottom = bottom;
 
   // Crenellations — a repeating notch pattern along the top edge.
   for (let x = keepLeft; x < keepLeft + keepWidth; x += 6) {
@@ -184,10 +228,14 @@ function buildCrow() {
 
 rasterize(buildCrow(), CROW_COLS, CROW_ROWS, CROW_CELL, join(ASSETS_DIR, 'crow.png'));
 
-// ---------- A room fireplace (item 6) — a stone mantle around a hearth
-// with a couple of flame shapes. Like the wall torch, the flame's flicker
-// is a Phaser alpha-tween applied to this whole static sprite client-side
-// (see WorldScene's renderMap), not a multi-frame animation. ----------
+// ---------- A room fireplace — split into two separate images (item 1's
+// correction: the stone mantle should stay perfectly still, only the fire
+// itself sways) that are stacked at the same position/size client-side
+// (see WorldScene's renderMap): fireplace-mantle.png (stone surround,
+// dark hearth, logs — no tween at all) and fireplace-flame.png (just the
+// flame shapes, everything else transparent — this is the one that gets
+// the sway + flicker tweens). Same canvas size/cell for both so they
+// align pixel-for-pixel when drawn on top of each other. ----------
 const HEARTH_COLS = 20;
 const HEARTH_ROWS = 22;
 const HEARTH_CELL = 4;
@@ -198,7 +246,7 @@ const FLAME_OUTER = 0xd9601a;
 const FLAME_INNER = 0xf0c040;
 const LOG = 0x4a3320;
 
-function buildFireplace() {
+function buildFireplaceMantle() {
   const grid = createGrid(HEARTH_COLS, HEARTH_ROWS);
 
   // Stone mantle surround.
@@ -215,7 +263,17 @@ function buildFireplace() {
   grid.fillRect(5, HEARTH_ROWS - 6, HEARTH_COLS - 10, 2, LOG);
   grid.fillRect(6, HEARTH_ROWS - 8, HEARTH_COLS - 12, 2, LOG);
 
+  return grid;
+}
+
+rasterize(buildFireplaceMantle(), HEARTH_COLS, HEARTH_ROWS, HEARTH_CELL, join(ASSETS_DIR, 'fireplace-mantle.png'));
+
+function buildFireplaceFlame() {
+  const grid = createGrid(HEARTH_COLS, HEARTH_ROWS);
+
   // Flame shapes — a couple of licking-flame silhouettes above the logs.
+  // Everything else on this canvas stays transparent (createGrid's cells
+  // default to null, which rasterize() skips entirely).
   const flameBase = HEARTH_ROWS - 7;
   for (const [fx, fw, fh] of [
     [5, 4, 8],
@@ -233,7 +291,7 @@ function buildFireplace() {
   return grid;
 }
 
-rasterize(buildFireplace(), HEARTH_COLS, HEARTH_ROWS, HEARTH_CELL, join(ASSETS_DIR, 'fireplace.png'));
+rasterize(buildFireplaceFlame(), HEARTH_COLS, HEARTH_ROWS, HEARTH_CELL, join(ASSETS_DIR, 'fireplace-flame.png'));
 
 // ---------- A stairway tile (item 6) — same footprint as the wooden
 // door (32x40) so it drops into the exact same doorSprites rendering

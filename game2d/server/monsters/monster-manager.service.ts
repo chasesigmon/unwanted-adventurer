@@ -6,6 +6,7 @@ import { fireplacePositionsFor } from '../../shared/lighting.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
 import { vendorsForMap } from '../worlds/vendors.js';
+import { teachersForMap, deskPositionFor } from '../worlds/teachers.js';
 import type { MapName } from '../../shared/constants.js';
 import type { MonsterSnapshot } from '../../shared/types.js';
 
@@ -91,6 +92,13 @@ export class MonsterManagerService {
     // WorldManagerService.isOccupied — a wandering/spawning monster
     // shouldn't stand inside the shop stall either.
     if (vendorsForMap(mapName).some((v) => (v.row === row && v.col === col) || (v.row + 1 === row && v.col === col))) return false;
+    if (
+      teachersForMap(mapName).some((t) => {
+        const desk = deskPositionFor(t);
+        return (t.row === row && t.col === col) || (desk.row === row && desk.col === col);
+      })
+    )
+      return false;
     for (const m of this.monsters.values()) {
       if (m.mapName === mapName && m.row === row && m.col === col) return false;
     }

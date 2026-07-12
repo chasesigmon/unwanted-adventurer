@@ -89,9 +89,24 @@ import {
 } from '../combat/formulas.js';
 import type { Monster } from '../monsters/monster.js';
 import type { AppConfig } from '../config/configuration.js';
-import type { PlayerSnapshot, GameServer, GameSocket, CombatEventPayload, UseItemAck, RestState, BuyAck, EatBrainsAck, SacrificeAck, MoveAck } from '../../shared/types.js';
+import type {
+  PlayerSnapshot,
+  GameServer,
+  GameSocket,
+  CombatEventPayload,
+  UseItemAck,
+  RestState,
+  BuyAck,
+  EatBrainsAck,
+  SacrificeAck,
+  MoveAck,
+  ReadLucemBookAck,
+} from '../../shared/types.js';
 import { TOWN_MAPS } from '../../shared/constants.js';
 import { emitsLight, TORCH_ITEM, timeOfDayLabel, isWithinLightRadius, isWithinShopReach } from '../../shared/lighting.js';
+import { WAND_ITEM } from '../../shared/equipment.js';
+import { LUCEM_SKILL } from '../../shared/skills.js';
+import { LUCEM_BOOK_MAP, LUCEM_BOOK_POSITION } from '../../shared/spells.js';
 import { MONSTER_KINDS } from '../../shared/constants.js';
 import type { Direction, MapName, MonsterClass, MonsterKind, Race } from '../../shared/constants.js';
 
@@ -118,6 +133,13 @@ const MONSTER_TICK_INTERVAL_MS = 3000;
 // ~2-2.7 minutes, not a fixed duration.
 const EAT_BRAINS_COOLDOWN_TICKS = 4;
 const EAT_BRAINS_HEAL_PERCENT = 20;
+// The Utilization classroom's spellbook podium (item 8) — same world-tick
+// unit as EAT_BRAINS_COOLDOWN_TICKS above ("2 stat ticks" per the
+// request); LUCEM_BOOK_MAP/POSITION live in shared/spells.ts so the
+// client (rendering/clicking the podium) and this reach check always
+// agree on where it actually is.
+const LUCEM_BOOK_COOLDOWN_TICKS = 2;
+const LUCEM_BOOK_LEARN_CHANCE = 0.1;
 // Skeleton-only "Glare" — measured in COMBAT ticks (see combatTickCount
 // below), the same ~3s cadence hits themselves land on, NOT the slow
 // 30-40s world tick Eat Brains uses above. Only applied when a skeleton
@@ -359,7 +381,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       equipment: client.data.equipment,
       consumeExp: client.data.consumeExp,
       restState: client.data.restState,
-      hasLight: emitsLight(client.data.equipment),
+      hasLight: emitsLight(client.data.equipment) || client.data.wandLit,
+      wandLit: client.data.wandLit,
       gold: client.data.gold,
       mimicableRaces: client.data.mimicableRaces,
       mimicForm: client.data.mimicForm,
@@ -852,6 +875,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // Never persisted — a fresh connection always starts every skill off
     // cooldown, same tradeoff as restState/eatBrainsReadyAtTick above.
     client.data.skillCooldowns = {};
+    // A wand never relights itself on reconnect (unlike a torch) — always
+    // starts unlit; same tradeoff as restState.
+    client.data.wandLit = false;
+    client.data.lucemBookReadyAtTick = 0;
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
@@ -883,6 +910,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       eatBrainsReadyAtTick: client.data.eatBrainsReadyAtTick,
       skillCooldowns: client.data.skillCooldowns,
       deathCount: client.data.deathCount,
+      wandLit: client.data.wandLit,
     });
     void client.join(client.data.map);
 
@@ -1806,6 +1834,53 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
+  // The Utilization classroom's spellbook podium (item 8): a 10% chance
+  // per click of learning lucem, gated by a 2-world-tick cooldown — same
+  // "reach check, then cooldown check, then a Math.random() roll" shape
+  // as handleEatBrains/applyConsume above.
+  @SubscribeMessage('readLucemBook')
+  handleReadLucemBook(@ConnectedSocket() client: GameSocket): ReadLucemBookAck {
+    if (client.data.map !== LUCEM_BOOK_MAP) {
+      return { ok: false, message: "There's no spellbook here." };
+    }
+    if (!this.isWithinLootReach(client, LUCEM_BOOK_POSITION.row, LUCEM_BOOK_POSITION.col)) {
+      return { ok: false, message: "You're too far away to reach the book." };
+    }
+    if (this.currentTick < client.data.lucemBookReadyAtTick) {
+      const ticksLeft = client.data.lucemBookReadyAtTick - this.currentTick;
+      return { ok: false, message: `You need a moment before reading again (${ticksLeft} more world tick${ticksLeft === 1 ? '' : 's'}).` };
+    }
+    client.data.lucemBookReadyAtTick = this.currentTick + LUCEM_BOOK_COOLDOWN_TICKS;
+
+    if (client.data.skills[LUCEM_SKILL] !== undefined) {
+      return {
+        ok: true,
+        skills: client.data.skills,
+        lucemBookReadyAtTick: client.data.lucemBookReadyAtTick,
+        message: 'You already know how to conjure light with lucem.',
+      };
+    }
+
+    if (Math.random() < LUCEM_BOOK_LEARN_CHANCE) {
+      client.data.skills = { ...client.data.skills, [LUCEM_SKILL]: STARTING_SKILL_PERCENT };
+      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      return {
+        ok: true,
+        skills: client.data.skills,
+        lucemBookReadyAtTick: client.data.lucemBookReadyAtTick,
+        message: 'The words swim into focus — you have learned lucem!',
+      };
+    }
+
+    return {
+      ok: true,
+      lucemBookReadyAtTick: client.data.lucemBookReadyAtTick,
+      message: 'You pore over the pages, but nothing clicks yet.',
+    };
+  }
+
   // Local (map-scoped) chat — same shape as punch: fire-and-forget,
   // rebroadcast only to the sender's own map room, so someone in the
   // Labyrinth or a town never sees Great Plains chat and vice versa. A
@@ -1842,6 +1917,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     '/mimic [race] - slime only: with no argument, lists what you can mimic; with one, shifts your form to it',
     '/revert - slime only: shift back to your natural slime form',
     '/time - show the current game hour and whether it is day or night',
+    "/lucem - toggle your equipped wand's light on or off (requires the lucem skill)",
   ].join('\n');
 
   private handleCommand(client: GameSocket, commandText: string): void {
@@ -1875,6 +1951,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         break;
       case 'time':
         this.handleTimeCommand(client);
+        break;
+      case 'lucem':
+        this.handleLucemCommand(client);
         break;
       default:
         this.systemMessage(client, `Unknown command: /${command}. Try /commands.`);
@@ -1926,6 +2005,30 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     this.setMimicForm(client, null);
     this.systemMessage(client, 'You revert to your natural slime form.');
+  }
+
+  // The lucem skill's own no-target toggle (see WorldScene's
+  // useTargetedSkill, which fires this via a plain '/lucem' chat command
+  // the same way /mimic and /revert already work) — requires both the
+  // skill (learned from the Utilization classroom's spellbook, see
+  // handleReadLucemBook) and a wand actually equipped; lighting/
+  // extinguishing just flips client.data.wandLit, which feeds both this
+  // player's own vision (see WorldScene's localLightRadiusTiles) and
+  // whether nearby players see it (hasLight, see snapshotFor).
+  private handleLucemCommand(client: GameSocket): void {
+    if (client.data.skills[LUCEM_SKILL] === undefined) {
+      this.systemMessage(client, "You don't know the lucem spell yet.");
+      return;
+    }
+    if (client.data.equipment.weapon !== WAND_ITEM) {
+      this.systemMessage(client, 'You need a wand equipped to cast lucem.');
+      return;
+    }
+    client.data.wandLit = !client.data.wandLit;
+    this.worldManager.updateState(client.data.username, { wandLit: client.data.wandLit });
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    this.systemMessage(client, client.data.wandLit ? 'Your wand glows with a soft light.' : 'Your wand goes dark.');
   }
 
   private handleTimeCommand(client: GameSocket): void {

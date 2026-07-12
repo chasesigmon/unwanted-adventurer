@@ -12,6 +12,7 @@ import type {
   BuyAck,
   EatBrainsAck,
   SacrificeAck,
+  ReadLucemBookAck,
   UseItemAck,
   ChatPayload,
   WhoAck,
@@ -307,6 +308,19 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('sacrificeCorpse', corpseId, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  readLucemBook(): Promise<ReadLucemBookAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('readLucemBook', (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

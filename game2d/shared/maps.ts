@@ -133,14 +133,16 @@ export function startingPositionFor(mapName: MapName): { row: number; col: numbe
 }
 
 // The castle exterior's own footprint in tiles (item 5's collision) —
-// derived from its raw asset size (384x672px, see
-// tools/gen-castle-exterior.mjs) times its 5x render scale (item 2, see
-// src/game/mapRender.ts's CASTLE_EXTERIOR_SCALE) divided by the 32px
-// tile size, computed here as plain numbers since this shared module
+// derived from its raw asset size (1920x672px, see
+// tools/gen-castle-exterior.mjs — widened by adding towers/wings, not by
+// stretching, per item 2's correction) times its 1x render scale (see
+// src/game/mapRender.ts's CASTLE_EXTERIOR_SCALE, halved again per a
+// follow-up "same building count, half the size" request) divided by the
+// 32px tile size, computed here as plain numbers since this shared module
 // (read by the server for collision) has no reason to depend on Phaser
 // or any client-only rendering constant.
-const CASTLE_FOOTPRINT_WIDTH_TILES = 60; // (384 * 5) / 32
-const CASTLE_FOOTPRINT_HEIGHT_TILES = 105; // (672 * 5) / 32
+const CASTLE_FOOTPRINT_WIDTH_TILES = 60; // (1920 * 1) / 32
+const CASTLE_FOOTPRINT_HEIGHT_TILES = 21; // (672 * 1) / 32
 
 // True for any tile the castle's own exterior sprite visually covers,
 // EXCEPT the door tile itself (still walkable — it's the entrance) —
@@ -169,10 +171,14 @@ const ROOM_COLS = 56;
 const ROOM_MID_ROW = Math.floor(ROOM_ROWS / 2);
 const ROOM_MID_COL = Math.floor(ROOM_COLS / 2);
 
-const CORRIDOR_ROWS = 36;
-const CORRIDOR_COLS = 90;
-const CORRIDOR_MID_ROW = Math.floor(CORRIDOR_ROWS / 2);
-const CORRIDOR_MID_COL = Math.floor(CORRIDOR_COLS / 2);
+// Classrooms specifically (not the dorm-style common rooms) got shrunk to
+// a third of the standard room footprint — see src/game/mapRender.ts's
+// CLASSROOM_ZOOM, which zooms the camera in to compensate so these still
+// "fill up the whole screen" despite the smaller grid.
+const CLASSROOM_ROWS = Math.round(ROOM_ROWS / 3);
+const CLASSROOM_COLS = Math.round(ROOM_COLS / 3);
+const CLASSROOM_MID_ROW = Math.floor(CLASSROOM_ROWS / 2);
+const CLASSROOM_MID_COL = Math.floor(CLASSROOM_COLS / 2);
 
 const ENTRANCE_ROWS = 48;
 const ENTRANCE_COLS = 70;
@@ -183,10 +189,24 @@ const GREAT_HALL_ROWS = 44;
 const GREAT_HALL_COLS = 64;
 const GREAT_HALL_MID_ROW = Math.floor(GREAT_HALL_ROWS / 2);
 
-const STAIRCASE_ROWS = 44;
-const STAIRCASE_COLS = 60;
-const STAIRCASE_MID_ROW = Math.floor(STAIRCASE_ROWS / 2);
-const STAIRCASE_MID_COL = Math.floor(STAIRCASE_COLS / 2);
+// A simplified castle (a follow-up ask): every classroom AND every house
+// common room now hangs directly off the Entrance Hall's own previously-
+// unused north wall, instead of via the Grand Staircase/Dungeon Corridor
+// hub rooms — those two, and the whole first/second-floor corridor
+// concept, have been removed outright (see the "deferred" project memory
+// note for the 2nd floor/stairs work this replaces). 8 doors spread
+// evenly across the north wall: 3 house common rooms, then the 5
+// classrooms named in the request.
+const ENTRANCE_NORTH_DOORS: Array<{ col: number; name: MapName }> = [
+  { col: 8, name: 'Emberclaw Common Room' },
+  { col: 16, name: 'Starfall Common Room' },
+  { col: 24, name: 'Duskwing Common Room' },
+  { col: 32, name: 'Elemental Casting' },
+  { col: 40, name: 'Defense' },
+  { col: 48, name: 'Summoning' },
+  { col: 56, name: 'Utilization' },
+  { col: 62, name: 'Offense' },
+];
 
 const ENTRANCE_HALL: MapDefinition = {
   name: 'Grimoak Entrance Hall',
@@ -204,10 +224,46 @@ const ENTRANCE_HALL: MapDefinition = {
     },
     { row: ENTRANCE_MID_ROW, col: ENTRANCE_COLS - 1, direction: 'east', toMap: 'Great Hall', toRow: GREAT_HALL_MID_ROW, toCol: 0 },
     { row: ENTRANCE_MID_ROW, col: 0, direction: 'west', toMap: 'Thistledown Common Room', toRow: ROOM_MID_ROW, toCol: ROOM_COLS - 1 },
-    { row: 0, col: ENTRANCE_MID_COL - 10, direction: 'north', toMap: 'Dungeon Corridor', toRow: CORRIDOR_ROWS - 1, toCol: CORRIDOR_MID_COL },
-    { row: 0, col: ENTRANCE_MID_COL + 10, direction: 'north', toMap: 'Grand Staircase', toRow: STAIRCASE_ROWS - 1, toCol: STAIRCASE_MID_COL },
+    ...ENTRANCE_NORTH_DOORS.map(({ col, name }) => {
+      const isCommonRoom = name.endsWith('Common Room');
+      return {
+        row: 0,
+        col,
+        direction: 'north' as const,
+        toMap: name,
+        toRow: (isCommonRoom ? ROOM_ROWS : CLASSROOM_ROWS) - 1,
+        toCol: isCommonRoom ? ROOM_MID_COL : CLASSROOM_MID_COL,
+      };
+    }),
   ],
 };
+
+// A room hanging directly off the Entrance Hall's north wall, entered
+// through its own south wall — same reciprocal-exit tile pair pattern as
+// every other room in this file, built generically since the classrooms
+// are otherwise identical (only their name/door column differ). House
+// common rooms (bigger, ROOM_ROWS/COLS) use their own dedicated
+// definitions below since they also carry lore/flavor comments, but
+// follow the exact same door math.
+function classroomOffEntranceHall(name: MapName): MapDefinition {
+  const entranceDoor = ENTRANCE_NORTH_DOORS.find((d) => d.name === name)!;
+  return {
+    name,
+    rows: CLASSROOM_ROWS,
+    cols: CLASSROOM_COLS,
+    terrain: 'stone',
+    exits: [
+      {
+        row: CLASSROOM_ROWS - 1,
+        col: CLASSROOM_MID_COL,
+        direction: 'south',
+        toMap: 'Grimoak Entrance Hall',
+        toRow: 0,
+        toCol: entranceDoor.col,
+      },
+    ],
+  };
+}
 
 const GREAT_HALL: MapDefinition = {
   name: 'Great Hall',
@@ -225,136 +281,34 @@ const THISTLEDOWN_COMMON_ROOM: MapDefinition = {
   exits: [{ row: ROOM_MID_ROW, col: ROOM_COLS - 1, direction: 'east', toMap: 'Grimoak Entrance Hall', toRow: ENTRANCE_MID_ROW, toCol: 0 }],
 };
 
-const DUNGEON_CORRIDOR: MapDefinition = {
-  name: 'Dungeon Corridor',
-  rows: CORRIDOR_ROWS,
-  cols: CORRIDOR_COLS,
-  terrain: 'stone',
-  exits: [
-    {
-      row: CORRIDOR_ROWS - 1,
-      col: CORRIDOR_MID_COL,
-      direction: 'south',
-      toMap: 'Grimoak Entrance Hall',
-      toRow: 0,
-      toCol: ENTRANCE_MID_COL - 10,
-    },
-    { row: CORRIDOR_MID_ROW, col: 0, direction: 'west', toMap: 'Alchemy', toRow: ROOM_MID_ROW, toCol: ROOM_COLS - 1 },
-    { row: CORRIDOR_MID_ROW, col: CORRIDOR_COLS - 1, direction: 'east', toMap: 'Duskwing Common Room', toRow: ROOM_MID_ROW, toCol: 0 },
-  ],
-};
+// The 3 house common rooms — now hanging directly off the Entrance
+// Hall's north wall (see ENTRANCE_NORTH_DOORS) instead of the removed
+// Grand Staircase/Dungeon Corridor hub rooms. Kept as their own dedicated
+// definitions (rather than classroomOffEntranceHall, which is
+// classroom-sized) since these are ROOM_ROWS/COLS, the bigger footprint.
+function commonRoomOffEntranceHall(name: MapName): MapDefinition {
+  const entranceDoor = ENTRANCE_NORTH_DOORS.find((d) => d.name === name)!;
+  return {
+    name,
+    rows: ROOM_ROWS,
+    cols: ROOM_COLS,
+    terrain: 'stone',
+    exits: [{ row: ROOM_ROWS - 1, col: ROOM_MID_COL, direction: 'south', toMap: 'Grimoak Entrance Hall', toRow: 0, toCol: entranceDoor.col }],
+  };
+}
 
-const ALCHEMY: MapDefinition = {
-  name: 'Alchemy',
-  rows: ROOM_ROWS,
-  cols: ROOM_COLS,
-  terrain: 'stone',
-  exits: [{ row: ROOM_MID_ROW, col: ROOM_COLS - 1, direction: 'east', toMap: 'Dungeon Corridor', toRow: CORRIDOR_MID_ROW, toCol: 0 }],
-};
+const EMBERCLAW_COMMON_ROOM = commonRoomOffEntranceHall('Emberclaw Common Room');
+const STARFALL_COMMON_ROOM = commonRoomOffEntranceHall('Starfall Common Room');
+const DUSKWING_COMMON_ROOM = commonRoomOffEntranceHall('Duskwing Common Room');
 
-const DUSKWING_COMMON_ROOM: MapDefinition = {
-  name: 'Duskwing Common Room',
-  rows: ROOM_ROWS,
-  cols: ROOM_COLS,
-  terrain: 'stone',
-  exits: [{ row: ROOM_MID_ROW, col: 0, direction: 'west', toMap: 'Dungeon Corridor', toRow: CORRIDOR_MID_ROW, toCol: CORRIDOR_COLS - 1 }],
-};
-
-const GRAND_STAIRCASE: MapDefinition = {
-  name: 'Grand Staircase',
-  rows: STAIRCASE_ROWS,
-  cols: STAIRCASE_COLS,
-  terrain: 'stone',
-  exits: [
-    {
-      row: STAIRCASE_ROWS - 1,
-      col: STAIRCASE_MID_COL,
-      direction: 'south',
-      toMap: 'Grimoak Entrance Hall',
-      toRow: 0,
-      toCol: ENTRANCE_MID_COL + 10,
-    },
-    { row: 0, col: STAIRCASE_MID_COL, direction: 'north', toMap: 'First Floor Corridor', toRow: CORRIDOR_ROWS - 1, toCol: CORRIDOR_MID_COL },
-    { row: STAIRCASE_MID_ROW, col: STAIRCASE_COLS - 1, direction: 'east', toMap: 'Emberclaw Common Room', toRow: ROOM_MID_ROW, toCol: 0 },
-    { row: STAIRCASE_MID_ROW, col: 0, direction: 'west', toMap: 'Starfall Common Room', toRow: ROOM_MID_ROW, toCol: ROOM_COLS - 1 },
-    // A staircase up to the second floor (item 6) — a distinct tile from
-    // the other east exit, further down the same wall.
-    {
-      row: STAIRCASE_ROWS - 8,
-      col: STAIRCASE_COLS - 1,
-      direction: 'east',
-      toMap: 'Second Floor Corridor',
-      toRow: CORRIDOR_ROWS - 1,
-      toCol: CORRIDOR_MID_COL,
-      kind: 'stairs',
-    },
-  ],
-};
-
-// The second floor's own stub corridor (item 6) — just the stairs back
-// down for now; classrooms up here are "eventually" work.
-const SECOND_FLOOR_CORRIDOR: MapDefinition = {
-  name: 'Second Floor Corridor',
-  rows: CORRIDOR_ROWS,
-  cols: CORRIDOR_COLS,
-  terrain: 'stone',
-  exits: [
-    {
-      row: CORRIDOR_ROWS - 1,
-      col: CORRIDOR_MID_COL,
-      direction: 'south',
-      toMap: 'Grand Staircase',
-      toRow: STAIRCASE_ROWS - 8,
-      toCol: STAIRCASE_COLS - 1,
-      kind: 'stairs',
-    },
-  ],
-};
-
-const FIRST_FLOOR_CORRIDOR: MapDefinition = {
-  name: 'First Floor Corridor',
-  rows: CORRIDOR_ROWS,
-  cols: CORRIDOR_COLS,
-  terrain: 'stone',
-  exits: [
-    { row: CORRIDOR_ROWS - 1, col: CORRIDOR_MID_COL, direction: 'south', toMap: 'Grand Staircase', toRow: 0, toCol: STAIRCASE_MID_COL },
-    { row: CORRIDOR_MID_ROW, col: 0, direction: 'west', toMap: 'Elemental Casting', toRow: ROOM_MID_ROW, toCol: ROOM_COLS - 1 },
-    { row: CORRIDOR_MID_ROW, col: CORRIDOR_COLS - 1, direction: 'east', toMap: 'Shapecraft', toRow: ROOM_MID_ROW, toCol: 0 },
-  ],
-};
-
-const EMBERCLAW_COMMON_ROOM: MapDefinition = {
-  name: 'Emberclaw Common Room',
-  rows: ROOM_ROWS,
-  cols: ROOM_COLS,
-  terrain: 'stone',
-  exits: [{ row: ROOM_MID_ROW, col: 0, direction: 'west', toMap: 'Grand Staircase', toRow: STAIRCASE_MID_ROW, toCol: STAIRCASE_COLS - 1 }],
-};
-
-const STARFALL_COMMON_ROOM: MapDefinition = {
-  name: 'Starfall Common Room',
-  rows: ROOM_ROWS,
-  cols: ROOM_COLS,
-  terrain: 'stone',
-  exits: [{ row: ROOM_MID_ROW, col: ROOM_COLS - 1, direction: 'east', toMap: 'Grand Staircase', toRow: STAIRCASE_MID_ROW, toCol: 0 }],
-};
-
-const ELEMENTAL_CASTING: MapDefinition = {
-  name: 'Elemental Casting',
-  rows: ROOM_ROWS,
-  cols: ROOM_COLS,
-  terrain: 'stone',
-  exits: [{ row: ROOM_MID_ROW, col: ROOM_COLS - 1, direction: 'east', toMap: 'First Floor Corridor', toRow: CORRIDOR_MID_ROW, toCol: 0 }],
-};
-
-const SHAPECRAFT: MapDefinition = {
-  name: 'Shapecraft',
-  rows: ROOM_ROWS,
-  cols: ROOM_COLS,
-  terrain: 'stone',
-  exits: [{ row: ROOM_MID_ROW, col: 0, direction: 'west', toMap: 'First Floor Corridor', toRow: CORRIDOR_MID_ROW, toCol: CORRIDOR_COLS - 1 }],
-};
-
+// The 5 classrooms named in the request — Elemental Casting, Defense,
+// Summoning, Utilization, Offense — the only classrooms in the castle
+// now, all connected directly to the Entrance Hall.
+const ELEMENTAL_CASTING = classroomOffEntranceHall('Elemental Casting');
+const DEFENSE = classroomOffEntranceHall('Defense');
+const SUMMONING = classroomOffEntranceHall('Summoning');
+const UTILIZATION = classroomOffEntranceHall('Utilization');
+const OFFENSE = classroomOffEntranceHall('Offense');
 
 export const MAPS: Record<MapName, MapDefinition> = {
   'Great Plains': {
@@ -469,16 +423,14 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Grimoak Entrance Hall': ENTRANCE_HALL,
   'Great Hall': GREAT_HALL,
   'Thistledown Common Room': THISTLEDOWN_COMMON_ROOM,
-  'Dungeon Corridor': DUNGEON_CORRIDOR,
-  Alchemy: ALCHEMY,
   'Duskwing Common Room': DUSKWING_COMMON_ROOM,
-  'Grand Staircase': GRAND_STAIRCASE,
-  'First Floor Corridor': FIRST_FLOOR_CORRIDOR,
-  'Second Floor Corridor': SECOND_FLOOR_CORRIDOR,
   'Emberclaw Common Room': EMBERCLAW_COMMON_ROOM,
   'Starfall Common Room': STARFALL_COMMON_ROOM,
   'Elemental Casting': ELEMENTAL_CASTING,
-  Shapecraft: SHAPECRAFT,
+  Defense: DEFENSE,
+  Summoning: SUMMONING,
+  Utilization: UTILIZATION,
+  Offense: OFFENSE,
 };
 
 export function getMap(name: MapName): MapDefinition {

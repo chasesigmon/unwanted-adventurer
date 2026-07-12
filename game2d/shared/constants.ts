@@ -47,29 +47,33 @@ export const FLORO_SHOP_MAPS = [
 // no trademarked terms). "Grimoak Grounds" is the outer world (castle
 // exterior, courtyard, lake, pitch, forest edge); everything else here is
 // a real interior room inside the castle, same reciprocal-exit pattern as
-// Floro's shops. See docs/research (or the published world sketch) for
-// the full room directory — this phase-1 set is the hub-and-spoke
-// skeleton: Entrance Hall out to the Grounds, the Great Hall, Thistledown
-// (ground floor), and the dungeon stair; the Grand Staircase up to the
-// two tower houses (Emberclaw, Starfall) and the first floor classroom
-// corridor; the dungeon corridor down to Alchemy and Duskwing.
+// Floro's shops. Simplified per a follow-up ask: the Grand Staircase,
+// Dungeon Corridor, and the whole first/second-floor corridor concept
+// (along with every classroom that used to hang off them) were removed —
+// see the "2nd floor deferred" project memory note. Every house common
+// room AND every classroom now connects directly to the Entrance Hall.
 export const GRIMOAK_CASTLE_MAPS = [
   'Grimoak Entrance Hall',
   'Great Hall',
-  'Grand Staircase',
-  'First Floor Corridor',
-  'Dungeon Corridor',
-  'Elemental Casting',
-  'Shapecraft',
-  'Alchemy',
-  'Emberclaw Common Room',
-  'Duskwing Common Room',
   'Thistledown Common Room',
+  'Duskwing Common Room',
+  'Emberclaw Common Room',
   'Starfall Common Room',
-  // A staircase up from the Grand Staircase (item 6) — a stub for now,
-  // the actual second-floor classrooms are "eventually" work.
-  'Second Floor Corridor',
+  'Elemental Casting',
+  'Defense',
+  'Summoning',
+  'Utilization',
+  'Offense',
 ] as const;
+
+// Classroom-sized rooms (a follow-up ask: "a third of the size" of the
+// standard ROOM_ROWS/COLS footprint, see shared/maps.ts's CLASSROOM_ROWS/
+// COLS) — the only 5 classrooms in the castle now. WorldScene uses this
+// list to zoom the camera in for these specific rooms so the smaller
+// footprint still fills the screen (see mapRender.ts's CLASSROOM_ZOOM);
+// the house common rooms/Great Hall/Entrance Hall stay at the standard
+// size/zoom.
+export const CLASSROOM_MAPS = ['Elemental Casting', 'Defense', 'Summoning', 'Utilization', 'Offense'] as const;
 
 export const MAP_NAMES = [
   'Great Plains',

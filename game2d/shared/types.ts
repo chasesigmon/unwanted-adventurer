@@ -64,6 +64,13 @@ export interface PlayerSnapshot {
   // Condeath tracking (item 23) — every death, from any cause, counts
   // toward CONDEATH_LIMIT (65); see game.gateway.ts's applyCondeathPenalty.
   deathCount: number;
+  // Whether THIS player's own wand is currently lit (the lucem spell's
+  // toggle — see game.gateway.ts's handleLucemCommand) — never persisted
+  // (resets to unlit on reconnect, same tradeoff as restState/torchLitAt).
+  // Distinct from hasLight below: this is checked for the LOCAL player's
+  // own vision (see WorldScene's localLightRadiusTiles); hasLight is what
+  // OTHER nearby players see.
+  wandLit: boolean;
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
@@ -157,6 +164,18 @@ export interface VendorSnapshot {
   greeting: string;
 }
 
+// A stationary classroom teacher (see server/worlds/teachers.ts) — no
+// combat stats (not a fight target like NpcSnapshot's training dummy),
+// no shop (unlike VendorSnapshot); just a name/position, standing behind
+// its own desk (see deskPositionFor).
+export interface TeacherSnapshot {
+  id: string;
+  name: string;
+  map: MapName;
+  row: number;
+  col: number;
+}
+
 export interface MapStatePayload {
   mapName: MapName;
   players: PlayerSnapshot[];
@@ -164,6 +183,7 @@ export interface MapStatePayload {
   monsters: MonsterSnapshot[];
   corpses: CorpseSnapshot[];
   vendors: VendorSnapshot[];
+  teachers: TeacherSnapshot[];
 }
 
 // Broadcast to a map's room whenever a punch actually lands on a target
@@ -264,6 +284,16 @@ export interface UseItemAck {
   message?: string;
 }
 
+// The Utilization classroom's spellbook podium (item 8) — same
+// "world-tick cooldown + a chance roll" shape as EatBrainsAck/UseItemAck's
+// consume path, just for a click-to-read interaction instead.
+export interface ReadLucemBookAck {
+  ok: boolean;
+  skills?: Record<string, number>;
+  lucemBookReadyAtTick?: number;
+  message?: string;
+}
+
 // Local (map-scoped) chat — broadcast only to the room for `map`, so a
 // player in the Labyrinth never sees a chat line sent from the Great
 // Plains, and vice versa.
@@ -342,6 +372,10 @@ export interface ClientToServerEvents {
   // Monster-corpse-only "sacrifice it to the gods" — see
   // game.gateway.ts's handleSacrificeCorpse for the gold formula.
   sacrificeCorpse: (corpseId: string, ack: (res: SacrificeAck) => void) => void;
+  // The Utilization classroom's spellbook podium (item 8) — a 10% chance
+  // per click of learning lucem, gated by a 2-world-tick cooldown; see
+  // game.gateway.ts's handleReadLucemBook.
+  readLucemBook: (ack: (res: ReadLucemBookAck) => void) => void;
   // Clicking an inventory item: the server decides consume vs. equip
   // based on the item itself (see combat/formulas.ts's
   // EQUIPMENT_SLOT_FOR_ITEM) so the client never has to know which items
@@ -407,6 +441,12 @@ export interface SocketData {
   // on connect (see handleConnection), incremented on every death (see
   // applyCondeathPenalty).
   deathCount: number;
+  // The lucem spell's own toggle (see PlayerSnapshot's wandLit) — never
+  // persisted, same tradeoff as restState/torchLitAt.
+  wandLit: boolean;
+  // A 2-stat-tick cooldown gate on reading the lucem spellbook (item 8),
+  // same shape/units as eatBrainsReadyAtTick above.
+  lucemBookReadyAtTick: number;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

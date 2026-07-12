@@ -51,6 +51,15 @@ export const ENHANCED_DURABILITY_SKILL = 'enhanced durability'; // skeleton: +5%
 // but a real active attack rather than a passive damage reduction.
 export const BONE_FINGER_STRIKE_SKILL = 'bone finger strike';
 
+// The first of the wizarding-school pivot's spells to actually work
+// mechanically (see shared/spells.ts for the full spell list, mostly
+// still flavor text) — learned by reading the spellbook podium in the
+// Utilization classroom (a 10% chance per read, see game.gateway.ts's
+// handleReadLucemBook), not race-bound and not a starting skill. Once
+// learned, it's a no-target toggle from the action bar (see
+// isUsableSkill) that lights/extinguishes an equipped wand.
+export const LUCEM_SKILL = 'lucem';
+
 // A skill with an entry here can't be re-queued until this long (wall-
 // clock ms) after it was last used — checked server-side (see
 // game.gateway.ts's engageInDirection) and rendered client-side as a

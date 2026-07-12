@@ -1,7 +1,7 @@
 import type { MapName } from './constants.js';
 import { GRIMOAK_CASTLE_MAPS } from './constants.js';
 import { INFRAVISION_SKILL } from './skills.js';
-import { getMap } from './maps.js';
+import { getMap, CASTLE_DOOR_ON_GROUNDS } from './maps.js';
 
 // "Late hours of night and early hours of morning" — a narrower, darker
 // window nested inside the broader 18:00-6:00 "night" range the cosmetic
@@ -44,12 +44,34 @@ export const SHOP_REACH_TILES = 2;
 
 export const TORCH_ITEM = 'torch';
 
+// A castle-sized fixture needs a much bigger reach than a town lamp — "a
+// 30 foot radius around the castle" at this project's own ~2.5ft/tile
+// convention (LIGHT_RADIUS_TILES(4) tiles = "about 10 foot radius," per
+// the comment on that constant, i.e. ~2.5ft/tile), so 30ft ≈ 12 tiles.
+export const CASTLE_LIGHT_RADIUS_TILES = 12;
+
+// Beyond the core radius above, the light doesn't just cut off — it
+// tapers smoothly over this many additional tiles (see
+// staticLightRadiusAt) so walking away from the castle reads as fading
+// into the dark, not stepping through an invisible wall.
+export const CASTLE_LIGHT_FALLOFF_TILES = 10;
+
 // Fixed-position light sources ("like a lamp in town") — every tile
-// within LIGHT_RADIUS_TILES of one of these is lit regardless of time of
-// day or who's standing there.
-export const STATIC_LIGHT_SOURCES: Partial<Record<MapName, Array<{ row: number; col: number }>>> = {
+// within a source's own radiusTiles (LIGHT_RADIUS_TILES if unset) is lit
+// regardless of time of day or who's standing there; a source can also
+// give an optional falloffTiles for a soft edge (see staticLightRadiusAt)
+// — town lamps default to 0 (a hard edge is fine at that small scale).
+// Grimoak Grounds' entry is anchored on the castle's own front door and
+// given both a much larger custom radius than a town lamp and a gradual
+// falloff — the whole building lights up the ground around its entrance
+// at night so players can navigate around it, fading out rather than
+// vanishing outright as they walk further away.
+export const STATIC_LIGHT_SOURCES: Partial<Record<MapName, Array<{ row: number; col: number; radiusTiles?: number; falloffTiles?: number }>>> = {
   Floro: [{ row: 25, col: 25 }],
   Kortho: [{ row: 25, col: 25 }],
+  'Grimoak Grounds': [
+    { row: CASTLE_DOOR_ON_GROUNDS.row, col: CASTLE_DOOR_ON_GROUNDS.col, radiusTiles: CASTLE_LIGHT_RADIUS_TILES, falloffTiles: CASTLE_LIGHT_FALLOFF_TILES },
+  ],
 };
 
 // Torch-lined halls, not just one lit stall — the WHOLE map is always
@@ -88,17 +110,22 @@ export function torchWallPositionsFor(mapName: MapName): Array<{ row: number; co
   return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
 }
 
-// A couple of fireplaces per castle room (item 6) — offset from the
-// center of the north wall rather than hand-placed, same "computed once
-// from the map's own size" reasoning as the wall torches above. Skips an
-// exit tile for the same reason.
+// 4 fireplaces per castle room — 2 near the top wall and 2 near the
+// bottom (a follow-up ask, doubling the original top-only pair) — offset
+// from the room's own quarter/three-quarter columns rather than
+// hand-placed, same "computed once from the map's own size" reasoning as
+// the wall torches above. Skips an exit tile for the same reason.
 export function fireplacePositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
   if (!(GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return [];
   const def = getMap(mapName);
-  const row = 3;
+  const topRow = 3;
+  const bottomRow = def.rows - 4;
+  const cols = [Math.round(def.cols * 0.25), Math.round(def.cols * 0.75)];
   const positions = [
-    { row, col: Math.round(def.cols * 0.25) },
-    { row, col: Math.round(def.cols * 0.75) },
+    { row: topRow, col: cols[0]! },
+    { row: topRow, col: cols[1]! },
+    { row: bottomRow, col: cols[0]! },
+    { row: bottomRow, col: cols[1]! },
   ];
   return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
 }
@@ -115,10 +142,38 @@ export function isWithinShopReach(row: number, col: number, sourceRow: number, s
   return isWithinRadius(row, col, sourceRow, sourceCol, SHOP_REACH_TILES);
 }
 
-export function isNearStaticLight(mapName: MapName, row: number, col: number): boolean {
+// Returns the EFFECTIVE radius (in tiles) of whichever nearby static
+// source reaches this tile — the biggest one, if more than one does — or
+// null if none do at all. Within a source's own radiusTiles, that's just
+// the plain radius (a hard, fully-lit core); beyond it, if the source has
+// a falloffTiles, the effective radius tapers linearly down to 0 over
+// that extra distance rather than cutting off outright — walking away
+// from the castle should read as the light fading behind you, not
+// stepping through an invisible wall (a follow-up fix; town lamps keep
+// falloffTiles unset, so they're unaffected). Callers that only care
+// about a lit/unlit tile can just check for non-null (see
+// isNearStaticLight); the client's dark-fog hole (see WorldScene's
+// updateDarkFog) needs the actual number, both so the castle's much
+// bigger CASTLE_LIGHT_RADIUS_TILES doesn't get clamped down to a town
+// lamp's LIGHT_RADIUS_TILES, and so the taper itself is visible.
+export function staticLightRadiusAt(mapName: MapName, row: number, col: number): number | null {
   const sources = STATIC_LIGHT_SOURCES[mapName];
-  if (!sources) return false;
-  return sources.some((s) => isWithinLightRadius(row, col, s.row, s.col));
+  if (!sources) return null;
+  let best: number | null = null;
+  for (const s of sources) {
+    const radius = s.radiusTiles ?? LIGHT_RADIUS_TILES;
+    const falloff = s.falloffTiles ?? 0;
+    const distance = Math.max(Math.abs(row - s.row), Math.abs(col - s.col));
+    let effective: number | null = null;
+    if (distance <= radius) effective = radius;
+    else if (falloff > 0 && distance <= radius + falloff) effective = radius * (1 - (distance - radius) / falloff);
+    if (effective !== null && (best === null || effective > best)) best = effective;
+  }
+  return best;
+}
+
+export function isNearStaticLight(mapName: MapName, row: number, col: number): boolean {
+  return staticLightRadiusAt(mapName, row, col) !== null;
 }
 
 // A player can see SOMETHING in the dark if they have infravision

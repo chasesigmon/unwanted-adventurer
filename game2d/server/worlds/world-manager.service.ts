@@ -10,6 +10,7 @@ import { isTreeTile } from '../../shared/trees.js';
 import { emitsLight, fireplacePositionsFor } from '../../shared/lighting.js';
 import { isCastleExteriorBlocked } from '../../shared/maps.js';
 import { vendorsForMap } from './vendors.js';
+import { teachersForMap, deskPositionFor } from './teachers.js';
 import { armorClassFor, armorEquipmentBonus } from '../combat/formulas.js';
 
 // A much smaller version of the text game's own WorldManagerService — no
@@ -92,6 +93,14 @@ export class WorldManagerService {
     const vendorHit = vendorsForMap(mapName).some((v) => (v.row === row && v.col === col) || (v.row + 1 === row && v.col === col));
     if (vendorHit) return true;
 
+    // A teacher blocks BOTH its own tile and its desk's (unlike a
+    // vendor's purely decorative shopfront — see teachers.ts).
+    const teacherHit = teachersForMap(mapName).some((t) => {
+      const desk = deskPositionFor(t);
+      return (t.row === row && t.col === col) || (desk.row === row && desk.col === col);
+    });
+    if (teacherHit) return true;
+
     for (const [username, state] of this.playerLocation) {
       if (username === excludeUsername) continue;
       if (state.mapName === mapName && state.row === row && state.col === col) return true;
@@ -159,7 +168,8 @@ export class WorldManagerService {
         // Whether OTHER players standing next to this one benefit from
         // their light — a carried torch only, not infravision (see
         // shared/lighting.ts's emitsLight).
-        hasLight: emitsLight(state.equipment),
+        hasLight: emitsLight(state.equipment) || state.wandLit,
+        wandLit: state.wandLit,
         gold: state.gold,
         mimicableRaces: state.mimicableRaces,
         mimicForm: state.mimicForm,
@@ -174,6 +184,7 @@ export class WorldManagerService {
     const monsters = this.monsterManager.getSnapshotsForMap(mapName);
     const corpses = this.corpseManager.getSnapshotsForMap(mapName);
     const vendors = vendorsForMap(mapName);
-    return { mapName, players, npcs, monsters, corpses, vendors };
+    const teachers = teachersForMap(mapName);
+    return { mapName, players, npcs, monsters, corpses, vendors, teachers };
   }
 }

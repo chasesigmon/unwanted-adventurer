@@ -18,6 +18,7 @@ import { updateEatBrainsButton } from './ui/corpseModal.js';
 import './ui/charSheet.js';
 import './ui/inventoryEquipment.js';
 import './ui/skillsPanel.js';
+import './ui/spellsPanel.js';
 import './ui/mapModal.js';
 import './ui/autopilotModal.js';
 

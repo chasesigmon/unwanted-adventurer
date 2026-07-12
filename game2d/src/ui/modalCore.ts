@@ -14,6 +14,10 @@ export const inventoryList = document.getElementById('inventory-list') as HTMLUL
 export const skillsModal = document.getElementById('skills-modal') as HTMLDivElement;
 export const skillsBody = document.getElementById('skills-body') as HTMLDivElement;
 export const skillsShowAllToggle = document.getElementById('skills-show-all-toggle') as HTMLButtonElement;
+// Spells and skills are different things (players will eventually have
+// both) — a separate modal/button rather than a tab bolted onto Skills.
+export const spellsModal = document.getElementById('spells-modal') as HTMLDivElement;
+export const spellsBody = document.getElementById('spells-body') as HTMLDivElement;
 export const equipmentModal = document.getElementById('equipment-modal') as HTMLDivElement;
 export const equipmentBody = document.getElementById('equipment-body') as HTMLDivElement;
 export const mapModal = document.getElementById('map-modal') as HTMLDivElement;
@@ -45,6 +49,7 @@ export const ALL_MODALS = [
   charSheetModal,
   inventoryModal,
   skillsModal,
+  spellsModal,
   equipmentModal,
   mapModal,
   corpseModal,
@@ -58,7 +63,7 @@ export const ALL_MODALS = [
 // & 15) — a player can browse Skills/Inventory/Equipment/the character
 // sheet/the map while still walking around. Every OTHER modal (corpse/
 // shop/target-info/autopilot's own text prompt) still blocks movement.
-export const MOVEMENT_PASSTHROUGH_MODALS = [inventoryModal, equipmentModal, skillsModal, charSheetModal, mapModal];
+export const MOVEMENT_PASSTHROUGH_MODALS = [inventoryModal, equipmentModal, skillsModal, spellsModal, charSheetModal, mapModal];
 
 export function isMovementBlocked(): boolean {
   return chatInputFocused || ALL_MODALS.some((m) => !m.hidden && !MOVEMENT_PASSTHROUGH_MODALS.includes(m));
@@ -206,11 +211,13 @@ export function appendStatRow(container: HTMLDivElement, label: string, value: s
 const charSheetBtn = document.getElementById('char-sheet-btn') as HTMLButtonElement;
 const inventoryBtn = document.getElementById('inventory-btn') as HTMLButtonElement;
 const skillsBtn = document.getElementById('skills-btn') as HTMLButtonElement;
+const spellsBtn = document.getElementById('spells-btn') as HTMLButtonElement;
 const equipmentBtn = document.getElementById('equipment-btn') as HTMLButtonElement;
 const mapBtn = document.getElementById('map-btn') as HTMLButtonElement;
 
 charSheetBtn.addEventListener('click', () => toggleModal(charSheetModal));
 inventoryBtn.addEventListener('click', () => toggleModal(inventoryModal));
 skillsBtn.addEventListener('click', () => toggleModal(skillsModal));
+spellsBtn.addEventListener('click', () => toggleModal(spellsModal));
 equipmentBtn.addEventListener('click', () => toggleModal(equipmentModal));
 mapBtn.addEventListener('click', () => toggleModal(mapModal));

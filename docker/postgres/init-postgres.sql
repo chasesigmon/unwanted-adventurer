@@ -48,10 +48,10 @@ CREATE TABLE IF NOT EXISTS players (
     'Great Plains', 'Labyrinth', 'Floro', 'Kortho',
     'Floro Blacksmith', 'Floro General Store', 'Floro Inn', 'Floro Bank',
     'Floro Armorer', 'Floro Pet Salesman', 'Floro Jobs Office',
-    'Grimoak Grounds', 'Grimoak Entrance Hall', 'Great Hall', 'Grand Staircase',
-    'First Floor Corridor', 'Dungeon Corridor', 'Elemental Casting', 'Shapecraft',
-    'Alchemy', 'Emberclaw Common Room', 'Duskwing Common Room',
-    'Thistledown Common Room', 'Starfall Common Room', 'Second Floor Corridor'
+    'Grimoak Grounds', 'Grimoak Entrance Hall', 'Great Hall',
+    'Thistledown Common Room', 'Duskwing Common Room', 'Emberclaw Common Room',
+    'Starfall Common Room', 'Elemental Casting', 'Defense', 'Summoning',
+    'Utilization', 'Offense'
   )),
   "row" INTEGER NOT NULL,
   col INTEGER NOT NULL,
