@@ -236,23 +236,39 @@ const GREAT_HALL_ROWS = 44;
 const GREAT_HALL_COLS = 64;
 const GREAT_HALL_MID_ROW = Math.floor(GREAT_HALL_ROWS / 2);
 
-// A simplified castle (a follow-up ask): every classroom AND every house
-// common room now hangs directly off the Entrance Hall's own previously-
-// unused north wall, instead of via the Grand Staircase/Dungeon Corridor
-// hub rooms — those two, and the whole first/second-floor corridor
-// concept, have been removed outright (see the "deferred" project memory
-// note for the 2nd floor/stairs work this replaces). 8 doors spread
-// evenly across the north wall: 3 house common rooms, then the 5
-// classrooms named in the request.
+// A simplified castle (a follow-up ask): every classroom hangs directly
+// off the Entrance Hall's own previously-unused north wall, instead of
+// via the Grand Staircase/Dungeon Corridor hub rooms — those two, and the
+// whole first/second-floor corridor concept, have been removed outright
+// (see the "deferred" project memory note for the 2nd floor/stairs work
+// this replaces). The house common rooms live on the EAST/WEST walls
+// instead (a follow-up ask: "only the classrooms should be to the
+// north") — see ENTRANCE_EAST_DOORS/ENTRANCE_WEST_DOORS below.
 const ENTRANCE_NORTH_DOORS: Array<{ col: number; name: MapName }> = [
-  { col: 5, name: 'Emberclaw Common Room' },
-  { col: 11, name: 'Starfall Common Room' },
-  { col: 17, name: 'Duskwing Common Room' },
-  { col: 23, name: 'Elemental Casting' },
-  { col: 29, name: 'Defense' },
-  { col: 35, name: 'Summoning' },
-  { col: 41, name: 'Utilization' },
-  { col: 47, name: 'Offense' },
+  { col: 9, name: 'Elemental Casting' },
+  { col: 18, name: 'Defense' },
+  { col: 27, name: 'Summoning' },
+  { col: 35, name: 'Utilization' },
+  { col: 44, name: 'Offense' },
+];
+
+// The house common rooms (plus Great Hall, already east) — spread across
+// the Entrance Hall's east and west walls instead of the north one, which
+// is now classrooms-only (a follow-up ask). Each entry's own `toRow`
+// carries the row the door lands on INSIDE that room (Great Hall keeps
+// its own distinct GREAT_HALL_MID_ROW; every common room is the standard
+// ROOM_MID_ROW), so both this array and each room's own reciprocal exit
+// (see commonRoomOffEntranceHall/GREAT_HALL/THISTLEDOWN_COMMON_ROOM
+// below) stay derived from one shared source instead of duplicating
+// literals on both sides of the door.
+const ENTRANCE_EAST_DOORS: Array<{ row: number; name: MapName; toRow: number }> = [
+  { row: 12, name: 'Great Hall', toRow: GREAT_HALL_MID_ROW },
+  { row: 24, name: 'Duskwing Common Room', toRow: ROOM_MID_ROW },
+];
+const ENTRANCE_WEST_DOORS: Array<{ row: number; name: MapName; toRow: number }> = [
+  { row: 9, name: 'Thistledown Common Room', toRow: ROOM_MID_ROW },
+  { row: 18, name: 'Emberclaw Common Room', toRow: ROOM_MID_ROW },
+  { row: 27, name: 'Starfall Common Room', toRow: ROOM_MID_ROW },
 ];
 
 const ENTRANCE_HALL: MapDefinition = {
@@ -269,19 +285,30 @@ const ENTRANCE_HALL: MapDefinition = {
       toRow: CASTLE_DOOR_ON_GROUNDS.row,
       toCol: CASTLE_DOOR_ON_GROUNDS.col,
     },
-    { row: ENTRANCE_MID_ROW, col: ENTRANCE_COLS - 1, direction: 'east', toMap: 'Great Hall', toRow: GREAT_HALL_MID_ROW, toCol: 0 },
-    { row: ENTRANCE_MID_ROW, col: 0, direction: 'west', toMap: 'Thistledown Common Room', toRow: ROOM_MID_ROW, toCol: ROOM_COLS - 1 },
-    ...ENTRANCE_NORTH_DOORS.map(({ col, name }) => {
-      const isCommonRoom = name.endsWith('Common Room');
-      return {
-        row: 0,
-        col,
-        direction: 'north' as const,
-        toMap: name,
-        toRow: (isCommonRoom ? ROOM_ROWS : CLASSROOM_ROWS) - 1,
-        toCol: isCommonRoom ? ROOM_MID_COL : CLASSROOM_MID_COL,
-      };
-    }),
+    ...ENTRANCE_EAST_DOORS.map(({ row, name, toRow }) => ({
+      row,
+      col: ENTRANCE_COLS - 1,
+      direction: 'east' as const,
+      toMap: name,
+      toRow,
+      toCol: 0,
+    })),
+    ...ENTRANCE_WEST_DOORS.map(({ row, name, toRow }) => ({
+      row,
+      col: 0,
+      direction: 'west' as const,
+      toMap: name,
+      toRow,
+      toCol: ROOM_COLS - 1,
+    })),
+    ...ENTRANCE_NORTH_DOORS.map(({ col, name }) => ({
+      row: 0,
+      col,
+      direction: 'north' as const,
+      toMap: name,
+      toRow: CLASSROOM_ROWS - 1,
+      toCol: CLASSROOM_MID_COL,
+    })),
   ],
 };
 
@@ -317,7 +344,16 @@ const GREAT_HALL: MapDefinition = {
   rows: GREAT_HALL_ROWS,
   cols: GREAT_HALL_COLS,
   terrain: 'stone',
-  exits: [{ row: GREAT_HALL_MID_ROW, col: 0, direction: 'west', toMap: 'Grimoak Entrance Hall', toRow: ENTRANCE_MID_ROW, toCol: ENTRANCE_COLS - 1 }],
+  exits: [
+    {
+      row: GREAT_HALL_MID_ROW,
+      col: 0,
+      direction: 'west',
+      toMap: 'Grimoak Entrance Hall',
+      toRow: ENTRANCE_EAST_DOORS.find((d) => d.name === 'Great Hall')!.row,
+      toCol: ENTRANCE_COLS - 1,
+    },
+  ],
 };
 
 const THISTLEDOWN_COMMON_ROOM: MapDefinition = {
@@ -325,28 +361,58 @@ const THISTLEDOWN_COMMON_ROOM: MapDefinition = {
   rows: ROOM_ROWS,
   cols: ROOM_COLS,
   terrain: 'stone',
-  exits: [{ row: ROOM_MID_ROW, col: ROOM_COLS - 1, direction: 'east', toMap: 'Grimoak Entrance Hall', toRow: ENTRANCE_MID_ROW, toCol: 0 }],
+  exits: [
+    {
+      row: ROOM_MID_ROW,
+      col: ROOM_COLS - 1,
+      direction: 'east',
+      toMap: 'Grimoak Entrance Hall',
+      toRow: ENTRANCE_WEST_DOORS.find((d) => d.name === 'Thistledown Common Room')!.row,
+      toCol: 0,
+    },
+  ],
 };
 
-// The 3 house common rooms — now hanging directly off the Entrance
-// Hall's north wall (see ENTRANCE_NORTH_DOORS) instead of the removed
-// Grand Staircase/Dungeon Corridor hub rooms. Kept as their own dedicated
-// definitions (rather than classroomOffEntranceHall, which is
-// classroom-sized) since these are ROOM_ROWS/COLS, the bigger footprint.
-function commonRoomOffEntranceHall(name: MapName): MapDefinition {
-  const entranceDoor = ENTRANCE_NORTH_DOORS.find((d) => d.name === name)!;
+// The other 3 house common rooms — on the Entrance Hall's east or west
+// wall (a follow-up ask: "only the classrooms should be to the north"),
+// instead of the removed Grand Staircase/Dungeon Corridor hub rooms. Kept
+// as their own dedicated definitions (rather than classroomOffEntranceHall,
+// which is classroom-sized) since these are ROOM_ROWS/COLS, the bigger
+// footprint. `side` picks which of the Entrance Hall's own door lists to
+// look the room's door row up in, and mirrors which of the room's OWN
+// walls the reciprocal exit sits on (its far wall from that side, same
+// "walk in one side, out the door on the way back" shape everywhere else
+// in this file uses).
+function commonRoomOffEntranceHall(name: MapName, side: 'east' | 'west'): MapDefinition {
+  const entranceDoor = (side === 'west' ? ENTRANCE_WEST_DOORS : ENTRANCE_EAST_DOORS).find((d) => d.name === name)!;
   return {
     name,
     rows: ROOM_ROWS,
     cols: ROOM_COLS,
     terrain: 'stone',
-    exits: [{ row: ROOM_ROWS - 1, col: ROOM_MID_COL, direction: 'south', toMap: 'Grimoak Entrance Hall', toRow: 0, toCol: entranceDoor.col }],
+    exits: [
+      {
+        row: ROOM_MID_ROW,
+        col: side === 'east' ? 0 : ROOM_COLS - 1,
+        direction: side === 'east' ? 'west' : 'east',
+        toMap: 'Grimoak Entrance Hall',
+        toRow: entranceDoor.row,
+        toCol: side === 'east' ? ENTRANCE_COLS - 1 : 0,
+      },
+    ],
   };
 }
 
-const EMBERCLAW_COMMON_ROOM = commonRoomOffEntranceHall('Emberclaw Common Room');
-const STARFALL_COMMON_ROOM = commonRoomOffEntranceHall('Starfall Common Room');
-const DUSKWING_COMMON_ROOM = commonRoomOffEntranceHall('Duskwing Common Room');
+// A common room "on the east side of the Entrance Hall" is reached
+// through one of the Entrance Hall's OWN east-wall doors, and its own
+// reciprocal exit is therefore on its WEST wall (col 0) — hence the
+// side passed to commonRoomOffEntranceHall is the room's own position
+// relative to the Entrance Hall, matching ENTRANCE_EAST_DOORS/
+// ENTRANCE_WEST_DOORS above (Emberclaw/Starfall sit west of the hall,
+// same wall as Thistledown; Duskwing sits east, alongside Great Hall).
+const EMBERCLAW_COMMON_ROOM = commonRoomOffEntranceHall('Emberclaw Common Room', 'west');
+const STARFALL_COMMON_ROOM = commonRoomOffEntranceHall('Starfall Common Room', 'west');
+const DUSKWING_COMMON_ROOM = commonRoomOffEntranceHall('Duskwing Common Room', 'east');
 
 // The 5 classrooms named in the request — Elemental Casting, Defense,
 // Summoning, Utilization, Offense — the only classrooms in the castle

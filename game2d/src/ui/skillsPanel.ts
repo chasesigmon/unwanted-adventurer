@@ -2,7 +2,7 @@
 // preview of skills this character could still acquire down their
 // current path.
 import { myProfile } from '../state.js';
-import { LUCEM_SKILL } from '../../shared/skills.js';
+import { LUCEM_SKILL, IRRIGO_SKILL, QUICK_MOVEMENT_SKILL } from '../../shared/skills.js';
 import { attachTooltip } from './tooltip.js';
 import { SKILL_DESCRIPTIONS, createCooldownOverlay, isAttackSkill, isUsableSkill, skillIconColor, skillIconLetter } from './skillMeta.js';
 import { actionBarSkills, assignActionSlot, saveActionBar } from './actionBar.js';
@@ -17,12 +17,13 @@ import { registerModalOpenHandler, registerModalRefreshHandler, skillsBody, skil
 // monster-part resistances) was removed here — this project's playable
 // race is exclusively human now (see shared/constants.ts's RACES doc
 // comment), so none of that applies to any character that can actually
-// exist anymore. Lucem (learnable at the Utilization classroom's
-// spellbook podium) is the one skill currently worth previewing this way.
+// exist anymore. Lucem/irrigo/quick movement (learnable at their own
+// classroom spellbook podiums) are the skills currently worth previewing
+// this way.
 let showAllSkills = false;
 
 function acquirableSkillPool(): string[] {
-  return [LUCEM_SKILL];
+  return [LUCEM_SKILL, IRRIGO_SKILL, QUICK_MOVEMENT_SKILL];
 }
 
 // A skill row with a small icon to the left of its name — built by hand

@@ -102,13 +102,22 @@ import type {
   MoveAck,
   ReadLucemBookAck,
   ReadIrrigoBookAck,
+  ReadQuickMovementBookAck,
   CanteenActionAck,
+  CastSpellAck,
 } from '../../shared/types.js';
 import { TOWN_MAPS } from '../../shared/constants.js';
 import { emitsLight, TORCH_ITEM, timeOfDayLabel, isWithinLightRadius, isWithinShopReach } from '../../shared/lighting.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
-import { LUCEM_SKILL, IRRIGO_SKILL } from '../../shared/skills.js';
-import { LUCEM_BOOK_MAP, LUCEM_BOOK_POSITION, IRRIGO_BOOK_MAP, IRRIGO_BOOK_POSITION } from '../../shared/spells.js';
+import { LUCEM_SKILL, IRRIGO_SKILL, QUICK_MOVEMENT_SKILL } from '../../shared/skills.js';
+import {
+  LUCEM_BOOK_MAP,
+  LUCEM_BOOK_POSITION,
+  IRRIGO_BOOK_MAP,
+  IRRIGO_BOOK_POSITION,
+  QUICK_MOVEMENT_BOOK_MAP,
+  QUICK_MOVEMENT_BOOK_POSITION,
+} from '../../shared/spells.js';
 import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem } from '../../shared/items.js';
 import { MONSTER_KINDS } from '../../shared/constants.js';
 import type { Direction, MapName, MonsterClass, MonsterKind, Race } from '../../shared/constants.js';
@@ -150,8 +159,22 @@ const LUCEM_BOOK_LEARN_CHANCE = 0.1;
 const LUCEM_CAST_MANA_COST = 10;
 const LUCEM_UPKEEP_MANA_COST = 3;
 // A follow-up ask's success formula — (skill percent + this, capped at
-// MAX_SKILL_PERCENT) is the % chance a cast actually lights the wand.
-const LUCEM_CAST_SUCCESS_BONUS = 10;
+// MAX_SKILL_PERCENT) is the % chance a cast actually takes hold. Shared by
+// every timed spell (lucem, irrigo, quick movement) so "irrigo should have
+// the same chance of succeeding... that lucem does" (a later follow-up
+// ask) is automatically true rather than a second formula to keep in
+// sync.
+const SPELL_CAST_SUCCESS_BONUS = 10;
+// How long a timed spell (lucem, quick movement) stays active once cast,
+// real-world — a later follow-up ask ("lucem should last 3 minutes...
+// before it goes out"), scaling up toward double that as skill% climbs to
+// MAX_SKILL_PERCENT (see spellDurationMs). Checked once per global stat
+// tick (see checkLucemExpiry/checkQuickMovementExpiry), the same
+// "periodic check, not its own timer" shape as a torch's own burnout.
+const SPELL_DURATION_BASE_MS = 3 * 60 * 1000;
+function spellDurationMs(skillPercent: number): number {
+  return SPELL_DURATION_BASE_MS + Math.round((skillPercent / MAX_SKILL_PERCENT) * SPELL_DURATION_BASE_MS);
+}
 // The Elemental Casting classroom's own podium, teaching irrigo — same
 // shape as the lucem book above.
 const IRRIGO_BOOK_COOLDOWN_TICKS = 2;
@@ -161,6 +184,12 @@ const IRRIGO_BOOK_LEARN_CHANCE = 0.1;
 // target still counts as "you tried," same as a missed punch still costs
 // nothing extra but the attempt itself was real).
 const IRRIGO_CAST_MANA_COST = 10;
+// Utilization's second podium (a later follow-up ask), teaching quick
+// movement — same shape/mana cost/success formula as lucem, just no wand
+// requirement (a self-buff, not tied to a carried light source).
+const QUICK_MOVEMENT_BOOK_COOLDOWN_TICKS = 2;
+const QUICK_MOVEMENT_BOOK_LEARN_CHANCE = 0.1;
+const QUICK_MOVEMENT_CAST_MANA_COST = 10;
 // Skeleton-only "Glare" — measured in COMBAT ticks (see combatTickCount
 // below), the same ~3s cadence hits themselves land on, NOT the slow
 // 30-40s world tick Eat Brains uses above. Only applied when a skeleton
@@ -344,6 +373,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     for (const socket of this.server.sockets.sockets.values()) {
       this.applyStatTick(socket as GameSocket);
       this.checkTorchBurnout(socket as GameSocket);
+      this.checkLucemExpiry(socket as GameSocket);
+      this.checkQuickMovementExpiry(socket as GameSocket);
     }
     this.scheduleStatTick();
   }
@@ -372,6 +403,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (mana <= LUCEM_UPKEEP_MANA_COST) {
         mana = 0;
         client.data.wandLit = false;
+        client.data.wandLitAt = null;
         wandJustWentOut = true;
       } else {
         mana -= LUCEM_UPKEEP_MANA_COST;
@@ -428,6 +460,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       restState: client.data.restState,
       hasLight: emitsLight(client.data.equipment) || client.data.wandLit,
       wandLit: client.data.wandLit,
+      quickMovementActive: client.data.quickMovementActive,
       gold: client.data.gold,
       mimicableRaces: client.data.mimicableRaces,
       mimicForm: client.data.mimicForm,
@@ -715,6 +748,41 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.systemMessage(client, 'Your torch burns out and crumbles to ash.');
   }
 
+  // Checked once per global stat tick, same shape as checkTorchBurnout —
+  // extinguishes a lit wand once it's stayed on for its full
+  // spellDurationMs (a later follow-up ask: "lucem should last 3 minutes
+  // in real life... before it goes out").
+  private checkLucemExpiry(client: GameSocket): void {
+    if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
+    if (!client.data.wandLit || client.data.wandLitAt === null) return;
+    const skillPercent = client.data.skills[LUCEM_SKILL] ?? STARTING_SKILL_PERCENT;
+    if (Date.now() - client.data.wandLitAt < spellDurationMs(skillPercent)) return;
+
+    client.data.wandLit = false;
+    client.data.wandLitAt = null;
+    this.worldManager.updateState(client.data.username, { wandLit: false });
+    void this.persistStats(client);
+    this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, 'Your wand flickers out — the light spell has run its course.');
+  }
+
+  // Same idea again, for quick movement — no other player sees this
+  // toggle (unlike wandLit's hasLight), so no map:state broadcast needed.
+  private checkQuickMovementExpiry(client: GameSocket): void {
+    if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
+    if (!client.data.quickMovementActive || client.data.quickMovementActiveAt === null) return;
+    const skillPercent = client.data.skills[QUICK_MOVEMENT_SKILL] ?? STARTING_SKILL_PERCENT;
+    if (Date.now() - client.data.quickMovementActiveAt < spellDurationMs(skillPercent)) return;
+
+    client.data.quickMovementActive = false;
+    client.data.quickMovementActiveAt = null;
+    this.worldManager.updateState(client.data.username, { quickMovementActive: false });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, 'The spring leaves your step as the spell wears off.');
+  }
+
   // A monster/dummy that survives a punch fights back — a flat punch
   // (or, if it's carrying a weapon, a weapon-style hit; see main.ts's
   // held-weapon overlay for the visual side), subject to the PLAYER's own
@@ -935,8 +1003,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // A wand never relights itself on reconnect (unlike a torch) — always
     // starts unlit; same tradeoff as restState.
     client.data.wandLit = false;
+    client.data.wandLitAt = null;
+    // Same tradeoff again — quick movement never carries over either.
+    client.data.quickMovementActive = false;
+    client.data.quickMovementActiveAt = null;
     client.data.lucemBookReadyAtTick = 0;
     client.data.irrigoBookReadyAtTick = 0;
+    client.data.quickMovementBookReadyAtTick = 0;
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
@@ -971,6 +1044,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       skillCooldowns: client.data.skillCooldowns,
       deathCount: client.data.deathCount,
       wandLit: client.data.wandLit,
+      quickMovementActive: client.data.quickMovementActive,
     });
     void client.join(client.data.map);
 
@@ -1990,6 +2064,52 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
+  // Utilization's second podium (a later follow-up ask) — identical
+  // shape to handleReadLucemBook/handleReadIrrigoBook, teaching quick
+  // movement instead.
+  @SubscribeMessage('readQuickMovementBook')
+  handleReadQuickMovementBook(@ConnectedSocket() client: GameSocket): ReadQuickMovementBookAck {
+    if (client.data.map !== QUICK_MOVEMENT_BOOK_MAP) {
+      return { ok: false, message: "There's no spellbook here." };
+    }
+    if (!this.isWithinLootReach(client, QUICK_MOVEMENT_BOOK_POSITION.row, QUICK_MOVEMENT_BOOK_POSITION.col)) {
+      return { ok: false, message: "You're too far away to reach the book." };
+    }
+    if (this.currentTick < client.data.quickMovementBookReadyAtTick) {
+      const hoursLeft = client.data.quickMovementBookReadyAtTick - this.currentTick;
+      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
+    }
+    client.data.quickMovementBookReadyAtTick = this.currentTick + QUICK_MOVEMENT_BOOK_COOLDOWN_TICKS;
+
+    if (client.data.skills[QUICK_MOVEMENT_SKILL] !== undefined) {
+      return {
+        ok: true,
+        skills: client.data.skills,
+        quickMovementBookReadyAtTick: client.data.quickMovementBookReadyAtTick,
+        message: 'You already know how to quicken your steps.',
+      };
+    }
+
+    if (Math.random() < QUICK_MOVEMENT_BOOK_LEARN_CHANCE) {
+      client.data.skills = { ...client.data.skills, [QUICK_MOVEMENT_SKILL]: STARTING_SKILL_PERCENT };
+      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      return {
+        ok: true,
+        skills: client.data.skills,
+        quickMovementBookReadyAtTick: client.data.quickMovementBookReadyAtTick,
+        message: 'The words swim into focus — you have learned quick movement!',
+      };
+    }
+
+    return {
+      ok: true,
+      quickMovementBookReadyAtTick: client.data.quickMovementBookReadyAtTick,
+      message: 'You pore over the pages, but nothing clicks yet.',
+    };
+  }
+
   // Drink/pour/irrigo (items 7 & 8's follow-up asks) all act on a single
   // targeted inventory item — this validates the index/item once for all
   // three rather than repeating it, returning the item string on success
@@ -2047,6 +2167,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // costs mana on every real cast attempt (an already-full target still
   // counts as one), same "the spell fired, it just had nothing to do"
   // treatment as casting any other spell with no effect left to have.
+  // Same percent-chance success formula (and 2%-per-cast growth roll) as
+  // lucem now (a later follow-up ask: "irrigo should have the same
+  // chance of succeeding... that lucem does") — a fumble still spends the
+  // mana but leaves the target's fill level untouched.
   @SubscribeMessage('castIrrigo')
   handleCastIrrigo(@ConnectedSocket() client: GameSocket, @MessageBody() itemIndex: unknown): CanteenActionAck {
     if (client.data.skills[IRRIGO_SKILL] === undefined) {
@@ -2065,26 +2189,30 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     client.data.mana -= IRRIGO_CAST_MANA_COST;
+    const skillPercent = client.data.skills[IRRIGO_SKILL] ?? STARTING_SKILL_PERCENT;
+    const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS);
 
-    if (client.data.canteenDrinks >= CANTEEN_CAPACITY) {
-      this.worldManager.updateState(client.data.username, { mana: client.data.mana });
-      void this.persistStats(client);
-      return {
-        ok: true,
-        mana: client.data.mana,
-        canteenDrinks: client.data.canteenDrinks,
-        message: `Your ${resolved.item} is already full and cannot be filled.`,
-      };
+    let message: string;
+    if (Math.random() * 100 >= successChance) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else if (client.data.canteenDrinks >= CANTEEN_CAPACITY) {
+      message = `Your ${resolved.item} is already full and cannot be filled.`;
+    } else {
+      client.data.canteenDrinks = CANTEEN_CAPACITY;
+      message = `You fill your ${resolved.item} with water!`;
     }
 
-    client.data.canteenDrinks = CANTEEN_CAPACITY;
-    this.worldManager.updateState(client.data.username, { mana: client.data.mana, canteenDrinks: client.data.canteenDrinks });
+    const growth = this.maybeGrowSkill(client, IRRIGO_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, canteenDrinks: client.data.canteenDrinks, skills: client.data.skills });
     void this.persistStats(client);
     return {
       ok: true,
       mana: client.data.mana,
       canteenDrinks: client.data.canteenDrinks,
-      message: `You fill your ${resolved.item} with water!`,
+      skills: client.data.skills,
+      message,
     };
   }
 
@@ -2214,44 +2342,53 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.systemMessage(client, 'You revert to your natural slime form.');
   }
 
-  // The lucem skill's own no-target toggle (see WorldScene's
-  // useTargetedSkill, which fires this via a plain '/lucem' chat command
-  // the same way /mimic and /revert already work) — requires both the
-  // skill (learned from the Utilization classroom's spellbook, see
+  // The lucem skill's own no-target toggle — requires both the skill
+  // (learned from the Utilization classroom's spellbook, see
   // handleReadLucemBook) and a wand actually equipped. Lighting it is a
   // real cast attempt (a follow-up ask): always costs mana whether it
-  // works or not, and only has a (skill percent + 10, capped at 100)%
-  // chance of actually lighting the wand — fumbling still spent the
-  // mana, same as swinging and missing still counts as the swing.
-  // Turning it back off is free (you're stopping a spell, not casting a
-  // new one) but still rolls the same skill-growth chance lighting does.
-  private handleLucemCommand(client: GameSocket): void {
+  // works or not, and only has a (skill percent + SPELL_CAST_SUCCESS_BONUS,
+  // capped at 100)% chance of actually lighting the wand — fumbling still
+  // spent the mana, same as swinging and missing still counts as the
+  // swing. Turning it back off is free (you're stopping a spell, not
+  // casting a new one) but still rolls the same skill-growth chance
+  // lighting does. Ack-based (a later follow-up ask, "messages should
+  // show even if a modal is open") rather than the old fire-and-forget
+  // '/lucem' chat command — see handleCastLucem/WorldScene's
+  // useTargetedSkill, which toasts whatever message comes back so it's
+  // visible even with the Inventory (or any other) modal open, on top of
+  // still logging it the normal way via systemMessage below.
+  private handleLucemCommand(client: GameSocket): CastSpellAck {
     if (client.data.skills[LUCEM_SKILL] === undefined) {
-      this.systemMessage(client, "You don't know the lucem spell yet.");
-      return;
+      const message = "You don't know the lucem spell yet.";
+      this.systemMessage(client, message);
+      return { ok: false, message };
     }
     if (client.data.equipment.weapon !== WAND_ITEM) {
-      this.systemMessage(client, 'You need a wand equipped to cast lucem.');
-      return;
+      const message = 'You need a wand equipped to cast lucem.';
+      this.systemMessage(client, message);
+      return { ok: false, message };
     }
 
     let message: string;
     if (!client.data.wandLit) {
       if (client.data.mana < LUCEM_CAST_MANA_COST) {
-        this.systemMessage(client, `You don't have enough mana to cast lucem (${LUCEM_CAST_MANA_COST} needed).`);
-        return;
+        const insufficientMana = `You don't have enough mana to cast lucem (${LUCEM_CAST_MANA_COST} needed).`;
+        this.systemMessage(client, insufficientMana);
+        return { ok: false, message: insufficientMana };
       }
       client.data.mana -= LUCEM_CAST_MANA_COST;
       const skillPercent = client.data.skills[LUCEM_SKILL] ?? STARTING_SKILL_PERCENT;
-      const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + LUCEM_CAST_SUCCESS_BONUS);
+      const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS);
       if (Math.random() * 100 < successChance) {
         client.data.wandLit = true;
+        client.data.wandLitAt = Date.now();
         message = 'Your wand glows with a soft light.';
       } else {
         message = 'You fumble the incantation and nothing happens.';
       }
     } else {
       client.data.wandLit = false;
+      client.data.wandLitAt = null;
       message = 'Your wand goes dark.';
     }
 
@@ -2263,6 +2400,67 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.emit('sync', { player: this.snapshotFor(client) });
     this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
     this.systemMessage(client, message);
+    return { ok: true, active: client.data.wandLit, mana: client.data.mana, skills: client.data.skills, message };
+  }
+
+  @SubscribeMessage('castLucem')
+  handleCastLucem(@ConnectedSocket() client: GameSocket): CastSpellAck {
+    return this.handleLucemCommand(client);
+  }
+
+  // Utilization's second podium's spell (a later follow-up ask) — same
+  // mechanics as lucem (mana cost, success-chance formula, growth-per-
+  // cast), minus the wand requirement (a self-buff, not a light source).
+  // While active, boosts the caster's own movement speed by ~10% (see
+  // WorldScene's effectiveMoveCooldownMs) for spellDurationMs, scaling up
+  // with skill% the same way lucem's own duration does.
+  private handleQuickMovementCommand(client: GameSocket): CastSpellAck {
+    if (client.data.skills[QUICK_MOVEMENT_SKILL] === undefined) {
+      const message = "You don't know the quick movement spell yet.";
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+
+    let message: string;
+    if (!client.data.quickMovementActive) {
+      if (client.data.mana < QUICK_MOVEMENT_CAST_MANA_COST) {
+        const insufficientMana = `You don't have enough mana to cast quick movement (${QUICK_MOVEMENT_CAST_MANA_COST} needed).`;
+        this.systemMessage(client, insufficientMana);
+        return { ok: false, message: insufficientMana };
+      }
+      client.data.mana -= QUICK_MOVEMENT_CAST_MANA_COST;
+      const skillPercent = client.data.skills[QUICK_MOVEMENT_SKILL] ?? STARTING_SKILL_PERCENT;
+      const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS);
+      if (Math.random() * 100 < successChance) {
+        client.data.quickMovementActive = true;
+        client.data.quickMovementActiveAt = Date.now();
+        message = 'Your feet feel lighter — you move with a spring in your step.';
+      } else {
+        message = 'You fumble the incantation and nothing happens.';
+      }
+    } else {
+      client.data.quickMovementActive = false;
+      client.data.quickMovementActiveAt = null;
+      message = 'The spring leaves your step.';
+    }
+
+    const growth = this.maybeGrowSkill(client, QUICK_MOVEMENT_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, {
+      mana: client.data.mana,
+      skills: client.data.skills,
+      quickMovementActive: client.data.quickMovementActive,
+    });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, active: client.data.quickMovementActive, mana: client.data.mana, skills: client.data.skills, message };
+  }
+
+  @SubscribeMessage('castQuickMovement')
+  handleCastQuickMovement(@ConnectedSocket() client: GameSocket): CastSpellAck {
+    return this.handleQuickMovementCommand(client);
   }
 
   private handleTimeCommand(client: GameSocket): void {

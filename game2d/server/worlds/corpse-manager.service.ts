@@ -27,6 +27,9 @@ const BODY_PART_LABEL: Record<Race | MonsterKind, string> = {
   human: 'lock of hair',
   'wild goblin': 'wild goblin ear',
   'wild skeleton': 'wild skeleton bone',
+  // A placeholder, like the human entry above — imp combat/death details
+  // ("killing an imp") are still to come.
+  imp: 'imp horn',
 };
 
 export function bodyPartLabelFor(kind: Race | MonsterKind): string {

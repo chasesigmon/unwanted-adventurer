@@ -84,6 +84,9 @@ export const CLASSROOM_DESK_TEXTURE_KEY = 'classroom-desk';
 // The Utilization classroom's clickable spellbook podium (item 8) — see
 // shared/spells.ts's LUCEM_BOOK_MAP/POSITION.
 export const SPELLBOOK_PODIUM_TEXTURE_KEY = 'spellbook-podium';
+// A social gathering spot's chairs (a follow-up ask) — see shared/
+// lighting.ts's chairPositionsFor.
+export const CHAIR_TEXTURE_KEY = 'chair';
 
 export const CHAR_SCALE = 0.275;
 export const CORPSE_SCALE = 0.35;

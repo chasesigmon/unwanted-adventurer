@@ -1,5 +1,5 @@
 import type { MapName } from './constants.js';
-import { GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS } from './constants.js';
+import { GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS, COMMON_ROOM_MAPS } from './constants.js';
 import { INFRAVISION_SKILL } from './skills.js';
 import { getMap, CASTLE_DOOR_ON_GROUNDS, MOAT_INNER_LEFT, MOAT_INNER_RIGHT, MOAT_INNER_TOP, MOAT_INNER_BOTTOM } from './maps.js';
 
@@ -147,16 +147,28 @@ export function fireplacePositionsFor(mapName: MapName): Array<{ row: number; co
   if (!(GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return [];
   const def = getMap(mapName);
   const isClassroom = (CLASSROOM_MAPS as readonly string[]).includes(mapName);
+  const isCommonRoom = (COMMON_ROOM_MAPS as readonly string[]).includes(mapName);
   // The Entrance Hall specifically has 8 doors spread across its own
   // north wall (see shared/maps.ts's ENTRANCE_NORTH_DOORS) — even the
   // generic "large room" inset above still landed close to one of them
   // (a follow-up ask: "still too close to the doors"), so it gets its
   // own deeper inset AND columns deliberately picked to sit BETWEEN two
-  // door columns rather than a fraction of the room's width.
+  // door columns rather than a fraction of the room's width. Common
+  // rooms get the same deeper inset (a follow-up ask: "bring the
+  // fireplaces in closer like the entrance hall... common rooms right
+  // now should look very similar to entrance hall") but don't have the
+  // Entrance Hall's own multi-door concern, so their columns stay a
+  // (tighter-than-generic) fraction of the room's width instead of
+  // hardcoded literals.
   const isEntranceHall = mapName === 'Grimoak Entrance Hall';
-  const topRow = isEntranceHall ? 8 : 3;
-  const bottomRow = isEntranceHall ? def.rows - 9 : def.rows - 4;
-  const colFraction = isClassroom ? 0.25 : 0.32;
+  const topRow = isEntranceHall || isCommonRoom ? 8 : 3;
+  const bottomRow = isEntranceHall || isCommonRoom ? def.rows - 9 : def.rows - 4;
+  // Classrooms moved from 0.25 to 0.1 (a follow-up ask) — at 0.25 a
+  // classroom's fireplace column landed on the EXACT same column as its
+  // right-side student desk (see studentDeskPositionsFor's rightCol),
+  // stacking a fireplace and a desk on one tile. 0.1 sits both fireplaces
+  // well clear of the desks at col 4/cols-5.
+  const colFraction = isClassroom ? 0.1 : isCommonRoom ? 0.28 : 0.32;
   const cols = isEntranceHall ? [14, 38] : [Math.round(def.cols * colFraction), Math.round(def.cols * (1 - colFraction))];
   const positions = [
     { row: topRow, col: cols[0]! },
@@ -186,6 +198,29 @@ export function studentDeskPositionsFor(mapName: MapName): Array<{ row: number; 
   return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
 }
 
+// A small plus-shaped cluster of 4 chairs around the room's own center —
+// a social gathering spot (a follow-up ask), Entrance-Hall-and-common-
+// room-only (not classrooms, which already have their own student desks).
+// Offset far enough from the center that players can still stand and
+// mingle between them, and clear of every fireplace position above
+// (those sit much closer to the top/bottom walls, see topRow/bottomRow).
+export function chairPositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
+  const isEntranceHall = mapName === 'Grimoak Entrance Hall';
+  const isCommonRoom = (COMMON_ROOM_MAPS as readonly string[]).includes(mapName);
+  if (!isEntranceHall && !isCommonRoom) return [];
+  const def = getMap(mapName);
+  const midRow = Math.floor(def.rows / 2);
+  const midCol = Math.floor(def.cols / 2);
+  const offset = 3;
+  const positions = [
+    { row: midRow - offset, col: midCol },
+    { row: midRow + offset, col: midCol },
+    { row: midRow, col: midCol - offset },
+    { row: midRow, col: midCol + offset },
+  ];
+  return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
+}
+
 // A fireplace's own tile AND the tile directly above it (a follow-up
 // correction — the flame sprite's art visually rises well above its
 // anchor tile, see WorldScene's origin(0.5, 0.85), so blocking only the
@@ -195,6 +230,12 @@ export function studentDeskPositionsFor(mapName: MapName): Array<{ row: number; 
 // fireplacePositionsFor directly.
 export function isFireplaceBlocked(mapName: MapName, row: number, col: number): boolean {
   return fireplacePositionsFor(mapName).some((p) => (p.row === row || p.row - 1 === row) && p.col === col);
+}
+
+// A chair's own tile only — no oversized sprite art to account for the
+// way a fireplace's flame does, so no extra tile above it needed.
+export function isChairBlocked(mapName: MapName, row: number, col: number): boolean {
+  return chairPositionsFor(mapName).some((p) => p.row === row && p.col === col);
 }
 
 export function isWithinRadius(row: number, col: number, sourceRow: number, sourceCol: number, radiusTiles: number): boolean {

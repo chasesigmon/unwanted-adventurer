@@ -14,7 +14,9 @@ import type {
   SacrificeAck,
   ReadLucemBookAck,
   ReadIrrigoBookAck,
+  ReadQuickMovementBookAck,
   CanteenActionAck,
+  CastSpellAck,
   UseItemAck,
   ChatPayload,
   WhoAck,
@@ -375,6 +377,48 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('castIrrigo', itemIndex, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  readQuickMovementBook(): Promise<ReadQuickMovementBookAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('readQuickMovementBook', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // Ack-based (a follow-up ask, replacing the old fire-and-forget
+  // '/lucem' chat command) so the result can be toasted even with a
+  // modal open — see WorldScene's useTargetedSkill.
+  castLucem(): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castLucem', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castQuickMovement(): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castQuickMovement', (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

@@ -29,6 +29,23 @@ export interface Monster extends CombatantStats {
   // through the exact same punchDamage()/weaponBonusFor() formula a player
   // uses, at this percent, instead of a flat made-up number.
   skills: Record<string, number>;
+  // Where this instance originally spawned — fixed for its whole
+  // lifetime, used by a "patrol" species (see patrolRangeTiles below) to
+  // know how far it's allowed to wander from home.
+  spawnRow: number;
+  spawnCol: number;
+  // Set only for a species with MonsterSpecies.patrolRangeTiles (a
+  // follow-up ask: imps "follow a small back and forth walking path from
+  // where they spawned at") — which single row/col axis it paces along,
+  // and which way it's currently walking on that axis (flips at either
+  // end of the patrol range or whenever the next tile's blocked). See
+  // MonsterManagerService.stepPatrol.
+  patrolAxis?: 'row' | 'col';
+  patrolDirection?: 1 | -1;
+  // Copied from MonsterSpecies.patrolRangeTiles at spawn time (so
+  // wanderAll doesn't need a species lookup on every tick) — undefined
+  // means "wander freely," same as before this feature existed.
+  patrolRangeTiles?: number;
 }
 
 export interface CarriedItemRoll {
@@ -47,6 +64,11 @@ export interface MonsterSpecies {
   startingHp: number;
   expReward: number;
   carriedItemRolls?: CarriedItemRoll[];
+  // Present only for a species that paces back and forth near its own
+  // spawn point instead of roaming its whole home map at random (a
+  // follow-up ask, imps only, see Monster.patrolAxis/patrolDirection) —
+  // how many tiles either side of its spawn point it's willing to walk.
+  patrolRangeTiles?: number;
 }
 
 // Every wild monster starts at level 1 with every attribute at 1 — so a
@@ -98,5 +120,21 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
       { label: 'bone dagger', chance: 0.3 },
       { label: 'bone shield', chance: 0.2 },
     ],
+  },
+  {
+    kind: 'imp',
+    monsterClass: 'normal',
+    homeMap: 'Grimoak Grounds',
+    // 40 of them, spread across the whole grounds outside the castle (a
+    // follow-up ask) — real stats/spawn tuning/kill rewards are still to
+    // come, so startingHp/expReward below are just reasonable holding
+    // values, not a balanced figure yet.
+    maxCount: 40,
+    startingHp: 12,
+    expReward: 4,
+    // Paces back and forth within 3 tiles of wherever it spawned (a
+    // follow-up ask), rather than roaming the whole map the way a wild
+    // goblin/skeleton does — see MonsterManagerService.stepPatrol.
+    patrolRangeTiles: 3,
   },
 ];

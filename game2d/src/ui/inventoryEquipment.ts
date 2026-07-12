@@ -49,12 +49,25 @@ export function renderInventory(): void {
     li.addEventListener('click', () => {
       // Fillable items (a canteen, item 7 & 11's follow-up asks) aren't
       // used/consumed by clicking — clicking targets them instead, for
-      // drink/pour/irrigo to act on from the action bar.
+      // drink/pour/irrigo to act on from the action bar. Clicking the
+      // SAME already-targeted item again de-selects it, rather than
+      // leaving no way to clear a target short of clicking elsewhere
+      // entirely.
       if (isFillableItem(item)) {
-        activeScene?.setItemTarget(item);
+        if (activeScene?.getItemTarget() === item) activeScene.clearItemTarget();
+        else activeScene?.setItemTarget(item);
         renderInventory();
         return;
       }
+      // "Selecting elsewhere in the inventory" (a later follow-up ask) —
+      // clicking a DIFFERENT, non-fillable row used to leave whatever
+      // fillable item was previously targeted still selected in the
+      // background (still highlighted, still actionable from the action
+      // bar) even though this click clearly meant to do something else
+      // entirely. De-select it first, same as clicking empty world
+      // ground or closing the modal already do (see clearItemTarget's
+      // other two call sites).
+      activeScene?.clearItemTarget();
       useInventoryItem(indices[0]!);
     });
     // The browser's own right-click context menu is never useful here —

@@ -75,6 +75,14 @@ export const GRIMOAK_CASTLE_MAPS = [
 // size/zoom.
 export const CLASSROOM_MAPS = ['Elemental Casting', 'Defense', 'Summoning', 'Utilization', 'Offense'] as const;
 
+// The 4 house common rooms — standard ROOM_ROWS/COLS-sized, unlike the
+// shrunk classrooms above. Used to give them the same "closer to the
+// walls, chairs in the center" treatment as the Entrance Hall (a
+// follow-up ask: "common rooms right now should look very similar to
+// entrance hall" — see shared/lighting.ts's fireplacePositionsFor/
+// chairPositionsFor).
+export const COMMON_ROOM_MAPS = ['Thistledown Common Room', 'Duskwing Common Room', 'Emberclaw Common Room', 'Starfall Common Room'] as const;
+
 export const MAP_NAMES = [
   'Great Plains',
   'Labyrinth',
@@ -136,7 +144,7 @@ export type Direction = (typeof DIRECTIONS)[number];
 // bare "goblin"/"skeleton") so they're never confused with the
 // player-choosable races above, same disambiguation the text game's own
 // monster kinds use.
-export const MONSTER_KINDS = ['wild goblin', 'wild skeleton'] as const;
+export const MONSTER_KINDS = ['wild goblin', 'wild skeleton', 'imp'] as const;
 export type MonsterKind = (typeof MONSTER_KINDS)[number];
 
 // Same idea as the text game's own monster classification — determines

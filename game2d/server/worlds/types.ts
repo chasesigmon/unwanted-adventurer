@@ -38,6 +38,11 @@ export interface PlayerState extends Location, Attributes {
   // needed here too so getMapState's hasLight calc (see
   // world-manager.service.ts) can factor it in for OTHER players' benefit.
   wandLit: boolean;
+  // Same idea, for quick movement's own toggle (see shared/types.ts's
+  // PlayerSnapshot doc comment) — no OTHER player benefits from this one
+  // (it's a personal move-speed buff, not emitted light), but it's still
+  // part of PlayerSnapshot's shape, so it lives here too.
+  quickMovementActive: boolean;
   canteenDrinks: number;
 }
 

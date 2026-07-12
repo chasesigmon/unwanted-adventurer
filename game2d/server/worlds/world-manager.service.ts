@@ -7,7 +7,7 @@ import type { MapName, Direction } from '../../shared/constants.js';
 import type { PlayerSnapshot, MapStatePayload } from '../../shared/types.js';
 import type { PlayerState, MoveResult } from './types.js';
 import { isTreeTile } from '../../shared/trees.js';
-import { emitsLight, isFireplaceBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
+import { emitsLight, isFireplaceBlocked, isChairBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
 import { isCastleExteriorBlocked, isMoatBlocked } from '../../shared/maps.js';
 import { vendorsForMap } from './vendors.js';
 import { teachersForMap, deskPositionFor } from './teachers.js';
@@ -82,6 +82,7 @@ export class WorldManagerService {
     if (isCastleExteriorBlocked(mapName, row, col)) return true;
     if (isMoatBlocked(mapName, row, col)) return true;
     if (isFireplaceBlocked(mapName, row, col)) return true;
+    if (isChairBlocked(mapName, row, col)) return true;
     if (studentDeskPositionsFor(mapName).some((p) => p.row === row && p.col === col)) return true;
 
     const npcHit = NPCS.some((npc) => npc.map === mapName && npc.row === row && npc.col === col);
@@ -179,6 +180,7 @@ export class WorldManagerService {
         // shared/lighting.ts's emitsLight).
         hasLight: emitsLight(state.equipment) || state.wandLit,
         wandLit: state.wandLit,
+        quickMovementActive: state.quickMovementActive,
         gold: state.gold,
         mimicableRaces: state.mimicableRaces,
         mimicForm: state.mimicForm,

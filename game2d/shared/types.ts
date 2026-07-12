@@ -53,6 +53,12 @@ export interface PlayerSnapshot {
   // slime appearance. No mechanical effect yet, purely cosmetic.
   mimicableRaces: (Race | MonsterKind)[];
   mimicForm: (Race | MonsterKind) | null;
+  // Whether the quick movement spell is currently active for THIS player
+  // (a follow-up ask) — same "wand toggle" shape as wandLit below, boosts
+  // their own move speed by ~10% while on (see WorldScene's
+  // effectiveMoveCooldownMs); auto-expires after spellDurationMs, same as
+  // lucem.
+  quickMovementActive: boolean;
   // Zombie-only Eat Brains cooldown, in the same world-tick units as
   // WorldTimePayload.tick — lets the client gray the button out instead
   // of letting it be clicked and fail (see main.ts's updateEatBrainsButton).
@@ -310,6 +316,29 @@ export interface ReadIrrigoBookAck {
   message?: string;
 }
 
+// Utilization's second podium (a follow-up ask), teaching quick movement —
+// same shape as ReadLucemBookAck.
+export interface ReadQuickMovementBookAck {
+  ok: boolean;
+  skills?: Record<string, number>;
+  quickMovementBookReadyAtTick?: number;
+  message?: string;
+}
+
+// Lucem/quick movement's own ack-based cast (a follow-up ask, replacing
+// lucem's old fire-and-forget '/lucem' chat command so the client can
+// toast the result even with a modal open — see WorldScene's
+// useTargetedSkill). Both are no-target toggles with identical mechanics
+// (mana cost, percent-chance success, 2%-per-cast growth, real-time
+// duration scaling with skill%), so one ack shape covers either.
+export interface CastSpellAck {
+  ok: boolean;
+  active?: boolean;
+  mana?: number;
+  skills?: Record<string, number>;
+  message?: string;
+}
+
 // Drink/pour/irrigo (items 7 & 8's follow-up asks) — all act on a single
 // targeted inventory item (see WorldScene's targetItemIndex) and report
 // back the canteen's new fill level so the client never has to guess it.
@@ -317,6 +346,11 @@ export interface CanteenActionAck {
   ok: boolean;
   canteenDrinks?: number;
   mana?: number;
+  // Set only by castIrrigo (a later follow-up ask gave irrigo the same
+  // percent-chance-to-grow mechanic lucem already has) — present whenever
+  // a growth roll actually fired, so the client can refresh its own copy
+  // without waiting for an unrelated 'sync'.
+  skills?: Record<string, number>;
   message?: string;
 }
 
@@ -405,6 +439,14 @@ export interface ClientToServerEvents {
   // The Elemental Casting classroom's own podium — same shape, teaching
   // irrigo instead; see game.gateway.ts's handleReadIrrigoBook.
   readIrrigoBook: (ack: (res: ReadIrrigoBookAck) => void) => void;
+  // Utilization's second podium — same shape again, teaching quick
+  // movement; see game.gateway.ts's handleReadQuickMovementBook.
+  readQuickMovementBook: (ack: (res: ReadQuickMovementBookAck) => void) => void;
+  // No-target toggles (a follow-up ask, replacing the old '/lucem' chat
+  // command so the result can be toasted even with a modal open) — see
+  // game.gateway.ts's handleCastLucem/handleCastQuickMovement.
+  castLucem: (ack: (res: CastSpellAck) => void) => void;
+  castQuickMovement: (ack: (res: CastSpellAck) => void) => void;
   // Drink/pour/irrigo (items 7 & 8's follow-up asks) — all take the
   // targeted inventory item's index (see WorldScene's targetItemIndex).
   drinkItem: (itemIndex: number, ack: (res: CanteenActionAck) => void) => void;
@@ -478,13 +520,24 @@ export interface SocketData {
   // applyCondeathPenalty).
   deathCount: number;
   // The lucem spell's own toggle (see PlayerSnapshot's wandLit) — never
-  // persisted, same tradeoff as restState/torchLitAt.
+  // persisted, same tradeoff as restState/torchLitAt. wandLitAt is the
+  // epoch-ms it was last lit, or null while off — a follow-up ask gave
+  // lucem a real-time duration (see game.gateway.ts's spellDurationMs/
+  // checkLucemExpiry), same "lit at X, checked once per stat tick" shape
+  // as a torch's own torchLitAt/checkTorchBurnout.
   wandLit: boolean;
+  wandLitAt: number | null;
+  // Quick movement's own toggle (a follow-up ask) — same shape as
+  // wandLit/wandLitAt above, see PlayerSnapshot's quickMovementActive.
+  quickMovementActive: boolean;
+  quickMovementActiveAt: number | null;
   // A 2-stat-tick cooldown gate on reading the lucem spellbook (item 8),
   // same shape/units as eatBrainsReadyAtTick above.
   lucemBookReadyAtTick: number;
   // Same idea, for the Elemental Casting classroom's irrigo podium.
   irrigoBookReadyAtTick: number;
+  // Same idea again, for Utilization's second podium (quick movement).
+  quickMovementBookReadyAtTick: number;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

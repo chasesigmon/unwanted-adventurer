@@ -5,7 +5,12 @@
 // duplicated.
 import type { Race } from './constants.js';
 
-export const STARTING_SKILL_PERCENT = 1;
+// A follow-up ask: "once a skill is learned, start it out at 10% instead
+// of 1%" — applies uniformly to every skill grant in the game (starting
+// kit, race-innate exceptions aside, evolution skills, podium-taught
+// spells, the bone-finger-strike bonus, ...) since they all funnel
+// through this one constant.
+export const STARTING_SKILL_PERCENT = 10;
 export const MAX_SKILL_PERCENT = 100;
 
 export const PUNCH_SKILL = 'punch';
@@ -66,6 +71,13 @@ export const LUCEM_SKILL = 'lucem';
 // water. Requires selecting that item as a target first (see
 // WorldScene's setItemTarget), then clicking it from the action bar.
 export const IRRIGO_SKILL = 'irrigo';
+
+// A second Utilization podium's spell (a follow-up ask) — same "10%
+// chance per read, STARTING_SKILL_PERCENT to start, 2% chance to grow per
+// cast" shape as lucem/irrigo. While active, boosts the caster's own
+// movement speed by about 10%; lasts the same real-time duration as
+// lucem (see game.gateway.ts's spellDurationMs), scaling up with skill%.
+export const QUICK_MOVEMENT_SKILL = 'quick movement';
 
 // Basic actions every human wizard starts knowing outright (item 7) —
 // not practiced up or learned from a podium, just part of the universal

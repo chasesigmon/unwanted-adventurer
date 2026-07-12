@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import { getMap, isCastleExteriorBlocked, isMoatBlocked } from '../../shared/maps.js';
 import { isTreeTile } from '../../shared/trees.js';
-import { isFireplaceBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
+import { isFireplaceBlocked, isChairBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
 import { vendorsForMap } from '../worlds/vendors.js';
@@ -90,6 +90,7 @@ export class MonsterManagerService {
     if (isCastleExteriorBlocked(mapName, row, col)) return false;
     if (isMoatBlocked(mapName, row, col)) return false;
     if (isFireplaceBlocked(mapName, row, col)) return false;
+    if (isChairBlocked(mapName, row, col)) return false;
     if (studentDeskPositionsFor(mapName).some((p) => p.row === row && p.col === col)) return false;
     // Same "own tile + shopfront tile in front of it" collision shape as
     // WorldManagerService.isOccupied — a wandering/spawning monster
@@ -169,6 +170,15 @@ export class MonsterManagerService {
       luck: MONSTER_BASE_ATTRIBUTE,
       carriedItems,
       skills: skillsForCarriedItems(carriedItems),
+      spawnRow: tile.row,
+      spawnCol: tile.col,
+      ...(species.patrolRangeTiles !== undefined
+        ? {
+            patrolAxis: (Math.random() < 0.5 ? 'row' : 'col') as 'row' | 'col',
+            patrolDirection: (Math.random() < 0.5 ? 1 : -1) as 1 | -1,
+            patrolRangeTiles: species.patrolRangeTiles,
+          }
+        : {}),
     };
     this.monsters.set(monster.id, monster);
   }
@@ -192,6 +202,11 @@ export class MonsterManagerService {
     for (const monster of this.monsters.values()) {
       if (this.stepTowardAggroTarget(monster, currentTick, changedMaps)) continue;
 
+      if (monster.patrolRangeTiles !== undefined) {
+        this.stepPatrol(monster, changedMaps);
+        continue;
+      }
+
       const delta = deltas[Math.floor(Math.random() * deltas.length)]!;
       const nextRow = monster.row + delta.dr;
       const nextCol = monster.col + delta.dc;
@@ -202,6 +217,36 @@ export class MonsterManagerService {
       }
     }
     return changedMaps;
+  }
+
+  // A "back and forth" wander mode (a follow-up ask, imps only) — paces
+  // one tile at a time along a single fixed row/col axis, reversing
+  // direction once it reaches patrolRangeTiles from its own spawn point
+  // (or whenever the next tile that way happens to be blocked), rather
+  // than stepping in a random direction like a free-roaming species does.
+  private stepPatrol(monster: Monster, changedMaps: Set<MapName>): void {
+    const axis = monster.patrolAxis!;
+    const spawnAlong = axis === 'row' ? monster.spawnRow : monster.spawnCol;
+    const currentAlong = axis === 'row' ? monster.row : monster.col;
+
+    const tryStep = (direction: 1 | -1): boolean => {
+      const nextAlong = currentAlong + direction;
+      if (Math.abs(nextAlong - spawnAlong) > monster.patrolRangeTiles!) return false;
+      const nextRow = axis === 'row' ? nextAlong : monster.row;
+      const nextCol = axis === 'col' ? nextAlong : monster.col;
+      if (!this.isFree(monster.mapName, nextRow, nextCol)) return false;
+      monster.row = nextRow;
+      monster.col = nextCol;
+      changedMaps.add(monster.mapName);
+      return true;
+    };
+
+    if (tryStep(monster.patrolDirection!)) return;
+    // Reached the end of the patrol line (or something's in the way) —
+    // reverse and try the other direction; if THAT'S also blocked, just
+    // stand still this tick rather than forcing through.
+    monster.patrolDirection = monster.patrolDirection === 1 ? -1 : 1;
+    tryStep(monster.patrolDirection);
   }
 
   // Returns true if this monster's aggro state was handled this tick
