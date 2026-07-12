@@ -22,7 +22,7 @@ export const SPELLS: SpellDefinition[] = [
   { name: 'exarme', description: "A disarming charm — knocks a weapon from its target's grip." },
   { name: 'scutum', description: 'Conjures a protective shield.' },
   { name: 'stupefaciunt', description: 'Stuns a target.' },
-  { name: 'irrigo', description: 'Creates water.' },
+  { name: 'irrigo', description: 'Fills a targeted container — a cup, bowl, canteen, well, or hole — with water.' },
 ];
 
 export function spellDefinition(name: string): SpellDefinition | undefined {
@@ -38,3 +38,8 @@ export function spellDefinition(name: string): SpellDefinition | undefined {
 // an earlier off-center placement.
 export const LUCEM_BOOK_MAP = 'Utilization' as const;
 export const LUCEM_BOOK_POSITION = { row: 6, col: CLASSROOM_MID_COL };
+
+// The Elemental Casting classroom's own spellbook podium, teaching irrigo
+// — same shape/position convention as the Utilization one above.
+export const IRRIGO_BOOK_MAP = 'Elemental Casting' as const;
+export const IRRIGO_BOOK_POSITION = { row: 6, col: CLASSROOM_MID_COL };

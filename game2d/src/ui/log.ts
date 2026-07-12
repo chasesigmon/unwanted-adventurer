@@ -74,11 +74,36 @@ function saveLogPanelRect(): void {
   }
 }
 
+// A follow-up bug fix — the resize handle sits at the panel's own
+// bottom-right corner; if a drag (or a previously-saved rect, restored
+// below) ever let it end up spatially underneath the action bar (z-index
+// 80, higher than this panel's 60), the action bar started intercepting
+// every pointer event meant for the handle, permanently trapping the
+// panel at that size with no way to grab the handle again. Clamps
+// height so the panel's bottom edge stays clear of the action bar's own
+// top edge whenever their horizontal spans would overlap.
+const actionBar = document.getElementById('action-bar') as HTMLDivElement;
+function clampHeightForActionBar(top: number, left: number, width: number, height: number): number {
+  const barRect = actionBar.getBoundingClientRect();
+  const horizontallyOverlaps = left < barRect.right && left + width > barRect.left;
+  if (!horizontallyOverlaps) return height;
+  return Math.max(LOG_PANEL_MIN_HEIGHT, Math.min(height, barRect.top - top - 8));
+}
+
 // Restores whatever size/position the player last dragged this panel to
 // (item 6) — before any drag ever happens it just stays at the CSS
-// default (bottom-left anchored, 220px tall).
+// default (bottom-left anchored, 220px tall). Re-clamped against the
+// action bar every load too, so anyone already stuck from before this fix
+// existed recovers on their next page load rather than staying trapped
+// forever (a fresh drag can't happen if the handle's already unreachable).
 const savedLogPanelRect = loadLogPanelRect();
-if (savedLogPanelRect) applyLogPanelRect(savedLogPanelRect);
+if (savedLogPanelRect) {
+  const clampedHeight = clampHeightForActionBar(savedLogPanelRect.top, savedLogPanelRect.left, savedLogPanelRect.width, savedLogPanelRect.height);
+  const wasClamped = clampedHeight !== savedLogPanelRect.height;
+  savedLogPanelRect.height = clampedHeight;
+  applyLogPanelRect(savedLogPanelRect);
+  if (wasClamped) saveLogPanelRect();
+}
 
 // Custom drag-resize instead of the native CSS `resize: both` handle —
 // the panel STARTS anchored to the bottom-left of the screen (see
@@ -117,7 +142,9 @@ if (savedLogPanelRect) applyLogPanelRect(savedLogPanelRect);
     const maxWidth = window.innerWidth * 0.9;
     const maxHeight = window.innerHeight * 0.8;
     const width = Math.min(maxWidth, Math.max(LOG_PANEL_MIN_WIDTH, startWidth + (e.clientX - startX)));
-    const height = Math.min(maxHeight, Math.max(LOG_PANEL_MIN_HEIGHT, startHeight + (e.clientY - startY)));
+    let height = Math.min(maxHeight, Math.max(LOG_PANEL_MIN_HEIGHT, startHeight + (e.clientY - startY)));
+    const panelRect = logPanel.getBoundingClientRect();
+    height = clampHeightForActionBar(panelRect.top, panelRect.left, width, height);
     logPanel.style.width = `${width}px`;
     logPanel.style.height = `${height}px`;
   });

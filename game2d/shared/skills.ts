@@ -60,6 +60,20 @@ export const BONE_FINGER_STRIKE_SKILL = 'bone finger strike';
 // isUsableSkill) that lights/extinguishes an equipped wand.
 export const LUCEM_SKILL = 'lucem';
 
+// Learned the same way (a 10% chance per read at the Elemental Casting
+// classroom's own spellbook podium, see handleReadIrrigoBook) — fills a
+// targeted fillable item (a canteen today — see shared/items.ts) with
+// water. Requires selecting that item as a target first (see
+// WorldScene's setItemTarget), then clicking it from the action bar.
+export const IRRIGO_SKILL = 'irrigo';
+
+// Basic actions every human wizard starts knowing outright (item 7) —
+// not practiced up or learned from a podium, just part of the universal
+// kit (see RACE_INNATE_SKILLS.human below). Both act on a targeted
+// inventory item the same way IRRIGO_SKILL does.
+export const DRINK_SKILL = 'drink';
+export const POUR_SKILL = 'pour out';
+
 // A skill with an entry here can't be re-queued until this long (wall-
 // clock ms) after it was last used — checked server-side (see
 // game.gateway.ts's engageInDirection) and rendered client-side as a
@@ -81,8 +95,8 @@ export const RACE_INNATE_SKILLS: Record<Race, string[]> = {
   // Hobgoblin is evolution-only (never a starting race) — its own extra
   // skills are granted separately, see HOBGOBLIN_EVOLUTION_SKILLS.
   hobgoblin: [],
-  // No innate ability yet — a human wizard's own spellcasting skills are
-  // future work (no magic system exists yet); for now they start with
-  // just the universal kit like everyone else.
-  human: [],
+  // Drink/pour are basic actions everyone can do from day one (item 7) —
+  // spellcasting skills (lucem, irrigo, ...) are still learned separately
+  // from their classroom podiums, not granted here.
+  human: [DRINK_SKILL, POUR_SKILL],
 };

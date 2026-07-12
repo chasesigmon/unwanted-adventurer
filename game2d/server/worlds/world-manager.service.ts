@@ -167,6 +167,7 @@ export class WorldManagerService {
         dexterity: state.dexterity,
         constitution: state.constitution,
         luck: state.luck,
+        canteenDrinks: state.canteenDrinks,
         skills: state.skills,
         inventory: state.inventory,
         equipment: state.equipment,

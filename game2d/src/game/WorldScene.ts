@@ -36,10 +36,14 @@ import {
   REVERT_SKILL,
   INFRAVISION_SKILL,
   LUCEM_SKILL,
+  IRRIGO_SKILL,
+  DRINK_SKILL,
+  POUR_SKILL,
 } from '../../shared/skills.js';
 import {
   isDarkHour,
   LIGHT_RADIUS_TILES,
+  LUCEM_LIGHT_RADIUS_TILES,
   SHOP_REACH_TILES,
   staticLightRadiusAt,
   isWithinLightRadius,
@@ -51,7 +55,7 @@ import {
 } from '../../shared/lighting.js';
 import { MONSTER_KINDS, FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS } from '../../shared/constants.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
-import { LUCEM_BOOK_MAP, LUCEM_BOOK_POSITION } from '../../shared/spells.js';
+import { LUCEM_BOOK_MAP, LUCEM_BOOK_POSITION, IRRIGO_BOOK_MAP, IRRIGO_BOOK_POSITION } from '../../shared/spells.js';
 import type { MapName, Race, Direction, MonsterKind, Gender, HairColor, SkinTone } from '../../shared/constants.js';
 import type {
   PlayerSnapshot,
@@ -167,6 +171,9 @@ export class WorldScene extends Phaser.Scene {
   // The Utilization classroom's clickable spellbook podium (item 8) —
   // only ever populated while rendering that one map.
   private spellbookPodiumSprite: Phaser.GameObjects.Sprite | null = null;
+  // Elemental Casting's own podium, teaching irrigo — a second, separate
+  // instance of the same mechanic (see renderSpellPodium).
+  private irrigoPodiumSprite: Phaser.GameObjects.Sprite | null = null;
   private race: Race = 'goblin';
   // Human-only appearance (item 4) — see displayKind/effectiveSpriteKind.
   private gender: Gender | null = null;
@@ -327,7 +334,9 @@ export class WorldScene extends Phaser.Scene {
         return;
       }
       const overEnemy = [...this.monsterSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
-      const overPodium = Boolean(this.spellbookPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY));
+      const overPodium =
+        Boolean(this.spellbookPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
+        Boolean(this.irrigoPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY));
       this.game.canvas.style.cursor = overEnemy ? SWORD_CURSOR : overPodium ? FEATHER_CURSOR : '';
     });
 
@@ -1112,7 +1121,6 @@ export class WorldScene extends Phaser.Scene {
     this.bridgeGraphics = null;
     if (mapName === 'Grimoak Grounds') {
       const WATER = 0x2f6fa8;
-      const WATER_DARK = 0x24537d;
       const fillTileBand = (
         graphics: Phaser.GameObjects.Graphics,
         rowStart: number,
@@ -1132,10 +1140,6 @@ export class WorldScene extends Phaser.Scene {
       fillTileBand(moat, MOAT_INNER_TOP, MOAT_INNER_BOTTOM, MOAT_INNER_RIGHT + 1, MOAT_OUTER_RIGHT, WATER);
       fillTileBand(moat, MOAT_INNER_BOTTOM + 1, MOAT_OUTER_BOTTOM, MOAT_OUTER_LEFT, BRIDGE_COL_LEFT - 1, WATER);
       fillTileBand(moat, MOAT_INNER_BOTTOM + 1, MOAT_OUTER_BOTTOM, BRIDGE_COL_RIGHT + 1, MOAT_OUTER_RIGHT, WATER);
-      // A couple of darker ripple stripes for a touch of water texture.
-      fillTileBand(moat, MOAT_OUTER_TOP + 1, MOAT_OUTER_TOP + 1, MOAT_OUTER_LEFT, MOAT_OUTER_RIGHT, WATER_DARK);
-      fillTileBand(moat, MOAT_OUTER_BOTTOM - 1, MOAT_OUTER_BOTTOM - 1, MOAT_OUTER_LEFT, BRIDGE_COL_LEFT - 1, WATER_DARK);
-      fillTileBand(moat, MOAT_OUTER_BOTTOM - 1, MOAT_OUTER_BOTTOM - 1, BRIDGE_COL_RIGHT + 1, MOAT_OUTER_RIGHT, WATER_DARK);
       this.moatGraphics = moat;
 
       const bridge = this.add.graphics().setDepth(-0.9);
@@ -1202,12 +1206,16 @@ export class WorldScene extends Phaser.Scene {
     // layer on top that gets the sway + flicker.
     for (const sprite of this.fireplaceSprites) sprite.destroy();
     this.fireplaceSprites = [];
+    // Half-sized in the small classrooms (a follow-up ask) — the large
+    // rooms' own fireplaces stay full-size, just nudged toward the
+    // center instead (see fireplacePositionsFor).
+    const fireplaceScale = (CLASSROOM_MAPS as readonly string[]).includes(mapName) ? 0.5 : 1;
     for (const { row, col } of fireplacePositionsFor(mapName)) {
       const pos = this.tilePosition(row, col);
-      const mantle = this.add.sprite(pos.x, pos.y, FIREPLACE_MANTLE_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
+      const mantle = this.add.sprite(pos.x, pos.y, FIREPLACE_MANTLE_TEXTURE_KEY).setOrigin(0.5, 0.85).setScale(fireplaceScale).setDepth(-0.5);
       this.fireplaceSprites.push(mantle);
 
-      const flame = this.add.sprite(pos.x, pos.y, FIREPLACE_FLAME_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.49);
+      const flame = this.add.sprite(pos.x, pos.y, FIREPLACE_FLAME_TEXTURE_KEY).setOrigin(0.5, 0.85).setScale(fireplaceScale).setDepth(-0.49);
       // A more natural, "flowing" flame (follow-up correction — a single
       // rigid rotation read as a mechanical pendulum swing, not fire) —
       // three independent tweens (sway, a taller/shorter "breathe," and a
@@ -1228,9 +1236,13 @@ export class WorldScene extends Phaser.Scene {
         repeat: -1,
         ease: 'Sine.easeInOut',
       });
+      // Scaled relative to fireplaceScale, not absolute — otherwise this
+      // tween would override the classroom half-size setScale() above the
+      // instant it started (Phaser tweens set the property outright, not
+      // relative to whatever it already was).
       this.tweens.add({
         targets: flame,
-        scaleY: { from: 0.9, to: 1.1 },
+        scaleY: { from: 0.9 * fireplaceScale, to: 1.1 * fireplaceScale },
         duration: 520 + Math.random() * 360,
         yoyo: true,
         repeat: -1,
@@ -1238,7 +1250,7 @@ export class WorldScene extends Phaser.Scene {
       });
       this.tweens.add({
         targets: flame,
-        scaleX: { from: 0.94, to: 1.06 },
+        scaleX: { from: 0.94 * fireplaceScale, to: 1.06 * fireplaceScale },
         duration: 760 + Math.random() * 420,
         yoyo: true,
         repeat: -1,
@@ -1262,34 +1274,58 @@ export class WorldScene extends Phaser.Scene {
       this.fireplaceSprites.push(flame);
     }
 
-    // The Utilization classroom's spellbook podium (item 8) — clickable,
-    // rolls a 10% chance of learning lucem server-side (see
-    // game.gateway.ts's handleReadLucemBook); reach-gated the same way a
-    // vendor/corpse is.
-    this.spellbookPodiumSprite?.destroy();
-    this.spellbookPodiumSprite = null;
-    if (mapName === LUCEM_BOOK_MAP) {
-      const pos = this.tilePosition(LUCEM_BOOK_POSITION.row, LUCEM_BOOK_POSITION.col);
-      // No useHandCursor here — the podium gets its own custom feather
-      // cursor instead (see the unified pointermove handler in create()),
-      // which would otherwise fight with Phaser's own hover cursor.
-      const podium = this.add.sprite(pos.x, pos.y, SPELLBOOK_PODIUM_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5).setInteractive();
-      podium.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-        if (isInputCaptured() || !pointer.leftButtonDown()) return;
-        if (!isWithinRadius(this.row, this.col, LUCEM_BOOK_POSITION.row, LUCEM_BOOK_POSITION.col, 1)) {
-          logCombatMessage("You're too far away to reach the book.");
-          return;
+    // The classroom spellbook podiums (item 8, item 9's follow-up ask) —
+    // clickable, roll a 10% chance of learning their own spell server-side;
+    // reach-gated the same way a vendor/corpse is. Half-sized (item 5's
+    // follow-up ask) — see renderSpellPodium's own setScale.
+    this.spellbookPodiumSprite = this.renderSpellPodium(
+      this.spellbookPodiumSprite,
+      mapName,
+      LUCEM_BOOK_MAP,
+      LUCEM_BOOK_POSITION,
+      () => this.network.readLucemBook()
+    );
+    this.irrigoPodiumSprite = this.renderSpellPodium(
+      this.irrigoPodiumSprite,
+      mapName,
+      IRRIGO_BOOK_MAP,
+      IRRIGO_BOOK_POSITION,
+      () => this.network.readIrrigoBook()
+    );
+  }
+
+  // Shared by both classroom podiums above — only their map/position/
+  // read-action actually differ.
+  private renderSpellPodium(
+    existing: Phaser.GameObjects.Sprite | null,
+    currentMapName: MapName,
+    bookMap: MapName,
+    position: { row: number; col: number },
+    readAction: () => Promise<{ ok: boolean; message?: string; skills?: Record<string, number> }>
+  ): Phaser.GameObjects.Sprite | null {
+    existing?.destroy();
+    if (currentMapName !== bookMap) return null;
+
+    const pos = this.tilePosition(position.row, position.col);
+    // No useHandCursor here — the podium gets its own custom feather
+    // cursor instead (see the unified pointermove handler in create()),
+    // which would otherwise fight with Phaser's own hover cursor.
+    const podium = this.add.sprite(pos.x, pos.y, SPELLBOOK_PODIUM_TEXTURE_KEY).setOrigin(0.5, 0.85).setScale(0.5).setDepth(-0.5).setInteractive();
+    podium.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (isInputCaptured() || !pointer.leftButtonDown()) return;
+      if (!isWithinRadius(this.row, this.col, position.row, position.col, 1)) {
+        logCombatMessage("You're too far away to reach the book.");
+        return;
+      }
+      void readAction().then((ack) => {
+        if (ack.message) logCombatMessage(ack.message);
+        if (ack.ok && myProfile && ack.skills) {
+          setMyProfile({ ...myProfile, skills: ack.skills });
+          refreshOpenModals();
         }
-        void this.network.readLucemBook().then((ack) => {
-          if (ack.message) logCombatMessage(ack.message);
-          if (ack.ok && myProfile && ack.skills) {
-            setMyProfile({ ...myProfile, skills: ack.skills });
-            refreshOpenModals();
-          }
-        });
       });
-      this.spellbookPodiumSprite = podium;
-    }
+    });
+    return podium;
   }
 
   private applySync(player: PlayerSnapshot): void {
@@ -1581,17 +1617,26 @@ export class WorldScene extends Phaser.Scene {
   // CASTLE_LIGHT_RADIUS_TILES) — or null if none reach at all.
   private localLightRadiusTiles(): number | null {
     if (!myProfile) return null;
+    // Takes the BEST (largest) of every light source currently reaching
+    // the player, not just the first one checked (a follow-up bug fix —
+    // early-returning whichever a static source like the castle's own
+    // gave, even while it was fading toward the edge of its range, meant
+    // an active lucem was silently ignored the whole time the player was
+    // anywhere near a static source at all, including well past the
+    // castle's own light — lucem should always guarantee its own radius
+    // regardless of what else is or isn't nearby).
+    let best: number | null = null;
     const staticRadius = staticLightRadiusAt(this.currentMap, this.row, this.col);
-    if (staticRadius !== null) return staticRadius;
-    if (myProfile.equipment.shield === TORCH_ITEM) return LIGHT_RADIUS_TILES;
-    if (myProfile.wandLit) return LIGHT_RADIUS_TILES;
+    if (staticRadius !== null) best = staticRadius;
+    if (myProfile.equipment.shield === TORCH_ITEM) best = best === null ? LIGHT_RADIUS_TILES : Math.max(best, LIGHT_RADIUS_TILES);
+    if (myProfile.wandLit) best = best === null ? LUCEM_LIGHT_RADIUS_TILES : Math.max(best, LUCEM_LIGHT_RADIUS_TILES);
     for (const sprite of this.otherPlayers.values()) {
       if (!sprite.getData('hasLight')) continue;
       const otherRow = sprite.getData('row') as number;
       const otherCol = sprite.getData('col') as number;
-      if (isWithinLightRadius(this.row, this.col, otherRow, otherCol)) return LIGHT_RADIUS_TILES;
+      if (isWithinLightRadius(this.row, this.col, otherRow, otherCol)) best = best === null ? LIGHT_RADIUS_TILES : Math.max(best, LIGHT_RADIUS_TILES);
     }
-    return null;
+    return best;
   }
 
   // Drives the #dark-fog-overlay DOM element every frame — cheap (just a
@@ -1810,6 +1855,63 @@ export class WorldScene extends Phaser.Scene {
     return { kind: this.targetKind, id: this.targetId };
   }
 
+  // A wholly separate targeting concept from targetKind/targetId above —
+  // "which inventory item is currently aimed at" for drink/pour/irrigo
+  // (item 11's follow-up ask). Tracked by NAME rather than array index —
+  // the inventory is a flat array that reshuffles indices whenever
+  // anything else is added/removed/consumed, so an index captured at
+  // click time could silently point at the wrong item by cast time; a
+  // canteen is also the only one of anything a player ever carries, so
+  // name alone is unambiguous. Set by inventoryEquipment.ts's click
+  // handler on a fillable item.
+  private targetItemName: string | null = null;
+
+  setItemTarget(item: string): void {
+    this.targetItemName = item;
+    logCombatMessage(`Targeted: ${item}.`);
+  }
+
+  clearItemTarget(): void {
+    this.targetItemName = null;
+  }
+
+  getItemTarget(): string | null {
+    return this.targetItemName;
+  }
+
+  // Drink/pour/irrigo all resolve the targeted item's CURRENT index fresh
+  // (see targetItemName's own doc comment) and apply the same shape of
+  // ack back onto myProfile.
+  private useItemTargetedSkill(skillName: string): void {
+    if (!myProfile || !this.targetItemName) {
+      logCombatMessage('Select an item in your inventory first.');
+      return;
+    }
+    const itemIndex = myProfile.inventory.indexOf(this.targetItemName);
+    if (itemIndex === -1) {
+      logCombatMessage("You don't have that anymore.");
+      this.clearItemTarget();
+      return;
+    }
+    const action =
+      skillName === DRINK_SKILL
+        ? this.network.drinkItem(itemIndex)
+        : skillName === POUR_SKILL
+          ? this.network.pourItem(itemIndex)
+          : this.network.castIrrigo(itemIndex);
+    void action.then((ack) => {
+      if (ack.message) logCombatMessage(ack.message);
+      if (!ack.ok || !myProfile) return;
+      setMyProfile({
+        ...myProfile,
+        canteenDrinks: ack.canteenDrinks ?? myProfile.canteenDrinks,
+        mana: ack.mana ?? myProfile.mana,
+      });
+      this.updateOwnBars();
+      refreshOpenModals();
+    });
+  }
+
   // The action bar's click handler for a filled slot — engages the
   // currently selected target with this exact skill. If it's out of
   // range, tryEngage starts walking toward it instead of just refusing,
@@ -1833,6 +1935,15 @@ export class WorldScene extends Phaser.Scene {
     // light") — same "drive the existing chat command" shape as revert.
     if (skillName === LUCEM_SKILL) {
       this.network.chat('/lucem');
+      return;
+    }
+    // Drink/pour/irrigo (items 7, 8 & 11's follow-up asks) act on a
+    // targeted INVENTORY item, not a player/npc/monster — a wholly
+    // separate targeting concept (see setItemTarget, driven by clicking a
+    // fillable item in the Inventory modal) from targetKind/targetId
+    // below.
+    if (skillName === DRINK_SKILL || skillName === POUR_SKILL || skillName === IRRIGO_SKILL) {
+      this.useItemTargetedSkill(skillName);
       return;
     }
 

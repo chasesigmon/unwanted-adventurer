@@ -31,6 +31,10 @@ export interface PlayerSnapshot {
   // Starts at 1 like every other attribute — no mechanical effect yet,
   // reserved for future use (see server/combat/formulas.ts's Attributes).
   luck: number;
+  // How many drinks of water remain in the player's canteen, 0-
+  // CANTEEN_CAPACITY (see shared/items.ts) — refilled by irrigo, drained
+  // by drink, dumped to 0 by pour.
+  canteenDrinks: number;
   skills: Record<string, number>;
   inventory: string[];
   equipment: Record<string, string>;
@@ -297,6 +301,25 @@ export interface ReadLucemBookAck {
   message?: string;
 }
 
+// The Elemental Casting classroom's own podium, teaching irrigo — same
+// shape as ReadLucemBookAck.
+export interface ReadIrrigoBookAck {
+  ok: boolean;
+  skills?: Record<string, number>;
+  irrigoBookReadyAtTick?: number;
+  message?: string;
+}
+
+// Drink/pour/irrigo (items 7 & 8's follow-up asks) — all act on a single
+// targeted inventory item (see WorldScene's targetItemIndex) and report
+// back the canteen's new fill level so the client never has to guess it.
+export interface CanteenActionAck {
+  ok: boolean;
+  canteenDrinks?: number;
+  mana?: number;
+  message?: string;
+}
+
 // Local (map-scoped) chat — broadcast only to the room for `map`, so a
 // player in the Labyrinth never sees a chat line sent from the Great
 // Plains, and vice versa.
@@ -379,6 +402,14 @@ export interface ClientToServerEvents {
   // per click of learning lucem, gated by a 2-world-tick cooldown; see
   // game.gateway.ts's handleReadLucemBook.
   readLucemBook: (ack: (res: ReadLucemBookAck) => void) => void;
+  // The Elemental Casting classroom's own podium — same shape, teaching
+  // irrigo instead; see game.gateway.ts's handleReadIrrigoBook.
+  readIrrigoBook: (ack: (res: ReadIrrigoBookAck) => void) => void;
+  // Drink/pour/irrigo (items 7 & 8's follow-up asks) — all take the
+  // targeted inventory item's index (see WorldScene's targetItemIndex).
+  drinkItem: (itemIndex: number, ack: (res: CanteenActionAck) => void) => void;
+  pourItem: (itemIndex: number, ack: (res: CanteenActionAck) => void) => void;
+  castIrrigo: (itemIndex: number, ack: (res: CanteenActionAck) => void) => void;
   // Clicking an inventory item: the server decides consume vs. equip
   // based on the item itself (see combat/formulas.ts's
   // EQUIPMENT_SLOT_FOR_ITEM) so the client never has to know which items
@@ -416,6 +447,7 @@ export interface SocketData {
   dexterity: number;
   constitution: number;
   luck: number;
+  canteenDrinks: number;
   hp: number;
   maxHp: number;
   mana: number;
@@ -451,6 +483,8 @@ export interface SocketData {
   // A 2-stat-tick cooldown gate on reading the lucem spellbook (item 8),
   // same shape/units as eatBrainsReadyAtTick above.
   lucemBookReadyAtTick: number;
+  // Same idea, for the Elemental Casting classroom's irrigo podium.
+  irrigoBookReadyAtTick: number;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

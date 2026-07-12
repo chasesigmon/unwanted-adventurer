@@ -76,6 +76,11 @@ export class Player {
   @Column({ type: 'int', default: 1 })
   luck!: number;
 
+  // Drinks of water remaining in the player's canteen (see
+  // shared/items.ts's CANTEEN_CAPACITY) — refilled by irrigo.
+  @Column({ name: 'canteen_drinks', type: 'int', default: 6 })
+  canteenDrinks!: number;
+
   @Column({ type: 'int', default: 100 })
   hp!: number;
 

@@ -1,7 +1,7 @@
 import type { MapName } from './constants.js';
-import { GRIMOAK_CASTLE_MAPS } from './constants.js';
+import { GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS } from './constants.js';
 import { INFRAVISION_SKILL } from './skills.js';
-import { getMap, CASTLE_DOOR_ON_GROUNDS } from './maps.js';
+import { getMap, CASTLE_DOOR_ON_GROUNDS, MOAT_INNER_LEFT, MOAT_INNER_RIGHT, MOAT_INNER_TOP, MOAT_INNER_BOTTOM } from './maps.js';
 
 // "Late hours of night and early hours of morning" — a narrower, darker
 // window nested inside the broader 18:00-6:00 "night" range the cosmetic
@@ -37,6 +37,12 @@ export function timeOfDayLabel(hour: number): TimeOfDay {
 // share a number before, not the same concept.
 export const LIGHT_RADIUS_TILES = 4;
 
+// The lucem spell's own wand-light radius — 25% bigger than a plain
+// torch's (a follow-up ask: "expand the light from lucem by another 25%
+// of what it already is," on top of it previously just reusing
+// LIGHT_RADIUS_TILES outright).
+export const LUCEM_LIGHT_RADIUS_TILES = Math.round(LIGHT_RADIUS_TILES * 1.25);
+
 // How close a player needs to be to a vendor to open/use its shop — its
 // own constant so widening the light radius above doesn't also widen how
 // far away you can shop from.
@@ -61,16 +67,32 @@ export const CASTLE_LIGHT_FALLOFF_TILES = 10;
 // regardless of time of day or who's standing there; a source can also
 // give an optional falloffTiles for a soft edge (see staticLightRadiusAt)
 // — town lamps default to 0 (a hard edge is fine at that small scale).
-// Grimoak Grounds' entry is anchored on the castle's own front door and
-// given both a much larger custom radius than a town lamp and a gradual
-// falloff — the whole building lights up the ground around its entrance
-// at night so players can navigate around it, fading out rather than
-// vanishing outright as they walk further away.
+// Grimoak Grounds' entries ring the WHOLE castle (a follow-up fix — a
+// single point anchored on the front door left the back and sides mostly
+// or entirely outside even the falloff range, since the building itself
+// is 60+ tiles wide) rather than just the front: the door, the back-
+// center, both side-centers, and all 4 corners of MOAT_INNER (the
+// building's own footprint plus its fixed buffer — see shared/maps.ts —
+// a close, cheap stand-in for "the castle's actual edge" without needing
+// real point-to-rectangle distance math). Each still gets the same much
+// larger custom radius than a town lamp and the same gradual falloff —
+// the whole building lights up the ground around it at night so players
+// can navigate around any side of it, fading out rather than vanishing
+// outright as they walk further away.
+const CASTLE_LIGHT_SOURCE = { radiusTiles: CASTLE_LIGHT_RADIUS_TILES, falloffTiles: CASTLE_LIGHT_FALLOFF_TILES };
+const CASTLE_LIGHT_MID_ROW = Math.round((MOAT_INNER_TOP + MOAT_INNER_BOTTOM) / 2);
 export const STATIC_LIGHT_SOURCES: Partial<Record<MapName, Array<{ row: number; col: number; radiusTiles?: number; falloffTiles?: number }>>> = {
   Floro: [{ row: 25, col: 25 }],
   Kortho: [{ row: 25, col: 25 }],
   'Grimoak Grounds': [
-    { row: CASTLE_DOOR_ON_GROUNDS.row, col: CASTLE_DOOR_ON_GROUNDS.col, radiusTiles: CASTLE_LIGHT_RADIUS_TILES, falloffTiles: CASTLE_LIGHT_FALLOFF_TILES },
+    { row: CASTLE_DOOR_ON_GROUNDS.row, col: CASTLE_DOOR_ON_GROUNDS.col, ...CASTLE_LIGHT_SOURCE }, // front (the door)
+    { row: MOAT_INNER_TOP, col: CASTLE_DOOR_ON_GROUNDS.col, ...CASTLE_LIGHT_SOURCE }, // back
+    { row: CASTLE_LIGHT_MID_ROW, col: MOAT_INNER_LEFT, ...CASTLE_LIGHT_SOURCE }, // left side
+    { row: CASTLE_LIGHT_MID_ROW, col: MOAT_INNER_RIGHT, ...CASTLE_LIGHT_SOURCE }, // right side
+    { row: MOAT_INNER_TOP, col: MOAT_INNER_LEFT, ...CASTLE_LIGHT_SOURCE }, // corners
+    { row: MOAT_INNER_TOP, col: MOAT_INNER_RIGHT, ...CASTLE_LIGHT_SOURCE },
+    { row: MOAT_INNER_BOTTOM, col: MOAT_INNER_LEFT, ...CASTLE_LIGHT_SOURCE },
+    { row: MOAT_INNER_BOTTOM, col: MOAT_INNER_RIGHT, ...CASTLE_LIGHT_SOURCE },
   ],
 };
 
@@ -114,13 +136,21 @@ export function torchWallPositionsFor(mapName: MapName): Array<{ row: number; co
 // bottom (a follow-up ask, doubling the original top-only pair) — offset
 // from the room's own quarter/three-quarter columns rather than
 // hand-placed, same "computed once from the map's own size" reasoning as
-// the wall torches above. Skips an exit tile for the same reason.
+// the wall torches above. Skips an exit tile for the same reason. In the
+// bigger rooms (Entrance Hall, Great Hall, house common rooms), the
+// columns are nudged in toward the center a little further (a follow-up
+// ask, "bring them in towards the center... away from doors") — the
+// classrooms stay at the original 1/4-3/4 split since they're small
+// enough already (see WorldScene's renderMap, which shrinks the
+// fireplace SPRITE itself by half there instead).
 export function fireplacePositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
   if (!(GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return [];
   const def = getMap(mapName);
   const topRow = 3;
   const bottomRow = def.rows - 4;
-  const cols = [Math.round(def.cols * 0.25), Math.round(def.cols * 0.75)];
+  const isClassroom = (CLASSROOM_MAPS as readonly string[]).includes(mapName);
+  const colFraction = isClassroom ? 0.25 : 0.32;
+  const cols = [Math.round(def.cols * colFraction), Math.round(def.cols * (1 - colFraction))];
   const positions = [
     { row: topRow, col: cols[0]! },
     { row: topRow, col: cols[1]! },

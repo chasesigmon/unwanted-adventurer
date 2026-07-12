@@ -13,6 +13,8 @@ import type {
   EatBrainsAck,
   SacrificeAck,
   ReadLucemBookAck,
+  ReadIrrigoBookAck,
+  CanteenActionAck,
   UseItemAck,
   ChatPayload,
   WhoAck,
@@ -321,6 +323,58 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('readLucemBook', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  readIrrigoBook(): Promise<ReadIrrigoBookAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('readIrrigoBook', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  drinkItem(itemIndex: number): Promise<CanteenActionAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('drinkItem', itemIndex, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  pourItem(itemIndex: number): Promise<CanteenActionAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('pourItem', itemIndex, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castIrrigo(itemIndex: number): Promise<CanteenActionAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castIrrigo', itemIndex, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

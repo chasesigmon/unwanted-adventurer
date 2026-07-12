@@ -101,12 +101,15 @@ import type {
   SacrificeAck,
   MoveAck,
   ReadLucemBookAck,
+  ReadIrrigoBookAck,
+  CanteenActionAck,
 } from '../../shared/types.js';
 import { TOWN_MAPS } from '../../shared/constants.js';
 import { emitsLight, TORCH_ITEM, timeOfDayLabel, isWithinLightRadius, isWithinShopReach } from '../../shared/lighting.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
-import { LUCEM_SKILL } from '../../shared/skills.js';
-import { LUCEM_BOOK_MAP, LUCEM_BOOK_POSITION } from '../../shared/spells.js';
+import { LUCEM_SKILL, IRRIGO_SKILL } from '../../shared/skills.js';
+import { LUCEM_BOOK_MAP, LUCEM_BOOK_POSITION, IRRIGO_BOOK_MAP, IRRIGO_BOOK_POSITION } from '../../shared/spells.js';
+import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem } from '../../shared/items.js';
 import { MONSTER_KINDS } from '../../shared/constants.js';
 import type { Direction, MapName, MonsterClass, MonsterKind, Race } from '../../shared/constants.js';
 
@@ -140,6 +143,21 @@ const EAT_BRAINS_HEAL_PERCENT = 20;
 // agree on where it actually is.
 const LUCEM_BOOK_COOLDOWN_TICKS = 2;
 const LUCEM_BOOK_LEARN_CHANCE = 0.1;
+// Casting lucem ON costs mana; turning it off is free (item 3's
+// follow-up ask). While it stays lit, it keeps draining a smaller amount
+// every global stat tick (see globalStatTick) — same "recoverable through
+// normal means" tradeoff every other mana/hp cost in this project has.
+const LUCEM_CAST_MANA_COST = 10;
+const LUCEM_UPKEEP_MANA_COST = 3;
+// The Elemental Casting classroom's own podium, teaching irrigo — same
+// shape as the lucem book above.
+const IRRIGO_BOOK_COOLDOWN_TICKS = 2;
+const IRRIGO_BOOK_LEARN_CHANCE = 0.1;
+// Irrigo itself (item 8's follow-up ask) — a flat mana cost per cast,
+// whether it succeeds in filling something or not (an already-full
+// target still counts as "you tried," same as a missed punch still costs
+// nothing extra but the attempt itself was real).
+const IRRIGO_CAST_MANA_COST = 10;
 // Skeleton-only "Glare" — measured in COMBAT ticks (see combatTickCount
 // below), the same ~3s cadence hits themselves land on, NOT the slow
 // 30-40s world tick Eat Brains uses above. Only applied when a skeleton
@@ -339,14 +357,36 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       Math.min(statMax, current + Math.round((healPercent / 100) * statMax));
 
     const hp = healed(client.data.hp, client.data.maxHp, percent);
-    const mana = healed(client.data.mana, client.data.maxMana, percent);
-    if (hp === client.data.hp && mana === client.data.mana) return;
+    let mana = healed(client.data.mana, client.data.maxMana, percent);
+
+    // Lucem's ongoing upkeep (item 3's follow-up ask) — drains a little
+    // mana every tick while lit, applied after this tick's own regen so
+    // the two net against each other. Running the player dry just puts
+    // the wand out, same "runs out and stops" tradeoff a torch's own
+    // burnout already has, rather than ever going negative.
+    let wandJustWentOut = false;
+    if (client.data.wandLit) {
+      if (mana <= LUCEM_UPKEEP_MANA_COST) {
+        mana = 0;
+        client.data.wandLit = false;
+        wandJustWentOut = true;
+      } else {
+        mana -= LUCEM_UPKEEP_MANA_COST;
+      }
+    }
+
+    if (hp === client.data.hp && mana === client.data.mana && !wandJustWentOut) return;
 
     client.data.hp = hp;
     client.data.mana = mana;
-    this.worldManager.updateState(client.data.username, { hp, mana });
+    this.worldManager.updateState(client.data.username, wandJustWentOut ? { hp, mana, wandLit: false } : { hp, mana });
     void this.persistStats(client);
     this.systemMessage(client, `${STAT_TICK_FLAVOR[client.data.restState]} and recover some hp/mana.`);
+    if (wandJustWentOut) {
+      this.systemMessage(client, "Your wand flickers out — you're out of mana to sustain it.");
+      client.emit('sync', { player: this.snapshotFor(client) });
+      this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+    }
     client.emit('statTick', {
       hp: client.data.hp,
       maxHp: client.data.maxHp,
@@ -377,6 +417,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       dexterity: client.data.dexterity,
       constitution: client.data.constitution,
       luck: client.data.luck,
+      canteenDrinks: client.data.canteenDrinks,
       skills: client.data.skills,
       inventory: client.data.inventory,
       equipment: client.data.equipment,
@@ -439,6 +480,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         dexterity: client.data.dexterity,
         constitution: client.data.constitution,
         luck: client.data.luck,
+        canteenDrinks: client.data.canteenDrinks,
         level: client.data.level,
         exp: client.data.exp,
         skills: client.data.skills,
@@ -842,6 +884,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.dexterity = doc?.dexterity ?? STARTING_ATTRIBUTE;
     client.data.constitution = doc?.constitution ?? STARTING_ATTRIBUTE;
     client.data.luck = doc?.luck ?? STARTING_ATTRIBUTE;
+    client.data.canteenDrinks = doc?.canteenDrinks ?? CANTEEN_CAPACITY;
     client.data.hp = doc?.hp ?? STARTING_VITAL;
     client.data.maxHp = doc?.maxHp ?? STARTING_VITAL;
     client.data.mana = doc?.mana ?? STARTING_VITAL;
@@ -858,6 +901,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
     }
     client.data.inventory = doc?.inventory ?? [];
+    // Every wizard carries a canteen (item 7) — backfilled here for any
+    // existing account that doesn't have one yet, same "granted
+    // retroactively on next login" treatment the race-innate skill
+    // backfill above uses.
+    if (!client.data.inventory.includes(CANTEEN_ITEM)) {
+      client.data.inventory = [...client.data.inventory, CANTEEN_ITEM];
+    }
     client.data.equipment = doc?.equipment ?? {};
     client.data.consumeExp = doc?.consumeExp ?? 0;
     client.data.gold = doc?.gold ?? STARTING_GOLD;
@@ -883,6 +933,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // starts unlit; same tradeoff as restState.
     client.data.wandLit = false;
     client.data.lucemBookReadyAtTick = 0;
+    client.data.irrigoBookReadyAtTick = 0;
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
@@ -904,6 +955,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       dexterity: client.data.dexterity,
       constitution: client.data.constitution,
       luck: client.data.luck,
+      canteenDrinks: client.data.canteenDrinks,
       skills: client.data.skills,
       inventory: client.data.inventory,
       equipment: client.data.equipment,
@@ -1890,6 +1942,149 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
+  // The Elemental Casting classroom's own podium — identical shape to
+  // handleReadLucemBook above, teaching irrigo instead.
+  @SubscribeMessage('readIrrigoBook')
+  handleReadIrrigoBook(@ConnectedSocket() client: GameSocket): ReadIrrigoBookAck {
+    if (client.data.map !== IRRIGO_BOOK_MAP) {
+      return { ok: false, message: "There's no spellbook here." };
+    }
+    if (!this.isWithinLootReach(client, IRRIGO_BOOK_POSITION.row, IRRIGO_BOOK_POSITION.col)) {
+      return { ok: false, message: "You're too far away to reach the book." };
+    }
+    if (this.currentTick < client.data.irrigoBookReadyAtTick) {
+      const hoursLeft = client.data.irrigoBookReadyAtTick - this.currentTick;
+      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
+    }
+    client.data.irrigoBookReadyAtTick = this.currentTick + IRRIGO_BOOK_COOLDOWN_TICKS;
+
+    if (client.data.skills[IRRIGO_SKILL] !== undefined) {
+      return {
+        ok: true,
+        skills: client.data.skills,
+        irrigoBookReadyAtTick: client.data.irrigoBookReadyAtTick,
+        message: 'You already know how to conjure water with irrigo.',
+      };
+    }
+
+    if (Math.random() < IRRIGO_BOOK_LEARN_CHANCE) {
+      client.data.skills = { ...client.data.skills, [IRRIGO_SKILL]: STARTING_SKILL_PERCENT };
+      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      return {
+        ok: true,
+        skills: client.data.skills,
+        irrigoBookReadyAtTick: client.data.irrigoBookReadyAtTick,
+        message: 'The words swim into focus — you have learned irrigo!',
+      };
+    }
+
+    return {
+      ok: true,
+      irrigoBookReadyAtTick: client.data.irrigoBookReadyAtTick,
+      message: 'You pore over the pages, but nothing clicks yet.',
+    };
+  }
+
+  // Drink/pour/irrigo (items 7 & 8's follow-up asks) all act on a single
+  // targeted inventory item — this validates the index/item once for all
+  // three rather than repeating it, returning the item string on success
+  // or an ack-shaped rejection to return directly.
+  private resolveCanteenTarget(client: GameSocket, itemIndex: unknown): { item: string } | { reject: CanteenActionAck } {
+    if (typeof itemIndex !== 'number' || !Number.isInteger(itemIndex)) {
+      return { reject: { ok: false, message: 'Invalid item.' } };
+    }
+    const item = client.data.inventory[itemIndex];
+    if (item === undefined) {
+      return { reject: { ok: false, message: "You don't have that." } };
+    }
+    return { item };
+  }
+
+  // Drinking from a canteen (item 7) — one charge per drink, no mana cost
+  // (it's not a spell), just depletes the canteen.
+  @SubscribeMessage('drinkItem')
+  handleDrinkItem(@ConnectedSocket() client: GameSocket, @MessageBody() itemIndex: unknown): CanteenActionAck {
+    const resolved = this.resolveCanteenTarget(client, itemIndex);
+    if ('reject' in resolved) return resolved.reject;
+    if (resolved.item !== CANTEEN_ITEM) {
+      return { ok: false, message: "You can't drink that." };
+    }
+    if (client.data.canteenDrinks <= 0) {
+      return { ok: false, message: 'Your canteen is empty.' };
+    }
+    client.data.canteenDrinks -= 1;
+    this.worldManager.updateState(client.data.username, { canteenDrinks: client.data.canteenDrinks });
+    void this.persistStats(client);
+    return { ok: true, canteenDrinks: client.data.canteenDrinks, message: 'You take a drink from your canteen.' };
+  }
+
+  // Pouring a canteen out (item 7) — dumps whatever's left, regardless of
+  // how much that is.
+  @SubscribeMessage('pourItem')
+  handlePourItem(@ConnectedSocket() client: GameSocket, @MessageBody() itemIndex: unknown): CanteenActionAck {
+    const resolved = this.resolveCanteenTarget(client, itemIndex);
+    if ('reject' in resolved) return resolved.reject;
+    if (resolved.item !== CANTEEN_ITEM) {
+      return { ok: false, message: "You can't pour that out." };
+    }
+    if (client.data.canteenDrinks <= 0) {
+      return { ok: false, message: 'Your canteen is already empty.' };
+    }
+    client.data.canteenDrinks = 0;
+    this.worldManager.updateState(client.data.username, { canteenDrinks: client.data.canteenDrinks });
+    void this.persistStats(client);
+    return { ok: true, canteenDrinks: client.data.canteenDrinks, message: 'You pour out your canteen.' };
+  }
+
+  // Irrigo (items 6, 8, 9, 11's follow-up asks) — fills a targeted
+  // fillable item (a canteen today, see shared/items.ts's FILLABLE_ITEMS)
+  // with water. Requires the skill, a wand equipped, and enough mana;
+  // costs mana on every real cast attempt (an already-full target still
+  // counts as one), same "the spell fired, it just had nothing to do"
+  // treatment as casting any other spell with no effect left to have.
+  @SubscribeMessage('castIrrigo')
+  handleCastIrrigo(@ConnectedSocket() client: GameSocket, @MessageBody() itemIndex: unknown): CanteenActionAck {
+    if (client.data.skills[IRRIGO_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the irrigo spell yet." };
+    }
+    if (client.data.equipment.weapon !== WAND_ITEM) {
+      return { ok: false, message: 'You need a wand equipped to cast irrigo.' };
+    }
+    const resolved = this.resolveCanteenTarget(client, itemIndex);
+    if ('reject' in resolved) return resolved.reject;
+    if (!isFillableItem(resolved.item)) {
+      return { ok: false, message: "You can't fill that." };
+    }
+    if (client.data.mana < IRRIGO_CAST_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast irrigo (${IRRIGO_CAST_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= IRRIGO_CAST_MANA_COST;
+
+    if (client.data.canteenDrinks >= CANTEEN_CAPACITY) {
+      this.worldManager.updateState(client.data.username, { mana: client.data.mana });
+      void this.persistStats(client);
+      return {
+        ok: true,
+        mana: client.data.mana,
+        canteenDrinks: client.data.canteenDrinks,
+        message: `Your ${resolved.item} is already full and cannot be filled.`,
+      };
+    }
+
+    client.data.canteenDrinks = CANTEEN_CAPACITY;
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, canteenDrinks: client.data.canteenDrinks });
+    void this.persistStats(client);
+    return {
+      ok: true,
+      mana: client.data.mana,
+      canteenDrinks: client.data.canteenDrinks,
+      message: `You fill your ${resolved.item} with water!`,
+    };
+  }
+
   // Local (map-scoped) chat — same shape as punch: fire-and-forget,
   // rebroadcast only to the sender's own map room, so someone in the
   // Labyrinth or a town never sees Great Plains chat and vice versa. A
@@ -2033,8 +2228,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, 'You need a wand equipped to cast lucem.');
       return;
     }
+    // Lighting it costs mana (item 3's follow-up ask); turning it back
+    // off is free — you're not casting a new spell, just stopping one.
+    if (!client.data.wandLit) {
+      if (client.data.mana < LUCEM_CAST_MANA_COST) {
+        this.systemMessage(client, `You don't have enough mana to cast lucem (${LUCEM_CAST_MANA_COST} needed).`);
+        return;
+      }
+      client.data.mana -= LUCEM_CAST_MANA_COST;
+    }
     client.data.wandLit = !client.data.wandLit;
-    this.worldManager.updateState(client.data.username, { wandLit: client.data.wandLit });
+    this.worldManager.updateState(client.data.username, { wandLit: client.data.wandLit, mana: client.data.mana });
+    void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
     this.systemMessage(client, client.data.wandLit ? 'Your wand glows with a soft light.' : 'Your wand goes dark.');
@@ -2277,6 +2482,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (item === undefined) {
       return { ok: false, message: "You don't have that." };
     }
+    // Fillable items (a canteen, item 7) aren't equippable OR consumable
+    // — they're acted on via drink/pour/irrigo instead (see
+    // handleDrinkItem/handlePourItem/handleCastIrrigo), targeted from the
+    // action bar. Guarded here so a stray click doesn't delete one.
+    if (isFillableItem(item)) {
+      return { ok: false, message: 'Target it, then use drink, pour out, or irrigo from your action bar.' };
+    }
 
     const inventory = [...client.data.inventory];
     inventory.splice(itemIndex, 1);
@@ -2309,6 +2521,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const item = client.data.inventory[itemIndex];
     if (item === undefined) {
       return { ok: false, message: "You don't have that." };
+    }
+    if (isFillableItem(item)) {
+      return { ok: false, message: 'Target it, then use drink, pour out, or irrigo from your action bar.' };
     }
 
     const inventory = [...client.data.inventory];

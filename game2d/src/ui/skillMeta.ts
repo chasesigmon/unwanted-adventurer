@@ -22,8 +22,12 @@ import {
   BONE_FINGER_STRIKE_SKILL,
   GLARE_SKILL,
   LUCEM_SKILL,
+  IRRIGO_SKILL,
+  DRINK_SKILL,
+  POUR_SKILL,
   SKILL_COOLDOWN_MS,
 } from '../../shared/skills.js';
+import { CANTEEN_CAPACITY, isFillableItem } from '../../shared/items.js';
 import { myProfile } from '../state.js';
 
 // A shared red for every "Attack" (A-icon) skill — they already collapse
@@ -82,7 +86,10 @@ export function isUsableSkill(skillName: string): boolean {
     skillName === GLARE_SKILL ||
     skillName === MIMIC_SKILL ||
     skillName === REVERT_SKILL ||
-    skillName === LUCEM_SKILL
+    skillName === LUCEM_SKILL ||
+    skillName === IRRIGO_SKILL ||
+    skillName === DRINK_SKILL ||
+    skillName === POUR_SKILL
   );
 }
 
@@ -116,6 +123,9 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
   [BONE_FINGER_STRIKE_SKILL]:
     'A separate active attack, earnable by chance from consuming bone daggers. Deals 1.5x your normal hit damage, scaling further with skill percent.',
   [LUCEM_SKILL]: "No target needed — lights or extinguishes your equipped wand's tip, granting a light source like a torch would.",
+  [IRRIGO_SKILL]: 'Fills a targeted container (a canteen) with water. Select it in your inventory first, then click this. Costs mana; requires a wand equipped.',
+  [DRINK_SKILL]: 'Takes a drink from a targeted container (a canteen). Select it in your inventory first, then click this.',
+  [POUR_SKILL]: 'Empties out a targeted container (a canteen). Select it in your inventory first, then click this.',
 };
 
 // Item-hover tooltip text — native `title` attribute replaced by
@@ -133,10 +143,12 @@ export const ITEM_DESCRIPTIONS: Record<string, string> = {
   'zombie finger': "A zombie's severed finger. Consume it for exp.",
   'dragonborn scale': "A dragonborn's scale. Consume it for exp.",
   'slime residue': "A slime's residue. Consume it for exp.",
+  canteen: `Holds up to ${CANTEEN_CAPACITY} drinks of water. Click to target it, then use drink, pour out, or irrigo from your action bar.`,
 };
 
 export function itemTooltip(item: string): string {
   const description = ITEM_DESCRIPTIONS[item];
+  if (isFillableItem(item)) return description ?? 'Click to target it, then act on it from your action bar.';
   return description ? `${description}\n\nClick to use, right-click to consume.` : 'Click to use, right-click to consume.';
 }
 

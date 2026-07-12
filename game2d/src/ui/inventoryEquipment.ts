@@ -3,6 +3,7 @@
 // applyUseItemAck reconciliation of myProfile.
 import { activeScene, myProfile, network, setMyProfile } from '../state.js';
 import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, type EquipmentSlot } from '../../shared/equipment.js';
+import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem } from '../../shared/items.js';
 import type { UseItemAck } from '../../shared/types.js';
 import { attachTooltip } from './tooltip.js';
 import { itemTooltip } from './skillMeta.js';
@@ -36,18 +37,34 @@ export function renderInventory(): void {
 
   for (const [item, indices] of groups) {
     const li = document.createElement('li');
-    li.textContent = indices.length > 1 ? `${item} x${indices.length}` : item;
+    const baseLabel = indices.length > 1 ? `${item} x${indices.length}` : item;
+    // The canteen's own fill level, shown right on its inventory row —
+    // there's only ever one, so no need to disambiguate which instance.
+    li.textContent = item === CANTEEN_ITEM ? `${baseLabel} (${myProfile?.canteenDrinks ?? 0}/${CANTEEN_CAPACITY})` : baseLabel;
     li.className = 'inventory-item';
+    if (isFillableItem(item) && activeScene?.getItemTarget() === item) li.classList.add('targeted');
     attachTooltip(li, () => itemTooltip(item));
     // Every group has at least one index (it's seeded with one on
     // creation above), so this is always defined.
-    li.addEventListener('click', () => useInventoryItem(indices[0]!));
+    li.addEventListener('click', () => {
+      // Fillable items (a canteen, item 7 & 11's follow-up asks) aren't
+      // used/consumed by clicking — clicking targets them instead, for
+      // drink/pour/irrigo to act on from the action bar.
+      if (isFillableItem(item)) {
+        activeScene?.setItemTarget(item);
+        renderInventory();
+        return;
+      }
+      useInventoryItem(indices[0]!);
+    });
     // The browser's own right-click context menu is never useful here —
     // captured and replaced with a forced consume, so an otherwise-
     // equippable item (a bone dagger, say) can be eaten for its exp
-    // instead of worn.
+    // instead of worn. Fillable items skip this (the server would refuse
+    // it anyway — see game.gateway.ts's handleConsumeItem).
     li.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      if (isFillableItem(item)) return;
       consumeInventoryItem(indices[0]!);
     });
     inventoryList.appendChild(li);

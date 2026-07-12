@@ -38,6 +38,7 @@ export interface PlayerState extends Location, Attributes {
   // needed here too so getMapState's hasLight calc (see
   // world-manager.service.ts) can factor it in for OTHER players' benefit.
   wandLit: boolean;
+  canteenDrinks: number;
 }
 
 export type MoveResult =

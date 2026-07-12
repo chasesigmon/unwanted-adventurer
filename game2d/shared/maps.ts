@@ -226,8 +226,9 @@ export const CLASSROOM_COLS = Math.round(ROOM_COLS / 3);
 export const CLASSROOM_MID_ROW = Math.floor(CLASSROOM_ROWS / 2);
 export const CLASSROOM_MID_COL = Math.floor(CLASSROOM_COLS / 2);
 
-const ENTRANCE_ROWS = 48;
-const ENTRANCE_COLS = 70;
+// Reduced by 25% from the original 48x70 (a follow-up ask).
+const ENTRANCE_ROWS = 36;
+const ENTRANCE_COLS = 53;
 const ENTRANCE_MID_ROW = Math.floor(ENTRANCE_ROWS / 2);
 const ENTRANCE_MID_COL = Math.floor(ENTRANCE_COLS / 2);
 
@@ -244,14 +245,14 @@ const GREAT_HALL_MID_ROW = Math.floor(GREAT_HALL_ROWS / 2);
 // evenly across the north wall: 3 house common rooms, then the 5
 // classrooms named in the request.
 const ENTRANCE_NORTH_DOORS: Array<{ col: number; name: MapName }> = [
-  { col: 8, name: 'Emberclaw Common Room' },
-  { col: 16, name: 'Starfall Common Room' },
-  { col: 24, name: 'Duskwing Common Room' },
-  { col: 32, name: 'Elemental Casting' },
-  { col: 40, name: 'Defense' },
-  { col: 48, name: 'Summoning' },
-  { col: 56, name: 'Utilization' },
-  { col: 62, name: 'Offense' },
+  { col: 5, name: 'Emberclaw Common Room' },
+  { col: 11, name: 'Starfall Common Room' },
+  { col: 17, name: 'Duskwing Common Room' },
+  { col: 23, name: 'Elemental Casting' },
+  { col: 29, name: 'Defense' },
+  { col: 35, name: 'Summoning' },
+  { col: 41, name: 'Utilization' },
+  { col: 47, name: 'Offense' },
 ];
 
 const ENTRANCE_HALL: MapDefinition = {

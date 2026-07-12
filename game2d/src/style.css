@@ -491,6 +491,16 @@ body {
   display: none;
 }
 
+/* A follow-up bug fix — #log-view already hides via the shared
+   `.panel.collapsed .panel-body` rule (it has the panel-body class), but
+   .log-tabs and #chat-input don't, so the Combat/Chat tab buttons (and,
+   if it happened to be open, the chat box) stayed visible after
+   collapsing — "doesn't actually fully collapse." */
+#log-panel.collapsed .log-tabs,
+#log-panel.collapsed #chat-input {
+  display: none;
+}
+
 #log-resize-handle {
   position: absolute;
   right: 0;
@@ -809,6 +819,14 @@ body {
 
 .inventory-item:hover {
   border-color: #f0c040;
+}
+
+/* A fillable item currently targeted for drink/pour/irrigo (items 7 & 11's
+   follow-up asks) — a visible confirmation of what the action bar will
+   act on next. */
+.inventory-item.targeted {
+  border-color: #4a8fd4;
+  background: rgba(74, 143, 212, 0.18);
 }
 
 .shop-item {

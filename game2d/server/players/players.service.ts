@@ -39,6 +39,7 @@ export interface PlayerStatsUpdate {
   dexterity?: number;
   constitution?: number;
   luck?: number;
+  canteenDrinks?: number;
   level?: number;
   exp?: number;
   skills?: Record<string, number>;
