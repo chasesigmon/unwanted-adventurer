@@ -1,4 +1,4 @@
-import { CLASSROOM_MID_COL } from './maps.js';
+import { CLASSROOM_MID_COL, CAVERNA_CHEST_POSITION } from './maps.js';
 import type { MapName } from './constants.js';
 
 // Spell definitions for the wizarding-school pivot — pure name/description
@@ -56,6 +56,12 @@ export const CELERITAS_BOOK_MAP = 'Utility Classroom' as const;
 export const CELERITAS_BOOK_POSITION = { row: LUCEM_BOOK_POSITION.row, col: LUCEM_BOOK_POSITION.col + 3 };
 export const CELERITAS_BOOK_LABEL = 'Secrets of the quick';
 
+// A THIRD podium in the same room (a later follow-up ask), teaching
+// resera — offset further still so all three stay individually reachable.
+export const RESERA_BOOK_MAP = 'Utility Classroom' as const;
+export const RESERA_BOOK_POSITION = { row: LUCEM_BOOK_POSITION.row, col: LUCEM_BOOK_POSITION.col + 6 };
+export const RESERA_BOOK_LABEL = 'Secrets of the lock';
+
 // The Offense classroom's own spellbook podium, teaching augue — same
 // shape/position convention as the others above.
 export const AUGUE_BOOK_MAP = 'Offense Classroom' as const;
@@ -72,5 +78,14 @@ export function isPodiumBlocked(mapName: MapName, row: number, col: number): boo
   if (mapName === IRRIGO_BOOK_MAP && row === IRRIGO_BOOK_POSITION.row && col === IRRIGO_BOOK_POSITION.col) return true;
   if (mapName === CELERITAS_BOOK_MAP && row === CELERITAS_BOOK_POSITION.row && col === CELERITAS_BOOK_POSITION.col) return true;
   if (mapName === AUGUE_BOOK_MAP && row === AUGUE_BOOK_POSITION.row && col === AUGUE_BOOK_POSITION.col) return true;
+  if (mapName === RESERA_BOOK_MAP && row === RESERA_BOOK_POSITION.row && col === RESERA_BOOK_POSITION.col) return true;
   return false;
+}
+
+// The secret room's treasure chest (a follow-up ask) — a solid object
+// either way regardless of its own per-player lock state (see
+// client.data.secretChestUnlocked), so this is a plain position check,
+// same shape as isPodiumBlocked.
+export function isChestBlocked(mapName: MapName, row: number, col: number): boolean {
+  return mapName === 'Caverna Secretissima' && row === CAVERNA_CHEST_POSITION.row && col === CAVERNA_CHEST_POSITION.col;
 }

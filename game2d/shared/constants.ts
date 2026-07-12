@@ -64,6 +64,12 @@ export const GRIMOAK_CASTLE_MAPS = [
   'Summoning Classroom',
   'Utility Classroom',
   'Offense Classroom',
+  // The secret bonus room (a follow-up ask) — a small locked room behind
+  // the Utility Classroom's own teacher, holding the treasure chest that
+  // grants map access. Included here so it's always-lit and gets the
+  // same automatic wall torches every other castle room does (see
+  // shared/lighting.ts's ALWAYS_LIT_MAPS/torchWallPositionsFor).
+  'Caverna Secretissima',
 ] as const;
 
 // Classroom-sized rooms (a follow-up ask: "a third of the size" of the

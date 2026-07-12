@@ -241,22 +241,23 @@ export const CLASSROOM_COLS = Math.round(ROOM_COLS / 3);
 export const CLASSROOM_MID_ROW = Math.floor(CLASSROOM_ROWS / 2);
 export const CLASSROOM_MID_COL = Math.floor(CLASSROOM_COLS / 2);
 
-// The 4 house common rooms, 25% smaller than the standard ROOM_ROWS/COLS
-// footprint above (a follow-up ask: "like the entrance hall," which took
-// the same 25% cut — see ENTRANCE_ROWS/COLS below).
-const COMMON_ROOM_ROWS = Math.round(ROOM_ROWS * 0.75);
-const COMMON_ROOM_COLS = Math.round(ROOM_COLS * 0.75);
-const COMMON_ROOM_MID_ROW = Math.floor(COMMON_ROOM_ROWS / 2);
-const COMMON_ROOM_MID_COL = Math.floor(COMMON_ROOM_COLS / 2);
-
 // Reduced by 25% from the original 48x70 (a follow-up ask).
 const ENTRANCE_ROWS = 36;
 const ENTRANCE_COLS = 53;
 const ENTRANCE_MID_ROW = Math.floor(ENTRANCE_ROWS / 2);
 const ENTRANCE_MID_COL = Math.floor(ENTRANCE_COLS / 2);
 
-const GREAT_HALL_ROWS = 44;
-const GREAT_HALL_COLS = 64;
+// The 4 house common rooms AND the Great Hall now match the Entrance
+// Hall's own size exactly (a follow-up ask: "reduce the size of the
+// great hall and common rooms to be the same as the entrance hall") —
+// previously their own separate (bigger) footprints.
+const COMMON_ROOM_ROWS = ENTRANCE_ROWS;
+const COMMON_ROOM_COLS = ENTRANCE_COLS;
+const COMMON_ROOM_MID_ROW = Math.floor(COMMON_ROOM_ROWS / 2);
+const COMMON_ROOM_MID_COL = Math.floor(COMMON_ROOM_COLS / 2);
+
+const GREAT_HALL_ROWS = ENTRANCE_ROWS;
+const GREAT_HALL_COLS = ENTRANCE_COLS;
 const GREAT_HALL_MID_ROW = Math.floor(GREAT_HALL_ROWS / 2);
 
 // A simplified castle (a follow-up ask): every classroom hangs directly
@@ -449,6 +450,50 @@ const SUMMONING = classroomOffEntranceHall('Summoning Classroom');
 const UTILIZATION = classroomOffEntranceHall('Utility Classroom');
 const OFFENSE = classroomOffEntranceHall('Offense Classroom');
 
+// The secret bonus room (a follow-up ask) — a small locked room "behind
+// the teacher" in the Utility Classroom, reached through its own
+// previously-unused north wall (row 0), directly above the teacher's own
+// column (CLASSROOM_MID_COL, same column the teacher stands in — see
+// server/worlds/teachers.ts). Same footprint as any other classroom
+// (CLASSROOM_ROWS/COLS) — small, holds just a treasure chest and a few
+// automatic wall torches (see shared/lighting.ts's ALWAYS_LIT_MAPS). The
+// door itself is LOCKED per-player (see shared/constants.ts's MapName and
+// game.gateway.ts's handleMove, which gates the actual transition on
+// client.data.secretDoorUnlocked) — resolveMove/this reciprocal exit pair
+// just describe WHERE the door leads, not whether it's currently passable.
+export const CAVERNA_SECRET_DOOR_POSITION = { row: 0, col: CLASSROOM_MID_COL };
+const CAVERNA_SECRETISSIMA: MapDefinition = {
+  name: 'Caverna Secretissima',
+  rows: CLASSROOM_ROWS,
+  cols: CLASSROOM_COLS,
+  terrain: 'stone',
+  exits: [
+    {
+      row: CLASSROOM_ROWS - 1,
+      col: CLASSROOM_MID_COL,
+      direction: 'south',
+      toMap: 'Utility Classroom',
+      toRow: CAVERNA_SECRET_DOOR_POSITION.row + 1,
+      toCol: CAVERNA_SECRET_DOOR_POSITION.col,
+    },
+  ],
+};
+UTILIZATION.exits.push({
+  row: CAVERNA_SECRET_DOOR_POSITION.row,
+  col: CAVERNA_SECRET_DOOR_POSITION.col,
+  direction: 'north',
+  toMap: 'Caverna Secretissima',
+  toRow: CLASSROOM_ROWS - 1,
+  toCol: CLASSROOM_MID_COL,
+});
+
+// The treasure chest (a follow-up ask) — dead center of the room, well
+// clear of the door on its south wall. Also LOCKED per-player (see
+// client.data.secretChestUnlocked) — collision-blocked the same way a
+// podium is (see isChestBlocked in shared/spells.ts) regardless of lock
+// state, since it's a solid object either way.
+export const CAVERNA_CHEST_POSITION = { row: Math.floor(CLASSROOM_ROWS / 2), col: CLASSROOM_MID_COL };
+
 export const MAPS: Record<MapName, MapDefinition> = {
   'Great Plains': {
     name: 'Great Plains',
@@ -570,6 +615,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Summoning Classroom': SUMMONING,
   'Utility Classroom': UTILIZATION,
   'Offense Classroom': OFFENSE,
+  'Caverna Secretissima': CAVERNA_SECRETISSIMA,
 };
 
 export function getMap(name: MapName): MapDefinition {

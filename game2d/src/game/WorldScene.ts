@@ -27,6 +27,8 @@ import {
   MOAT_INNER_RIGHT,
   BRIDGE_COL_LEFT,
   BRIDGE_COL_RIGHT,
+  CAVERNA_SECRET_DOOR_POSITION,
+  CAVERNA_CHEST_POSITION,
 } from '../../shared/maps.js';
 import { treePositionsFor } from '../../shared/trees.js';
 import {
@@ -39,6 +41,8 @@ import {
   IRRIGO_SKILL,
   CELERITAS_SKILL,
   AUGUE_SKILL,
+  WAND_BOLT_SKILL,
+  RESERA_SKILL,
   DRINK_SKILL,
   POUR_SKILL,
 } from '../../shared/skills.js';
@@ -72,6 +76,9 @@ import {
   AUGUE_BOOK_MAP,
   AUGUE_BOOK_POSITION,
   AUGUE_BOOK_LABEL,
+  RESERA_BOOK_MAP,
+  RESERA_BOOK_POSITION,
+  RESERA_BOOK_LABEL,
 } from '../../shared/spells.js';
 import type { MapName, Race, Direction, MonsterKind, Gender, HairColor, SkinTone } from '../../shared/constants.js';
 import type {
@@ -85,6 +92,7 @@ import type {
   StatTickPayload,
   RestState,
   WorldTimePayload,
+  LockTarget,
 } from '../../shared/types.js';
 import {
   BAR_STACK_GAP,
@@ -99,6 +107,10 @@ import {
   CLASSROOM_DESK_TEXTURE_KEY,
   SPELLBOOK_PODIUM_TEXTURE_KEY,
   BENCH_TEXTURE_KEY,
+  FIREBALL_TEXTURE_KEY,
+  BOLT_TEXTURE_KEY,
+  CHEST_LOCKED_TEXTURE_KEY,
+  CHEST_UNLOCKED_TEXTURE_KEY,
   CLASSROOM_ZOOM,
   CORPSE_SCALE,
   CROW_TEXTURE_KEY,
@@ -146,8 +158,9 @@ import {
 import { logChatMessage, logCombatMessage, noteCombatActivity, openChatInputWithText } from '../ui/log.js';
 import { showCenterToast } from '../ui/toast.js';
 import { loadActionBarOnce } from '../ui/actionBar.js';
-import { isInputCaptured, isMovementBlocked, refreshOpenModals } from '../ui/modalCore.js';
+import { isInputCaptured, isMovementBlocked, refreshOpenModals, updateMapButtonVisibility } from '../ui/modalCore.js';
 import { openCorpseModal, updateEatBrainsButton } from '../ui/corpseModal.js';
+import { openChestModal } from '../ui/chestModal.js';
 import { openShopModal } from '../ui/shopModal.js';
 import { openTargetInfoModal } from '../ui/targetInfoModal.js';
 import { notifyMapChanged } from '../ui/mapModal.js';
@@ -170,6 +183,15 @@ export class WorldScene extends Phaser.Scene {
   private playerWandGlow!: Phaser.GameObjects.Graphics;
   private floorTile!: Phaser.GameObjects.TileSprite;
   private doorSprites: Phaser.GameObjects.Sprite[] = [];
+  // The secret room's treasure chest (a later follow-up ask) — only
+  // populated on 'Caverna Secretissima', clickable to open it (see
+  // renderMap and handleChestClick).
+  private chestSprite: Phaser.GameObjects.Sprite | null = null;
+  // Which lockable object (the secret door or its chest) the player has
+  // most recently clicked — resera targets THIS, not the usual combat
+  // targetKind/targetId, since doors/chests aren't combat targets. Reset
+  // to null on every map change.
+  private lockTarget: LockTarget | null = null;
   // The decorative shop building standing behind each of Floro's shop
   // doors (item 13) — only populated while rendering the 'Floro' map
   // itself (the shop interiors don't need their own exterior rendered).
@@ -206,6 +228,9 @@ export class WorldScene extends Phaser.Scene {
   // The Offense classroom's own podium (a later follow-up ask), teaching
   // augue.
   private auguePodiumSprite: Phaser.GameObjects.Sprite | null = null;
+  // Utilization's THIRD podium (a later follow-up ask), teaching resera —
+  // stands next to the other two.
+  private reseraPodiumSprite: Phaser.GameObjects.Sprite | null = null;
   // Each podium's own small floating label (item 8's follow-up ask) —
   // tracked in lockstep with the 4 podium sprites above purely so
   // map-transition cleanup destroys them together.
@@ -322,6 +347,10 @@ export class WorldScene extends Phaser.Scene {
     this.load.image(CLASSROOM_DESK_TEXTURE_KEY, '/classroom-desk.png');
     this.load.image(SPELLBOOK_PODIUM_TEXTURE_KEY, '/spellbook-podium.png');
     this.load.image(BENCH_TEXTURE_KEY, '/bench.png');
+    this.load.image(FIREBALL_TEXTURE_KEY, '/fireball.png');
+    this.load.image(BOLT_TEXTURE_KEY, '/bolt.png');
+    this.load.image(CHEST_LOCKED_TEXTURE_KEY, '/chest-locked.png');
+    this.load.image(CHEST_UNLOCKED_TEXTURE_KEY, '/chest-unlocked.png');
     createWallTorchTexture(this);
     preloadCharacterSprites(this);
   }
@@ -389,7 +418,8 @@ export class WorldScene extends Phaser.Scene {
         Boolean(this.spellbookPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
         Boolean(this.irrigoPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
         Boolean(this.celeritasPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
-        Boolean(this.auguePodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY));
+        Boolean(this.auguePodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
+        Boolean(this.reseraPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY));
       // A teacher's own `useHandCursor` (set on their sprite below) never
       // actually showed — this SAME pointermove handler fires on every
       // mouse move and unconditionally reset the cursor back to '' right
@@ -820,11 +850,20 @@ export class WorldScene extends Phaser.Scene {
   // mutate myProfile's vitals directly (eat brains, move acks, ...) can
   // keep this in sync too — several of those used to only refresh the
   // text status bar, leaving the graphical bar ABOVE the player stale
-  // until the next sync/combat event.
+  // until the next sync/combat event. ALSO refreshes the plain-DOM status
+  // bar's own HP/MP text now (a follow-up bug report: "the HP/MP in the
+  // player bar at the top left sometimes seem slow to update") — the
+  // mirror-image gap of the one this comment already describes: several
+  // mana-spending actions (lucem/celeritas/irrigo, ...) called this method
+  // but never updateStatusBar() directly, so the graphical bar above the
+  // player updated instantly while the top-left text sat stale until
+  // some LATER unrelated event happened to touch it. Folding both into
+  // one call means neither can be forgotten independently again.
   updateOwnBars(): void {
     if (!myProfile) return;
     drawHpBar(this.playerHpBar, myProfile.hp, myProfile.maxHp);
     drawStatBar(this.playerManaBar, myProfile.maxMana > 0 ? myProfile.mana / myProfile.maxMana : 0, MANA_BAR_COLOR);
+    updateStatusBar();
   }
 
   private ensureHpBar(sprite: Phaser.GameObjects.Sprite, hp: number, maxHp: number): void {
@@ -967,6 +1006,14 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private destroyEntitySprite(sprite: Phaser.GameObjects.Sprite): void {
+    // Same reasoning as the map-decoration destroy loops in renderMap
+    // (fireplaces/torches/crows/trees) — a resting other-player/monster
+    // can be mid rest-pose breathing tween (see applyRestPose) when they
+    // leave the map, and destroying the sprite without stopping that
+    // tween first risks the same "tween throws on a destroyed target,
+    // freezing all tween processing" crash a follow-up bug report traced
+    // fireplaces/movement freezing to.
+    this.tweens.killTweensOf(sprite);
     (sprite.getData('hpBar') as Phaser.GameObjects.Graphics | undefined)?.destroy();
     (sprite.getData('weaponSprite') as Phaser.GameObjects.Sprite | undefined)?.destroy();
     (sprite.getData('wandSprite') as Phaser.GameObjects.Sprite | undefined)?.destroy();
@@ -1084,6 +1131,7 @@ export class WorldScene extends Phaser.Scene {
     // show the first. Every exit uses the same fancy double door now (a
     // follow-up ask) — the old shop-vs-generic texture split is gone.
     for (const sprite of this.doorSprites) sprite.destroy();
+    this.lockTarget = null;
     this.doorSprites = def.exits.map((exit) => {
       const pos = this.tilePosition(exit.row, exit.col);
       // Every reciprocal door pair lands you exactly on the tile that
@@ -1093,9 +1141,64 @@ export class WorldScene extends Phaser.Scene {
       // the top of the display list — on every renderMap call) rendered
       // OVER the player, hiding the sprite completely. Depth -0.5 keeps
       // them above the floor (-1) but below every character.
-      if (exit.kind === 'stairs') return this.add.sprite(pos.x, pos.y, STAIRS_TEXTURE_KEY).setDepth(-0.5);
-      return this.add.sprite(pos.x, pos.y, GRAND_DOOR_TEXTURE_KEY).setDepth(-0.5);
+      const sprite =
+        exit.kind === 'stairs'
+          ? this.add.sprite(pos.x, pos.y, STAIRS_TEXTURE_KEY).setDepth(-0.5)
+          : this.add.sprite(pos.x, pos.y, GRAND_DOOR_TEXTURE_KEY).setDepth(-0.5);
+
+      // Doors are targetable for resera (a later follow-up ask: "make
+      // all doors and treasure chests targetable") — clicking one sets
+      // it as the resera lockTarget. Only the secret room's own door
+      // actually has a lock (see shared/maps.ts's CAVERNA_SECRETISSIMA);
+      // every other door just reports back that it isn't locked.
+      const isSecretDoor =
+        (mapName === RESERA_BOOK_MAP && exit.toMap === 'Caverna Secretissima') ||
+        (mapName === 'Caverna Secretissima' && exit.toMap === RESERA_BOOK_MAP);
+      sprite.setInteractive();
+      sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (isInputCaptured() || !pointer.leftButtonDown()) return;
+        if (!isSecretDoor) {
+          logCombatMessage("This door isn't locked.");
+          return;
+        }
+        this.lockTarget = 'secret-door';
+        logCombatMessage('You target the secret door.');
+      });
+      return sprite;
     });
+
+    // The secret room's own treasure chest (a later follow-up ask) — a
+    // single sprite, textured by whether THIS player has already
+    // resera'd it open (myProfile.secretChestUnlocked); clicking it
+    // always calls openChest() server-side, which independently
+    // re-validates the lock/reach/already-taken state.
+    this.chestSprite?.destroy();
+    this.chestSprite = null;
+    if (mapName === 'Caverna Secretissima') {
+      const pos = this.tilePosition(CAVERNA_CHEST_POSITION.row, CAVERNA_CHEST_POSITION.col);
+      const unlocked = Boolean(myProfile?.secretChestUnlocked);
+      const chest = this.add
+        .sprite(pos.x, pos.y, unlocked ? CHEST_UNLOCKED_TEXTURE_KEY : CHEST_LOCKED_TEXTURE_KEY)
+        .setOrigin(0.5, 0.85)
+        .setDepth(-0.5)
+        .setInteractive();
+      chest.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (isInputCaptured() || !pointer.leftButtonDown()) return;
+        this.lockTarget = 'caverna-chest';
+        if (!isWithinRadius(this.row, this.col, CAVERNA_CHEST_POSITION.row, CAVERNA_CHEST_POSITION.col, 1)) {
+          logCombatMessage("You're too far away to reach the chest.");
+          return;
+        }
+        void this.network.openChest().then((ack) => {
+          if (!ack.ok) {
+            if (ack.message) logCombatMessage(ack.message);
+            return;
+          }
+          openChestModal(ack.items ?? []);
+        });
+      });
+      this.chestSprite = chest;
+    }
 
     // The shop buildings themselves (item 13) — only rendered while
     // standing on Floro's own street (its 7 shop interiors don't need
@@ -1141,6 +1244,19 @@ export class WorldScene extends Phaser.Scene {
     // the server blocks movement onto these same tiles (see
     // WorldManagerService/MonsterManagerService), so this list must stay
     // byte-for-byte identical between client and server.
+    // Kills each sway/flicker/breathe tween BEFORE destroying its target
+    // (a follow-up bug fix: "went outside and wandered around and came
+    // back in... the screen froze including fireplaces and player
+    // movement"). Without this, a tween left running against an already-
+    // destroyed sprite (re-entering a map re-creates all of these, but
+    // never explicitly stopped the PREVIOUS visit's tweens) eventually
+    // throws when it tries to update a property on the destroyed
+    // GameObject — an uncaught error inside Phaser's tween step halts
+    // ALL tween processing for the rest of the session, not just that one
+    // tween, which is why fireplaces elsewhere on the map froze too and
+    // why the in-flight move tween that sets isMoving never reached its
+    // onComplete to clear the flag again, permanently blocking movement.
+    this.tweens.killTweensOf(this.treeSprites);
     for (const sprite of this.treeSprites) sprite.destroy();
     this.treeSprites = [];
     if (mapName === 'Great Plains') {
@@ -1168,6 +1284,7 @@ export class WorldScene extends Phaser.Scene {
     // the visual reason it never goes dark. A gentle alpha flicker per
     // torch, each on its own randomized cycle so they don't all pulse in
     // lockstep.
+    this.tweens.killTweensOf(this.wallTorchSprites);
     for (const sprite of this.wallTorchSprites) sprite.destroy();
     this.wallTorchSprites = [];
     for (const { row, col } of torchWallPositionsFor(mapName)) {
@@ -1229,6 +1346,7 @@ export class WorldScene extends Phaser.Scene {
     // Grimoak Castle's exterior + flying crows (item 4) — only on the
     // Grounds, positioned directly behind (north of) the castle door so
     // its glowing archway lines up with the actual entrance tile.
+    this.tweens.killTweensOf(this.crowSprites);
     for (const sprite of this.castleExteriorSprites) sprite.destroy();
     for (const sprite of this.crowSprites) sprite.destroy();
     this.castleExteriorSprites = [];
@@ -1277,6 +1395,7 @@ export class WorldScene extends Phaser.Scene {
     // should stay perfectly still; only the fire itself sways/flickers):
     // a static stone mantle with NO tween at all, and a separate flame
     // layer on top that gets the sway + flicker.
+    this.tweens.killTweensOf(this.fireplaceSprites);
     for (const sprite of this.fireplaceSprites) sprite.destroy();
     this.fireplaceSprites = [];
     // Half-sized in the small classrooms (a follow-up ask) — the large
@@ -1406,6 +1525,14 @@ export class WorldScene extends Phaser.Scene {
       AUGUE_BOOK_POSITION,
       () => this.network.readAugueBook()
     );
+    // Utilization's THIRD podium (a later follow-up ask), teaching resera.
+    this.reseraPodiumSprite = this.renderSpellPodium(
+      this.reseraPodiumSprite,
+      mapName,
+      RESERA_BOOK_MAP,
+      RESERA_BOOK_POSITION,
+      () => this.network.readReseraBook()
+    );
 
     // A small floating label above each podium (a follow-up ask) —
     // hinting what it teaches without giving the exact spell name away.
@@ -1416,12 +1543,18 @@ export class WorldScene extends Phaser.Scene {
       { map: IRRIGO_BOOK_MAP, position: IRRIGO_BOOK_POSITION, label: IRRIGO_BOOK_LABEL },
       { map: CELERITAS_BOOK_MAP, position: CELERITAS_BOOK_POSITION, label: CELERITAS_BOOK_LABEL },
       { map: AUGUE_BOOK_MAP, position: AUGUE_BOOK_POSITION, label: AUGUE_BOOK_LABEL },
+      { map: RESERA_BOOK_MAP, position: RESERA_BOOK_POSITION, label: RESERA_BOOK_LABEL },
     ];
     for (const { map, position, label } of podiumLabels) {
       if (mapName !== map) continue;
       const pos = this.tilePosition(position.row, position.col);
+      // Shrunk again and wrapped narrow (a follow-up ask: "still
+      // overlapping") — Utility's own two podiums stand only 3 tiles
+      // (96px) apart, and even the previous 8px single-line label was
+      // wide enough to spill into its neighbor's; wrapping to a ~52px
+      // column keeps each label's own footprint well inside that gap.
       const text = this.add
-        .text(pos.x, pos.y - 30, label, { fontSize: '8px', color: '#d8c888', fontStyle: 'italic' })
+        .text(pos.x, pos.y - 26, label, { fontSize: '6px', color: '#d8c888', fontStyle: 'italic', align: 'center', wordWrap: { width: 52 } })
         .setOrigin(0.5, 1)
         .setDepth(-0.4);
       this.podiumLabelSprites.push(text);
@@ -1474,6 +1607,7 @@ export class WorldScene extends Phaser.Scene {
     setMyProfile(player);
     loadActionBarOnce(player.username);
     updateStatusBar();
+    updateMapButtonVisibility(Boolean(player.mapUnlocked));
     updateWorldLabel(player.map);
     notifyMapChanged();
     refreshOpenModals();
@@ -1599,13 +1733,14 @@ export class WorldScene extends Phaser.Scene {
         const pos = this.tilePosition(npc.row, npc.col);
         sprite.setPosition(pos.x, pos.y);
       }
+      const npcLabel = npc.label ?? 'training dummy';
       sprite.setData('race', npc.race);
-      sprite.setData('label', 'training dummy');
+      sprite.setData('label', npcLabel);
       sprite.setData('hp', npc.hp);
       sprite.setData('maxHp', npc.maxHp);
       sprite.setData('level', npc.level);
       this.ensureHpBar(sprite, npc.hp, npc.maxHp);
-      if (this.targetKind === 'npc' && this.targetId === npc.id) updateTargetPanel('training dummy', npc.level, npc.hp, npc.maxHp);
+      if (this.targetKind === 'npc' && this.targetId === npc.id) updateTargetPanel(npcLabel, npc.level, npc.hp, npc.maxHp);
     }
 
     const seenMonsters = new Set<string>();
@@ -1951,8 +2086,29 @@ export class WorldScene extends Phaser.Scene {
     if (!found) return;
 
     this.setTarget(found.kind, found.id, found.sprite);
+    // A follow-up ask: right-clicking with a wand equipped fires the
+    // wand's own RANGED auto-attack instead of walking into melee range —
+    // same "right-click initiates, then it's automatic" shape, just no
+    // walking-closer step, since a ranged weapon staying at range is the
+    // whole point.
+    if (myProfile?.equipment.weapon === WAND_ITEM) {
+      this.tryRangedEngage(found.kind, found.id);
+      return;
+    }
     const defaultSkill = myProfile?.equipment.weapon?.toLowerCase().includes('dagger') ? DAGGER_SKILL : PUNCH_SKILL;
     this.tryEngage(found.kind, found.id, defaultSkill);
+  }
+
+  // The wand's ranged auto-attack (a follow-up ask) — no walking involved
+  // (unlike tryEngage's melee approach): just asks the server to arm/
+  // refresh the sustained session, which is the sole authority on range/
+  // wand-equipped and returns an immediate rejection message if either
+  // isn't met — same "let the server decide, just show what it says"
+  // shape as castAugue.
+  private tryRangedEngage(kind: 'player' | 'npc' | 'monster', id: string): void {
+    void this.network.engageRangedAttack({ targetKind: kind, targetId: id }).then((ack) => {
+      if (!ack.ok && ack.message) logCombatMessage(ack.message);
+    });
   }
 
   // Left click anywhere a player/npc/monster sprite's bounds cover sets
@@ -2175,6 +2331,28 @@ export class WorldScene extends Phaser.Scene {
       this.useItemTargetedSkill(skillName);
       return;
     }
+    // Resera (a later follow-up ask) targets a door or chest, not a
+    // player/npc/monster — a wholly separate targeting concept (see
+    // lockTarget, set by clicking the secret door or the chest sprite in
+    // renderMap) from targetKind/targetId below.
+    if (skillName === RESERA_SKILL) {
+      if (!this.lockTarget) {
+        logCombatMessage('Select a door or chest first (left-click it).');
+        return;
+      }
+      void this.network.castResera(this.lockTarget).then((ack) => {
+        if (ack.message) logCombatMessage(ack.message);
+        if (ack.ok && myProfile && ack.skills) {
+          setMyProfile({ ...myProfile, skills: ack.skills });
+          refreshOpenModals();
+        }
+        // Re-render so the door/chest tint (and, for the chest, its
+        // texture) reflects the freshly-unlocked state immediately
+        // rather than waiting for the next map transition.
+        this.renderMap(this.currentMap);
+      });
+      return;
+    }
 
     if (!this.targetKind || !this.targetId) {
       logCombatMessage('Select a target first (left-click a player or monster).');
@@ -2274,6 +2452,40 @@ export class WorldScene extends Phaser.Scene {
     return dCol <= 0 ? 'left' : 'right';
   }
 
+  // Augue's fireball / the wand's own ranged bolt (a follow-up ask) — a
+  // small sprite tweened from the attacker's current tile to the
+  // target's, rotated to face the way it's actually travelling, then
+  // destroyed on arrival. No-op for any other skill (melee has no
+  // projectile to animate) or if either end's position isn't resolvable
+  // (e.g. the target already left the map some other way).
+  private playProjectileEffect(event: CombatEventPayload): void {
+    if (event.skill !== AUGUE_SKILL && event.skill !== WAND_BOLT_SKILL) return;
+    const attackerPos = this.attackerPosition(event.attacker);
+    if (!attackerPos) return;
+
+    let targetSprite: Phaser.GameObjects.Sprite | undefined;
+    if (event.targetKind === 'npc') targetSprite = this.npcSprites.get(event.target);
+    else if (event.targetKind === 'monster') targetSprite = this.monsterSprites.get(event.target);
+    else targetSprite = event.target === this.myUsername ? this.player : this.otherPlayers.get(event.target);
+    if (!targetSprite) return;
+
+    const from = this.tilePosition(attackerPos.row, attackerPos.col);
+    const textureKey = event.skill === AUGUE_SKILL ? FIREBALL_TEXTURE_KEY : BOLT_TEXTURE_KEY;
+    const projectile = this.add.sprite(from.x, from.y, textureKey).setDepth(4);
+    projectile.setRotation(Phaser.Math.Angle.Between(from.x, from.y, targetSprite.x, targetSprite.y));
+
+    const distance = Phaser.Math.Distance.Between(from.x, from.y, targetSprite.x, targetSprite.y);
+    const PROJECTILE_SPEED_PX_PER_S = 480;
+    const duration = Math.max(120, (distance / PROJECTILE_SPEED_PX_PER_S) * 1000);
+    this.tweens.add({
+      targets: projectile,
+      x: targetSprite.x,
+      y: targetSprite.y,
+      duration,
+      onComplete: () => projectile.destroy(),
+    });
+  }
+
   // The current tile of whoever landed a hit (self, or another player
   // visible on this same map) — used to turn a monster to face its
   // attacker. Returns null for an attacker we have no visible position
@@ -2310,6 +2522,13 @@ export class WorldScene extends Phaser.Scene {
   // this just reflects it: a combat-log line, and an immediate HP-bar/
   // status-bar update rather than waiting for the next map:state tick.
   private applyCombatEvent(event: CombatEventPayload): void {
+    // A follow-up ask's projectile animations (augue's fireball, the
+    // wand's own ranged bolt) — resolved from the attacker's CURRENT
+    // position to the target's, so this has to run before any of the
+    // cleanup below might destroy a dead target's sprite out from under
+    // it.
+    this.playProjectileEffect(event);
+
     // Deselect a target the instant it dies — covers monster/npc/player
     // kills alike, including cases (an NPC dummy relocating, a killed
     // player respawning elsewhere) where the entity doesn't actually

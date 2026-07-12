@@ -24,7 +24,7 @@ import { SessionStoreService } from '../auth/session-store.service.js';
 import { ActiveConnectionsService } from '../auth/active-connections.service.js';
 import { SocketConnectionLimiterService } from '../rate-limit/socket-connection-limiter.service.js';
 import { CommandRateLimiter, type CommandRateLimiterOptions } from '../rate-limit/command-rate-limiter.js';
-import { getMap, startingPositionFor } from '../../shared/maps.js';
+import { getMap, startingPositionFor, CAVERNA_CHEST_POSITION, CAVERNA_SECRET_DOOR_POSITION } from '../../shared/maps.js';
 import { resolveMove } from '../worlds/resolveMove.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { STARTING_MAP, DIRECTIONS } from '../../shared/constants.js';
@@ -108,11 +108,16 @@ import type {
   CanteenActionAck,
   CastSpellAck,
   AugueTargetPayload,
+  ReadReseraBookAck,
+  CastReseraAck,
+  OpenChestAck,
+  TakeChestItemAck,
+  LockTarget,
 } from '../../shared/types.js';
 import { TOWN_MAPS } from '../../shared/constants.js';
 import { emitsLight, TORCH_ITEM, timeOfDayLabel, isWithinLightRadius, isWithinShopReach, isWithinRadius } from '../../shared/lighting.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
-import { LUCEM_SKILL, IRRIGO_SKILL, CELERITAS_SKILL, AUGUE_SKILL } from '../../shared/skills.js';
+import { LUCEM_SKILL, IRRIGO_SKILL, CELERITAS_SKILL, AUGUE_SKILL, WAND_BOLT_SKILL, RESERA_SKILL } from '../../shared/skills.js';
 import {
   LUCEM_BOOK_MAP,
   LUCEM_BOOK_POSITION,
@@ -122,6 +127,8 @@ import {
   CELERITAS_BOOK_POSITION,
   AUGUE_BOOK_MAP,
   AUGUE_BOOK_POSITION,
+  RESERA_BOOK_MAP,
+  RESERA_BOOK_POSITION,
 } from '../../shared/spells.js';
 import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem, manaCrystalForLevel, isManaCrystal } from '../../shared/items.js';
 import { MONSTER_KINDS } from '../../shared/constants.js';
@@ -153,6 +160,11 @@ interface CombatSession {
   // Consecutive combatTicks the target's been out of reach — see
   // COMBAT_DISENGAGE_TICKS.
   missedTicks: number;
+  // Undefined means "melee" — the exact adjacency-1 check every skill has
+  // always used. Set (a follow-up ask's ranged wand-bolt auto-attack,
+  // WAND_BOLT_RANGE_TILES) for a square-radius reach instead, checked in
+  // combatTick.
+  range?: number;
 }
 const MONSTER_TICK_INTERVAL_MS = 3000;
 // Zombie-only "Eat Brains" (see handleEatBrains) — "a 4 tick cooldown"
@@ -216,6 +228,21 @@ const AUGUE_BOOK_COOLDOWN_TICKS = 2;
 const AUGUE_BOOK_LEARN_CHANCE = 0.1;
 const AUGUE_DAMAGE = 10;
 const AUGUE_RANGE_TILES = 7;
+// The wand's own ranged basic attack (a follow-up ask) — flat damage
+// (like the punch formula's base, but simplified), resolved every
+// combat tick same as any other queued attack (see combatTick's own
+// WAND_BOLT_SKILL branch), no cooldown of its own beyond that natural
+// ~3s cadence.
+const WAND_BOLT_DAMAGE = 5;
+const WAND_BOLT_RANGE_TILES = 7;
+// The Utility Classroom's third podium (a later follow-up ask), teaching
+// resera — same learn-chance shape as the other podiums. Costs mana like
+// every other cast (not explicitly requested, but consistent with lucem/
+// celeritas/augue) via SPELL_CAST_MANA... reusing the same 10-mana figure
+// every other spell uses.
+const RESERA_BOOK_COOLDOWN_TICKS = 2;
+const RESERA_BOOK_LEARN_CHANCE = 0.1;
+const RESERA_CAST_MANA_COST = 10;
 // Skeleton-only "Glare" — measured in COMBAT ticks (see combatTickCount
 // below), the same ~3s cadence hits themselves land on, NOT the slow
 // 30-40s world tick Eat Brains uses above. Only applied when a skeleton
@@ -429,7 +456,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (mana <= LUCEM_UPKEEP_MANA_COST) {
         mana = 0;
         client.data.wandLit = false;
-        client.data.wandLitAt = null;
+        client.data.wandLitUntil = null;
         wandJustWentOut = true;
       } else {
         mana -= LUCEM_UPKEEP_MANA_COST;
@@ -487,6 +514,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       hasLight: emitsLight(client.data.equipment) || client.data.wandLit,
       wandLit: client.data.wandLit,
       celeritasActive: client.data.celeritasActive,
+      wandLitUntil: client.data.wandLitUntil,
+      celeritasActiveUntil: client.data.celeritasActiveUntil,
       gold: client.data.gold,
       mimicableRaces: client.data.mimicableRaces,
       mimicForm: client.data.mimicForm,
@@ -494,6 +523,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       skillCooldowns: client.data.skillCooldowns,
       armorClass: armorClassFor(client.data.dexterity, armorEquipmentBonus(client.data.equipment)),
       deathCount: client.data.deathCount,
+      mapUnlocked: client.data.mapUnlocked,
+      secretDoorUnlocked: client.data.secretDoorUnlocked,
+      secretChestUnlocked: client.data.secretChestUnlocked,
     };
   }
 
@@ -554,6 +586,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         mimicForm: client.data.mimicForm,
         deathCount: client.data.deathCount,
         condemned: client.data.deathCount >= GameGateway.CONDEATH_LIMIT,
+        secretDoorUnlocked: client.data.secretDoorUnlocked,
+        secretChestUnlocked: client.data.secretChestUnlocked,
+        mapUnlocked: client.data.mapUnlocked,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -780,12 +815,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // in real life... before it goes out").
   private checkLucemExpiry(client: GameSocket): void {
     if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
-    if (!client.data.wandLit || client.data.wandLitAt === null) return;
-    const skillPercent = client.data.skills[LUCEM_SKILL] ?? STARTING_SKILL_PERCENT;
-    if (Date.now() - client.data.wandLitAt < spellDurationMs(skillPercent)) return;
+    if (!client.data.wandLit || client.data.wandLitUntil === null) return;
+    if (Date.now() < client.data.wandLitUntil) return;
 
     client.data.wandLit = false;
-    client.data.wandLitAt = null;
+    client.data.wandLitUntil = null;
     this.worldManager.updateState(client.data.username, { wandLit: false });
     void this.persistStats(client);
     this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
@@ -797,12 +831,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // toggle (unlike wandLit's hasLight), so no map:state broadcast needed.
   private checkCeleritasExpiry(client: GameSocket): void {
     if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
-    if (!client.data.celeritasActive || client.data.celeritasActiveAt === null) return;
-    const skillPercent = client.data.skills[CELERITAS_SKILL] ?? STARTING_SKILL_PERCENT;
-    if (Date.now() - client.data.celeritasActiveAt < spellDurationMs(skillPercent)) return;
+    if (!client.data.celeritasActive || client.data.celeritasActiveUntil === null) return;
+    if (Date.now() < client.data.celeritasActiveUntil) return;
 
     client.data.celeritasActive = false;
-    client.data.celeritasActiveAt = null;
+    client.data.celeritasActiveUntil = null;
     this.worldManager.updateState(client.data.username, { celeritasActive: false });
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
@@ -1029,14 +1062,22 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // A wand never relights itself on reconnect (unlike a torch) — always
     // starts unlit; same tradeoff as restState.
     client.data.wandLit = false;
-    client.data.wandLitAt = null;
+    client.data.wandLitUntil = null;
     // Same tradeoff again — celeritas never carries over either.
     client.data.celeritasActive = false;
-    client.data.celeritasActiveAt = null;
+    client.data.celeritasActiveUntil = null;
     client.data.lucemBookReadyAtTick = 0;
     client.data.irrigoBookReadyAtTick = 0;
     client.data.celeritasBookReadyAtTick = 0;
     client.data.augueBookReadyAtTick = 0;
+    client.data.reseraBookReadyAtTick = 0;
+    // The secret room system (a follow-up ask) — persisted, unlike the
+    // cooldowns above; loaded straight from the player doc, defaulting to
+    // false for any character that predates this feature (every existing
+    // character, Baltar included).
+    client.data.secretDoorUnlocked = doc?.secretDoorUnlocked ?? false;
+    client.data.secretChestUnlocked = doc?.secretChestUnlocked ?? false;
+    client.data.mapUnlocked = doc?.mapUnlocked ?? false;
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
@@ -1132,6 +1173,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           message: `The guards of ${preview.mapName} bar your way — you need a weapon equipped to pass.`,
         };
       }
+      // The secret room's own door (a follow-up ask) — locked per-player
+      // until resera'd open (see handleCastResera); same "preview first,
+      // no side effects" shape as the town gate above.
+      if (preview.ok && preview.transitioned && preview.mapName === 'Caverna Secretissima' && !client.data.secretDoorUnlocked) {
+        return { ok: false, player: this.snapshotFor(client), message: 'The door is locked.' };
+      }
     }
 
     const result = this.worldManager.processMove(username, parsed.data);
@@ -1210,6 +1257,49 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     this.engageInDirection(client, parsed.data.direction, parsed.data.skill);
+  }
+
+  // The wand's own ranged auto-attack (a follow-up ask) — right-click
+  // arms/refreshes a sustained combat session against the given target,
+  // resolved automatically every combat tick (see combatTick's own
+  // WAND_BOLT_SKILL branch/resolveRangedAutoAttack) for as long as the
+  // target stays within WAND_BOLT_RANGE_TILES and the wand stays
+  // equipped — no walking-into-melee-range involved, unlike
+  // engageInDirection's own contact-only shape.
+  @SubscribeMessage('engageRangedAttack')
+  handleEngageRangedAttack(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    const limiter = this.commandLimiters.get(client.id);
+    if (limiter && !limiter.tryConsume()) return { ok: false };
+    if (client.data.equipment.weapon !== WAND_ITEM) {
+      return { ok: false, message: 'You need a wand equipped to auto-attack at range.' };
+    }
+    if (this.isParalyzed(`player:${client.data.username}`)) {
+      const message = "You are paralyzed by a skeleton's glare and cannot attack!";
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+    const parsed = augueTargetSchema.safeParse(payload);
+    if (!parsed.success) return { ok: false, message: 'Invalid target.' };
+
+    const targetLoc = this.locateCombatTarget(parsed.data.targetKind, parsed.data.targetId);
+    if (!targetLoc || targetLoc.mapName !== client.data.map) {
+      return { ok: false, message: 'Your target is no longer here.' };
+    }
+    if (!isWithinRadius(client.data.row, client.data.col, targetLoc.row, targetLoc.col, WAND_BOLT_RANGE_TILES)) {
+      return { ok: false, message: "You're too far away to hit that with your wand." };
+    }
+
+    this.playerCombat.set(client.data.username, {
+      targetKind: parsed.data.targetKind,
+      targetId: parsed.data.targetId,
+      skill: WAND_BOLT_SKILL,
+      missedTicks: 0,
+      range: WAND_BOLT_RANGE_TILES,
+    });
+    if (parsed.data.targetKind === 'monster') {
+      this.monsterManager.setAggro(parsed.data.targetId, client.data.username, this.combatTickCount);
+    }
+    return { ok: true };
   }
 
   // Starts a skill's cooldown (item 22) — only skills with an entry in
@@ -1306,10 +1396,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (this.isParalyzed(`player:${username}`)) continue;
 
       const targetLoc = this.locateCombatTarget(session.targetKind, session.targetId);
+      // Melee (session.range undefined) keeps its EXACT original check —
+      // Manhattan distance 1, cardinal-adjacent only, no diagonals — so
+      // this doesn't change existing punch/dagger/bone-finger/glare
+      // behavior at all. A ranged session (session.range set — today only
+      // WAND_BOLT_SKILL) instead uses a square radius, same shape as
+      // shared/lighting.ts's isWithinRadius.
       const inRange =
         targetLoc !== undefined &&
         targetLoc.mapName === client.data.map &&
-        Math.abs(targetLoc.row - client.data.row) + Math.abs(targetLoc.col - client.data.col) === 1;
+        (session.range === undefined
+          ? Math.abs(targetLoc.row - client.data.row) + Math.abs(targetLoc.col - client.data.col) === 1
+          : Math.abs(targetLoc.row - client.data.row) <= session.range && Math.abs(targetLoc.col - client.data.col) <= session.range);
 
       if (!inRange) {
         // A monster target that's STILL actively chasing this exact
@@ -1327,6 +1425,24 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         continue;
       }
       session.missedTicks = 0;
+
+      // The wand's own ranged auto-attack (a follow-up ask) resolves
+      // through its own self-contained path — flat damage, no dodge/
+      // parry/counter-attack, and it auto-cancels the instant the wand
+      // comes off (this is checked HERE, every tick, rather than only at
+      // engage time, since "auto attack every combat tick unless
+      // something else would prevent it" explicitly covers unequipping
+      // mid-fight) — rather than threading a whole new damage shape
+      // through resolveHitOnMonster/Npc/Player, which are tuned for
+      // melee's own formula/avoidance/counter-attack rules.
+      if (session.skill === WAND_BOLT_SKILL) {
+        if (client.data.equipment.weapon !== WAND_ITEM) {
+          this.playerCombat.delete(username);
+          continue;
+        }
+        this.resolveRangedAutoAttack(client, session);
+        continue;
+      }
 
       if (session.targetKind === 'monster') {
         const monster = this.monsterManager.getMonster(session.targetId);
@@ -1347,6 +1463,101 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         void this.resolveHitOnPlayer(client, session.targetId, session.skill);
       }
     }
+  }
+
+  // The wand's ranged basic attack (a follow-up ask) — flat
+  // WAND_BOLT_DAMAGE, no dodge/parry/shield-block, no counter-attack (a
+  // bolt fired from up to 7 tiles away doesn't give the target a chance
+  // to retaliate in melee). Monster kills still grant the usual exp/mana-
+  // crystal drop; NPC/scarecrow and player targets follow the same
+  // simplified shape handleCastAugue's own target-kind branches use.
+  private resolveRangedAutoAttack(client: GameSocket, session: CombatSession): void {
+    if (session.targetKind === 'monster') {
+      const monster = this.monsterManager.getMonster(session.targetId);
+      if (!monster) {
+        this.playerCombat.delete(client.data.username);
+        return;
+      }
+      this.monsterManager.setAggro(monster.id, client.data.username, this.combatTickCount);
+      const result = this.monsterManager.applyDamage(monster.id, WAND_BOLT_DAMAGE);
+      if (!result) return;
+
+      let expGained: number | undefined;
+      let leveledUp = false;
+      if (result.died) {
+        const rawExpGained = expGainFor(monster.expReward, client.data.level, monster.level);
+        const grantResult = this.grantExp(client, rawExpGained);
+        leveledUp = grantResult.leveledUp;
+        expGained = grantResult.message ? undefined : rawExpGained;
+        const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
+        this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username);
+        this.playerCombat.delete(client.data.username);
+      }
+      const message = result.died
+        ? `${client.data.username}'s wand bolt strikes the ${monster.kind} for ${WAND_BOLT_DAMAGE} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
+        : `${client.data.username}'s wand bolt strikes the ${monster.kind} for ${WAND_BOLT_DAMAGE} damage.`;
+      void this.persistStats(client);
+      this.emitCombat(client, {
+        targetKind: 'monster',
+        target: monster.id,
+        targetLabel: monster.kind,
+        damage: WAND_BOLT_DAMAGE,
+        targetHp: result.monster.hp,
+        targetMaxHp: monster.maxHp,
+        targetDied: result.died,
+        expGained,
+        leveledUp,
+        message,
+        skill: WAND_BOLT_SKILL,
+      });
+      this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+      return;
+    }
+
+    if (session.targetKind === 'npc') {
+      const npc = NPCS.find((n) => n.id === session.targetId);
+      if (!npc) {
+        this.playerCombat.delete(client.data.username);
+        return;
+      }
+      npc.hp = Math.max(0, npc.hp - WAND_BOLT_DAMAGE);
+      const died = npc.hp <= 0;
+      const label = npc.label ?? 'training dummy';
+      if (died) {
+        if (!npc.immortal) {
+          this.corpseManager.spawn(npc.race, npc.level, [bodyPartLabelFor(npc.race), 'bone dagger'], npc.map, npc.row, npc.col);
+          const tile = this.randomFreeTileFor(npc.map);
+          npc.row = tile.row;
+          npc.col = tile.col;
+          this.playerCombat.delete(client.data.username);
+        }
+        npc.hp = npc.maxHp;
+      }
+      const message = died
+        ? npc.immortal
+          ? `${client.data.username}'s wand bolt strikes the ${label} for ${WAND_BOLT_DAMAGE} damage — it shrugs off the blow, unharmed.`
+          : `${client.data.username}'s wand bolt strikes the ${label} for ${WAND_BOLT_DAMAGE} damage, defeating it! It leaves a corpse and reappears elsewhere.`
+        : `${client.data.username}'s wand bolt strikes the ${label} for ${WAND_BOLT_DAMAGE} damage.`;
+      void this.persistStats(client);
+      this.emitCombat(client, {
+        targetKind: 'npc',
+        target: npc.id,
+        targetLabel: label,
+        damage: WAND_BOLT_DAMAGE,
+        targetHp: npc.hp,
+        targetMaxHp: npc.maxHp,
+        targetDied: died,
+        message,
+        skill: WAND_BOLT_SKILL,
+      });
+      this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+      return;
+    }
+
+    // PvP wand bolts aren't part of this ask ("shoots a little bolt at
+    // the imp target") — monster/scarecrow only for now, same scope
+    // limit augue's own targetKind guard already has.
+    this.playerCombat.delete(client.data.username);
   }
 
   // Resolves exactly one combat tick's worth of hit(s) on a monster —
@@ -1485,6 +1696,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // dummy — see that method's own doc comment for the shared reasoning.
   private resolveHitOnNpc(client: GameSocket, npc: (typeof NPCS)[number], skillName: string): void {
     if (skillName === GLARE_SKILL) this.startSkillCooldown(client, GLARE_SKILL);
+    // A follow-up ask's practice scarecrows (npc.immortal) share this same
+    // NPC combat path but skip the corpse/relocate/counter-attack below
+    // entirely — a true passive damage sink, not "a punching bag that
+    // occasionally fights back and moves," which the ORIGINAL Great
+    // Plains training dummy still does unchanged.
+    const label = npc.label ?? 'training dummy';
     // The training dummy has the same starting attributes as a brand-new
     // player (see combat/formulas.ts) — it's "a player as well" for
     // damage-formula purposes ("the test player"). It still grants no
@@ -1561,7 +1778,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (attackGrowth) growthMessages.push(attackGrowth);
     }
 
-    if (died) {
+    if (died && npc.immortal) {
+      // A practice scarecrow just shrugs it off and resets in place — no
+      // corpse, no relocating, no "defeating" anything.
+      npc.hp = npc.maxHp;
+    } else if (died) {
       // No killedBy, deliberately — same "not a real kill" reasoning as
       // the no-exp rule above: an ever-respawning dummy would otherwise
       // make a zombie's Eat Brains cooldown meaningless (free heal on
@@ -1576,30 +1797,36 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     let message: string;
     if (skillName === BONE_FINGER_STRIKE_SKILL) {
       message = avoided
-        ? `${client.data.username}'s bone finger strike misses the training dummy — it ${avoidVerb}s out of the way!`
+        ? `${client.data.username}'s bone finger strike misses the ${label} — it ${avoidVerb}s out of the way!`
         : died
-          ? `${client.data.username}'s bone finger strike hits the training dummy for ${totalDamage} damage, defeating it! It leaves a corpse and reappears elsewhere.`
-          : `${client.data.username}'s bone finger strike hits the training dummy for ${totalDamage} damage.`;
+          ? npc.immortal
+            ? `${client.data.username}'s bone finger strike hits the ${label} for ${totalDamage} damage — it shrugs off the blow, unharmed.`
+            : `${client.data.username}'s bone finger strike hits the ${label} for ${totalDamage} damage, defeating it! It leaves a corpse and reappears elsewhere.`
+          : `${client.data.username}'s bone finger strike hits the ${label} for ${totalDamage} damage.`;
     } else {
       const verb = this.attackVerb(client);
       message = died
-        ? `${client.data.username} ${verb} the training dummy for ${totalDamage} damage, defeating it! It leaves a corpse and reappears elsewhere.`
-        : `${client.data.username} ${verb} the training dummy for ${totalDamage} damage.`;
+        ? npc.immortal
+          ? `${client.data.username} ${verb} the ${label} for ${totalDamage} damage — it shrugs off the blow, unharmed.`
+          : `${client.data.username} ${verb} the ${label} for ${totalDamage} damage, defeating it! It leaves a corpse and reappears elsewhere.`
+        : `${client.data.username} ${verb} the ${label} for ${totalDamage} damage.`;
     }
 
-    if (!died) {
+    // A scarecrow never fights back — a true passive damage sink, unlike
+    // the original training dummy's own dodge/parry/counter-attack.
+    if (!died && !npc.immortal) {
       const paralysisKey = `npc:${npc.id}`;
       let counterMessage: string;
       if (skillName === GLARE_SKILL) {
         const wasParalyzed = this.isParalyzed(paralysisKey);
         this.applyGlare(client, paralysisKey);
         counterMessage = wasParalyzed
-          ? 'The training dummy is still paralyzed by your glare and cannot counter-attack!'
-          : 'Your glare paralyzes the training dummy, freezing it before it can retaliate!';
+          ? `The ${label} is still paralyzed by your glare and cannot counter-attack!`
+          : `Your glare paralyzes the ${label}, freezing it before it can retaliate!`;
       } else if (this.isParalyzed(paralysisKey)) {
-        counterMessage = 'The training dummy is paralyzed by your glare and cannot counter-attack!';
+        counterMessage = `The ${label} is paralyzed by your glare and cannot counter-attack!`;
       } else {
-        counterMessage = this.resolveMonsterCounterAttack(client, defenderStats, 'training dummy', undefined, growthMessages);
+        counterMessage = this.resolveMonsterCounterAttack(client, defenderStats, label, undefined, growthMessages);
       }
       message += ` ${counterMessage}`;
     }
@@ -1608,7 +1835,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.emitCombat(client, {
       targetKind: 'npc',
       target: npc.id,
-      targetLabel: 'training dummy',
+      targetLabel: label,
       damage: totalDamage,
       targetHp: npc.hp,
       targetMaxHp: npc.maxHp,
@@ -2186,6 +2413,146 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
+  // The Utility Classroom's third podium (a later follow-up ask) —
+  // identical shape to handleReadLucemBook/handleReadAugueBook, teaching
+  // resera instead.
+  @SubscribeMessage('readReseraBook')
+  handleReadReseraBook(@ConnectedSocket() client: GameSocket): ReadReseraBookAck {
+    if (client.data.map !== RESERA_BOOK_MAP) {
+      return { ok: false, message: "There's no spellbook here." };
+    }
+    if (!this.isWithinLootReach(client, RESERA_BOOK_POSITION.row, RESERA_BOOK_POSITION.col)) {
+      return { ok: false, message: "You're too far away to reach the book." };
+    }
+    if (this.currentTick < client.data.reseraBookReadyAtTick) {
+      const hoursLeft = client.data.reseraBookReadyAtTick - this.currentTick;
+      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
+    }
+    client.data.reseraBookReadyAtTick = this.currentTick + RESERA_BOOK_COOLDOWN_TICKS;
+
+    if (client.data.skills[RESERA_SKILL] !== undefined) {
+      return {
+        ok: true,
+        skills: client.data.skills,
+        reseraBookReadyAtTick: client.data.reseraBookReadyAtTick,
+        message: 'You already know how to conjure resera.',
+      };
+    }
+
+    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : RESERA_BOOK_LEARN_CHANCE)) {
+      client.data.skills = { ...client.data.skills, [RESERA_SKILL]: STARTING_SKILL_PERCENT };
+      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      return {
+        ok: true,
+        skills: client.data.skills,
+        reseraBookReadyAtTick: client.data.reseraBookReadyAtTick,
+        message: 'The words swim into focus — you have learned resera!',
+      };
+    }
+
+    return {
+      ok: true,
+      reseraBookReadyAtTick: client.data.reseraBookReadyAtTick,
+      message: 'You pore over the pages, but nothing clicks yet.',
+    };
+  }
+
+  // Resera (a later follow-up ask) — a targeted UTILITY spell: requires
+  // selecting one of the game's two lockable objects (the secret room's
+  // own door, or its treasure chest — see shared/types.ts's LockTarget)
+  // and rolls the same percent-chance-success/growth formula every other
+  // spell uses. Success sets a PER-PLAYER persisted unlock flag — other
+  // players still have to resera the same object themselves; one
+  // player's success never unlocks it for anyone else.
+  @SubscribeMessage('castResera')
+  handleCastResera(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastReseraAck {
+    if (client.data.skills[RESERA_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the resera spell yet." };
+    }
+    const parsed = z.object({ target: z.enum(['secret-door', 'caverna-chest']) }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid target.' };
+    }
+    const target: LockTarget = parsed.data.target;
+    const alreadyUnlocked = target === 'secret-door' ? client.data.secretDoorUnlocked : client.data.secretChestUnlocked;
+    if (alreadyUnlocked) {
+      return { ok: false, message: `That's already unlocked.` };
+    }
+    // Both lockable objects live in/around the same room — reach-gated
+    // the same way a podium/vendor/corpse is, from wherever the object
+    // itself actually is.
+    const targetPosition = target === 'secret-door' ? CAVERNA_SECRET_DOOR_POSITION : CAVERNA_CHEST_POSITION;
+    const targetMap = target === 'secret-door' ? RESERA_BOOK_MAP : 'Caverna Secretissima';
+    if (client.data.map !== targetMap || !this.isWithinLootReach(client, targetPosition.row, targetPosition.col)) {
+      return { ok: false, message: "You're too far away to reach that." };
+    }
+    if (client.data.mana < RESERA_CAST_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast resera (${RESERA_CAST_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= RESERA_CAST_MANA_COST;
+    const skillPercent = client.data.skills[RESERA_SKILL] ?? STARTING_SKILL_PERCENT;
+    const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS);
+
+    let message: string;
+    if (Math.random() * 100 < successChance) {
+      if (target === 'secret-door') {
+        client.data.secretDoorUnlocked = true;
+        message = 'The lock clicks open — the door is unlocked.';
+      } else {
+        client.data.secretChestUnlocked = true;
+        message = 'The lock clicks open — the chest is unlocked.';
+      }
+    } else {
+      message = 'You fumble the incantation and nothing happens.';
+    }
+
+    const growth = this.maybeGrowSkill(client, RESERA_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    return { ok: true, skills: client.data.skills, message };
+  }
+
+  // The secret room's treasure chest (a later follow-up ask) — must be
+  // physically standing next to it AND have already resera'd it open
+  // (client.data.secretChestUnlocked); `items` is ['map'] the first time,
+  // [] forever after (see handleTakeChestItem).
+  @SubscribeMessage('openChest')
+  handleOpenChest(@ConnectedSocket() client: GameSocket): OpenChestAck {
+    if (client.data.map !== 'Caverna Secretissima' || !this.isWithinLootReach(client, CAVERNA_CHEST_POSITION.row, CAVERNA_CHEST_POSITION.col)) {
+      return { ok: false, message: "You're too far away to reach the chest." };
+    }
+    if (!client.data.secretChestUnlocked) {
+      return { ok: false, message: 'The chest is locked.' };
+    }
+    return { ok: true, items: client.data.mapUnlocked ? [] : ['map'] };
+  }
+
+  // Taking the map out of the chest (a later follow-up ask) — a real
+  // ITEM never enters the inventory; instead this permanently flips
+  // mapUnlocked, which is what actually gates the map corner button/'m'
+  // hotkey/modal client-side (see shared/types.ts's PlayerSnapshot).
+  @SubscribeMessage('takeChestItem')
+  handleTakeChestItem(@ConnectedSocket() client: GameSocket): TakeChestItemAck {
+    if (client.data.map !== 'Caverna Secretissima' || !this.isWithinLootReach(client, CAVERNA_CHEST_POSITION.row, CAVERNA_CHEST_POSITION.col)) {
+      return { ok: false, message: "You're too far away to reach the chest." };
+    }
+    if (!client.data.secretChestUnlocked) {
+      return { ok: false, message: 'The chest is locked.' };
+    }
+    if (client.data.mapUnlocked) {
+      return { ok: false, message: 'The chest is empty.' };
+    }
+    client.data.mapUnlocked = true;
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    return { ok: true, player: this.snapshotFor(client), message: 'You take the map. A world of possibilities opens up!' };
+  }
+
   // Augue (a later follow-up ask) — a targeted fireball, unlike lucem/
   // irrigo/celeritas's no-target-or-item-targeted shape. Requires the
   // skill, an off-cooldown state (see SKILL_COOLDOWN_MS), and a monster
@@ -2209,8 +2576,63 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!parsed.success) {
       return { ok: false, message: 'Invalid target.' };
     }
+    // A practice scarecrow (or the original Great Plains training dummy)
+    // is a valid augue target too (a follow-up ask: "practice their
+    // offense spells, like augue, on them") — a much simpler, self-
+    // contained damage path than resolveHitOnNpc's own melee-oriented
+    // dodge/counter-attack resolution, since a ranged spell hit doesn't
+    // give the target a chance to dodge or fight back either way.
+    if (parsed.data.targetKind === 'npc') {
+      const npc = NPCS.find((n) => n.id === parsed.data.targetId);
+      if (!npc || npc.map !== client.data.map) {
+        return { ok: false, message: 'Your target is no longer here.' };
+      }
+      if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, AUGUE_RANGE_TILES)) {
+        return { ok: false, message: "You're too far away to hit that with augue." };
+      }
+
+      this.startSkillCooldown(client, AUGUE_SKILL);
+      npc.hp = Math.max(0, npc.hp - AUGUE_DAMAGE);
+      const died = npc.hp <= 0;
+      const label = npc.label ?? 'training dummy';
+      if (died) {
+        if (!npc.immortal) {
+          this.corpseManager.spawn(npc.race, npc.level, [bodyPartLabelFor(npc.race), 'bone dagger'], npc.map, npc.row, npc.col);
+          const tile = this.randomFreeTileFor(npc.map);
+          npc.row = tile.row;
+          npc.col = tile.col;
+        }
+        npc.hp = npc.maxHp;
+      }
+
+      const growthMessages: string[] = [];
+      const growth = this.maybeGrowSkill(client, AUGUE_SKILL);
+      if (growth) growthMessages.push(growth);
+
+      const message = died
+        ? npc.immortal
+          ? `${client.data.username}'s augue engulfs the ${label} in flame for ${AUGUE_DAMAGE} damage — it shrugs off the blow, unharmed.`
+          : `${client.data.username}'s augue engulfs the ${label} in flame for ${AUGUE_DAMAGE} damage, defeating it! It leaves a corpse and reappears elsewhere.`
+        : `${client.data.username}'s augue engulfs the ${label} in flame for ${AUGUE_DAMAGE} damage.`;
+
+      void this.persistStats(client);
+      this.emitCombat(client, {
+        targetKind: 'npc',
+        target: npc.id,
+        targetLabel: label,
+        damage: AUGUE_DAMAGE,
+        targetHp: npc.hp,
+        targetMaxHp: npc.maxHp,
+        targetDied: died,
+        message,
+        growthMessages,
+        skill: AUGUE_SKILL,
+      });
+      this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
+      return { ok: true, skills: client.data.skills, message };
+    }
     if (parsed.data.targetKind !== 'monster') {
-      return { ok: false, message: "Augue can only target a monster right now — that's the only kind of target you can select." };
+      return { ok: false, message: "Augue can only target a monster or scarecrow right now — that's the only kind of target you can select." };
     }
     const monster = this.monsterManager.getMonster(parsed.data.targetId);
     if (!monster || monster.mapName !== client.data.map) {
@@ -2260,6 +2682,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       leveledUp,
       message,
       growthMessages,
+      skill: AUGUE_SKILL,
     });
     this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
 
@@ -2537,14 +2960,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS);
       if (Math.random() * 100 < successChance) {
         client.data.wandLit = true;
-        client.data.wandLitAt = Date.now();
+        client.data.wandLitUntil = Date.now() + spellDurationMs(skillPercent);
         message = 'Your wand glows with a soft light.';
       } else {
         message = 'You fumble the incantation and nothing happens.';
       }
     } else {
       client.data.wandLit = false;
-      client.data.wandLitAt = null;
+      client.data.wandLitUntil = null;
       message = 'Your wand goes dark.';
     }
 
@@ -2589,14 +3012,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS);
       if (Math.random() * 100 < successChance) {
         client.data.celeritasActive = true;
-        client.data.celeritasActiveAt = Date.now();
+        client.data.celeritasActiveUntil = Date.now() + spellDurationMs(skillPercent);
         message = 'Your feet feel lighter — you move with a spring in your step.';
       } else {
         message = 'You fumble the incantation and nothing happens.';
       }
     } else {
       client.data.celeritasActive = false;
-      client.data.celeritasActiveAt = null;
+      client.data.celeritasActiveUntil = null;
       message = 'The spring leaves your step.';
     }
 

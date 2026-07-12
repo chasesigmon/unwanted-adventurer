@@ -44,6 +44,17 @@ export const targetInfoConsideration = document.getElementById('target-info-cons
 export const autopilotModal = document.getElementById('autopilot-modal') as HTMLDivElement;
 export const autopilotInput = document.getElementById('autopilot-input') as HTMLInputElement;
 export const autopilotStatusEl = document.getElementById('autopilot-status') as HTMLDivElement;
+// Shows currently-active timed spells (lucem/celeritas) and their own
+// remaining duration (a follow-up ask, e.g. "Lucem - 2m") — read-only,
+// same "doesn't obstruct the map" shape as Skills/Inventory.
+export const affectsModal = document.getElementById('affects-modal') as HTMLDivElement;
+export const affectsBody = document.getElementById('affects-body') as HTMLDivElement;
+// The secret room's treasure chest (a follow-up ask) — same "list +
+// click an item" shape as the corpse loot modal, just a single fixed
+// "map" item instead of a corpse's varying drops.
+export const chestModal = document.getElementById('chest-modal') as HTMLDivElement;
+export const chestModalTitle = document.getElementById('chest-modal-title') as HTMLHeadingElement;
+export const chestItemList = document.getElementById('chest-item-list') as HTMLUListElement;
 
 export const ALL_MODALS = [
   charSheetModal,
@@ -52,18 +63,21 @@ export const ALL_MODALS = [
   spellsModal,
   equipmentModal,
   mapModal,
+  affectsModal,
   corpseModal,
   shopModal,
   targetInfoModal,
   autopilotModal,
+  chestModal,
 ];
 
-// None of these five visually obstruct the map and none has a text input
+// None of these six visually obstruct the map and none has a text input
 // of its own, so movement stays usable while any of them is open (items 7
 // & 15) — a player can browse Skills/Inventory/Equipment/the character
-// sheet/the map while still walking around. Every OTHER modal (corpse/
-// shop/target-info/autopilot's own text prompt) still blocks movement.
-export const MOVEMENT_PASSTHROUGH_MODALS = [inventoryModal, equipmentModal, skillsModal, spellsModal, charSheetModal, mapModal];
+// sheet/the map/Affects while still walking around. Every OTHER modal
+// (corpse/shop/target-info/autopilot's own text prompt/the chest) still
+// blocks movement.
+export const MOVEMENT_PASSTHROUGH_MODALS = [inventoryModal, equipmentModal, skillsModal, spellsModal, charSheetModal, mapModal, affectsModal];
 
 export function isMovementBlocked(): boolean {
   return chatInputFocused || ALL_MODALS.some((m) => !m.hidden && !MOVEMENT_PASSTHROUGH_MODALS.includes(m));
@@ -209,7 +223,7 @@ export function appendStatRow(container: HTMLDivElement, label: string, value: s
   container.appendChild(valueEl);
 }
 
-// ---------- Corner buttons — the 5 plain toggleModal-driven ones (the
+// ---------- Corner buttons — the 6 plain toggleModal-driven ones (the
 // autopilot/"prompt" button is wired separately in autopilotModal.ts,
 // since dismissing it also needs to stop any active hunt). ----------
 
@@ -219,6 +233,7 @@ const skillsBtn = document.getElementById('skills-btn') as HTMLButtonElement;
 const spellsBtn = document.getElementById('spells-btn') as HTMLButtonElement;
 const equipmentBtn = document.getElementById('equipment-btn') as HTMLButtonElement;
 const mapBtn = document.getElementById('map-btn') as HTMLButtonElement;
+const affectsBtn = document.getElementById('affects-btn') as HTMLButtonElement;
 
 charSheetBtn.addEventListener('click', () => toggleModal(charSheetModal));
 inventoryBtn.addEventListener('click', () => toggleModal(inventoryModal));
@@ -226,3 +241,18 @@ skillsBtn.addEventListener('click', () => toggleModal(skillsModal));
 spellsBtn.addEventListener('click', () => toggleModal(spellsModal));
 equipmentBtn.addEventListener('click', () => toggleModal(equipmentModal));
 mapBtn.addEventListener('click', () => toggleModal(mapModal));
+affectsBtn.addEventListener('click', () => toggleModal(affectsModal));
+
+// The map corner button (and its 'm' hotkey, see keyboard.ts) is hidden
+// until myProfile.mapUnlocked (a follow-up ask — the map is now found in
+// the secret room's treasure chest, not given to every character) —
+// called on every 'sync' (see WorldScene's applySync) so it flips the
+// instant a fresh character doc loads OR the moment the map is actually
+// taken out of the chest, whichever happens first.
+export function updateMapButtonVisibility(mapUnlocked: boolean): void {
+  mapBtn.hidden = !mapUnlocked;
+  // A player who had it open via devtools/a stale hotkey before losing
+  // access (shouldn't normally happen, but cheap to guard) shouldn't be
+  // left staring at a modal they can no longer re-open the normal way.
+  if (!mapUnlocked && !mapModal.hidden) hideModal(mapModal);
+}

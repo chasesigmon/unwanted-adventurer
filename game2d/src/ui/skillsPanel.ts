@@ -2,7 +2,7 @@
 // preview of skills this character could still acquire down their
 // current path.
 import { myProfile } from '../state.js';
-import { LUCEM_SKILL, IRRIGO_SKILL, CELERITAS_SKILL, AUGUE_SKILL } from '../../shared/skills.js';
+import { LUCEM_SKILL, IRRIGO_SKILL, CELERITAS_SKILL, AUGUE_SKILL, RESERA_SKILL } from '../../shared/skills.js';
 import { attachTooltip } from './tooltip.js';
 import { SKILL_DESCRIPTIONS, createCooldownOverlay, isAttackSkill, isUsableSkill, skillIconColor, skillIconLetter } from './skillMeta.js';
 import { actionBarSkills, assignActionSlot, saveActionBar } from './actionBar.js';
@@ -23,7 +23,7 @@ import { registerModalOpenHandler, registerModalRefreshHandler, skillsBody, skil
 let showAllSkills = false;
 
 function acquirableSkillPool(): string[] {
-  return [LUCEM_SKILL, IRRIGO_SKILL, CELERITAS_SKILL, AUGUE_SKILL];
+  return [LUCEM_SKILL, IRRIGO_SKILL, CELERITAS_SKILL, AUGUE_SKILL, RESERA_SKILL];
 }
 
 // A skill row with a small icon to the left of its name — built by hand

@@ -59,6 +59,16 @@ export interface PlayerSnapshot {
   // effectiveMoveCooldownMs); auto-expires after spellDurationMs, same as
   // lucem.
   celeritasActive: boolean;
+  // Absolute epoch-ms expiry for lucem/celeritas, whenever active (a
+  // follow-up ask: the new Affects modal needs to show a live countdown,
+  // e.g. "Lucem - 2m" — an absolute timestamp lets the client compute
+  // "how much time is left" continuously via Date.now() without needing
+  // a fresh server push every second). null while inactive; optional
+  // (rather than every OTHER player's snapshot needing a filler null)
+  // since only the OWNING client's own Affects modal ever reads this —
+  // see snapshotFor, the one place that actually populates it.
+  wandLitUntil?: number | null;
+  celeritasActiveUntil?: number | null;
   // Zombie-only Eat Brains cooldown, in the same world-tick units as
   // WorldTimePayload.tick — lets the client gray the button out instead
   // of letting it be clicked and fail (see main.ts's updateEatBrainsButton).
@@ -84,6 +94,20 @@ export interface PlayerSnapshot {
   // own vision (see WorldScene's localLightRadiusTiles); hasLight is what
   // OTHER nearby players see.
   wandLit: boolean;
+  // Whether this player has ever taken the map out of the secret room's
+  // treasure chest (a follow-up ask: "the map/world map/who/where modal"
+  // is now something a player finds, not a starting given) — gates the
+  // map corner button, its 'm' hotkey, and the map modal itself client-
+  // side; permanent once true (see game.gateway.ts's handleTakeChestItem).
+  // Optional for the same reason as wandLitUntil/celeritasActiveUntil
+  // above — only the OWNING client's own snapshot ever populates it.
+  mapUnlocked?: boolean;
+  // Per-player lock state for the secret room's own door/chest (a later
+  // follow-up ask) — optional for the same reason as mapUnlocked above,
+  // used client-side purely to tint the door/chest sprites and word
+  // messages ("already unlocked" vs "locked").
+  secretDoorUnlocked?: boolean;
+  secretChestUnlocked?: boolean;
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
@@ -99,6 +123,16 @@ export interface NpcSnapshot {
   level: number;
   hp: number;
   maxHp: number;
+  // A follow-up ask's practice scarecrows — true means this NPC resets
+  // to full hp in place on "death" instead of leaving a corpse/relocating
+  // (see game.gateway.ts's resolveHitOnNpc) and never counter-attacks.
+  // Absent (falsy) for the original Great Plains training dummy, whose
+  // behavior is unchanged.
+  immortal?: boolean;
+  // Display name used in combat messages/emitCombat's targetLabel —
+  // defaults to "training dummy" (the original NPC's own name) when
+  // absent, so existing behavior doesn't need every NPCS entry updated.
+  label?: string;
 }
 
 // A wild monster — wanders on its own, has no account/login, and is a
@@ -220,6 +254,12 @@ export interface CombatEventPayload {
   expGained?: number;
   leveledUp?: boolean;
   message: string;
+  // Which skill actually landed this hit (a follow-up ask) — lets the
+  // client trigger a skill-specific visual (a fireball for augue, a bolt
+  // for the wand's own ranged auto-attack) instead of guessing from
+  // `message`'s own text. Absent for melee (punch/dagger/bone finger
+  // strike/glare), which has no projectile to animate.
+  skill?: string;
   // Attacker's own weapon-skill growth (punch, or dagger while wielding
   // one), plus the defender's dodge/parry/shield-block growth when their
   // avoidance actually triggered/was attempted — each a standalone line
@@ -362,6 +402,49 @@ export interface AugueTargetPayload {
   targetId: string;
 }
 
+// The Utility Classroom's third podium (a follow-up ask), teaching
+// resera — same shape as ReadLucemBookAck.
+export interface ReadReseraBookAck {
+  ok: boolean;
+  skills?: Record<string, number>;
+  reseraBookReadyAtTick?: number;
+  message?: string;
+}
+
+// Resera's own two lockable targets (a follow-up ask: "make all doors and
+// treasure chests targetable" — scoped today to the one door/chest the
+// secret room actually has, see WorldScene's lockTarget).
+export type LockTarget = 'secret-door' | 'caverna-chest';
+
+// Resera's own ack-based cast — same percent-chance-success/growth shape
+// as lucem/celeritas/augue, but on success sets a per-player persisted
+// unlock flag (client.data.secretDoorUnlocked/secretChestUnlocked)
+// instead of a toggle or damage.
+export interface CastReseraAck {
+  ok: boolean;
+  skills?: Record<string, number>;
+  message?: string;
+}
+
+// The secret room's treasure chest (a follow-up ask) — `items` is either
+// ['map'] (unlocked, not yet taken), [] (unlocked, already taken), or
+// absent entirely (ok: false — still locked).
+export interface OpenChestAck {
+  ok: boolean;
+  items?: string[];
+  message?: string;
+}
+
+// Taking the map out of the chest (a follow-up ask) — returns the
+// player's own fresh snapshot so the client can flip mapUnlocked (and
+// thus show the map corner button/hotkey) the instant it happens, same
+// "no need to wait for an unrelated sync" shape other acks already use.
+export interface TakeChestItemAck {
+  ok: boolean;
+  player?: PlayerSnapshot;
+  message?: string;
+}
+
 // Drink/pour/irrigo (items 7 & 8's follow-up asks) — all act on a single
 // targeted inventory item (see WorldScene's targetItemIndex) and report
 // back the canteen's new fill level so the client never has to guess it.
@@ -469,6 +552,10 @@ export interface ClientToServerEvents {
   // again, teaching augue instead; see game.gateway.ts's
   // handleReadAugueBook.
   readAugueBook: (ack: (res: ReadAugueBookAck) => void) => void;
+  // The Utility Classroom's third podium (a later follow-up ask) — same
+  // shape again, teaching resera instead; see game.gateway.ts's
+  // handleReadReseraBook.
+  readReseraBook: (ack: (res: ReadReseraBookAck) => void) => void;
   // No-target toggles (a follow-up ask, replacing the old '/lucem' chat
   // command so the result can be toasted even with a modal open) — see
   // game.gateway.ts's handleCastLucem/handleCastCeleritas.
@@ -478,6 +565,21 @@ export interface ClientToServerEvents {
   // one needs a target (the only kind this game currently offers is a
   // wild monster); see game.gateway.ts's handleCastAugue.
   castAugue: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  // The wand's ranged auto-attack (a follow-up ask) — arms/refreshes a
+  // sustained combat session against this target (resolved automatically
+  // every combat tick from here on, see combatTick's own WAND_BOLT_SKILL
+  // branch) rather than resolving a single hit immediately. Ack-based
+  // (unlike punch's fire-and-forget) purely so an immediate rejection
+  // (no wand equipped, target out of range) can be shown right away
+  // instead of silently doing nothing until the session quietly times out.
+  engageRangedAttack: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  // Resera (a later follow-up ask) — a targeted utility spell, not a
+  // toggle or attack; see game.gateway.ts's handleCastResera.
+  castResera: (payload: { target: LockTarget }, ack: (res: CastReseraAck) => void) => void;
+  // The secret room's treasure chest (a later follow-up ask) — see
+  // game.gateway.ts's handleOpenChest/handleTakeChestItem.
+  openChest: (ack: (res: OpenChestAck) => void) => void;
+  takeChestItem: (ack: (res: TakeChestItemAck) => void) => void;
   // Drink/pour/irrigo (items 7 & 8's follow-up asks) — all take the
   // targeted inventory item's index (see WorldScene's targetItemIndex).
   drinkItem: (itemIndex: number, ack: (res: CanteenActionAck) => void) => void;
@@ -556,17 +658,17 @@ export interface SocketData {
   // applyCondeathPenalty).
   deathCount: number;
   // The lucem spell's own toggle (see PlayerSnapshot's wandLit) — never
-  // persisted, same tradeoff as restState/torchLitAt. wandLitAt is the
+  // persisted, same tradeoff as restState/torchLitAt. wandLitUntil is the
   // epoch-ms it was last lit, or null while off — a follow-up ask gave
   // lucem a real-time duration (see game.gateway.ts's spellDurationMs/
   // checkLucemExpiry), same "lit at X, checked once per stat tick" shape
   // as a torch's own torchLitAt/checkTorchBurnout.
   wandLit: boolean;
-  wandLitAt: number | null;
+  wandLitUntil: number | null;
   // Quick movement's own toggle (a follow-up ask) — same shape as
-  // wandLit/wandLitAt above, see PlayerSnapshot's celeritasActive.
+  // wandLit/wandLitUntil above, see PlayerSnapshot's celeritasActive.
   celeritasActive: boolean;
-  celeritasActiveAt: number | null;
+  celeritasActiveUntil: number | null;
   // A 2-stat-tick cooldown gate on reading the lucem spellbook (item 8),
   // same shape/units as eatBrainsReadyAtTick above.
   lucemBookReadyAtTick: number;
@@ -576,6 +678,14 @@ export interface SocketData {
   celeritasBookReadyAtTick: number;
   // Same idea again, for the Offense classroom's own podium (augue).
   augueBookReadyAtTick: number;
+  // Same idea again, for the Utility classroom's third podium (resera).
+  reseraBookReadyAtTick: number;
+  // The secret room system (a follow-up ask) — persisted; loaded from the
+  // player doc on connect. See the DB column's own comment
+  // (docker/postgres/init-postgres.sql) for what each one means.
+  secretDoorUnlocked: boolean;
+  secretChestUnlocked: boolean;
+  mapUnlocked: boolean;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

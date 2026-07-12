@@ -16,6 +16,11 @@ import type {
   ReadIrrigoBookAck,
   ReadCeleritasBookAck,
   ReadAugueBookAck,
+  ReadReseraBookAck,
+  CastReseraAck,
+  OpenChestAck,
+  TakeChestItemAck,
+  LockTarget,
   CanteenActionAck,
   CastSpellAck,
   AugueTargetPayload,
@@ -214,6 +219,23 @@ export class NetworkManager extends EventTarget {
   // default, the same way punch() does.
   useSkill(direction: Direction, skill: string): void {
     this.socket?.emit('useSkill', { direction, skill });
+  }
+
+  // The wand's ranged auto-attack (a follow-up ask) — arms/refreshes a
+  // sustained session the server keeps resolving every combat tick on its
+  // own (see game.gateway.ts's handleEngageRangedAttack); ack-based so an
+  // immediate rejection (no wand, out of range) shows right away.
+  engageRangedAttack(target: AugueTargetPayload): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('engageRangedAttack', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
   }
 
   loot(corpseId: string): Promise<LootAck> {
@@ -449,6 +471,60 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('castAugue', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  readReseraBook(): Promise<ReadReseraBookAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('readReseraBook', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // Resera (a later follow-up ask) targets a door or chest, not a combat
+  // target — see WorldScene's own lockTarget field.
+  castResera(target: LockTarget): Promise<CastReseraAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castResera', { target }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  openChest(): Promise<OpenChestAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('openChest', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  takeChestItem(): Promise<TakeChestItemAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('takeChestItem', (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

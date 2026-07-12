@@ -144,6 +144,11 @@ export function torchWallPositionsFor(mapName: MapName): Array<{ row: number; co
 // enough already (see WorldScene's renderMap, which shrinks the
 // fireplace SPRITE itself by half there instead).
 export function fireplacePositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
+  // The secret room (a follow-up ask) is tiny and deliberately bare —
+  // "a few torches on the walls" (already automatic, see
+  // torchWallPositionsFor) and a treasure chest, no fireplaces cluttering
+  // it up.
+  if (mapName === 'Caverna Secretissima') return [];
   if (!(GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return [];
   const def = getMap(mapName);
   const isClassroom = (CLASSROOM_MAPS as readonly string[]).includes(mapName);

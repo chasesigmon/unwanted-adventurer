@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS players (
     'Grimoak Grounds', 'Grimoak Entrance Hall', 'Great Hall',
     'Thistledown Common Room', 'Duskwing Common Room', 'Emberclaw Common Room',
     'Starfall Common Room', 'Elemental Casting Classroom', 'Defense Classroom', 'Summoning Classroom',
-    'Utility Classroom', 'Offense Classroom'
+    'Utility Classroom', 'Offense Classroom', 'Caverna Secretissima'
   )),
   "row" INTEGER NOT NULL,
   col INTEGER NOT NULL,
@@ -82,6 +82,16 @@ CREATE TABLE IF NOT EXISTS players (
   -- deleted outright.
   death_count INTEGER NOT NULL DEFAULT 0,
   condemned BOOLEAN NOT NULL DEFAULT false,
+  -- The secret room system (a follow-up ask) — each per-player, persisted
+  -- forever once true, never re-locked. secret_door_unlocked/
+  -- secret_chest_unlocked are resera'd open independently by each player
+  -- (unlocking for one player never unlocks it for anyone else);
+  -- map_unlocked is set the moment a player takes the map out of the
+  -- chest, and is what actually gates the map corner button/'m' hotkey/
+  -- modal (see game2d/shared/types.ts's PlayerSnapshot.mapUnlocked).
+  secret_door_unlocked BOOLEAN NOT NULL DEFAULT false,
+  secret_chest_unlocked BOOLEAN NOT NULL DEFAULT false,
+  map_unlocked BOOLEAN NOT NULL DEFAULT false,
   last_login TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

@@ -51,6 +51,9 @@ export interface PlayerStatsUpdate {
   mimicForm?: string | null;
   deathCount?: number;
   condemned?: boolean;
+  secretDoorUnlocked?: boolean;
+  secretChestUnlocked?: boolean;
+  mapUnlocked?: boolean;
 }
 
 @Injectable()

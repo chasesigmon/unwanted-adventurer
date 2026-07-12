@@ -116,10 +116,14 @@
         </div>
 
         <div id="corner-buttons">
-          <button type="button" id="map-btn" class="corner-btn" title="Map (m)">🗺️</button>
+          <!-- Hidden until myProfile.mapUnlocked (a follow-up ask: the map
+               is now found, not given — see server/game-gateway/game.gateway.ts's
+               handleTakeChestItem) — see main.ts's own visibility toggle. -->
+          <button type="button" id="map-btn" class="corner-btn" title="Map (m)" hidden>🗺️</button>
           <button type="button" id="equipment-btn" class="corner-btn" title="Equipment (e)">🗡️</button>
           <button type="button" id="skills-btn" class="corner-btn" title="Skills (k)">⭐</button>
           <button type="button" id="spells-btn" class="corner-btn" title="Spells (l)">🪄</button>
+          <button type="button" id="affects-btn" class="corner-btn" title="Affects (f)">✨</button>
           <button type="button" id="autopilot-btn" class="corner-btn" title="Prompt (p)">💬</button>
           <button type="button" id="inventory-btn" class="corner-btn" title="Inventory (i)">🎒</button>
           <button type="button" id="char-sheet-btn" class="corner-btn" title="Character sheet (c)">📜</button>
@@ -163,6 +167,22 @@
             <button type="button" class="modal-close">&times;</button>
             <h2>Equipment</h2>
             <div id="equipment-body" class="modal-stats"></div>
+          </div>
+        </div>
+
+        <div id="affects-modal" class="modal" hidden>
+          <div class="modal-box">
+            <button type="button" class="modal-close">&times;</button>
+            <h2>Affects</h2>
+            <div id="affects-body" class="modal-stats"></div>
+          </div>
+        </div>
+
+        <div id="chest-modal" class="modal" hidden>
+          <div class="modal-box">
+            <button type="button" class="modal-close">&times;</button>
+            <h2 id="chest-modal-title">Chest</h2>
+            <ul id="chest-item-list" class="inventory-list"></ul>
           </div>
         </div>
 

@@ -11,7 +11,7 @@ import { emitsLight, isFireplaceBlocked, isBenchBlocked, studentDeskPositionsFor
 import { isCastleExteriorBlocked, isMoatBlocked } from '../../shared/maps.js';
 import { vendorsForMap } from './vendors.js';
 import { teachersForMap, teacherDeskFootprintFor } from './teachers.js';
-import { isPodiumBlocked } from '../../shared/spells.js';
+import { isPodiumBlocked, isChestBlocked } from '../../shared/spells.js';
 import { armorClassFor, armorEquipmentBonus } from '../combat/formulas.js';
 
 // A much smaller version of the text game's own WorldManagerService — no
@@ -110,6 +110,7 @@ export class WorldManagerService {
     // Both classroom spellbook podiums — a follow-up ask to give them
     // collision too.
     if (isPodiumBlocked(mapName, row, col)) return true;
+    if (isChestBlocked(mapName, row, col)) return true;
 
     for (const [username, state] of this.playerLocation) {
       if (username === excludeUsername) continue;

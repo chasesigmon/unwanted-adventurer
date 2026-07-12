@@ -1,8 +1,21 @@
 // The global document-level keydown handler — hotkeys for every modal,
 // Enter/"/" to open chat, and Escape (item 8: closes whatever modal is
 // open, in addition to its prior "stop autopilot" behavior).
-import { activeScene } from '../state.js';
-import { isInputCaptured, ALL_MODALS, autopilotModal, charSheetModal, closeAllModals, equipmentModal, inventoryModal, mapModal, skillsModal, spellsModal, toggleModal } from './modalCore.js';
+import { activeScene, myProfile } from '../state.js';
+import {
+  isInputCaptured,
+  ALL_MODALS,
+  autopilotModal,
+  charSheetModal,
+  closeAllModals,
+  equipmentModal,
+  inventoryModal,
+  mapModal,
+  skillsModal,
+  spellsModal,
+  affectsModal,
+  toggleModal,
+} from './modalCore.js';
 import { openChatInput, openChatInputWithSlash } from './log.js';
 import { dismissAutopilotModal, toggleAutopilotModal } from './autopilotModal.js';
 
@@ -66,8 +79,17 @@ export function initGlobalKeyboardShortcuts(): void {
       e.preventDefault();
       toggleModal(equipmentModal);
     } else if (key === 'm') {
+      // Gated behind myProfile.mapUnlocked now (a follow-up ask: "the
+      // ability to press 'm'" is something the player has to actually
+      // FIND, via the secret room's treasure chest, not something every
+      // character starts with) — same silent no-op the corner button's
+      // own `hidden` attribute gives when it isn't shown at all.
+      if (!myProfile?.mapUnlocked) return;
       e.preventDefault();
       toggleModal(mapModal);
+    } else if (key === 'f') {
+      e.preventDefault();
+      toggleModal(affectsModal);
     } else if (key === 'p') {
       e.preventDefault();
       toggleAutopilotModal();

@@ -20,6 +20,15 @@ export const SHIELD_BLOCK_SKILL = 'shield block';
 export const DAGGER_SKILL = 'dagger';
 export const STARTING_SKILLS = [PUNCH_SKILL, DODGE_SKILL, PARRY_SKILL, SHIELD_BLOCK_SKILL, DAGGER_SKILL];
 
+// A follow-up ask's ranged basic attack — automatic the moment a wand is
+// equipped (no podium/learning needed), the same "the weapon itself
+// grants the attack" shape DAGGER_SKILL already has, just ranged (7
+// tiles, see game.gateway.ts's WAND_BOLT_RANGE_TILES) instead of melee,
+// and flat damage instead of the usual punch formula. Right-click arms a
+// sustained session (see engageRangedAttack) resolved automatically every
+// combat tick, same as any other queued attack.
+export const WAND_BOLT_SKILL = 'wand bolt';
+
 export const SECOND_ATTACK_SKILL = 'second attack';
 export const THIRD_ATTACK_SKILL = 'third attack';
 export const ENHANCED_DAMAGE_SKILL = 'enhanced damage';
@@ -78,6 +87,15 @@ export const IRRIGO_SKILL = 'irrigo';
 // movement speed by about 10%; lasts the same real-time duration as
 // lucem (see game.gateway.ts's spellDurationMs), scaling up with skill%.
 export const CELERITAS_SKILL = 'celeritas';
+
+// The Utility Classroom's third podium (a follow-up ask) — same "10%
+// chance per read, STARTING_SKILL_PERCENT to start, 2% chance to grow per
+// cast" shape as the others, but a targeted UTILITY spell rather than a
+// toggle or attack: requires selecting a lockable object (the secret
+// room's own door or its treasure chest — see WorldScene's lockTarget)
+// and rolls the same success-chance formula for a CHANCE to unlock it,
+// per-player (see game.gateway.ts's handleCastResera).
+export const RESERA_SKILL = 'resera';
 
 // A follow-up ask's fireball spell — learned the same podium way (10%
 // chance per read, a second Offense classroom podium, see

@@ -145,6 +145,17 @@ export class Player {
   @Column({ type: 'boolean', default: false })
   condemned!: boolean;
 
+  // The secret room system (a follow-up ask) — see the equivalent columns'
+  // own comment in docker/postgres/init-postgres.sql for what each means.
+  @Column({ name: 'secret_door_unlocked', type: 'boolean', default: false })
+  secretDoorUnlocked!: boolean;
+
+  @Column({ name: 'secret_chest_unlocked', type: 'boolean', default: false })
+  secretChestUnlocked!: boolean;
+
+  @Column({ name: 'map_unlocked', type: 'boolean', default: false })
+  mapUnlocked!: boolean;
+
   @Column({ name: 'last_login', type: 'timestamptz', default: () => 'now()' })
   lastLogin!: Date;
 

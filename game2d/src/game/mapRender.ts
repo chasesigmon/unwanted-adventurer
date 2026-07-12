@@ -87,6 +87,15 @@ export const SPELLBOOK_PODIUM_TEXTURE_KEY = 'spellbook-podium';
 // A social gathering spot's benches (a follow-up ask upgraded these from
 // plain chairs) — see shared/lighting.ts's benchPositionsFor.
 export const BENCH_TEXTURE_KEY = 'bench';
+// Spell/attack projectiles (a follow-up ask) — see WorldScene's
+// playProjectileEffect, triggered off a 'combat' event's own `skill`.
+export const FIREBALL_TEXTURE_KEY = 'fireball';
+export const BOLT_TEXTURE_KEY = 'bolt';
+// The secret room's treasure chest (a later follow-up ask) — two frames
+// picked by the player's own secretChestUnlocked flag, see
+// shared/maps.ts's CAVERNA_CHEST_POSITION.
+export const CHEST_LOCKED_TEXTURE_KEY = 'chest-locked';
+export const CHEST_UNLOCKED_TEXTURE_KEY = 'chest-unlocked';
 
 export const CHAR_SCALE = 0.275;
 export const CORPSE_SCALE = 0.35;

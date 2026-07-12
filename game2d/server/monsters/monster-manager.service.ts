@@ -7,7 +7,7 @@ import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
 import { vendorsForMap } from '../worlds/vendors.js';
 import { teachersForMap, teacherDeskFootprintFor } from '../worlds/teachers.js';
-import { isPodiumBlocked } from '../../shared/spells.js';
+import { isPodiumBlocked, isChestBlocked } from '../../shared/spells.js';
 import type { MapName } from '../../shared/constants.js';
 import type { MonsterSnapshot } from '../../shared/types.js';
 
@@ -103,6 +103,7 @@ export class MonsterManagerService {
     )
       return false;
     if (isPodiumBlocked(mapName, row, col)) return false;
+    if (isChestBlocked(mapName, row, col)) return false;
     for (const m of this.monsters.values()) {
       if (m.mapName === mapName && m.row === row && m.col === col) return false;
     }

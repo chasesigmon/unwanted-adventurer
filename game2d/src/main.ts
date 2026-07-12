@@ -21,6 +21,7 @@ import './ui/skillsPanel.js';
 import './ui/spellsPanel.js';
 import './ui/mapModal.js';
 import './ui/autopilotModal.js';
+import './ui/affectsPanel.js';
 
 const gameRoot = document.getElementById('game-root') as HTMLDivElement;
 

@@ -25,6 +25,7 @@ import {
   IRRIGO_SKILL,
   CELERITAS_SKILL,
   AUGUE_SKILL,
+  RESERA_SKILL,
   DRINK_SKILL,
   POUR_SKILL,
   SKILL_COOLDOWN_MS,
@@ -92,6 +93,7 @@ export function isUsableSkill(skillName: string): boolean {
     skillName === IRRIGO_SKILL ||
     skillName === CELERITAS_SKILL ||
     skillName === AUGUE_SKILL ||
+    skillName === RESERA_SKILL ||
     skillName === DRINK_SKILL ||
     skillName === POUR_SKILL
   );
@@ -130,6 +132,7 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
   [IRRIGO_SKILL]: 'Fills a targeted container (a canteen) with water. Select it in your inventory first, then click this. Costs mana; requires a wand equipped.',
   [CELERITAS_SKILL]: 'No target needed — quickens your own footsteps by about 10% for a time. Costs mana; lasts longer the higher your skill.',
   [AUGUE_SKILL]: 'Hurls a bolt of flame at your selected target (a monster) from up to 7 tiles away. Deals 10 damage; has its own cooldown.',
+  [RESERA_SKILL]: 'Unlocks a targeted door or chest. Left-click the door/chest first, then use this. Costs mana; chance of success scales with skill percent.',
   [DRINK_SKILL]: 'Takes a drink from a targeted container (a canteen). Select it in your inventory first, then click this.',
   [POUR_SKILL]: 'Empties out a targeted container (a canteen). Select it in your inventory first, then click this.',
 };
