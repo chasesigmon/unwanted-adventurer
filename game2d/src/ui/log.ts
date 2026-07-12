@@ -18,6 +18,23 @@ const logTabChatBtn = document.getElementById('log-tab-chat') as HTMLButtonEleme
 
 setupCollapsible(logPanel, logToggle);
 
+// A follow-up bug fix — once the panel's been resized, the drag logic
+// below sets an INLINE height style, which (inline styles always beat
+// any class-based CSS rule, regardless of specificity) completely
+// overrides `#log-panel.collapsed { height: auto }` — collapsing only
+// ever hid the tabs/log-view/chat-input *inside* the still full-height
+// box, not the box itself. Explicitly clearing/restoring the inline
+// height alongside the class toggle fixes that for real.
+let heightBeforeCollapse: string | null = null;
+logToggle.addEventListener('click', () => {
+  if (logPanel.classList.contains('collapsed')) {
+    heightBeforeCollapse = logPanel.style.height || null;
+    logPanel.style.height = '';
+  } else if (heightBeforeCollapse) {
+    logPanel.style.height = heightBeforeCollapse;
+  }
+});
+
 // ---------- Drag-resize (item 6: true two-axis resize + persistence) ----------
 
 const LOG_PANEL_MIN_WIDTH = 260;

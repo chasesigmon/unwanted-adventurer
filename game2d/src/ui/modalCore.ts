@@ -130,6 +130,11 @@ export function refreshOpenModals(): void {
 export function hideModal(modal: HTMLDivElement): void {
   modal.hidden = true;
   if (modal === autopilotModal) autopilotInput.blur();
+  // Closing the Inventory modal clears whatever fillable item was
+  // targeted for drink/pour/irrigo (item 10's follow-up ask) — the
+  // highlight wouldn't even be visible again until it's reopened, so
+  // leaving a stale target selected behind the scenes was confusing.
+  if (modal === inventoryModal) activeScene?.clearItemTarget();
   // Item 3: hiding a modal doesn't fire a 'mouseleave' on whatever was
   // hovered inside it (the element can be removed from view without the
   // cursor ever actually moving off it first) — without this, a tooltip

@@ -60,11 +60,16 @@ export function renderInventory(): void {
     // The browser's own right-click context menu is never useful here —
     // captured and replaced with a forced consume, so an otherwise-
     // equippable item (a bone dagger, say) can be eaten for its exp
-    // instead of worn. Fillable items skip this (the server would refuse
-    // it anyway — see game.gateway.ts's handleConsumeItem).
+    // instead of worn. A fillable item (a canteen) right-clicks straight
+    // to a drink instead (a follow-up ask) — a quick shortcut alongside
+    // the target-then-click-drink-in-the-action-bar path, not a
+    // replacement for it.
     li.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      if (isFillableItem(item)) return;
+      if (isFillableItem(item)) {
+        drinkInventoryItem(indices[0]!);
+        return;
+      }
       consumeInventoryItem(indices[0]!);
     });
     inventoryList.appendChild(li);
@@ -112,6 +117,24 @@ function consumeInventoryItem(index: number): void {
   network.consumeItem(index).then(applyUseItemAck).catch(() => {
     /* nothing to show */
   });
+}
+
+// Right-click on a fillable item (a canteen) — item 9's follow-up ask —
+// takes one drink, same reconciliation shape as applyUseItemAck but for
+// CanteenActionAck's own (smaller) field set.
+function drinkInventoryItem(index: number): void {
+  network
+    .drinkItem(index)
+    .then((ack) => {
+      if (ack.message) logCombatMessage(ack.message);
+      if (ack.ok && myProfile) {
+        setMyProfile({ ...myProfile, canteenDrinks: ack.canteenDrinks ?? myProfile.canteenDrinks });
+        refreshOpenModals();
+      }
+    })
+    .catch(() => {
+      /* nothing to show */
+    });
 }
 
 registerModalOpenHandler(inventoryModal, renderInventory);

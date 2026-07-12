@@ -146,16 +146,42 @@ export function torchWallPositionsFor(mapName: MapName): Array<{ row: number; co
 export function fireplacePositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
   if (!(GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return [];
   const def = getMap(mapName);
-  const topRow = 3;
-  const bottomRow = def.rows - 4;
   const isClassroom = (CLASSROOM_MAPS as readonly string[]).includes(mapName);
+  // The Entrance Hall specifically has 8 doors spread across its own
+  // north wall (see shared/maps.ts's ENTRANCE_NORTH_DOORS) — even the
+  // generic "large room" inset above still landed close to one of them
+  // (a follow-up ask: "still too close to the doors"), so it gets its
+  // own deeper inset AND columns deliberately picked to sit BETWEEN two
+  // door columns rather than a fraction of the room's width.
+  const isEntranceHall = mapName === 'Grimoak Entrance Hall';
+  const topRow = isEntranceHall ? 8 : 3;
+  const bottomRow = isEntranceHall ? def.rows - 9 : def.rows - 4;
   const colFraction = isClassroom ? 0.25 : 0.32;
-  const cols = [Math.round(def.cols * colFraction), Math.round(def.cols * (1 - colFraction))];
+  const cols = isEntranceHall ? [14, 38] : [Math.round(def.cols * colFraction), Math.round(def.cols * (1 - colFraction))];
   const positions = [
     { row: topRow, col: cols[0]! },
     { row: topRow, col: cols[1]! },
     { row: bottomRow, col: cols[0]! },
     { row: bottomRow, col: cols[1]! },
+  ];
+  return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
+}
+
+// 4 student desks per classroom, 2 on either side (a follow-up ask) —
+// fixed rows between the teacher's own desk/podium and the door, well
+// clear of both (see server/worlds/teachers.ts's deskPositionFor for the
+// teacher's own desk, and shared/spells.ts for the podium position).
+// Classroom-only (CLASSROOM_MAPS), not the bigger rooms.
+export function studentDeskPositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
+  if (!(CLASSROOM_MAPS as readonly string[]).includes(mapName)) return [];
+  const def = getMap(mapName);
+  const leftCol = 4;
+  const rightCol = def.cols - 5;
+  const positions = [
+    { row: 8, col: leftCol },
+    { row: 8, col: rightCol },
+    { row: 10, col: leftCol },
+    { row: 10, col: rightCol },
   ];
   return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
 }

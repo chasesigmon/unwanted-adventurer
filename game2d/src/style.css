@@ -479,8 +479,15 @@ body {
      this panel fell into the z-index:auto layer, which sits BELOW any
      positioned sibling that has an explicit z-index — so at night the
      fog/tint painted over the chat/combat log, same underlying stacking
-     rule as the earlier "modals unreadable at night" bug. */
-  z-index: 60;
+     rule as the earlier "modals unreadable at night" bug.
+     Raised above #action-bar's own 80 (a follow-up bug fix) — this panel
+     is user-draggable/resizable and the action bar isn't, so if the two
+     ever end up spatially overlapping, the action bar previously won
+     the stacking order and permanently intercepted every pointer event
+     meant for the resize handle underneath it — this panel now always
+     wins that fight instead, so the handle stays reachable no matter
+     where the panel's been dragged/resized to. */
+  z-index: 85;
 }
 
 #log-panel.collapsed {

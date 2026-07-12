@@ -149,6 +149,9 @@ const LUCEM_BOOK_LEARN_CHANCE = 0.1;
 // normal means" tradeoff every other mana/hp cost in this project has.
 const LUCEM_CAST_MANA_COST = 10;
 const LUCEM_UPKEEP_MANA_COST = 3;
+// A follow-up ask's success formula — (skill percent + this, capped at
+// MAX_SKILL_PERCENT) is the % chance a cast actually lights the wand.
+const LUCEM_CAST_SUCCESS_BONUS = 10;
 // The Elemental Casting classroom's own podium, teaching irrigo — same
 // shape as the lucem book above.
 const IRRIGO_BOOK_COOLDOWN_TICKS = 2;
@@ -2215,10 +2218,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // useTargetedSkill, which fires this via a plain '/lucem' chat command
   // the same way /mimic and /revert already work) — requires both the
   // skill (learned from the Utilization classroom's spellbook, see
-  // handleReadLucemBook) and a wand actually equipped; lighting/
-  // extinguishing just flips client.data.wandLit, which feeds both this
-  // player's own vision (see WorldScene's localLightRadiusTiles) and
-  // whether nearby players see it (hasLight, see snapshotFor).
+  // handleReadLucemBook) and a wand actually equipped. Lighting it is a
+  // real cast attempt (a follow-up ask): always costs mana whether it
+  // works or not, and only has a (skill percent + 10, capped at 100)%
+  // chance of actually lighting the wand — fumbling still spent the
+  // mana, same as swinging and missing still counts as the swing.
+  // Turning it back off is free (you're stopping a spell, not casting a
+  // new one) but still rolls the same skill-growth chance lighting does.
   private handleLucemCommand(client: GameSocket): void {
     if (client.data.skills[LUCEM_SKILL] === undefined) {
       this.systemMessage(client, "You don't know the lucem spell yet.");
@@ -2228,21 +2234,35 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, 'You need a wand equipped to cast lucem.');
       return;
     }
-    // Lighting it costs mana (item 3's follow-up ask); turning it back
-    // off is free — you're not casting a new spell, just stopping one.
+
+    let message: string;
     if (!client.data.wandLit) {
       if (client.data.mana < LUCEM_CAST_MANA_COST) {
         this.systemMessage(client, `You don't have enough mana to cast lucem (${LUCEM_CAST_MANA_COST} needed).`);
         return;
       }
       client.data.mana -= LUCEM_CAST_MANA_COST;
+      const skillPercent = client.data.skills[LUCEM_SKILL] ?? STARTING_SKILL_PERCENT;
+      const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + LUCEM_CAST_SUCCESS_BONUS);
+      if (Math.random() * 100 < successChance) {
+        client.data.wandLit = true;
+        message = 'Your wand glows with a soft light.';
+      } else {
+        message = 'You fumble the incantation and nothing happens.';
+      }
+    } else {
+      client.data.wandLit = false;
+      message = 'Your wand goes dark.';
     }
-    client.data.wandLit = !client.data.wandLit;
-    this.worldManager.updateState(client.data.username, { wandLit: client.data.wandLit, mana: client.data.mana });
+
+    const growth = this.maybeGrowSkill(client, LUCEM_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { wandLit: client.data.wandLit, mana: client.data.mana, skills: client.data.skills });
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     this.server.to(client.data.map).emit('map:state', this.worldManager.getMapState(client.data.map));
-    this.systemMessage(client, client.data.wandLit ? 'Your wand glows with a soft light.' : 'Your wand goes dark.');
+    this.systemMessage(client, message);
   }
 
   private handleTimeCommand(client: GameSocket): void {

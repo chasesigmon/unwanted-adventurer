@@ -52,6 +52,7 @@ import {
   isAlwaysLit,
   torchWallPositionsFor,
   fireplacePositionsFor,
+  studentDeskPositionsFor,
 } from '../../shared/lighting.js';
 import { MONSTER_KINDS, FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS } from '../../shared/constants.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
@@ -168,6 +169,10 @@ export class WorldScene extends Phaser.Scene {
   private moatGraphics: Phaser.GameObjects.Graphics | null = null;
   private bridgeGraphics: Phaser.GameObjects.Graphics | null = null;
   private fireplaceSprites: Phaser.GameObjects.Sprite[] = [];
+  // 4 student desks per classroom (a follow-up ask) — reuses the same
+  // desk texture the teacher's own desk uses (see teacherDeskSprites),
+  // just placed at studentDeskPositionsFor's fixed positions instead.
+  private studentDeskSprites: Phaser.GameObjects.Sprite[] = [];
   // The Utilization classroom's clickable spellbook podium (item 8) —
   // only ever populated while rendering that one map.
   private spellbookPodiumSprite: Phaser.GameObjects.Sprite | null = null;
@@ -1274,6 +1279,16 @@ export class WorldScene extends Phaser.Scene {
       this.fireplaceSprites.push(flame);
     }
 
+    // 4 student desks per classroom, 2 on either side (a follow-up ask) —
+    // furniture only, no click handler.
+    for (const sprite of this.studentDeskSprites) sprite.destroy();
+    this.studentDeskSprites = [];
+    for (const { row, col } of studentDeskPositionsFor(mapName)) {
+      const pos = this.tilePosition(row, col);
+      const desk = this.add.sprite(pos.x, pos.y, CLASSROOM_DESK_TEXTURE_KEY).setOrigin(0.5, 0.85).setScale(0.7).setDepth(-0.5);
+      this.studentDeskSprites.push(desk);
+    }
+
     // The classroom spellbook podiums (item 8, item 9's follow-up ask) —
     // clickable, roll a 10% chance of learning their own spell server-side;
     // reach-gated the same way a vendor/corpse is. Half-sized (item 5's
@@ -1582,9 +1597,9 @@ export class WorldScene extends Phaser.Scene {
     }
 
     // Classroom teachers — static and permanent for the lifetime of the
-    // map, same "create once" shape as vendors above; not interactive
-    // yet (no click handler), just a placed NPC + its desk (both are
-    // blocked server-side, see world-manager.service.ts's isOccupied).
+    // map, same "create once" shape as vendors above. Clickable now (a
+    // follow-up ask) — a hand cursor and a fading world-space tooltip
+    // greeting, nothing mechanical yet.
     for (const t of state.teachers) {
       if (this.teacherSprites.has(t.id)) continue;
 
@@ -1593,9 +1608,39 @@ export class WorldScene extends Phaser.Scene {
       this.teacherDeskSprites.set(t.id, deskSprite);
 
       const pos = this.tilePosition(t.row, t.col);
-      const sprite = this.add.sprite(pos.x, pos.y, textureKeyFor('teacher'), idleFrameFor('teacher', 'down')).setScale(CHAR_SCALE);
+      const sprite = this.add
+        .sprite(pos.x, pos.y, textureKeyFor('teacher'), idleFrameFor('teacher', 'down'))
+        .setScale(CHAR_SCALE)
+        .setInteractive({ useHandCursor: true });
+      sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (isInputCaptured() || !pointer.leftButtonDown()) return;
+        this.showTeacherTooltip(sprite, `Welcome to ${t.map}. Please study from the podium.`);
+      });
       this.teacherSprites.set(t.id, sprite);
     }
+  }
+
+  // A world-space speech-bubble tooltip (item 8's follow-up ask) — plain
+  // Phaser text with a background, fading out over 3 seconds then
+  // destroyed. Positioned just above whoever it's for.
+  private showTeacherTooltip(anchor: Phaser.GameObjects.Sprite, message: string): void {
+    const bubble = this.add
+      .text(anchor.x, anchor.y - 46, message, {
+        fontSize: '13px',
+        color: '#ffffff',
+        backgroundColor: '#1a1a2ee6',
+        padding: { x: 8, y: 6 },
+        wordWrap: { width: 180 },
+        align: 'center',
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(5);
+    this.tweens.add({
+      targets: bubble,
+      alpha: 0,
+      duration: 3000,
+      onComplete: () => bubble.destroy(),
+    });
   }
 
   // True either because the player can see everywhere themselves
@@ -1806,6 +1851,12 @@ export class WorldScene extends Phaser.Scene {
   private static readonly DOUBLE_CLICK_MS = 350;
 
   private handleLeftClick(pointer: Phaser.Input.Pointer): void {
+    // Clicking anywhere in the game world deselects whatever inventory
+    // item was targeted for drink/pour/irrigo (item 10's follow-up ask,
+    // "selecting anywhere else") — the same "clicking elsewhere clears
+    // the old selection" precedent the player/monster target below
+    // already follows for itself.
+    this.clearItemTarget();
     const found = this.findTargetableAt(pointer.worldX, pointer.worldY);
     if (!found) {
       // Clicking empty ground deselects whatever was targeted — but a
@@ -1872,7 +1923,13 @@ export class WorldScene extends Phaser.Scene {
   }
 
   clearItemTarget(): void {
+    if (this.targetItemName === null) return;
     this.targetItemName = null;
+    // Clears the Inventory modal's own "targeted" highlight immediately,
+    // wherever this got called from (closing the modal, clicking
+    // elsewhere in the game world, ...) rather than leaving it stale
+    // until the next unrelated re-render.
+    refreshOpenModals();
   }
 
   getItemTarget(): string | null {

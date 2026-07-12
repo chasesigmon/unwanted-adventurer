@@ -2,12 +2,12 @@ import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import { getMap, isCastleExteriorBlocked, isMoatBlocked } from '../../shared/maps.js';
 import { isTreeTile } from '../../shared/trees.js';
-import { isFireplaceBlocked } from '../../shared/lighting.js';
+import { isFireplaceBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
 import { vendorsForMap } from '../worlds/vendors.js';
 import { teachersForMap, deskPositionFor } from '../worlds/teachers.js';
-import { LUCEM_BOOK_MAP, LUCEM_BOOK_POSITION } from '../../shared/spells.js';
+import { isPodiumBlocked } from '../../shared/spells.js';
 import type { MapName } from '../../shared/constants.js';
 import type { MonsterSnapshot } from '../../shared/types.js';
 
@@ -90,6 +90,7 @@ export class MonsterManagerService {
     if (isCastleExteriorBlocked(mapName, row, col)) return false;
     if (isMoatBlocked(mapName, row, col)) return false;
     if (isFireplaceBlocked(mapName, row, col)) return false;
+    if (studentDeskPositionsFor(mapName).some((p) => p.row === row && p.col === col)) return false;
     // Same "own tile + shopfront tile in front of it" collision shape as
     // WorldManagerService.isOccupied — a wandering/spawning monster
     // shouldn't stand inside the shop stall either.
@@ -101,7 +102,7 @@ export class MonsterManagerService {
       })
     )
       return false;
-    if (mapName === LUCEM_BOOK_MAP && row === LUCEM_BOOK_POSITION.row && col === LUCEM_BOOK_POSITION.col) return false;
+    if (isPodiumBlocked(mapName, row, col)) return false;
     for (const m of this.monsters.values()) {
       if (m.mapName === mapName && m.row === row && m.col === col) return false;
     }
