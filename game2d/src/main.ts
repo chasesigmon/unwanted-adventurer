@@ -20,6 +20,7 @@ import './ui/inventoryEquipment.js';
 import './ui/skillsPanel.js';
 import './ui/spellsPanel.js';
 import './ui/mapModal.js';
+import './ui/questLog.js';
 import './ui/autopilotModal.js';
 import './ui/affectsPanel.js';
 

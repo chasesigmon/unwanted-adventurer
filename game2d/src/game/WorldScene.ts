@@ -151,6 +151,7 @@ import {
   CORPSE_SCALE,
   CROW_TEXTURE_KEY,
   DAGGER_TEXTURE_KEY,
+  CLUB_TEXTURE_KEY,
   type Facing,
   FIREPLACE_MANTLE_TEXTURE_KEY,
   FIREPLACE_FLAME_TEXTURE_KEY,
@@ -203,7 +204,9 @@ import { openBedModal } from '../ui/bedModal.js';
 import { openShopModal } from '../ui/shopModal.js';
 import { openTargetInfoModal } from '../ui/targetInfoModal.js';
 import { notifyMapChanged } from '../ui/mapModal.js';
+import { openNpcDialogueModal } from '../ui/npcDialogueModal.js';
 import { hideTargetPanel, updateTargetPanel, updateLockTargetPanel } from '../ui/targetPanel.js';
+import { questDefinition } from '../../shared/quests.js';
 
 const autopilotStatusEl = document.getElementById('autopilot-status') as HTMLDivElement;
 
@@ -412,6 +415,7 @@ export class WorldScene extends Phaser.Scene {
     this.load.svg('concrete', '/concrete-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     this.load.svg(TREE_TEXTURE_KEY, '/tree.svg', { width: 48, height: 64 });
     this.load.svg(DAGGER_TEXTURE_KEY, '/dagger.svg', { width: 16, height: 16 });
+    this.load.svg(CLUB_TEXTURE_KEY, '/club.svg', { width: 16, height: 16 });
     this.load.svg(BONE_SHIELD_TEXTURE_KEY, '/bone-shield.svg', { width: 16, height: 16 });
     this.load.svg(TORCH_HELD_TEXTURE_KEY, '/torch.svg', { width: 16, height: 20 });
     this.load.svg(WAND_TEXTURE_KEY, '/wand.svg', { width: 16, height: 16 });
@@ -532,7 +536,13 @@ export class WorldScene extends Phaser.Scene {
       // cursor (a "?" — see appendStatRow's own use of the same cursor for
       // a tooltip-bearing stat label) reads better here than a hand, since
       // clicking shows information rather than performing an action.
-      const overTeacher = [...this.teacherSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
+      const hoveredTeacher = [...this.teacherSprites.values()].find((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
+      const overTeacher = Boolean(hoveredTeacher);
+      // A follow-up ask's quest-giver teacher (the Headmistress) uses a
+      // plain pointer cursor instead of the ordinary classroom teacher's
+      // 'help' — clicking her actually DOES something (opens her dialogue
+      // and offers a quest), it isn't just an info tooltip.
+      const overQuestGiverTeacher = Boolean(hoveredTeacher?.getData('questId'));
       // A key cursor over any door or the treasure chest (a follow-up
       // ask) — every door is resera-targetable now, not just the secret
       // one (see the doorSprites click handler below).
@@ -548,9 +558,11 @@ export class WorldScene extends Phaser.Scene {
             ? SLEEP_CURSOR
             : overPodium
               ? FEATHER_CURSOR
-              : overTeacher
-                ? 'help'
-                : '';
+              : overQuestGiverTeacher
+                ? 'pointer'
+                : overTeacher
+                  ? 'help'
+                  : '';
     });
 
     // A window resize can cross the "map fits in the viewport" threshold
@@ -1130,11 +1142,19 @@ export class WorldScene extends Phaser.Scene {
   // Shows/hides a player's held-weapon overlay based on whether their
   // weapon slot is filled — called for self on every profile update and
   // for other players whenever their snapshot arrives.
-  private ensureWeaponSprite(sprite: Phaser.GameObjects.Sprite, hasWeapon: boolean, facing: Facing): void {
+  // textureKey defaults to the dagger (every existing call site's own
+  // weapon) — the training skeletons' wooden club (a follow-up ask) is
+  // the one exception, passing CLUB_TEXTURE_KEY explicitly. setTexture
+  // every call (cheap, a no-op if unchanged) rather than only at creation
+  // since the same overlay sprite could in principle hold either item
+  // over an NPC's lifetime.
+  private ensureWeaponSprite(sprite: Phaser.GameObjects.Sprite, hasWeapon: boolean, facing: Facing, textureKey: string = DAGGER_TEXTURE_KEY): void {
     let weaponSprite = sprite.getData('weaponSprite') as Phaser.GameObjects.Sprite | undefined;
     if (!weaponSprite) {
-      weaponSprite = this.add.sprite(sprite.x, sprite.y, DAGGER_TEXTURE_KEY).setDepth(1);
+      weaponSprite = this.add.sprite(sprite.x, sprite.y, textureKey).setDepth(1);
       sprite.setData('weaponSprite', weaponSprite);
+    } else {
+      weaponSprite.setTexture(textureKey);
     }
     sprite.setData('facing', facing);
     weaponSprite.setVisible(hasWeapon);
@@ -2194,6 +2214,12 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('maxHp', npc.maxHp);
       sprite.setData('level', npc.level);
       this.ensureHpBar(sprite, npc.hp, npc.maxHp);
+      // The training skeletons' own practice club (a follow-up ask) —
+      // the only NPCs that carry anything today; every other NPC's
+      // carriedItems is absent, so hasWeapon is false and the overlay
+      // just stays hidden for them.
+      const hasClub = (npc.carriedItems ?? []).some((item) => item.toLowerCase().includes('club'));
+      this.ensureWeaponSprite(sprite, hasClub, (sprite.getData('facing') as Facing) ?? 'down', CLUB_TEXTURE_KEY);
       if (this.targetKind === 'npc' && this.targetId === npc.id) updateTargetPanel(npcLabel, npc.level, npc.hp, npc.maxHp);
     }
 
@@ -2348,20 +2374,40 @@ export class WorldScene extends Phaser.Scene {
     for (const t of state.teachers) {
       if (this.teacherSprites.has(t.id)) continue;
 
-      const deskPos = this.tilePosition(t.row + 1, t.col);
-      const deskSprite = this.add.sprite(deskPos.x, deskPos.y, CLASSROOM_DESK_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
-      this.teacherDeskSprites.set(t.id, deskSprite);
+      // hasDesk: false (a follow-up ask's Headmistress) skips the desk
+      // sprite entirely — she stands between the fireplaces, not at a
+      // classroom desk (see server/worlds/teachers.ts's own comment).
+      if (t.hasDesk !== false) {
+        const deskPos = this.tilePosition(t.row + 1, t.col);
+        const deskSprite = this.add.sprite(deskPos.x, deskPos.y, CLASSROOM_DESK_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
+        this.teacherDeskSprites.set(t.id, deskSprite);
+      }
 
       const pos = this.tilePosition(t.row, t.col);
       // No useHandCursor here — same reasoning as the spellbook podiums'
       // own "No useHandCursor here" comment above: the unified pointermove
       // handler in create() owns the cursor for every non-default hover
-      // case (sword/feather/help) now, and fighting Phaser's own hover
-      // cursor here is what silently broke it before (see that handler's
-      // own comment).
+      // case (sword/feather/help/pointer) now, and fighting Phaser's own
+      // hover cursor here is what silently broke it before (see that
+      // handler's own comment).
       const sprite = this.add.sprite(pos.x, pos.y, textureKeyFor('teacher'), idleFrameFor('teacher', 'down')).setScale(CHAR_SCALE).setInteractive();
+      sprite.setData('questId', t.questId);
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
+        // A follow-up ask: the Headmistress opens a dialogue modal (with
+        // a quest to accept) instead of the plain classroom-teacher
+        // tooltip, and requires the player be close enough — same reach
+        // concept ("must be within [a few] feet... otherwise show a
+        // message") as a shop's own SHOP_REACH_TILES.
+        if (t.questId) {
+          if (!isWithinRadius(this.row, this.col, t.row, t.col, SHOP_REACH_TILES)) {
+            logCombatMessage(`You're too far away to talk to ${t.name}.`);
+            return;
+          }
+          const quest = questDefinition(t.questId);
+          if (quest) openNpcDialogueModal(t.name, quest.description, quest.id);
+          return;
+        }
         // A fixed, generic line (a later follow-up ask dropped the
         // earlier per-classroom "<Subject>. Please study from the
         // podium." framing entirely, now that Utilization's classroom has
@@ -2796,6 +2842,7 @@ export class WorldScene extends Phaser.Scene {
         ...myProfile,
         canteenDrinks: ack.canteenDrinks ?? myProfile.canteenDrinks,
         mana: ack.mana ?? myProfile.mana,
+        thirst: ack.thirst ?? myProfile.thirst,
         skills: ack.skills ?? myProfile.skills,
       });
       this.updateOwnBars();

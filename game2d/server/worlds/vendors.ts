@@ -1,5 +1,6 @@
 import type { MapName } from '../../shared/constants.js';
 import type { VendorSnapshot } from '../../shared/types.js';
+import { CUP_OF_WATER_ITEM, JERKY_ITEM } from '../../shared/items.js';
 
 // Deterministic (not Math.random) so a vendor's appearance/name stays
 // the same across server restarts — same reasoning as shared/trees.ts's
@@ -53,6 +54,26 @@ function nameFor(id: string, gender: VendorSnapshot['gender']): string {
 // the shopkeeper's own tile and that shopfront tile block movement (see
 // WorldManagerService.isOccupied/MonsterManagerService.isFree).
 const VENDOR_SEEDS: VendorSeed[] = [
+  // The Great Hall's own food-and-drink vendor (a follow-up ask) — "about
+  // 5 feet north after you walk into the Great Hall and about 5 feet
+  // away from the left wall." The Great Hall's own west door lands the
+  // player at (GREAT_HALL_MID_ROW, 0) — see shared/maps.ts — so "5 feet"
+  // (this project's own ~2 tiles/5ft scale, see SHOP_REACH_TILES's "about
+  // 10 feet" == 2 tiles) north and east of there is (MID_ROW - 2, 2).
+  // Reuses the shared shopkeeper/shopfront spritesheets (see
+  // WorldScene.ts's applyMapState), same as every other vendor.
+  {
+    id: 'great-hall-shopkeeper',
+    name: 'Provisioner',
+    map: 'Great Hall',
+    row: 11,
+    col: 2,
+    items: [
+      { label: CUP_OF_WATER_ITEM, price: 2 },
+      { label: JERKY_ITEM, price: 3 },
+    ],
+    greeting: 'Water and jerky, fresh enough — keep your strength up between classes.',
+  },
   {
     id: 'labyrinth-shopkeeper',
     name: 'Shopkeeper',

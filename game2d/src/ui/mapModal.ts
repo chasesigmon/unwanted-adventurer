@@ -90,16 +90,16 @@ const GRIMOAK_ASCII_MAP = `
   THISTLEDOWN ------------------------------.              |              .----------------- |
   COMMON ROOM                                \\             |             /
                                               |             |            |
-  EMBERCLAW                                   \\            |           /
-    DORMS                                      |            |          |
-      ^                                        |            |          |
-      |                                        |            |          |
+  EMBERCLAW                                   \\            |           /                 DUSKWING
+    DORMS                                      |            |          |                   DORMS
+      ^                                        |            |          |                     ^
+      |                                        |            |          |                     |
   EMBERCLAW ---------------------------------- +--- ENTRANCE HALL ---- + ---------------- DUSKWING
   COMMON ROOM                                  |            |          |                COMMON ROOM
-                                               |            |          |                     ^
-  STARFALL                                     /            |           \\                    |
-    DORMS                                     |             |            |               DUSKWING
-      ^                                       |             |            |                 DORMS
+                                               |            |          |
+  STARFALL                                     /            |           \\
+    DORMS                                     |             |            |
+      ^                                       |             |            |
       |                                       /              |            \\
   STARFALL -----------------------------------               |             ------------------'
   COMMON ROOM                                                |

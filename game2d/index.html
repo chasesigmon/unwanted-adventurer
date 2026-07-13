@@ -138,6 +138,7 @@
           <button type="button" id="autopilot-btn" class="corner-btn" title="Prompt (p)" hidden>💬</button>
           <button type="button" id="inventory-btn" class="corner-btn" title="Inventory (i)">🎒</button>
           <button type="button" id="char-sheet-btn" class="corner-btn" title="Character sheet (c)">📜</button>
+          <button type="button" id="quest-log-btn" class="corner-btn" title="Quest log (q)">📋</button>
         </div>
 
         <div id="char-sheet-modal" class="modal" hidden>
@@ -145,6 +146,23 @@
             <button type="button" class="modal-close">&times;</button>
             <h2 id="char-sheet-username">Character</h2>
             <div id="char-sheet-body" class="modal-stats"></div>
+          </div>
+        </div>
+
+        <div id="npc-dialogue-modal" class="modal" hidden>
+          <div class="modal-box">
+            <button type="button" class="modal-close">&times;</button>
+            <h2 id="npc-dialogue-name">NPC</h2>
+            <p id="npc-dialogue-text"></p>
+            <div id="npc-dialogue-actions" class="modal-actions"></div>
+          </div>
+        </div>
+
+        <div id="quest-log-modal" class="modal" hidden>
+          <div class="modal-box">
+            <button type="button" class="modal-close">&times;</button>
+            <h2 id="quest-log-title">Quest Log</h2>
+            <div id="quest-log-body"></div>
           </div>
         </div>
 

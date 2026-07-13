@@ -263,21 +263,29 @@ export const CLASSROOM_COLS = Math.round(ROOM_COLS / 3);
 export const CLASSROOM_MID_ROW = Math.floor(CLASSROOM_ROWS / 2);
 export const CLASSROOM_MID_COL = Math.floor(CLASSROOM_COLS / 2);
 
-// Reduced by 25% from the original 48x70 (a follow-up ask).
-const ENTRANCE_ROWS = 36;
-const ENTRANCE_COLS = 53;
+// Reduced by 25% from the original 48x70, then another 5% by a later
+// follow-up ask (36x53 -> 34x50).
+const ENTRANCE_ROWS = Math.round(36 * 0.95);
+const ENTRANCE_COLS = Math.round(53 * 0.95);
 const ENTRANCE_MID_ROW = Math.floor(ENTRANCE_ROWS / 2);
 const ENTRANCE_MID_COL = Math.floor(ENTRANCE_COLS / 2);
 
-// The Great Hall originally matched the Entrance Hall's own size exactly
-// (a follow-up ask: "reduce the size of the great hall and common rooms
-// to be the same as the entrance hall"), but got shrunk another 25% by a
-// later follow-up ask ("reduce the size of the Great Hall by 25%," to
-// make room for the new banquet-table/faculty-stage furniture below
-// without an oversized empty room) — no longer tied to the Entrance
-// Hall's own footprint at all, same as the house common rooms below.
-const COMMON_ROOM_ROWS = Math.round(ENTRANCE_ROWS * 0.75);
-const COMMON_ROOM_COLS = Math.round(ENTRANCE_COLS * 0.75);
+// The Great Hall/common-room family's own base footprint — pinned to the
+// Entrance Hall's PRE-5%-reduction size (36x53) rather than the live
+// ENTRANCE_ROWS/COLS above, since a later follow-up ask ("reduce the size
+// of the great hall and common rooms to be the same as the entrance
+// hall") deliberately decoupled them from the Entrance Hall's own
+// footprint at that point in time — shrinking the Entrance Hall again
+// (see ENTRANCE_ROWS/COLS above) must not cascade into these too.
+const GREAT_HALL_FAMILY_BASE_ROWS = 36;
+const GREAT_HALL_FAMILY_BASE_COLS = 53;
+
+// The Great Hall originally matched the Entrance Hall's own size exactly,
+// but got shrunk another 25% by a later follow-up ask ("reduce the size
+// of the Great Hall by 25%," to make room for the new banquet-table/
+// faculty-stage furniture below without an oversized empty room).
+const COMMON_ROOM_ROWS = Math.round(GREAT_HALL_FAMILY_BASE_ROWS * 0.75);
+const COMMON_ROOM_COLS = Math.round(GREAT_HALL_FAMILY_BASE_COLS * 0.75);
 const COMMON_ROOM_MID_ROW = Math.floor(COMMON_ROOM_ROWS / 2);
 const COMMON_ROOM_MID_COL = Math.floor(COMMON_ROOM_COLS / 2);
 
@@ -291,8 +299,8 @@ const DORM_ROOM_ROWS = Math.round(COMMON_ROOM_ROWS * DORM_ROOM_SCALE);
 const DORM_ROOM_COLS = Math.round(COMMON_ROOM_COLS * DORM_ROOM_SCALE);
 const DORM_ROOM_MID_COL = Math.floor(DORM_ROOM_COLS / 2);
 
-const GREAT_HALL_ROWS = Math.round(ENTRANCE_ROWS * 0.75);
-const GREAT_HALL_COLS = Math.round(ENTRANCE_COLS * 0.75);
+const GREAT_HALL_ROWS = Math.round(GREAT_HALL_FAMILY_BASE_ROWS * 0.75);
+const GREAT_HALL_COLS = Math.round(GREAT_HALL_FAMILY_BASE_COLS * 0.75);
 const GREAT_HALL_MID_ROW = Math.floor(GREAT_HALL_ROWS / 2);
 
 // A simplified castle (a follow-up ask): every classroom hangs directly

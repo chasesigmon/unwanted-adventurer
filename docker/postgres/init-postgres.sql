@@ -98,6 +98,18 @@ CREATE TABLE IF NOT EXISTS players (
   secret_door_unlocked BOOLEAN NOT NULL DEFAULT false,
   secret_chest_unlocked BOOLEAN NOT NULL DEFAULT false,
   map_unlocked BOOLEAN NOT NULL DEFAULT false,
+  -- Eating & drinking (a follow-up ask) — both start at 100 (a brand new
+  -- character has just eaten/drunk their fill) and drop by 1 point per
+  -- world-clock hour (see game2d/server/game-gateway/game.gateway.ts's
+  -- globalStatTick/applyStatTick); recovered 20 points at a time by
+  -- drinking (canteen or a cup of water) or eating jerky.
+  hunger INTEGER NOT NULL DEFAULT 100,
+  thirst INTEGER NOT NULL DEFAULT 100,
+  -- Quest progress (a follow-up ask) — quest id -> array of completed
+  -- objective ids; a quest id present as a key (even with an empty array)
+  -- means it's been started. See game2d/shared/quests.ts for the quest/
+  -- objective definitions themselves, which live in code, not the DB.
+  quests JSONB NOT NULL DEFAULT '{}',
   last_login TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

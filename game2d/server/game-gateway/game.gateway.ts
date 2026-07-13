@@ -171,7 +171,19 @@ import {
   MURUS_LAPIDEUS_BOOK_MAP,
   MURUS_LAPIDEUS_BOOK_POSITION,
 } from '../../shared/spells.js';
-import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem, manaCrystalForLevel, isManaCrystal } from '../../shared/items.js';
+import {
+  CANTEEN_ITEM,
+  CANTEEN_CAPACITY,
+  isFillableItem,
+  manaCrystalForLevel,
+  isManaCrystal,
+  CUP_OF_WATER_ITEM,
+  JERKY_ITEM,
+  THIRST_RESTORE_PERCENT,
+  HUNGER_RESTORE_PERCENT,
+  MAX_HUNGER_THIRST,
+} from '../../shared/items.js';
+import { questDefinition, QUESTS } from '../../shared/quests.js';
 import { MONSTER_KINDS } from '../../shared/constants.js';
 import type { Direction, MapName, MonsterClass, MonsterKind, Race } from '../../shared/constants.js';
 
@@ -603,10 +615,22 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
     }
 
-    if (hp === client.data.hp && mana === client.data.mana && !wandJustWentOut) return;
+    // Eating & drinking (a follow-up ask) — 1 point (of 100) lost per
+    // world-clock hour; this tick IS one hour (see globalStatTick's own
+    // worldHour advance just above), floored at 0 rather than going
+    // negative. Restored 20 points at a time by drinking/eating (see
+    // applyConsume/handleDrinkItem).
+    const hunger = Math.max(0, client.data.hunger - 1);
+    const thirst = Math.max(0, client.data.thirst - 1);
+
+    if (hp === client.data.hp && mana === client.data.mana && hunger === client.data.hunger && thirst === client.data.thirst && !wandJustWentOut) {
+      return;
+    }
 
     client.data.hp = hp;
     client.data.mana = mana;
+    client.data.hunger = hunger;
+    client.data.thirst = thirst;
     this.worldManager.updateState(client.data.username, wandJustWentOut ? { hp, mana, wandLit: false } : { hp, mana });
     void this.persistStats(client);
     this.systemMessage(client, `${STAT_TICK_FLAVOR[client.data.restState]} and recover some hp/mana.`);
@@ -620,6 +644,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxHp: client.data.maxHp,
       mana: client.data.mana,
       maxMana: client.data.maxMana,
+      hunger: client.data.hunger,
+      thirst: client.data.thirst,
     });
   }
 
@@ -670,6 +696,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       mapUnlocked: client.data.mapUnlocked,
       secretDoorUnlocked: client.data.secretDoorUnlocked,
       secretChestUnlocked: client.data.secretChestUnlocked,
+      hunger: client.data.hunger,
+      thirst: client.data.thirst,
+      quests: client.data.quests,
     };
   }
 
@@ -776,6 +805,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         secretDoorUnlocked: client.data.secretDoorUnlocked,
         secretChestUnlocked: client.data.secretChestUnlocked,
         mapUnlocked: client.data.mapUnlocked,
+        hunger: client.data.hunger,
+        thirst: client.data.thirst,
+        quests: client.data.quests,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -891,6 +923,30 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     return { ok: true };
+  }
+
+  // The Headmistress's own quest offer (a follow-up ask) — see
+  // src/game/WorldScene.ts's questGiver click handler for the reach check
+  // and dialogue modal this backs. A no-op (still ok: true) if the quest
+  // was already started, rather than an error — clicking "Quest: Learn
+  // spells" a second time shouldn't feel like a failure.
+  @SubscribeMessage('startQuest')
+  handleStartQuest(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): { ok: boolean; message?: string } {
+    const parsed = z.object({ questId: z.string() }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid quest.' };
+    }
+    const quest = questDefinition(parsed.data.questId);
+    if (!quest) {
+      return { ok: false, message: "That quest doesn't exist." };
+    }
+    if (client.data.quests[quest.id] !== undefined) {
+      return { ok: true };
+    }
+    client.data.quests = { ...client.data.quests, [quest.id]: [] };
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    return { ok: true, message: `Quest added: ${quest.title}` };
   }
 
   // A small chance per attack/defense (hit or miss doesn't matter here,
@@ -1359,6 +1415,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.mimicableRaces = (doc?.mimicableRaces ?? []) as (Race | MonsterKind)[];
     client.data.mimicForm = (doc?.mimicForm ?? null) as (Race | MonsterKind) | null;
     client.data.deathCount = doc?.deathCount ?? 0;
+    // Eating & drinking (a follow-up ask) — starts full for a brand new
+    // character, backfilled to full for any existing one too (see
+    // docker/postgres/init-postgres.sql's column DEFAULT, applied
+    // retroactively by Postgres to every pre-existing row).
+    client.data.hunger = doc?.hunger ?? MAX_HUNGER_THIRST;
+    client.data.thirst = doc?.thirst ?? MAX_HUNGER_THIRST;
+    client.data.quests = doc?.quests ?? {};
     // Stacks across levels if never spent (a later follow-up ask) — see
     // handleAllocateStatPoint.
     client.data.statPointsAvailable = doc?.statPointsAvailable ?? 0;
@@ -1533,11 +1596,36 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       void client.leave(previousMap);
       void client.join(result.mapName);
       this.server.to(previousMap).emit('map:state', this.mapStateFor(previousMap));
+      this.advanceClassroomQuestObjectives(client);
     }
     this.server.to(result.mapName).emit('map:state', this.mapStateFor(result.mapName));
 
     const message = result.transitioned ? `You enter ${result.mapName}.` : undefined;
     return { ok: true, player: this.snapshotFor(client), message };
+  }
+
+  // The Headmistress's own "visit all of the classrooms" quest (a
+  // follow-up ask) — marks whichever objective matches the classroom the
+  // player just walked into as complete, for every quest that's active
+  // and doesn't already have it. Silent no-op once a quest has no
+  // matching/incomplete objective left, so re-entering an already-visited
+  // classroom (or walking anywhere else) doesn't do anything.
+  private advanceClassroomQuestObjectives(client: GameSocket): void {
+    let changed = false;
+    const quests = { ...client.data.quests };
+    for (const quest of Object.values(QUESTS)) {
+      const progress = quests[quest.id];
+      if (progress === undefined) continue;
+      const objective = quest.objectives.find((o) => o.map === client.data.map);
+      if (!objective || progress.includes(objective.id)) continue;
+      quests[quest.id] = [...progress, objective.id];
+      changed = true;
+      this.systemMessage(client, `Quest objective complete: ${objective.label} (${quest.title})`);
+    }
+    if (!changed) return;
+    client.data.quests = quests;
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
   }
 
   // A right-click punch always plays its swing animation (broadcast via
@@ -2166,6 +2254,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // A practice scarecrow just shrugs it off and resets in place — no
       // corpse, no relocating, no "defeating" anything.
       npc.hp = npc.maxHp;
+      // A follow-up ask: "every time the training skeleton respawns after
+      // being killed, equip the club to them again" — exarme (see
+      // handleCastExarme) can strip its carriedItems entirely; this
+      // immortal-reset moment IS this NPC's own "respawn," so it's the
+      // right place to re-arm it. Only NPCs that started out carrying
+      // something get one back (npc.carriedItems is absent, not just
+      // empty, for every NPC never meant to carry anything).
+      if (npc.carriedItems) npc.carriedItems = ['wooden club'];
     } else if (died) {
       // No killedBy, deliberately — same "not a real kill" reasoning as
       // the no-exp rule above: an ever-respawning dummy would otherwise
@@ -2561,7 +2657,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.worldManager.updateState(client.data.username, { gold: client.data.gold, inventory: client.data.inventory });
     void this.persistStats(client);
 
-    return { ok: true, inventory: client.data.inventory, gold: client.data.gold, message: `You buy a ${item.label} for ${item.price} gold.` };
+    // Every item label sold before this batch (torch, bone dagger, ...) is
+    // a bare noun, needing "a" in front to read naturally — the new food
+    // items (a follow-up ask's "a cup of water"/"some jerky") already
+    // carry their own article/quantifier, so prepending another one would
+    // read as "You buy a a cup of water..."
+    const article = /^(a|an|some)\s/i.test(item.label) ? '' : 'a ';
+    return { ok: true, inventory: client.data.inventory, gold: client.data.gold, message: `You buy ${article}${item.label} for ${item.price} gold.` };
   }
 
   // Zombie-only: heals 20% hp/mana and starts a 4-world-tick
@@ -3344,13 +3446,32 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const succeeded = this.rollSpellSuccess(client, EXARME_SKILL);
       const growth = this.maybeGrowSpellSkill(client, EXARME_SKILL);
       const label = npc.label ?? 'training dummy';
-      const message = succeeded
-        ? `The ${label} isn't wielding a weapon.${growth ? ` ${growth}` : ''}`
-        : `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
+      // A follow-up ask gave the training skeletons a wooden club (see
+      // server/worlds/npcs.ts) specifically so this branch — previously
+      // always "isn't wielding a weapon," since no NPC ever carried
+      // anything — has something to actually disarm. Not added to the
+      // player's own inventory (unlike a monster's dropped dagger below)
+      // — it's a practice target, not a real loot source; the club comes
+      // back the next time this skeleton is "killed" (see
+      // resolveHitOnNpc's own immortal-reset branch).
+      let message: string;
+      if (!succeeded) {
+        message = 'You fumble the incantation and nothing happens.';
+      } else {
+        const weaponIndex = (npc.carriedItems ?? []).findIndex((item) => item.toLowerCase().includes('club'));
+        if (weaponIndex === -1) {
+          message = `The ${label} isn't wielding a weapon.`;
+        } else {
+          const [weapon] = npc.carriedItems!.splice(weaponIndex, 1);
+          message = `${client.data.username}'s exarme knocks the ${weapon} from the ${label}'s grip!`;
+        }
+      }
+      if (growth) message = `${message} ${growth}`;
       this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
       this.systemMessage(client, message);
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
       return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
     }
     if (parsed.data.targetKind !== 'monster') {
@@ -3614,9 +3735,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: 'Your canteen is empty.' };
     }
     client.data.canteenDrinks -= 1;
+    // Eating & drinking (a follow-up ask) — a canteen drink restores
+    // thirst same as a cup of water (see applyConsume).
+    client.data.thirst = Math.min(MAX_HUNGER_THIRST, client.data.thirst + THIRST_RESTORE_PERCENT);
     this.worldManager.updateState(client.data.username, { canteenDrinks: client.data.canteenDrinks });
     void this.persistStats(client);
-    return { ok: true, canteenDrinks: client.data.canteenDrinks, message: 'You take a drink from your canteen.' };
+    return { ok: true, canteenDrinks: client.data.canteenDrinks, thirst: client.data.thirst, message: 'You take a drink from your canteen.' };
   }
 
   // Pouring a canteen out (item 7) — dumps whatever's left, regardless of
@@ -4095,6 +4219,21 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // evolution through consuming in the wizard world.")
   private applyConsume(client: GameSocket, item: string): string[] {
     const messages: string[] = [];
+    // Eating & drinking (a follow-up ask) — a cup of water/jerky each
+    // restore a flat percent of thirst/hunger and, like every other
+    // consumable, are gone from the inventory the instant they're
+    // clicked (see handleUseItem/handleConsumeItem, which splice the item
+    // out before this ever runs).
+    if (item === CUP_OF_WATER_ITEM) {
+      client.data.thirst = Math.min(MAX_HUNGER_THIRST, client.data.thirst + THIRST_RESTORE_PERCENT);
+      messages.push('You drink the cup of water, quenching your thirst a little.');
+      return messages;
+    }
+    if (item === JERKY_ITEM) {
+      client.data.hunger = Math.min(MAX_HUNGER_THIRST, client.data.hunger + HUNGER_RESTORE_PERCENT);
+      messages.push('You eat the jerky, easing your hunger a little.');
+      return messages;
+    }
     const grant = resistanceGrantForItem(item);
     if (grant) {
       if (client.data.skills[grant.skill] === undefined) {
@@ -4158,6 +4297,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       inventory: client.data.inventory,
       equipment: client.data.equipment,
       skills: client.data.skills,
+      hunger: client.data.hunger,
+      thirst: client.data.thirst,
       message: messages.length > 0 ? messages.join('\n') : undefined,
     };
   }

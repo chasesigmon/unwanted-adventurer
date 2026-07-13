@@ -29,6 +29,10 @@ export const COMMON_ROOM_ZOOM = 1.4;
 export const DORM_ZOOM = 3.1;
 export const TREE_TEXTURE_KEY = 'tree';
 export const DAGGER_TEXTURE_KEY = 'held-dagger';
+// The training skeletons' own practice weapon (a follow-up ask) — same
+// "small held-item overlay" shape as the dagger, its own texture/asset
+// since it's a visually distinct weapon, not a reskin.
+export const CLUB_TEXTURE_KEY = 'held-club';
 export const BONE_SHIELD_TEXTURE_KEY = 'held-bone-shield';
 export const TORCH_HELD_TEXTURE_KEY = 'held-torch';
 // A wand, held in the same hand/position as a dagger (mutually

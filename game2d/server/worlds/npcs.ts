@@ -39,5 +39,11 @@ export const NPCS: NpcSnapshot[] = [
     maxHp: STARTING_VITAL,
     immortal: true,
     label: 'training skeleton',
+    // A wooden club (a follow-up ask: "give the training skeletons a
+    // wooden club sprite as a weapon... so players can practice exarme")
+    // — exarme can strip it (see game.gateway.ts's handleCastExarme); the
+    // immortal-respawn branch of resolveHitOnNpc re-equips it the next
+    // time this skeleton is "killed."
+    carriedItems: ['wooden club'],
   })),
 ];

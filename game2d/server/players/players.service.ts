@@ -54,6 +54,9 @@ export interface PlayerStatsUpdate {
   secretDoorUnlocked?: boolean;
   secretChestUnlocked?: boolean;
   mapUnlocked?: boolean;
+  hunger?: number;
+  thirst?: number;
+  quests?: Record<string, string[]>;
 }
 
 @Injectable()

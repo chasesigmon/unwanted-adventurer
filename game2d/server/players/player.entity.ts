@@ -157,6 +157,18 @@ export class Player {
   @Column({ name: 'map_unlocked', type: 'boolean', default: false })
   mapUnlocked!: boolean;
 
+  // Eating & drinking (a follow-up ask) — see the equivalent columns' own
+  // comment in docker/postgres/init-postgres.sql for what these mean.
+  @Column({ type: 'int', default: 100 })
+  hunger!: number;
+
+  @Column({ type: 'int', default: 100 })
+  thirst!: number;
+
+  // Quest id -> completed objective ids (see shared/quests.ts).
+  @Column({ type: 'jsonb', default: () => "'{}'" })
+  quests!: Record<string, string[]>;
+
   @Column({ name: 'last_login', type: 'timestamptz', default: () => 'now()' })
   lastLogin!: Date;
 

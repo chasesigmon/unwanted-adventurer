@@ -660,6 +660,21 @@ export class NetworkManager extends EventTarget {
     });
   }
 
+  // The Headmistress's own "Quest: Learn spells" button (a follow-up ask)
+  // — see game.gateway.ts's handleStartQuest.
+  startQuest(questId: string): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('startQuest', { questId }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
   readStupefaciuntBook(): Promise<ReadSpellBookAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {

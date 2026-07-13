@@ -136,6 +136,20 @@ export interface PlayerSnapshot {
   // messages ("already unlocked" vs "locked").
   secretDoorUnlocked?: boolean;
   secretChestUnlocked?: boolean;
+  // Eating & drinking (a follow-up ask) — 0-100, 1 point lost per
+  // world-clock hour (see game.gateway.ts's applyStatTick), 20 points
+  // recovered per drink/meal. See shared/items.ts for what restores each.
+  // Optional for the same reason as mapUnlocked above — private stats,
+  // only the OWNING client's own snapshot ever populates them (see
+  // WorldManagerService.getMapState, which never sets them for the
+  // copies OTHER players in the room see).
+  hunger?: number;
+  thirst?: number;
+  // Quest id -> completed objective ids (see shared/quests.ts for the
+  // quest/objective definitions themselves) — a quest id present here
+  // (even with an empty array) means it's been started. Optional for the
+  // same reason as hunger/thirst above.
+  quests?: Record<string, string[]>;
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
@@ -161,6 +175,12 @@ export interface NpcSnapshot {
   // defaults to "training dummy" (the original NPC's own name) when
   // absent, so existing behavior doesn't need every NPCS entry updated.
   label?: string;
+  // While present, whatever this NPC is carrying (a follow-up ask gave
+  // the training skeletons a wooden club to practice exarme on) — same
+  // "first weapon-slot item shows as a held-weapon overlay" shape as
+  // MonsterSnapshot's own carriedItems. Absent (not just empty) for every
+  // NPC that was never meant to carry anything.
+  carriedItems?: string[];
 }
 
 // A wild monster — wanders on its own, has no account/login, and is a
@@ -249,6 +269,18 @@ export interface TeacherSnapshot {
   map: MapName;
   row: number;
   col: number;
+  // Absent (the default) means "yes, has a desk one tile south" — every
+  // classroom teacher. false is for a non-classroom teacher who shouldn't
+  // get one at all (a follow-up ask's Headmistress, standing between the
+  // Entrance Hall's own fireplaces, not at a desk) — see
+  // server/worlds/teachers.ts's teacherDeskFootprintFor.
+  hasDesk?: boolean;
+  // Present only for a teacher who offers a quest on click (a follow-up
+  // ask) — opens a dialogue modal (see src/ui/npcDialogueModal.ts) with
+  // this quest's own description (shared/quests.ts) as the spoken line
+  // and a button to start it, instead of the plain classroom-teacher
+  // tooltip.
+  questId?: string;
 }
 
 // Murus lapideus (a later follow-up ask) — a temporary, defensive summon
@@ -375,6 +407,10 @@ export interface UseItemAck {
   inventory?: string[];
   equipment?: Record<string, string>;
   skills?: Record<string, number>;
+  // Set only when consuming a cup of water/jerky (a follow-up ask's
+  // eating & drinking system) — see game.gateway.ts's applyConsume.
+  hunger?: number;
+  thirst?: number;
   message?: string;
 }
 
@@ -534,6 +570,9 @@ export interface CanteenActionAck {
   ok: boolean;
   canteenDrinks?: number;
   mana?: number;
+  // Set only by drinkItem (a follow-up ask's eating & drinking system) —
+  // a canteen drink restores thirst same as a cup of water.
+  thirst?: number;
   // Set only by castIrrigo (a later follow-up ask gave irrigo the same
   // percent-chance-to-grow mechanic lucem already has) — present whenever
   // a growth roll actually fired, so the client can refresh its own copy
@@ -570,6 +609,8 @@ export interface StatTickPayload {
   maxHp: number;
   mana: number;
   maxMana: number;
+  hunger: number;
+  thirst: number;
 }
 
 // Broadcast to every connected socket (not just one map's room) whenever
@@ -732,6 +773,10 @@ export interface ClientToServerEvents {
   // caps and rebroadcasts to the sender's own map room only.
   chat: (message: string) => void;
   who: (ack: (res: WhoAck) => void) => void;
+  // The Headmistress's own quest offer (a follow-up ask) — see
+  // game.gateway.ts's handleStartQuest. A no-op (still ok: true) if
+  // already started.
+  startQuest: (payload: { questId: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
   // ===== TESTING OVERRIDE — REMOVE AFTER TESTING ===== "add a 'cheat'
   // hotkey... pressing it should recover my mana to 100%. This will go
   // away after testing." Bound to the '~' key client-side (see
@@ -837,6 +882,11 @@ export interface SocketData {
   secretDoorUnlocked: boolean;
   secretChestUnlocked: boolean;
   mapUnlocked: boolean;
+  // See PlayerSnapshot's own doc comment — persisted; loaded from the
+  // player doc on connect.
+  hunger: number;
+  thirst: number;
+  quests: Record<string, string[]>;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

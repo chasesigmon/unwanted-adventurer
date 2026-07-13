@@ -1,5 +1,6 @@
 import type { MapName } from '../../shared/constants.js';
 import type { TeacherSnapshot } from '../../shared/types.js';
+import { LEARN_SPELLS_QUEST_ID } from '../../shared/quests.js';
 
 // Static, permanent classroom occupants (a follow-up ask: "Add teacher
 // NPCs to each classroom and they are behind a desk with collision for
@@ -10,6 +11,13 @@ import type { TeacherSnapshot } from '../../shared/types.js';
 // decorative). Never move, never despawn, not a combat target and not
 // (yet) clickable — purely a placed NPC + furniture piece for now.
 export const TEACHERS: TeacherSnapshot[] = [
+  // The Headmistress (a follow-up ask) — "in the middle of the top 2
+  // fireplaces," facing south. The Entrance Hall's own top fireplaces sit
+  // at row 8, cols 14 and 38 (see shared/lighting.ts's
+  // fireplacePositionsFor) — she stands at their shared row, the midpoint
+  // column between them, with no desk (hasDesk: false) since she's not a
+  // classroom occupant. Offers the Learn Spells quest on click.
+  { id: 'headmistress', name: 'Headmistress Elowen', map: 'Grimoak Entrance Hall', row: 8, col: 26, hasDesk: false, questId: LEARN_SPELLS_QUEST_ID },
   { id: 'elemental-casting-teacher', name: 'Professor Ashgrove', map: 'Elemental Casting Classroom', row: 2, col: 9 },
   { id: 'defense-teacher', name: 'Professor Vantor', map: 'Defense Classroom', row: 2, col: 9 },
   { id: 'summoning-teacher', name: 'Professor Nyx', map: 'Summoning Classroom', row: 2, col: 9 },
@@ -34,6 +42,7 @@ export function deskPositionFor(teacher: TeacherSnapshot): { row: number; col: n
 // width/height at its render scale (see WorldScene's teacher-desk
 // setOrigin(0.5, 0.85), which puts most of its height above the anchor).
 export function teacherDeskFootprintFor(teacher: TeacherSnapshot): Array<{ row: number; col: number }> {
+  if (teacher.hasDesk === false) return [];
   const anchor = deskPositionFor(teacher);
   const tiles: Array<{ row: number; col: number }> = [];
   for (const dRow of [-1, 0]) {

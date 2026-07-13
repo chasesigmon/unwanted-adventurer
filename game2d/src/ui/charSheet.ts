@@ -16,6 +16,8 @@ const CHAR_SHEET_STAT_DESCRIPTIONS: Record<string, string> = {
   'Armor Class':
     'A base of 10, plus a small dexterity bonus and +5 while a bone shield is equipped. Flatly reduces incoming damage a little on every hit that lands.',
   Deaths: 'Every death (from any cause) counts here. Every 5th costs 1 constitution permanently. At 65, CONDEATH — this character can never be played again.',
+  Hunger: 'Drops by 1 every game hour. Eating jerky restores 20. No mechanical effect yet at 0 — reserved for future use.',
+  Thirst: 'Drops by 1 every game hour. Drinking from your canteen or a cup of water restores 20. No mechanical effect yet at 0 — reserved for future use.',
 };
 
 // Must match game.gateway.ts's own GameGateway.CONDEATH_LIMIT.
@@ -92,6 +94,8 @@ export function renderCharSheet(): void {
   appendStatRow(charSheetBody, 'Exp', myProfile.exp, CHAR_SHEET_STAT_DESCRIPTIONS.Exp);
   appendStatRow(charSheetBody, 'HP', `${myProfile.hp}/${myProfile.maxHp}`);
   appendStatRow(charSheetBody, 'Mana', `${myProfile.mana}/${myProfile.maxMana}`);
+  appendStatRow(charSheetBody, 'Hunger', `${myProfile.hunger}/100`, CHAR_SHEET_STAT_DESCRIPTIONS.Hunger);
+  appendStatRow(charSheetBody, 'Thirst', `${myProfile.thirst}/100`, CHAR_SHEET_STAT_DESCRIPTIONS.Thirst);
   if (hasPoints) {
     appendStatRow(
       charSheetBody,

@@ -14,6 +14,7 @@ import {
   skillsModal,
   spellsModal,
   affectsModal,
+  questLogModal,
   toggleModal,
 } from './modalCore.js';
 import { openChatInput, openChatInputWithSlash } from './log.js';
@@ -90,6 +91,9 @@ export function initGlobalKeyboardShortcuts(): void {
     } else if (key === 'f') {
       e.preventDefault();
       toggleModal(affectsModal);
+    } else if (key === 'q') {
+      e.preventDefault();
+      toggleModal(questLogModal);
     } else if (key === 'x') {
       // A later follow-up ask: "make the player stop auto attacking" —
       // stops whatever combat session (melee or ranged) is currently

@@ -11,6 +11,19 @@ export const charSheetUsername = document.getElementById('char-sheet-username') 
 export const charSheetBody = document.getElementById('char-sheet-body') as HTMLDivElement;
 export const inventoryModal = document.getElementById('inventory-modal') as HTMLDivElement;
 export const inventoryList = document.getElementById('inventory-list') as HTMLUListElement;
+// The quest log (a follow-up ask) — a list of started quest titles;
+// clicking one swaps this same body to a detail view (description +
+// objective checklist) instead of opening a second modal.
+export const questLogModal = document.getElementById('quest-log-modal') as HTMLDivElement;
+export const questLogTitle = document.getElementById('quest-log-title') as HTMLHeadingElement;
+export const questLogBody = document.getElementById('quest-log-body') as HTMLDivElement;
+// A stationary NPC's own dialogue (a follow-up ask: the Headmistress's
+// greeting + her "Quest: Learn spells" button) — generic enough for any
+// future quest-giver, not Headmistress-specific itself.
+export const npcDialogueModal = document.getElementById('npc-dialogue-modal') as HTMLDivElement;
+export const npcDialogueName = document.getElementById('npc-dialogue-name') as HTMLHeadingElement;
+export const npcDialogueText = document.getElementById('npc-dialogue-text') as HTMLParagraphElement;
+export const npcDialogueActions = document.getElementById('npc-dialogue-actions') as HTMLDivElement;
 export const skillsModal = document.getElementById('skills-modal') as HTMLDivElement;
 export const skillsBody = document.getElementById('skills-body') as HTMLDivElement;
 // Spells and skills are different things (players will eventually have
@@ -63,6 +76,8 @@ export const bedSleepNoBtn = document.getElementById('bed-sleep-no') as HTMLButt
 export const ALL_MODALS = [
   charSheetModal,
   inventoryModal,
+  questLogModal,
+  npcDialogueModal,
   skillsModal,
   spellsModal,
   equipmentModal,
@@ -82,7 +97,7 @@ export const ALL_MODALS = [
 // sheet/the map/Affects while still walking around. Every OTHER modal
 // (corpse/shop/target-info/autopilot's own text prompt/the chest) still
 // blocks movement.
-export const MOVEMENT_PASSTHROUGH_MODALS = [inventoryModal, equipmentModal, skillsModal, spellsModal, charSheetModal, mapModal, affectsModal];
+export const MOVEMENT_PASSTHROUGH_MODALS = [inventoryModal, equipmentModal, skillsModal, spellsModal, charSheetModal, mapModal, affectsModal, questLogModal];
 
 export function isMovementBlocked(): boolean {
   return chatInputFocused || ALL_MODALS.some((m) => !m.hidden && !MOVEMENT_PASSTHROUGH_MODALS.includes(m));
@@ -239,6 +254,7 @@ const spellsBtn = document.getElementById('spells-btn') as HTMLButtonElement;
 const equipmentBtn = document.getElementById('equipment-btn') as HTMLButtonElement;
 const mapBtn = document.getElementById('map-btn') as HTMLButtonElement;
 const affectsBtn = document.getElementById('affects-btn') as HTMLButtonElement;
+const questLogBtn = document.getElementById('quest-log-btn') as HTMLButtonElement;
 
 charSheetBtn.addEventListener('click', () => toggleModal(charSheetModal));
 inventoryBtn.addEventListener('click', () => toggleModal(inventoryModal));
@@ -247,6 +263,7 @@ spellsBtn.addEventListener('click', () => toggleModal(spellsModal));
 equipmentBtn.addEventListener('click', () => toggleModal(equipmentModal));
 mapBtn.addEventListener('click', () => toggleModal(mapModal));
 affectsBtn.addEventListener('click', () => toggleModal(affectsModal));
+questLogBtn.addEventListener('click', () => toggleModal(questLogModal));
 
 // The map corner button (and its 'm' hotkey, see keyboard.ts) is hidden
 // until myProfile.mapUnlocked (a follow-up ask — the map is now found in

@@ -100,6 +100,8 @@ function applyUseItemAck(ack: UseItemAck): void {
       inventory: ack.inventory ?? myProfile.inventory,
       equipment: ack.equipment ?? myProfile.equipment,
       skills: ack.skills ?? myProfile.skills,
+      hunger: ack.hunger ?? myProfile.hunger,
+      thirst: ack.thirst ?? myProfile.thirst,
     });
     refreshOpenModals();
     activeScene?.refreshEquipmentSprites();
@@ -140,7 +142,7 @@ function drinkInventoryItem(index: number): void {
     .then((ack) => {
       if (ack.message) logCombatMessage(ack.message);
       if (ack.ok && myProfile) {
-        setMyProfile({ ...myProfile, canteenDrinks: ack.canteenDrinks ?? myProfile.canteenDrinks });
+        setMyProfile({ ...myProfile, canteenDrinks: ack.canteenDrinks ?? myProfile.canteenDrinks, thirst: ack.thirst ?? myProfile.thirst });
         refreshOpenModals();
       }
     })

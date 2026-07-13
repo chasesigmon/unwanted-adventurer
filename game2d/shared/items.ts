@@ -54,3 +54,19 @@ export function manaCrystalForLevel(level: number): ManaCrystalLabel {
 export function isManaCrystal(item: string): boolean {
   return (MANA_CRYSTAL_LABELS as readonly string[]).includes(item);
 }
+
+// Food & drink (a follow-up ask's eating & drinking system) — ordinary
+// click-to-consume inventory items (see game.gateway.ts's applyConsume),
+// unlike the canteen above: no targeting, a single use each, gone from
+// the inventory the moment they're consumed (handleUseItem/
+// handleConsumeItem already splice the clicked item out before applyConsume
+// even runs). Sold by the Great Hall's own shopkeeper (see
+// server/worlds/vendors.ts).
+export const CUP_OF_WATER_ITEM = 'a cup of water';
+export const JERKY_ITEM = 'some jerky';
+
+// How much of the total (0-100) each restores — "recover 20% of thirst/
+// hunger" per the follow-up ask.
+export const THIRST_RESTORE_PERCENT = 20;
+export const HUNGER_RESTORE_PERCENT = 20;
+export const MAX_HUNGER_THIRST = 100;
