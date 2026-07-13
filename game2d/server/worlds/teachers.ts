@@ -1,6 +1,5 @@
 import type { MapName } from '../../shared/constants.js';
 import type { TeacherSnapshot } from '../../shared/types.js';
-import { deskOffsetForFacing } from '../../shared/types.js';
 import { LEARN_SPELLS_QUEST_ID, KILL_IMPS_QUEST_ID, GATHER_MANA_CRYSTALS_QUEST_ID, FIND_THE_MAP_QUEST_ID } from '../../shared/quests.js';
 
 // Static, permanent classroom occupants (a follow-up ask: "Add teacher
@@ -19,7 +18,16 @@ export const TEACHERS: TeacherSnapshot[] = [
   // column between them. A later follow-up ask gave her a desk after all
   // (hasDesk defaults to true when absent, same as every classroom
   // teacher). Offers the Learn Spells quest on click.
-  { id: 'headmistress', name: 'Headmistress Elowen', map: 'Grimoak Entrance Hall', row: 8, col: 26, questId: LEARN_SPELLS_QUEST_ID, robeColorKey: 'violet' },
+  {
+    id: 'headmistress',
+    name: 'Headmistress Elowen',
+    map: 'Grimoak Entrance Hall',
+    row: 8,
+    col: 26,
+    questId: LEARN_SPELLS_QUEST_ID,
+    robeColorKey: 'violet',
+    longHair: true,
+  },
   // Two more quest-givers flanking her (a later follow-up ask: "add
   // another teacher left of Elowen"/"right of Elowen"), same row, each
   // a comfortable 6 columns clear of both her own desk footprint and the
@@ -53,9 +61,8 @@ export const TEACHERS: TeacherSnapshot[] = [
   // toward the Entrance Hall's own benches specifically — see
   // benchPositionsFor's midRow/midCol diamond, which 'right' already
   // points roughly toward from here) rather than 'down' like every other
-  // teacher. Her desk now follows that same facing (see
-  // deskPositionFor/teacherDeskFootprintFor above) instead of always
-  // sitting south of her.
+  // teacher. Her DESK, however, stays south of her (a still-later
+  // follow-up ask put it back) — only her own sprite faces east.
   {
     id: 'map-quest-teacher',
     name: 'Professor Hollowell',
@@ -65,20 +72,25 @@ export const TEACHERS: TeacherSnapshot[] = [
     facing: 'right',
     questId: FIND_THE_MAP_QUEST_ID,
     robeColorKey: 'forest',
+    longHair: true,
   },
-  // The house-assignment teacher (a follow-up ask) — "15 feet in front
-  // of [the] entrance hall door, facing south toward the door." The
-  // Entrance Hall's own south door (back out to the grounds) sits at its
-  // last row (ENTRANCE_ROWS - 1 = 33) and middle column (ENTRANCE_MID_COL
-  // = 25 — both module-private in shared/maps.ts, recomputed here); 15
-  // tiles in front of (north of, back into the room from) that door
-  // lands at row 18, same column, facing 'down' (south) — the default,
-  // so it's omitted below — to greet arriving students face-on.
+  // The house-assignment teacher (a follow-up ask, since adjusted) —
+  // "10 feet in front of the door, behind the bench, not overlapping or
+  // in front of it." The Entrance Hall's own south door sits at row
+  // ENTRANCE_ROWS-1 = 33; its nearest bench (see benchPositionsFor's
+  // midRow+4) sits at row 21, only 12 tiles in from the door — a strict
+  // 10-tiles-in position (row 23) would land IN FRONT of that bench
+  // (between it and the door), the opposite of what's asked. Prioritizing
+  // "behind the bench" as the harder constraint: row 20 sits 1 tile
+  // north of (behind) the bench, clear of its footprint, at roughly the
+  // requested distance rather than the exact figure. Same column
+  // (ENTRANCE_MID_COL = 25) and facing 'down' (south, the default,
+  // omitted below) as before, to greet arriving students face-on.
   {
     id: 'house-teacher',
     name: 'Professor Caldwell',
     map: 'Grimoak Entrance Hall',
-    row: 18,
+    row: 20,
     col: 25,
     houseChoiceGate: true,
     robeColorKey: 'slate',
@@ -99,43 +111,30 @@ export function teachersForMap(mapName: MapName): TeacherSnapshot[] {
   return TEACHERS.filter((t) => t.map === mapName);
 }
 
-// The desk sits directly in front of the teacher, in whichever direction
-// they face (absent facing defaults to 'down' — one tile south — same as
-// every pre-existing classroom teacher).
+// The desk sits directly in front of (one tile south of) the teacher,
+// regardless of which way their own sprite happens to face — a later
+// follow-up ask made this facing-aware for Professor Hollowell
+// specifically, then reverted it ("put Hollowell's desk back to where it
+// was") since the rotated desk didn't read well, so this is back to the
+// original fixed offset for every teacher again.
 export function deskPositionFor(teacher: TeacherSnapshot): { row: number; col: number } {
-  const { dRow, dCol } = deskOffsetForFacing(teacher.facing);
-  return { row: teacher.row + dRow, col: teacher.col + dCol };
+  return { row: teacher.row + 1, col: teacher.col };
 }
 
 // The desk sprite's own art is visually wider/taller than the single
 // anchor tile deskPositionFor returns (a follow-up ask: "add collision
 // for the ENTIRE teacher's desk... right now you can walk through it
 // from the top or the sides") — a 3-wide, 2-tall footprint centered on
-// and just in front of (between the anchor and the teacher) the anchor
-// tile, matching the sprite's own real width/height at its render scale
-// (see WorldScene's teacher-desk setOrigin(0.5, 0.85), which puts most
-// of its height on the side facing the teacher). Rotated 90 degrees for
-// an east/west-facing teacher (a later follow-up ask's Professor
-// Hollowell, facing the Entrance Hall's own benches) so the "wide" axis
-// stays perpendicular to the direction the desk actually sits in.
+// and just above the anchor tile, matching the sprite's own real
+// width/height at its render scale (see WorldScene's teacher-desk
+// setOrigin(0.5, 0.85), which puts most of its height above the anchor).
 export function teacherDeskFootprintFor(teacher: TeacherSnapshot): Array<{ row: number; col: number }> {
   if (teacher.hasDesk === false) return [];
   const anchor = deskPositionFor(teacher);
-  const facing = teacher.facing ?? 'down';
   const tiles: Array<{ row: number; col: number }> = [];
-  if (facing === 'left' || facing === 'right') {
-    const backCol = facing === 'right' ? -1 : 1; // one step back, toward the teacher
-    for (const dCol of [backCol, 0]) {
-      for (const dRow of [-1, 0, 1]) {
-        tiles.push({ row: anchor.row + dRow, col: anchor.col + dCol });
-      }
-    }
-  } else {
-    const backRow = facing === 'down' ? -1 : 1; // one step back, toward the teacher
-    for (const dRow of [backRow, 0]) {
-      for (const dCol of [-1, 0, 1]) {
-        tiles.push({ row: anchor.row + dRow, col: anchor.col + dCol });
-      }
+  for (const dRow of [-1, 0]) {
+    for (const dCol of [-1, 0, 1]) {
+      tiles.push({ row: anchor.row + dRow, col: anchor.col + dCol });
     }
   }
   return tiles;

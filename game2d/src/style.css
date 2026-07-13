@@ -556,8 +556,17 @@ body {
   z-index: 85;
 }
 
+/* A follow-up bug fix — width/min-width/min-height are all set
+   unconditionally on #log-panel's own base rule above (needed while
+   expanded/resizable), so collapsing must explicitly reset every one of
+   them here too (paired with log.ts's own inline-style clearing) for the
+   panel to actually shrink down to just its toggle button, rather than
+   getting stuck at its old resized/persisted footprint. */
 #log-panel.collapsed {
+  width: auto;
   height: auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 #log-panel.collapsed #log-resize-handle {
@@ -1159,6 +1168,15 @@ body {
   margin-top: 12px;
 }
 
+/* The house/specialization choice dialogues (a follow-up ask) can show
+   4-6 buttons at once — stacked one per line, unlike every other
+   #npc-dialogue-actions use (a single "Quest: ..."/"Complete Quest"
+   button, where direction doesn't matter) or the bed/bench Yes/No pair
+   (its own dedicated modal, not this one, so unaffected). */
+#npc-dialogue-actions {
+  flex-direction: column;
+}
+
 #bed-sleep-yes,
 #bed-sleep-no {
   flex: 1;
@@ -1230,6 +1248,37 @@ body {
   gap: 8px;
   /* Stays visible above the sleep overlay, same reasoning as #status-bar. */
   z-index: 60;
+}
+
+/* A single shared collapse button (a follow-up ask) for both labels
+   below — same corner-button look as #logout-btn, sitting between the
+   labels and the logout button. */
+#world-info-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#world-info-group.collapsed {
+  display: none;
+}
+
+#world-info-toggle {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: rgba(10, 10, 16, 0.75);
+  border: 1px solid #444;
+  color: #999;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#world-info-toggle:hover {
+  color: #eee;
 }
 
 #world-label {

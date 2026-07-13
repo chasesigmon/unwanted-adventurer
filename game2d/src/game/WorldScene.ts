@@ -71,7 +71,7 @@ import {
   benchPositionsFor,
   bedPositionsFor,
   BED_REACH_TILES,
-  BENCH_REACH_TILES,
+  isNearBench,
   greatHallTableFootprint,
   greatHallChairPositionsFor,
   greatHallStagePlatform,
@@ -122,7 +122,6 @@ import type {
   WorldTimePayload,
   LockTarget,
 } from '../../shared/types.js';
-import { deskOffsetForFacing, DESK_ANGLE_FOR_FACING } from '../../shared/types.js';
 import {
   BAR_STACK_GAP,
   BONE_SHIELD_TEXTURE_KEY,
@@ -1744,11 +1743,15 @@ export class WorldScene extends Phaser.Scene {
     // A small social gathering spot's benches (a follow-up ask upgraded
     // these from plain chairs) — Entrance Hall and common-room-only,
     // Clickable now (a follow-up ask) — opens a rest-confirmation modal
-    // if the player's within BENCH_REACH_TILES, otherwise just a message
-    // (matching the server's own re-validated reach check in
-    // handleRestOnBench), same shape as the beds below. Each one's own
-    // `angle` (see benchPositionsFor) rotates it to face inward, toward
-    // the other three.
+    // only if the player is actually close enough to receive the
+    // enhanced-regeneration bonus itself (isNearBench, distance 1) — a
+    // follow-up bug fix: this used to check the looser BENCH_REACH_TILES
+    // (2 tiles), which let the modal open and the player sit down from a
+    // distance the regen bonus (game.gateway.ts's own applyStatTick
+    // restingOnBench check) never actually granted anything at. Same
+    // shape as the beds below. Each one's own `angle` (see
+    // benchPositionsFor) rotates it to face inward, toward the other
+    // three.
     for (const sprite of this.benchSprites) sprite.destroy();
     this.benchSprites = [];
     for (const { row, col, angle } of benchPositionsFor(mapName)) {
@@ -1761,7 +1764,7 @@ export class WorldScene extends Phaser.Scene {
         .setInteractive();
       bench.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
-        if (!isWithinRadius(this.row, this.col, row, col, BENCH_REACH_TILES)) {
+        if (!isNearBench(mapName, this.row, this.col)) {
           logCombatMessage("You're too far away to reach that bench.");
           return;
         }
@@ -1983,7 +1986,10 @@ export class WorldScene extends Phaser.Scene {
       sprite.setInteractive();
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
-        this.setLockTarget({ kind: 'door', map: mapName, row: exit.row, col: exit.col }, 'Door');
+        // A follow-up ask: name the destination in the top-left panel
+        // (e.g. "Utility Classroom Door") instead of the bare generic
+        // "Door" label, so a door's own purpose is clear at a glance.
+        this.setLockTarget({ kind: 'door', map: mapName, row: exit.row, col: exit.col }, `${exit.toMap} Door`);
       });
       return sprite;
     });
@@ -2457,20 +2463,13 @@ export class WorldScene extends Phaser.Scene {
       // hasDesk: false (a follow-up ask's Headmistress) skips the desk
       // sprite entirely — she stands between the fireplaces, not at a
       // classroom desk (see server/worlds/teachers.ts's own comment).
-      // Position AND rotation both follow the teacher's own facing (a
-      // later follow-up ask's Professor Hollowell, facing the Entrance
-      // Hall's own benches instead of straight down) — see shared/types.
-      // ts's deskOffsetForFacing/DESK_ANGLE_FOR_FACING, the same mapping
-      // server/worlds/teachers.ts's own collision footprint now uses.
+      // Always one tile south of the teacher, regardless of which way
+      // their own sprite faces (a later follow-up ask reverted a brief
+      // facing-aware version — see server/worlds/teachers.ts's
+      // deskPositionFor for why).
       if (t.hasDesk !== false) {
-        const facing = t.facing ?? 'down';
-        const { dRow, dCol } = deskOffsetForFacing(facing);
-        const deskPos = this.tilePosition(t.row + dRow, t.col + dCol);
-        const deskSprite = this.add
-          .sprite(deskPos.x, deskPos.y, CLASSROOM_DESK_TEXTURE_KEY)
-          .setOrigin(0.5, 0.85)
-          .setAngle(DESK_ANGLE_FOR_FACING[facing])
-          .setDepth(-0.5);
+        const deskPos = this.tilePosition(t.row + 1, t.col);
+        const deskSprite = this.add.sprite(deskPos.x, deskPos.y, CLASSROOM_DESK_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
         this.teacherDeskSprites.set(t.id, deskSprite);
       }
 
@@ -2484,7 +2483,9 @@ export class WorldScene extends Phaser.Scene {
       // A distinct robe color per teacher (a follow-up ask) — a fully
       // recolored variant spritesheet, same frame layout as the base
       // 'teacher' sheet (see characterSprites.ts's TeacherVariantKind).
-      const teacherKind = t.robeColorKey ? (`teacher-${t.robeColorKey}` as const) : 'teacher';
+      // Long hair (a later follow-up ask, female teachers only) is its
+      // own further variant of that same recolored sheet.
+      const teacherKind = t.robeColorKey ? (`teacher-${t.robeColorKey}${t.longHair ? '-longhair' : ''}` as const) : 'teacher';
       const sprite = this.add
         .sprite(pos.x, pos.y, textureKeyFor(teacherKind), idleFrameFor(teacherKind, t.facing ?? 'down'))
         .setScale(CHAR_SCALE)
@@ -2731,6 +2732,11 @@ export class WorldScene extends Phaser.Scene {
       .move(direction)
       .then((ack) => {
         if (!ack.ok) {
+          // A follow-up ask: rejected moves (the house gate specifically,
+          // but this covers every other rejection reason too — the town
+          // gate, the secret door, paralysis, rate-limiting) never showed
+          // WHY the move failed at all.
+          if (ack.message) logCombatMessage(ack.message);
           this.isMoving = false;
           this.setIdle();
           return;

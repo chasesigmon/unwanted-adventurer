@@ -7,11 +7,18 @@ import type { AllocatableStat } from '../../shared/types.js';
 
 const CHAR_SHEET_STAT_DESCRIPTIONS: Record<string, string> = {
   Exp: 'Experience earned toward your next level. Each level requires level x 100 exp.',
-  Strength: 'Increases your base melee damage and your parry chance.',
-  Intelligence: 'Each point increases your max mana by 10 and adds +1% success chance to every spell you cast.',
+  // Parry isn't implemented yet (may be added later) — dropped from
+  // this description (a follow-up ask).
+  Strength: 'Increases your base melee damage.',
+  Intelligence:
+    'Each point increases your max mana by 10, adds +1% success chance to every spell you cast, and adds ranged damage when attacking with a wand equipped.',
   Wisdom: 'No mechanical effect yet — reserved for future use.',
-  Dexterity: 'Increases your dodge chance, your Armor Class a little, and how fast you can move.',
-  Constitution: 'Increases your max hp by 20 per point and (with a shield equipped) your shield-block chance.',
+  // Dodge isn't implemented yet (may be added later) — dropped from
+  // this description (a follow-up ask).
+  Dexterity: 'Increases your Armor Class a little and how fast you can move.',
+  // Shield block isn't implemented yet (may be added later) — dropped
+  // from this description (a follow-up ask).
+  Constitution: 'Increases your max hp by 20 per point.',
   Luck: "Gives every spell cast a chance at a bonus to its own success chance, and boosts how much your skills/spells can grow from casting them.",
   'Armor Class':
     'A base of 10, plus a small dexterity bonus and +5 while a bone shield is equipped. Flatly reduces incoming damage a little on every hit that lands.',

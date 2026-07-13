@@ -162,6 +162,11 @@ export const SKILL_COOLDOWN_MS: Partial<Record<string, number>> = {
   [SCUTUM_SKILL]: 2 * 60 * 1000,
   // "The cooldown to 1 minute" (a later follow-up ask, up from 40s).
   [MURUS_LAPIDEUS_SKILL]: 60 * 1000,
+  // "Both celeritas and lucem should have 5 minute cooldowns" (a later
+  // follow-up ask) — only gates turning the toggle back ON (see
+  // game.gateway.ts's handleLucemCommand/handleCeleritasCommand).
+  [LUCEM_SKILL]: 5 * 60 * 1000,
+  [CELERITAS_SKILL]: 5 * 60 * 1000,
 };
 
 export const RACE_INNATE_SKILLS: Record<Race, string[]> = {

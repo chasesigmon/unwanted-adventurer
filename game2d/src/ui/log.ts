@@ -18,20 +18,26 @@ const logTabChatBtn = document.getElementById('log-tab-chat') as HTMLButtonEleme
 
 setupCollapsible(logPanel, logToggle);
 
-// A follow-up bug fix — once the panel's been resized, the drag logic
-// below sets an INLINE height style, which (inline styles always beat
-// any class-based CSS rule, regardless of specificity) completely
-// overrides `#log-panel.collapsed { height: auto }` — collapsing only
-// ever hid the tabs/log-view/chat-input *inside* the still full-height
-// box, not the box itself. Explicitly clearing/restoring the inline
-// height alongside the class toggle fixes that for real.
-let heightBeforeCollapse: string | null = null;
+// A follow-up bug fix — once the panel's been resized (or on every load
+// after the first resize, via the persisted rect below), the drag logic
+// sets INLINE width/height styles, which (inline styles always beat any
+// class-based CSS rule, regardless of specificity) completely override
+// `#log-panel.collapsed`'s own width/height/min-width/min-height reset —
+// collapsing only ever hid the tabs/log-view/chat-input *inside* the
+// still full-size box, not the box itself ("just makes the bottom of the
+// box come up some"). Explicitly clearing/restoring BOTH inline
+// dimensions alongside the class toggle is what actually lets it
+// collapse down to just the toggle button, matching #status-bar's own
+// collapsed size in the opposite corner.
+let sizeBeforeCollapse: { width: string; height: string } | null = null;
 logToggle.addEventListener('click', () => {
   if (logPanel.classList.contains('collapsed')) {
-    heightBeforeCollapse = logPanel.style.height || null;
+    sizeBeforeCollapse = { width: logPanel.style.width, height: logPanel.style.height };
+    logPanel.style.width = '';
     logPanel.style.height = '';
-  } else if (heightBeforeCollapse) {
-    logPanel.style.height = heightBeforeCollapse;
+  } else if (sizeBeforeCollapse) {
+    logPanel.style.width = sizeBeforeCollapse.width;
+    logPanel.style.height = sizeBeforeCollapse.height;
   }
 });
 

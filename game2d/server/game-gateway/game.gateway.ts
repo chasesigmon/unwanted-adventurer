@@ -138,7 +138,6 @@ import {
   BED_REACH_TILES,
   isNearBench,
   isBenchBlocked,
-  BENCH_REACH_TILES,
 } from '../../shared/lighting.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
 import {
@@ -288,6 +287,13 @@ const AUGUE_BOOK_COOLDOWN_TICKS = 2;
 const AUGUE_BOOK_LEARN_CHANCE = 0.1;
 const AUGUE_DAMAGE = 10;
 const AUGUE_RANGE_TILES = SPELL_ATTACK_RANGE_TILES;
+// A follow-up ask: a successful augue hit also leaves the target
+// burning — 1 extra damage on each of the next 2 combat ticks (~3s
+// apart), with its own combat message each time (see tickAugueBurns,
+// driven off the same MONSTER_TICK_INTERVAL_MS loop every other timed
+// combat effect here already uses).
+const AUGUE_BURN_DAMAGE_PER_TICK = 1;
+const AUGUE_BURN_TICKS = 2;
 // The wand's own ranged basic attack (a follow-up ask) — flat damage
 // (like the punch formula's base, but simplified), resolved every
 // combat tick same as any other queued attack (see combatTick's own
@@ -372,6 +378,10 @@ const STAT_TICK_MS = 30_000;
 // STAT_TICK_MS(30s) each is exactly 10 real-world minutes.
 const ENHANCED_LEARNING_TICKS = 20;
 const ENHANCED_LEARNING_BONUS_PERCENT = 10;
+// A follow-up ask: every quest (all 4) also grants a flat supply reward
+// on top of its own exp — see handleCompleteQuest.
+const QUEST_REWARD_WATER_COUNT = 5;
+const QUEST_REWARD_JERKY_COUNT = 5;
 // Two follow-up asks: exp for actually learning a new spell from a
 // classroom podium (see each handleReadXBook's own "newly learned"
 // branch), and a smaller amount every time an already-known spell grows
@@ -427,6 +437,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // and Glare's paralysis window are measured in, as opposed to the much
   // slower, randomized currentTick above (world-clock/Eat-Brains only).
   private combatTickCount = 0;
+  // A successful augue's own lingering burn (a follow-up ask) — ticked
+  // down once per combat tick in tickAugueBurns, pushed onto here by
+  // handleCastAugue's own success branches. Several can coexist (even on
+  // the same target, if augue lands again before an earlier burn
+  // expires) — a plain array is enough since each only lives 2 ticks.
+  private augueBurns: Array<{ targetKind: 'npc' | 'monster'; targetId: string; mapName: MapName; ticksRemaining: number; casterUsername: string }> =
+    [];
   // One active fight per player, keyed by username — set by engageCombat
   // (right-click or a queued action-bar skill) and resolved once per
   // combatTick, not instantly on click. See combatTick/engageCombat.
@@ -504,6 +521,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     setInterval(() => {
       this.combatTickCount += 1;
       this.combatTick();
+      this.tickAugueBurns();
       this.monsterManager.wanderAll(this.combatTickCount);
       this.resolveMonsterInitiatedAttack(this.combatTickCount);
       this.monsterManager.respawnBelowMax();
@@ -1008,8 +1026,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     client.data.quests = { ...client.data.quests, [quest.id]: { ...progress, completedAt: Date.now() } };
+    // Every quest also grants 5 cups of water and 5 jerky (a follow-up
+    // ask) — flat across all 4 quests, not per-quest-defined, so this
+    // stays here rather than in each QuestDefinition itself.
+    client.data.inventory = [
+      ...client.data.inventory,
+      ...Array<string>(QUEST_REWARD_WATER_COUNT).fill(CUP_OF_WATER_ITEM),
+      ...Array<string>(QUEST_REWARD_JERKY_COUNT).fill(JERKY_ITEM),
+    ];
     const grantResult = this.grantExp(client, quest.rewardExp);
-    const messages = [`Quest complete: ${quest.title} (+${quest.rewardExp} exp)`];
+    const messages = [
+      `Quest complete: ${quest.title} (+${quest.rewardExp} exp, +${QUEST_REWARD_WATER_COUNT} cups of water, +${QUEST_REWARD_JERKY_COUNT} jerky)`,
+    ];
     if (grantResult.message) messages.push(grantResult.message);
     // A follow-up bug fix: "after turning in the Learn Spells quest, I
     // levelled up but it did not show that message in Combat" — a quest
@@ -2132,6 +2160,76 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
   }
 
+  // A successful augue's own lingering burn (a follow-up ask) — 1 extra
+  // damage per combat tick for AUGUE_BURN_TICKS ticks, same "self-
+  // contained, no dodge/counter-attack" shape resolveRangedAutoAttack
+  // uses, since the caster may well have disconnected by the time a
+  // later tick fires (in which case the kill still happens, just without
+  // an exp grant to award).
+  private tickAugueBurns(): void {
+    if (this.augueBurns.length === 0) return;
+    const stillBurning: typeof this.augueBurns = [];
+    for (const burn of this.augueBurns) {
+      let label: string;
+      let targetHp: number;
+      let targetMaxHp: number;
+      let died: boolean;
+
+      if (burn.targetKind === 'monster') {
+        const monster = this.monsterManager.getMonster(burn.targetId);
+        if (!monster || monster.mapName !== burn.mapName) continue; // gone — drop the burn silently
+        const result = this.monsterManager.applyDamage(monster.id, AUGUE_BURN_DAMAGE_PER_TICK);
+        if (!result) continue;
+        label = monster.kind;
+        targetHp = result.monster.hp;
+        targetMaxHp = monster.maxHp;
+        died = result.died;
+        if (died) {
+          const casterSocketId = this.activeConnections.getActiveSocketId(burn.casterUsername);
+          const casterSocket = casterSocketId ? (this.server.sockets.sockets.get(casterSocketId) as GameSocket | undefined) : undefined;
+          if (casterSocket) {
+            const rawExpGained = expGainFor(monster.expReward, casterSocket.data.level, monster.level);
+            this.grantExp(casterSocket, rawExpGained);
+            void this.persistStats(casterSocket);
+            casterSocket.emit('sync', { player: this.snapshotFor(casterSocket) });
+            this.recordMonsterKillForQuests(casterSocket, monster.kind);
+          }
+          const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
+          this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, burn.casterUsername);
+        }
+      } else {
+        const npc = NPCS.find((n) => n.id === burn.targetId && n.map === burn.mapName);
+        if (!npc) continue;
+        npc.hp = Math.max(0, npc.hp - AUGUE_BURN_DAMAGE_PER_TICK);
+        label = npc.label ?? 'training dummy';
+        died = npc.hp <= 0;
+        if (died) {
+          if (!npc.immortal) {
+            this.corpseManager.spawn(npc.race, npc.level, [bodyPartLabelFor(npc.race), 'bone dagger'], npc.map, npc.row, npc.col);
+            const tile = this.randomFreeTileFor(npc.map);
+            npc.row = tile.row;
+            npc.col = tile.col;
+          } else if (npc.carriedItems) {
+            npc.carriedItems = ['wooden club'];
+          }
+          npc.hp = npc.maxHp;
+        }
+        targetHp = npc.hp;
+        targetMaxHp = npc.maxHp;
+      }
+
+      const message = died
+        ? `Lingering flames from augue finish off the ${label} for ${AUGUE_BURN_DAMAGE_PER_TICK} damage!`
+        : `Lingering flames from augue burn the ${label} for ${AUGUE_BURN_DAMAGE_PER_TICK} damage. (${targetHp}/${targetMaxHp} hp)`;
+      this.server.to(burn.mapName).emit('combatNotice', message);
+      this.server.to(burn.mapName).emit('map:state', this.mapStateFor(burn.mapName));
+
+      const ticksRemaining = burn.ticksRemaining - 1;
+      if (!died && ticksRemaining > 0) stillBurning.push({ ...burn, ticksRemaining });
+    }
+    this.augueBurns = stillBurning;
+  }
+
   // The wand's ranged basic attack (a follow-up ask) — flat
   // WAND_BOLT_DAMAGE, no dodge/parry/shield-block, no counter-attack (a
   // bolt fired from up to 7 tiles away doesn't give the target a chance
@@ -2139,6 +2237,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // crystal drop; NPC/scarecrow and player targets follow the same
   // simplified shape handleCastAugue's own target-kind branches use.
   private resolveRangedAutoAttack(client: GameSocket, session: CombatSession): void {
+    // A follow-up ask: "every point into intelligence also increases
+    // ranged damage with a wand" — a flat +1 damage per point on top of
+    // the base WAND_BOLT_DAMAGE.
+    const wandBoltDamage = WAND_BOLT_DAMAGE + client.data.intelligence;
     if (session.targetKind === 'monster') {
       const monster = this.monsterManager.getMonster(session.targetId);
       if (!monster) {
@@ -2146,7 +2248,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return;
       }
       this.monsterManager.setAggro(monster.id, client.data.username, this.combatTickCount);
-      const result = this.monsterManager.applyDamage(monster.id, WAND_BOLT_DAMAGE);
+      const result = this.monsterManager.applyDamage(monster.id, wandBoltDamage);
       if (!result) return;
 
       let expGained: number | undefined;
@@ -2162,14 +2264,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         this.playerCombat.delete(client.data.username);
       }
       const message = result.died
-        ? `${client.data.username}'s wand bolt strikes the ${monster.kind} for ${WAND_BOLT_DAMAGE} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
-        : `${client.data.username}'s wand bolt strikes the ${monster.kind} for ${WAND_BOLT_DAMAGE} damage.`;
+        ? `${client.data.username}'s wand bolt strikes the ${monster.kind} for ${wandBoltDamage} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
+        : `${client.data.username}'s wand bolt strikes the ${monster.kind} for ${wandBoltDamage} damage.`;
       void this.persistStats(client);
       this.emitCombat(client, {
         targetKind: 'monster',
         target: monster.id,
         targetLabel: monster.kind,
-        damage: WAND_BOLT_DAMAGE,
+        damage: wandBoltDamage,
         targetHp: result.monster.hp,
         targetMaxHp: monster.maxHp,
         targetDied: result.died,
@@ -2188,7 +2290,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         this.playerCombat.delete(client.data.username);
         return;
       }
-      npc.hp = Math.max(0, npc.hp - WAND_BOLT_DAMAGE);
+      npc.hp = Math.max(0, npc.hp - wandBoltDamage);
       const died = npc.hp <= 0;
       const label = npc.label ?? 'training dummy';
       if (died) {
@@ -2210,15 +2312,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
       const message = died
         ? npc.immortal
-          ? `${client.data.username}'s wand bolt strikes the ${label} for ${WAND_BOLT_DAMAGE} damage — it shrugs off the blow, unharmed.`
-          : `${client.data.username}'s wand bolt strikes the ${label} for ${WAND_BOLT_DAMAGE} damage, defeating it! It leaves a corpse and reappears elsewhere.`
-        : `${client.data.username}'s wand bolt strikes the ${label} for ${WAND_BOLT_DAMAGE} damage.`;
+          ? `${client.data.username}'s wand bolt strikes the ${label} for ${wandBoltDamage} damage — it shrugs off the blow, unharmed.`
+          : `${client.data.username}'s wand bolt strikes the ${label} for ${wandBoltDamage} damage, defeating it! It leaves a corpse and reappears elsewhere.`
+        : `${client.data.username}'s wand bolt strikes the ${label} for ${wandBoltDamage} damage.`;
       void this.persistStats(client);
       this.emitCombat(client, {
         targetKind: 'npc',
         target: npc.id,
         targetLabel: label,
-        damage: WAND_BOLT_DAMAGE,
+        damage: wandBoltDamage,
         targetHp: npc.hp,
         targetMaxHp: npc.maxHp,
         targetDied: died,
@@ -3226,11 +3328,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     client.data.mana -= RESERA_CAST_MANA_COST;
-    const skillPercent = client.data.skills[RESERA_SKILL] ?? STARTING_SKILL_PERCENT;
-    const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS);
 
     let message: string;
-    if (Math.random() * 100 < successChance) {
+    if (this.rollSpellSuccess(client, RESERA_SKILL)) {
       if (isSecretDoor) {
         client.data.secretDoorUnlocked = true;
         message = 'The lock clicks open — the door is unlocked.';
@@ -3378,6 +3478,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
       npc.hp = Math.max(0, npc.hp - AUGUE_DAMAGE);
       const died = npc.hp <= 0;
+      if (!died) {
+        // A follow-up ask: a successful hit that DOESN'T finish the
+        // target off leaves it burning for a couple more ticks.
+        this.augueBurns.push({
+          targetKind: 'npc',
+          targetId: npc.id,
+          mapName: npc.map,
+          ticksRemaining: AUGUE_BURN_TICKS,
+          casterUsername: client.data.username,
+        });
+      }
       if (died) {
         if (!npc.immortal) {
           this.corpseManager.spawn(npc.race, npc.level, [bodyPartLabelFor(npc.race), 'bone dagger'], npc.map, npc.row, npc.col);
@@ -3453,6 +3564,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const result = this.monsterManager.applyDamage(monster.id, AUGUE_DAMAGE);
     if (!result) {
       return { ok: false, message: 'Your target is no longer here.' };
+    }
+    if (!result.died) {
+      // A follow-up ask: a successful hit that DOESN'T finish the target
+      // off leaves it burning for a couple more ticks.
+      this.augueBurns.push({
+        targetKind: 'monster',
+        targetId: monster.id,
+        mapName: monster.mapName,
+        ticksRemaining: AUGUE_BURN_TICKS,
+        casterUsername: client.data.username,
+      });
     }
 
     const growthMessages: string[] = [];
@@ -4051,11 +4173,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     client.data.mana -= IRRIGO_CAST_MANA_COST;
-    const skillPercent = client.data.skills[IRRIGO_SKILL] ?? STARTING_SKILL_PERCENT;
-    const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS);
 
     let message: string;
-    if (Math.random() * 100 >= successChance) {
+    if (!this.rollSpellSuccess(client, IRRIGO_SKILL)) {
       message = 'You fumble the incantation and nothing happens.';
     } else if (client.data.canteenDrinks >= CANTEEN_CAPACITY) {
       message = `Your ${resolved.item} is already full and cannot be filled.`;
@@ -4234,6 +4354,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, message);
       return { ok: false, message };
     }
+    // A follow-up ask: a flat 5-minute cooldown, same shape/message as
+    // every other on-cooldown spell — only gates turning it ON, not
+    // toggling it back off (see startSkillCooldown's own call below,
+    // only reached from the success branch).
+    const cooldownUntil = client.data.skillCooldowns[LUCEM_SKILL];
+    if (!client.data.wandLit && cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      const message = `Lucem is still recharging (${secondsLeft}s left).`;
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
 
     let message: string;
     if (!client.data.wandLit) {
@@ -4244,10 +4375,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
       client.data.mana -= LUCEM_CAST_MANA_COST;
       const skillPercent = client.data.skills[LUCEM_SKILL] ?? STARTING_SKILL_PERCENT;
-      const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS);
-      if (Math.random() * 100 < successChance) {
+      if (this.rollSpellSuccess(client, LUCEM_SKILL)) {
         client.data.wandLit = true;
         client.data.wandLitUntil = Date.now() + spellDurationMs(skillPercent);
+        this.startSkillCooldown(client, LUCEM_SKILL);
         message = 'Your wand glows with a soft light.';
       } else {
         message = 'You fumble the incantation and nothing happens.';
@@ -4294,6 +4425,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, message);
       return { ok: false, message };
     }
+    // A follow-up ask: a flat 5-minute cooldown, same shape as lucem's
+    // own — only gates turning it ON.
+    const cooldownUntil = client.data.skillCooldowns[CELERITAS_SKILL];
+    if (!client.data.celeritasActive && cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      const message = `Celeritas is still recharging (${secondsLeft}s left).`;
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
 
     let message: string;
     if (!client.data.celeritasActive) {
@@ -4304,10 +4444,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
       client.data.mana -= CELERITAS_CAST_MANA_COST;
       const skillPercent = client.data.skills[CELERITAS_SKILL] ?? STARTING_SKILL_PERCENT;
-      const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS);
-      if (Math.random() * 100 < successChance) {
+      if (this.rollSpellSuccess(client, CELERITAS_SKILL)) {
         client.data.celeritasActive = true;
         client.data.celeritasActiveUntil = Date.now() + spellDurationMs(skillPercent);
+        this.startSkillCooldown(client, CELERITAS_SKILL);
         message = 'Your feet feel lighter — you move with a spring in your step.';
       } else {
         message = 'You fumble the incantation and nothing happens.';
@@ -4394,7 +4534,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!isBenchBlocked(client.data.map, row, col)) {
       return { ok: false, message: "That's not a bench." };
     }
-    if (!isWithinRadius(client.data.row, client.data.col, row, col, BENCH_REACH_TILES)) {
+    // A follow-up bug fix: this used to check BENCH_REACH_TILES (2 tiles)
+    // — looser than isNearBench's own distance-1 check, which is what
+    // actually decides whether applyStatTick's restingOnBench bonus
+    // applies. A player 2 tiles away could sit down here but never
+    // actually get the enhanced regeneration it promised. Same check
+    // both places now.
+    if (!isNearBench(client.data.map, client.data.row, client.data.col)) {
       return { ok: false, message: "You're too far away to reach that bench." };
     }
     this.setRestState(client, 'resting');

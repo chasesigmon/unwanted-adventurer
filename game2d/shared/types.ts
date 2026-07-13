@@ -326,35 +326,15 @@ export interface TeacherSnapshot {
   // spritesheet per name, generated from the base art — see assets/
   // teacher-spritesheet-*.png).
   robeColorKey?: TeacherRobeColor;
+  // Long hair (a follow-up ask: "update the female teachers to have long
+  // hair so you can tell they are females") — absent means the base
+  // short/round hairstyle. See src/characterSprites.ts's own
+  // teacher-${TeacherRobeColor}-longhair variant textures.
+  longHair?: boolean;
 }
 
 export const TEACHER_ROBE_COLORS = ['violet', 'crimson', 'teal', 'forest', 'amber', 'steel', 'plum', 'olive', 'maroon', 'slate'] as const;
 export type TeacherRobeColor = (typeof TEACHER_ROBE_COLORS)[number];
-
-export type TeacherFacing = NonNullable<TeacherSnapshot['facing']>;
-
-// The desk sits one tile in front of the teacher, in whichever direction
-// they face (absent facing defaults to 'down', same as TeacherSnapshot
-// itself) — shared so server/worlds/teachers.ts's collision footprint
-// and WorldScene's own desk sprite placement can never drift apart.
-export function deskOffsetForFacing(facing: TeacherFacing | undefined): { dRow: number; dCol: number } {
-  switch (facing) {
-    case 'up':
-      return { dRow: -1, dCol: 0 };
-    case 'left':
-      return { dRow: 0, dCol: -1 };
-    case 'right':
-      return { dRow: 0, dCol: 1 };
-    case 'down':
-    default:
-      return { dRow: 1, dCol: 0 };
-  }
-}
-
-// The desk sprite art is drawn extending "up" (toward a south-facing
-// teacher) by default — rotated clockwise here to match whichever
-// direction the teacher actually faces (see WorldScene's desk sprite).
-export const DESK_ANGLE_FOR_FACING: Record<TeacherFacing, number> = { down: 0, right: 90, up: 180, left: 270 };
 
 // Murus lapideus (a later follow-up ask) — a temporary, defensive summon
 // standing wherever the caster clicked; rendered like an NPC (a health

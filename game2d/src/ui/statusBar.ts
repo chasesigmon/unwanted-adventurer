@@ -17,7 +17,18 @@ const statusExp = document.getElementById('status-exp') as HTMLSpanElement;
 const statusGold = document.getElementById('status-gold') as HTMLSpanElement;
 const worldLabel = document.getElementById('world-label') as HTMLDivElement;
 const worldTimeLabel = document.getElementById('world-time-label') as HTMLDivElement;
+const worldInfoGroup = document.getElementById('world-info-group') as HTMLDivElement;
+const worldInfoToggle = document.getElementById('world-info-toggle') as HTMLButtonElement;
 const logoutBtn = document.getElementById('logout-btn') as HTMLButtonElement;
+
+// A single shared collapse button (a follow-up ask) for both the world-
+// time and room-name labels — same plain toggle-a-class shape as
+// setupCollapsible, just targeting a sibling group rather than a
+// `.panel` this button lives inside of.
+worldInfoToggle.addEventListener('click', () => {
+  const collapsed = worldInfoGroup.classList.toggle('collapsed');
+  worldInfoToggle.textContent = collapsed ? '+' : '−';
+});
 const sleepOverlay = document.getElementById('sleep-overlay') as HTMLDivElement;
 const daynightOverlay = document.getElementById('daynight-overlay') as HTMLDivElement;
 const darkFogOverlay = document.getElementById('dark-fog-overlay') as HTMLDivElement;
