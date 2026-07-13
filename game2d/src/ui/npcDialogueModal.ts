@@ -48,7 +48,7 @@ export function openNpcDialogueModal(name: string, questId: string): void {
     npcDialogueActions.appendChild(btn);
   } else if (progress.completedAt) {
     npcDialogueText.textContent = quest.completedMessage;
-  } else if (allObjectivesDone(quest, progress, myProfile?.skills ?? {}, myProfile?.inventory ?? [])) {
+  } else if (allObjectivesDone(quest, progress, myProfile?.skills ?? {}, myProfile?.inventory ?? [], { mapUnlocked: myProfile?.mapUnlocked })) {
     npcDialogueText.textContent = quest.readyMessage;
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -76,6 +76,24 @@ export function openNpcDialogueModal(name: string, questId: string): void {
     npcDialogueText.textContent = quest.description;
   }
 
+  npcDialogueModal.hidden = false;
+  updateInputCaptured();
+}
+
+// The Specialization room's own teacher (a follow-up ask) — no quest at
+// all, just a live level check every time: "Return to me when you are
+// level 10" below that, "choose your path as a mage" (choices TBD, no
+// button yet) at/above it.
+const SPECIALIZATION_LEVEL_REQUIREMENT = 10;
+
+export function openSpecializationDialogue(name: string): void {
+  closeAllModals();
+  npcDialogueName.textContent = name;
+  npcDialogueActions.innerHTML = '';
+  npcDialogueText.textContent =
+    (myProfile?.level ?? 0) >= SPECIALIZATION_LEVEL_REQUIREMENT
+      ? 'It is time to choose your path as a mage. Please make your selection from the choices below:'
+      : `Return to me when you are level ${SPECIALIZATION_LEVEL_REQUIREMENT}.`;
   npcDialogueModal.hidden = false;
   updateInputCaptured();
 }

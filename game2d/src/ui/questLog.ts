@@ -16,7 +16,15 @@ const QUEST_GIVER_NAMES: Record<string, string> = {
   'learn-spells': 'Headmistress Elowen',
   'kill-imps': 'Professor Bramwell',
   'gather-mana-crystals': 'Professor Thistlewood',
+  'find-the-map': 'Professor Hollowell',
 };
+
+// hasFlag objectives (a follow-up ask's "acquire the map" quest) check
+// PlayerSnapshot.mapUnlocked — bundled the same way everywhere this
+// module calls into isObjectiveDone/allObjectivesDone.
+function flagsFor(): { mapUnlocked: boolean | undefined } {
+  return { mapUnlocked: myProfile?.mapUnlocked };
+}
 
 // Reset to the list view every time the modal is freshly opened (mapModal's
 // own "always resets back to the current-world tab" convention) — null
@@ -24,7 +32,7 @@ const QUEST_GIVER_NAMES: Record<string, string> = {
 let selectedQuestId: string | null = null;
 
 function objectiveCountsFor(objective: QuestObjective, progress: QuestProgress): string {
-  if (objective.kind === 'learnSkill') return '';
+  if (objective.kind === 'learnSkill' || objective.kind === 'hasFlag') return '';
   const current = objectiveCurrentCount(objective, progress, myProfile?.inventory ?? []);
   return ` (${Math.min(current, objective.count ?? 1)}/${objective.count ?? 1})`;
 }
@@ -47,7 +55,7 @@ function renderQuestList(): void {
     if (!quest || !progress) continue;
     const li = document.createElement('li');
     li.className = 'inventory-item';
-    const done = quest.objectives.filter((o) => isObjectiveDone(o, progress, myProfile?.skills ?? {}, myProfile?.inventory ?? [])).length;
+    const done = quest.objectives.filter((o) => isObjectiveDone(o, progress, myProfile?.skills ?? {}, myProfile?.inventory ?? [], flagsFor())).length;
     const status = progress.completedAt ? ' — Completed' : '';
     li.textContent = `${quest.title} (${done}/${quest.objectives.length})${status}`;
     li.addEventListener('click', () => {
@@ -92,7 +100,7 @@ function renderQuestDetail(questId: string): void {
   list.className = 'quest-objective-list';
   for (const objective of quest.objectives) {
     const li = document.createElement('li');
-    const isDone = isObjectiveDone(objective, progress, myProfile?.skills ?? {}, myProfile?.inventory ?? []);
+    const isDone = isObjectiveDone(objective, progress, myProfile?.skills ?? {}, myProfile?.inventory ?? [], flagsFor());
     li.textContent = `${objective.label}${objectiveCountsFor(objective, progress)}`;
     li.className = isDone ? 'quest-objective-done' : 'quest-objective-pending';
     list.appendChild(li);
@@ -105,7 +113,7 @@ function renderQuestDetail(questId: string): void {
   note.className = 'quest-description';
   if (progress.completedAt) {
     note.textContent = 'Quest completed!';
-  } else if (allObjectivesDone(quest, progress, myProfile?.skills ?? {}, myProfile?.inventory ?? [])) {
+  } else if (allObjectivesDone(quest, progress, myProfile?.skills ?? {}, myProfile?.inventory ?? [], flagsFor())) {
     note.textContent = `Return to ${QUEST_GIVER_NAMES[questId] ?? 'the quest giver'} to complete this quest.`;
   }
   if (note.textContent) questLogBody.appendChild(note);

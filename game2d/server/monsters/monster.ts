@@ -2,6 +2,7 @@ import type { MapName, MonsterKind, MonsterClass } from '../../shared/constants.
 import type { CombatantStats } from '../combat/formulas.js';
 import { WILD_GOBLIN_EXP_REWARD, WILD_SKELETON_EXP_REWARD } from '../combat/formulas.js';
 import { PUNCH_SKILL, DAGGER_SKILL } from '../../shared/skills.js';
+import { GRIMOAK_GROUNDS_EXTENSION_MIN_COL } from '../../shared/maps.js';
 
 // A wild monster is a plain in-memory record — no account, no login, not
 // persisted (population/position reset on server restart, same tradeoff
@@ -68,6 +69,13 @@ export interface Monster extends CombatantStats {
   // (because the player happened to also be attacking it), so it never
   // gets hit twice in one tick.
   lastCounterAttackTick?: number;
+  // Which MonsterSpecies entry spawned this instance (see
+  // MonsterSpecies.id's own doc comment) — copied at spawn time so
+  // countOf/respawnBelowMax can tell apart two species entries that
+  // happen to share the same `kind` (a follow-up ask's tougher wild
+  // skeleton/goblin populations on Grimoak Grounds, distinct from the
+  // original Labyrinth/Great Plains ones).
+  speciesId: string;
 }
 
 export interface CarriedItemRoll {
@@ -93,6 +101,21 @@ export interface MonsterSpecies {
   patrolRangeTiles?: number;
   // See Monster.attackDamage's own doc comment.
   attackDamage?: number;
+  // Distinguishes two species entries that share the same `kind` (a
+  // follow-up ask added a second, tougher "wild skeleton"/"wild goblin"
+  // population on Grimoak Grounds, distinct from the original Labyrinth/
+  // Great Plains ones) — countOf/respawnBelowMax key off this instead of
+  // `kind` alone. Defaults to `kind` itself when absent, so every
+  // existing single-population species needs no changes at all.
+  id?: string;
+  // Overrides MONSTER_LEVEL for this species specifically (a follow-up
+  // ask's higher-level Grimoak Grounds populations).
+  level?: number;
+  // Restricts spawn placement to col >= this (a follow-up ask: the new
+  // wild skeleton/goblin populations only roam the newly-widened strip
+  // of Grimoak Grounds, not the whole map) — see
+  // shared/maps.ts's GRIMOAK_GROUNDS_EXTENSION_MIN_COL.
+  minSpawnCol?: number;
 }
 
 // Every wild monster starts at level 1 with every attribute at 1 — so a
@@ -166,5 +189,39 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     // hit. They should move into range to hit the player if aggro'd" (a
     // later follow-up ask) — see Monster.attackDamage's own doc comment.
     attackDamage: 5,
+  },
+  // The Grimoak Grounds' new 25%-wider eastern strip (a follow-up ask) —
+  // a distinct, tougher population of the same 2 kinds already roaming
+  // Great Plains/the Labyrinth, free-roaming (no patrolRangeTiles) rather
+  // than pacing like the imps, but WITH an attackDamage so they still
+  // "move closer to punch when aggro'd" the exact same way imps do (see
+  // MonsterManagerService.wanderAll — stepTowardAggroTarget already
+  // applies to every monster generically, imp or not; attackDamage is
+  // the only piece that actually needs setting here). `id` keeps their
+  // own headcount separate from the ORIGINAL wild goblin/skeleton
+  // populations sharing the same `kind` (see countOf/respawnBelowMax).
+  {
+    id: 'wild-skeleton-grounds',
+    kind: 'wild skeleton',
+    monsterClass: 'undead',
+    homeMap: 'Grimoak Grounds',
+    minSpawnCol: GRIMOAK_GROUNDS_EXTENSION_MIN_COL,
+    maxCount: 15,
+    level: 5,
+    startingHp: 100,
+    expReward: WILD_SKELETON_EXP_REWARD,
+    attackDamage: 10,
+  },
+  {
+    id: 'wild-goblin-grounds',
+    kind: 'wild goblin',
+    monsterClass: 'normal',
+    homeMap: 'Grimoak Grounds',
+    minSpawnCol: GRIMOAK_GROUNDS_EXTENSION_MIN_COL,
+    maxCount: 15,
+    level: 7,
+    startingHp: 130,
+    expReward: WILD_GOBLIN_EXP_REWARD,
+    attackDamage: 15,
   },
 ];

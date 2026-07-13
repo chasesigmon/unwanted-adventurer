@@ -71,6 +71,7 @@ import {
   benchPositionsFor,
   bedPositionsFor,
   BED_REACH_TILES,
+  BENCH_REACH_TILES,
   greatHallTableFootprint,
   greatHallChairPositionsFor,
   greatHallStagePlatform,
@@ -132,6 +133,7 @@ import {
   CASTLE_TOWER_TOP_FRACTION,
   CHAR_SCALE,
   CLASSROOM_DESK_TEXTURE_KEY,
+  CLASSROOM_SYMBOL_TEXTURE_KEYS,
   SPELLBOOK_PODIUM_TEXTURE_KEY,
   BENCH_TEXTURE_KEY,
   FIREBALL_TEXTURE_KEY,
@@ -202,10 +204,11 @@ import { isInputCaptured, isMovementBlocked, refreshOpenModals, updateMapButtonV
 import { openCorpseModal, updateEatBrainsButton } from '../ui/corpseModal.js';
 import { openChestModal } from '../ui/chestModal.js';
 import { openBedModal } from '../ui/bedModal.js';
+import { openBenchModal } from '../ui/benchModal.js';
 import { openShopModal } from '../ui/shopModal.js';
 import { openTargetInfoModal } from '../ui/targetInfoModal.js';
 import { notifyMapChanged } from '../ui/mapModal.js';
-import { openNpcDialogueModal } from '../ui/npcDialogueModal.js';
+import { openNpcDialogueModal, openSpecializationDialogue } from '../ui/npcDialogueModal.js';
 import { hideTargetPanel, updateTargetPanel, updateLockTargetPanel } from '../ui/targetPanel.js';
 
 const autopilotStatusEl = document.getElementById('autopilot-status') as HTMLDivElement;
@@ -230,6 +233,9 @@ export class WorldScene extends Phaser.Scene {
   private scutumGlows = new Map<string, Phaser.GameObjects.Graphics>();
   private floorTile!: Phaser.GameObjects.TileSprite;
   private doorSprites: Phaser.GameObjects.Sprite[] = [];
+  // Classroom door symbols (a follow-up ask) — recreated alongside
+  // doorSprites in renderDoorsAndChest, same lifetime.
+  private classroomSymbolSprites: Phaser.GameObjects.Sprite[] = [];
   // The secret room's treasure chest (a later follow-up ask) — only
   // populated on 'Caverna Secretissima', clickable to open it (see
   // renderMap and handleChestClick).
@@ -441,6 +447,12 @@ export class WorldScene extends Phaser.Scene {
     this.load.image(FIREPLACE_FLAME_TEXTURE_KEY, '/fireplace-flame.png');
     this.load.image(STAIRS_TEXTURE_KEY, '/stairs.png');
     this.load.image(CLASSROOM_DESK_TEXTURE_KEY, '/classroom-desk.png');
+    // Classroom door symbols (a follow-up ask) — one small icon per
+    // classroom, loaded once here regardless of map (cheap, tiny SVGs)
+    // rather than per-renderMap.
+    for (const key of Object.values(CLASSROOM_SYMBOL_TEXTURE_KEYS)) {
+      this.load.svg(key, `/${key}.svg`, { width: 20, height: 20 });
+    }
     this.load.image(SPELLBOOK_PODIUM_TEXTURE_KEY, '/spellbook-podium.png');
     this.load.image(BENCH_TEXTURE_KEY, '/bench.png');
     this.load.image(FIREBALL_TEXTURE_KEY, '/fireball.png');
@@ -505,16 +517,22 @@ export class WorldScene extends Phaser.Scene {
       if (pointer.rightButtonDown()) this.handleRightClick(pointer);
       else if (pointer.leftButtonDown()) this.handleLeftClick(pointer);
     });
-    // A sword cursor over an enemy — monsters specifically, not other
-    // players or the friendly training dummy. Monster sprites aren't
-    // `setInteractive` themselves (see findTargetableAt's own
-    // bounds-based hit-testing), hence the manual check here.
+    // A sword cursor over an enemy — monsters, plus the training
+    // skeletons specifically (a follow-up ask: "indicate combat is
+    // possible"), not other players or the friendly training dummy.
+    // Neither monster nor NPC sprites are `setInteractive` themselves
+    // (see findTargetableAt's own bounds-based hit-testing), hence the
+    // manual check here.
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
       if (isInputCaptured()) {
         this.game.canvas.style.cursor = '';
         return;
       }
-      const overEnemy = [...this.monsterSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
+      const overEnemy =
+        [...this.monsterSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY)) ||
+        [...this.npcSprites.values()].some(
+          (s) => s.getData('label') === 'training skeleton' && s.getBounds().contains(pointer.worldX, pointer.worldY)
+        );
       const overPodium =
         Boolean(this.spellbookPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
         Boolean(this.irrigoPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
@@ -540,7 +558,7 @@ export class WorldScene extends Phaser.Scene {
       // plain pointer cursor instead of the ordinary classroom teacher's
       // 'help' — clicking her actually DOES something (opens her dialogue
       // and offers a quest), it isn't just an info tooltip.
-      const overQuestGiverTeacher = Boolean(hoveredTeacher?.getData('questId'));
+      const overQuestGiverTeacher = Boolean(hoveredTeacher?.getData('questId')) || Boolean(hoveredTeacher?.getData('specializationGate'));
       // A key cursor over any door or the treasure chest (a follow-up
       // ask) — every door is resera-targetable now, not just the secret
       // one (see the doorSprites click handler below).
@@ -558,6 +576,10 @@ export class WorldScene extends Phaser.Scene {
       // this handler too, same as teachers were.
       const overVendor = [...this.vendorSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
       const overCorpse = [...this.corpseSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
+      // A follow-up ask: "on hover make the cursor a pointer" for benches
+      // — a plain pointer, not the bed's own SLEEP_CURSOR, since resting
+      // on a bench (unlike sleeping) doesn't black out the screen.
+      const overBench = this.benchSprites.some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
       this.game.canvas.style.cursor = overEnemy
         ? SWORD_CURSOR
         : overLockable
@@ -570,7 +592,7 @@ export class WorldScene extends Phaser.Scene {
                 ? 'pointer'
                 : overTeacher
                   ? 'help'
-                  : overVendor || overCorpse
+                  : overVendor || overCorpse || overBench
                     ? 'pointer'
                     : '';
     });
@@ -1348,7 +1370,15 @@ export class WorldScene extends Phaser.Scene {
     // dorm... fullscreen, just like how the classrooms are") get their
     // own zoom factors instead, computed for their own (different)
     // footprints — see mapRender.ts's COMMON_ROOM_ZOOM/DORM_ZOOM.
-    const isClassroomSized = (CLASSROOM_MAPS as readonly string[]).includes(this.currentMap) || this.currentMap === 'Caverna Secretissima';
+    // 'Specialization' (formerly Elemental Casting Classroom, a later
+    // follow-up ask) shares the same classroom footprint too, despite no
+    // longer being a CLASSROOM_MAPS entry — same "not a classroom
+    // anymore, still classroom-sized" carve-out Caverna Secretissima
+    // already gets.
+    const isClassroomSized =
+      (CLASSROOM_MAPS as readonly string[]).includes(this.currentMap) ||
+      this.currentMap === 'Caverna Secretissima' ||
+      this.currentMap === 'Specialization';
     const isCommonRoomSized = (COMMON_ROOM_MAPS as readonly string[]).includes(this.currentMap) || this.currentMap === 'Great Hall';
     const isDormSized = (DORM_MAPS as readonly string[]).includes(this.currentMap);
     const zoom = isClassroomSized ? CLASSROOM_ZOOM : isCommonRoomSized ? COMMON_ROOM_ZOOM : isDormSized ? DORM_ZOOM : 1;
@@ -1629,7 +1659,10 @@ export class WorldScene extends Phaser.Scene {
     // Half-sized in the small classrooms (a follow-up ask) — the large
     // rooms' own fireplaces stay full-size, just nudged toward the
     // center instead (see fireplacePositionsFor).
-    const fireplaceScale = (CLASSROOM_MAPS as readonly string[]).includes(mapName) ? 0.5 : 1;
+    // 'Specialization' gets the same half-size treatment for the same
+    // "still classroom-sized, just not a CLASSROOM_MAPS entry anymore"
+    // reason as isClassroomSized above.
+    const fireplaceScale = (CLASSROOM_MAPS as readonly string[]).includes(mapName) || mapName === 'Specialization' ? 0.5 : 1;
     for (const { row, col } of fireplacePositionsFor(mapName)) {
       const pos = this.tilePosition(row, col);
       const mantle = this.add.sprite(pos.x, pos.y, FIREPLACE_MANTLE_TEXTURE_KEY).setOrigin(0.5, 0.85).setScale(fireplaceScale).setDepth(-0.5);
@@ -1706,14 +1739,30 @@ export class WorldScene extends Phaser.Scene {
 
     // A small social gathering spot's benches (a follow-up ask upgraded
     // these from plain chairs) — Entrance Hall and common-room-only,
-    // furniture only, no click handler, collision is server-side (see
-    // isBenchBlocked). Each one's own `angle` (see benchPositionsFor)
-    // rotates it to face inward, toward the other three.
+    // Clickable now (a follow-up ask) — opens a rest-confirmation modal
+    // if the player's within BENCH_REACH_TILES, otherwise just a message
+    // (matching the server's own re-validated reach check in
+    // handleRestOnBench), same shape as the beds below. Each one's own
+    // `angle` (see benchPositionsFor) rotates it to face inward, toward
+    // the other three.
     for (const sprite of this.benchSprites) sprite.destroy();
     this.benchSprites = [];
     for (const { row, col, angle } of benchPositionsFor(mapName)) {
       const pos = this.tilePosition(row, col);
-      const bench = this.add.sprite(pos.x, pos.y, BENCH_TEXTURE_KEY).setOrigin(0.5, 0.85).setAngle(angle).setDepth(-0.5);
+      const bench = this.add
+        .sprite(pos.x, pos.y, BENCH_TEXTURE_KEY)
+        .setOrigin(0.5, 0.85)
+        .setAngle(angle)
+        .setDepth(-0.5)
+        .setInteractive();
+      bench.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (isInputCaptured() || !pointer.leftButtonDown()) return;
+        if (!isWithinRadius(this.row, this.col, row, col, BENCH_REACH_TILES)) {
+          logCombatMessage("You're too far away to reach that bench.");
+          return;
+        }
+        openBenchModal(row, col);
+      });
       this.benchSprites.push(bench);
     }
 
@@ -1934,6 +1983,18 @@ export class WorldScene extends Phaser.Scene {
       });
       return sprite;
     });
+
+    // Classroom door symbols (a follow-up ask) — a small icon floating
+    // just above whichever door leads to a classroom, purely decorative
+    // (not interactive), so a player can tell what's taught behind each
+    // one at a glance.
+    for (const sprite of this.classroomSymbolSprites) sprite.destroy();
+    this.classroomSymbolSprites = def.exits
+      .filter((exit) => CLASSROOM_SYMBOL_TEXTURE_KEYS[exit.toMap])
+      .map((exit) => {
+        const pos = this.tilePosition(exit.row, exit.col);
+        return this.add.sprite(pos.x, pos.y - TILE_SIZE * 0.9, CLASSROOM_SYMBOL_TEXTURE_KEYS[exit.toMap]!).setDepth(-0.4);
+      });
 
     // The secret room's own treasure chest (a later follow-up ask) — a
     // single sprite, textured by whether THIS player has already
@@ -2400,8 +2461,12 @@ export class WorldScene extends Phaser.Scene {
       // case (sword/feather/help/pointer) now, and fighting Phaser's own
       // hover cursor here is what silently broke it before (see that
       // handler's own comment).
-      const sprite = this.add.sprite(pos.x, pos.y, textureKeyFor('teacher'), idleFrameFor('teacher', 'down')).setScale(CHAR_SCALE).setInteractive();
+      const sprite = this.add
+        .sprite(pos.x, pos.y, textureKeyFor('teacher'), idleFrameFor('teacher', t.facing ?? 'down'))
+        .setScale(CHAR_SCALE)
+        .setInteractive();
       sprite.setData('questId', t.questId);
+      sprite.setData('specializationGate', t.specializationGate);
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
         // A follow-up ask: the Headmistress opens a dialogue modal (with
@@ -2415,6 +2480,16 @@ export class WorldScene extends Phaser.Scene {
             return;
           }
           openNpcDialogueModal(t.name, t.questId);
+          return;
+        }
+        // The Specialization room's own teacher (a later follow-up ask)
+        // — no quest, just a level-gated dialogue, same reach concept.
+        if (t.specializationGate) {
+          if (!isWithinRadius(this.row, this.col, t.row, t.col, SHOP_REACH_TILES)) {
+            logCombatMessage(`You're too far away to talk to ${t.name}.`);
+            return;
+          }
+          openSpecializationDialogue(t.name);
           return;
         }
         // A fixed, generic line (a later follow-up ask dropped the
@@ -2748,7 +2823,10 @@ export class WorldScene extends Phaser.Scene {
       void this.network.castMurusLapideus({ row, col }).then((ack) => {
         // A follow-up bug fix (see the stupefaciunt branch's own comment
         // above) — the success message was silently dropped here too.
-        if (ack.message) showCenterToast(ack.message);
+        if (ack.message) {
+          showCenterToast(ack.message);
+          logCombatMessage(ack.message);
+        }
       });
       return;
     }
@@ -2928,7 +3006,13 @@ export class WorldScene extends Phaser.Scene {
   // shouldn't leave the outcome invisible.
   private castToggleSpell(cast: () => Promise<{ ok: boolean; mana?: number; skills?: Record<string, number>; message?: string }>): void {
     void cast().then((ack) => {
-      if (ack.message) showCenterToast(ack.message);
+      // A follow-up ask (the new "must have a wand equipped" rejection,
+      // but really any cast failure) wants BOTH a toast and a combat-log
+      // line, not just the toast this already showed.
+      if (ack.message) {
+        showCenterToast(ack.message);
+        logCombatMessage(ack.message);
+      }
       if (!ack.ok || !myProfile) return;
       setMyProfile({
         ...myProfile,
@@ -3010,7 +3094,10 @@ export class WorldScene extends Phaser.Scene {
         return;
       }
       void this.network.castResera(this.lockTarget).then((ack) => {
-        if (ack.message) logCombatMessage(ack.message);
+        if (ack.message) {
+          logCombatMessage(ack.message);
+          showCenterToast(ack.message);
+        }
         if (ack.ok && myProfile && ack.skills) {
           setMyProfile({ ...myProfile, skills: ack.skills });
           refreshOpenModals();
@@ -3047,7 +3134,10 @@ export class WorldScene extends Phaser.Scene {
       const targetId = this.targetId;
       this.tryRangedAction(targetKind, targetId, SPELL_ATTACK_RANGE_TILES, () => {
         void this.network.castAugue({ targetKind, targetId }).then((ack) => {
-          if (ack.message) showCenterToast(ack.message);
+          if (ack.message) {
+            showCenterToast(ack.message);
+            logCombatMessage(ack.message);
+          }
         });
       });
       return;
@@ -3065,7 +3155,10 @@ export class WorldScene extends Phaser.Scene {
         // success text lives; showing it only on failure (the old check
         // here) silently dropped every successful cast.
         void this.network.castStupefaciunt({ targetKind, targetId }).then((ack) => {
-          if (ack.message) showCenterToast(ack.message);
+          if (ack.message) {
+            showCenterToast(ack.message);
+            logCombatMessage(ack.message);
+          }
         });
       });
       return;
@@ -3075,7 +3168,10 @@ export class WorldScene extends Phaser.Scene {
       const targetId = this.targetId;
       this.tryRangedAction(targetKind, targetId, SPELL_ATTACK_RANGE_TILES, () => {
         void this.network.castExarme({ targetKind, targetId }).then((ack) => {
-          if (ack.message) showCenterToast(ack.message);
+          if (ack.message) {
+            showCenterToast(ack.message);
+            logCombatMessage(ack.message);
+          }
         });
       });
       return;
@@ -3258,7 +3354,13 @@ export class WorldScene extends Phaser.Scene {
     // view) is only relevant to the two people actually in it.
     if (involvesMe) logCombatMessage(event.message, logKind);
     if (event.leveledUp && event.attacker === this.myUsername) {
-      logCombatMessage(`${this.myUsername} reaches level ${event.attackerLevel}!`, 'level-up');
+      // A follow-up ask: the level-up line itself should also remind the
+      // player to go spend their new stat point(s), not just the separate
+      // toast below (easy to miss/scroll past).
+      logCombatMessage(
+        `${this.myUsername} reaches level ${event.attackerLevel}! Open your character sheet to allocate your stat points.`,
+        'level-up'
+      );
       // A later follow-up ask replaced the old automatic per-level
       // attribute bonus with player-chosen stat points — the level-up's
       // own 'sync' (see game.gateway.ts's grantExp) already landed by now

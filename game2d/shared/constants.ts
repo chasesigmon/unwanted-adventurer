@@ -62,7 +62,15 @@ export const GRIMOAK_CASTLE_MAPS = [
   'Duskwing Common Room',
   'Emberclaw Common Room',
   'Starfall Common Room',
-  'Elemental Casting Classroom',
+  // Formerly "Elemental Casting Classroom" (a later follow-up ask) —
+  // renamed and deliberately dropped from CLASSROOM_MAPS below (it's not
+  // considered a classroom anymore; its own teacher instead gates a
+  // level-10 "choose your path as a mage" specialization choice, not
+  // spell-podium teaching — irrigo's own podium moved to Utility
+  // Classroom). Still classroom-SIZED though (see WorldScene's own
+  // explicit `|| 'Specialization'` fallbacks, same pattern Caverna
+  // Secretissima already uses for the same reason).
+  'Specialization',
   'Defense Classroom',
   'Summoning Classroom',
   'Utility Classroom',
@@ -97,13 +105,11 @@ export const GRIMOAK_CASTLE_MAPS = [
 // reads clearly everywhere") — these ARE the map's real MapName now, not
 // just a display label, so every door/teacher/podium reference below
 // uses the full "<Subject> Classroom" string.
-export const CLASSROOM_MAPS = [
-  'Elemental Casting Classroom',
-  'Defense Classroom',
-  'Summoning Classroom',
-  'Utility Classroom',
-  'Offense Classroom',
-] as const;
+// 'Specialization' (formerly Elemental Casting Classroom) is deliberately
+// NOT here anymore (a later follow-up ask: "this room should not be
+// considered a classroom") — see this file's own GRIMOAK_CASTLE_MAPS
+// comment for why.
+export const CLASSROOM_MAPS = ['Defense Classroom', 'Summoning Classroom', 'Utility Classroom', 'Offense Classroom'] as const;
 
 // The 4 house common rooms — standard ROOM_ROWS/COLS-sized, unlike the
 // shrunk classrooms above. Used to give them the same "closer to the

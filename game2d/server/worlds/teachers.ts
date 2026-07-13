@@ -1,6 +1,6 @@
 import type { MapName } from '../../shared/constants.js';
 import type { TeacherSnapshot } from '../../shared/types.js';
-import { LEARN_SPELLS_QUEST_ID, KILL_IMPS_QUEST_ID, GATHER_MANA_CRYSTALS_QUEST_ID } from '../../shared/quests.js';
+import { LEARN_SPELLS_QUEST_ID, KILL_IMPS_QUEST_ID, GATHER_MANA_CRYSTALS_QUEST_ID, FIND_THE_MAP_QUEST_ID } from '../../shared/quests.js';
 
 // Static, permanent classroom occupants (a follow-up ask: "Add teacher
 // NPCs to each classroom and they are behind a desk with collision for
@@ -26,7 +26,29 @@ export const TEACHERS: TeacherSnapshot[] = [
   // or the fireplace collision boxes ever touch.
   { id: 'imp-hunter-teacher', name: 'Professor Bramwell', map: 'Grimoak Entrance Hall', row: 8, col: 20, questId: KILL_IMPS_QUEST_ID },
   { id: 'mana-crystal-teacher', name: 'Professor Thistlewood', map: 'Grimoak Entrance Hall', row: 8, col: 32, questId: GATHER_MANA_CRYSTALS_QUEST_ID },
-  { id: 'elemental-casting-teacher', name: 'Professor Ashgrove', map: 'Elemental Casting Classroom', row: 2, col: 9 },
+  // A 4th quest-giver (a later follow-up ask) — "in between the
+  // fireplaces on the left, facing the center of the room." The
+  // Entrance Hall's own LEFT fireplaces both sit at col 14 (rows 8 and
+  // 25 — see fireplacePositionsFor), so "in between" them here means
+  // row-wise, at their shared midpoint (16.5, rounded down to 16, same
+  // rounding the training skeletons' own re-centering used) — facing
+  // 'right' (east) toward the room's own center rather than 'down' like
+  // every other teacher.
+  {
+    id: 'map-quest-teacher',
+    name: 'Professor Hollowell',
+    map: 'Grimoak Entrance Hall',
+    row: 16,
+    col: 14,
+    facing: 'right',
+    questId: FIND_THE_MAP_QUEST_ID,
+  },
+  // Still here, still Professor Ashgrove, same desk — only the room and
+  // his own role changed (a later follow-up ask): "Specialization" isn't
+  // a classroom teaching a spell anymore, so clicking him gates a
+  // level-10 "choose your path as a mage" dialogue instead (no quest —
+  // see WorldScene's own specializationGate branch).
+  { id: 'elemental-casting-teacher', name: 'Professor Ashgrove', map: 'Specialization', row: 2, col: 9, specializationGate: true },
   { id: 'defense-teacher', name: 'Professor Vantor', map: 'Defense Classroom', row: 2, col: 9 },
   { id: 'summoning-teacher', name: 'Professor Nyx', map: 'Summoning Classroom', row: 2, col: 9 },
   { id: 'utilization-teacher', name: 'Professor Wren', map: 'Utility Classroom', row: 2, col: 9 },

@@ -17,7 +17,13 @@ import {
 // live), and when a quest was actually turned in; the title/description/
 // objective list itself is always looked up from here, same "content in
 // code, progress in the DB" split the vendor/teacher NPCs already use.
-export type QuestObjectiveKind = 'learnSkill' | 'killMonster' | 'haveItem';
+export type QuestObjectiveKind = 'learnSkill' | 'killMonster' | 'haveItem' | 'hasFlag';
+
+// hasFlag's own set of checkable boolean facts about a player (a follow-
+// up ask's "acquire the map" quest) — just the one today, but a bag
+// rather than a single hardcoded boolean so a future quest gated on a
+// different flag doesn't need its own new objective kind.
+export type QuestFlag = 'mapUnlocked';
 
 export interface QuestObjective {
   id: string;
@@ -32,6 +38,8 @@ export interface QuestObjective {
   itemLabel?: string;
   // killMonster/haveItem only — how many are needed. Always 1 if absent.
   count?: number;
+  // hasFlag only — which flag (see PlayerSnapshot/SocketData) must be true.
+  flag?: QuestFlag;
 }
 
 export interface QuestDefinition {
@@ -70,15 +78,17 @@ export interface QuestProgress {
 export const LEARN_SPELLS_QUEST_ID = 'learn-spells';
 export const KILL_IMPS_QUEST_ID = 'kill-imps';
 export const GATHER_MANA_CRYSTALS_QUEST_ID = 'gather-mana-crystals';
+export const FIND_THE_MAP_QUEST_ID = 'find-the-map';
 
 // Which spells live behind which classroom's own podium(s) (see
-// shared/spells.ts's own *_BOOK_MAP constants) — Utility and Offense each
-// have 3 podiums, every other classroom has exactly 1.
+// shared/spells.ts's own *_BOOK_MAP constants) — Offense has 3 podiums,
+// Utility now has 4 (irrigo moved in from the old Elemental Casting
+// Classroom, which stopped being a classroom entirely — a later
+// follow-up ask), every other classroom has exactly 1.
 const CLASSROOM_SPELLS: Record<string, string[]> = {
-  'Elemental Casting Classroom': [IRRIGO_SKILL],
   'Defense Classroom': [SCUTUM_SKILL],
   'Summoning Classroom': [MURUS_LAPIDEUS_SKILL],
-  'Utility Classroom': [LUCEM_SKILL, CELERITAS_SKILL, RESERA_SKILL],
+  'Utility Classroom': [IRRIGO_SKILL, LUCEM_SKILL, CELERITAS_SKILL, RESERA_SKILL],
   'Offense Classroom': [AUGUE_SKILL, STUPEFACIUNT_SKILL, EXARME_SKILL],
 };
 
@@ -117,7 +127,7 @@ export const QUESTS: Record<string, QuestDefinition> = {
   [GATHER_MANA_CRYSTALS_QUEST_ID]: {
     id: GATHER_MANA_CRYSTALS_QUEST_ID,
     title: 'Mana Crystal Delivery',
-    description: 'I would like for you to bring me 10 lesser mana crystals. Return to me after.',
+    description: 'I would like for you to bring me 10 lesser mana crystals. You can get them from the imps outside. Return to me after.',
     readyMessage: "You've got enough lesser mana crystals — well done! Click below when you're ready to complete this quest.",
     completedMessage: 'Thank you for the mana crystals.',
     // haveItem — checked live against current inventory count, not
@@ -129,6 +139,20 @@ export const QUESTS: Record<string, QuestDefinition> = {
     ],
     rewardExp: 150,
   },
+  [FIND_THE_MAP_QUEST_ID]: {
+    id: FIND_THE_MAP_QUEST_ID,
+    title: 'The Hidden Map',
+    description:
+      'Go and acquire the map from the back of the Utility Classroom. You must first learn the secrets of the lock in order to gain access to it. Return to me once you have acquired it.',
+    readyMessage: "You've acquired the map — wonderful! Click below when you're ready to complete this quest.",
+    completedMessage: 'Keep that map safe — it will serve you well.',
+    // hasFlag — the same secret-room mapUnlocked flag the map corner
+    // button/'m' hotkey are already gated behind (see
+    // game.gateway.ts's handleTakeChestItem), so this quest just tracks
+    // whatever ALREADY happened rather than needing its own new event.
+    objectives: [{ id: 'acquire-map', label: 'Acquire the map from the Utility Classroom', kind: 'hasFlag', flag: 'mapUnlocked' }],
+    rewardExp: 100,
+  },
 };
 
 export function questDefinition(questId: string): QuestDefinition | undefined {
@@ -136,29 +160,41 @@ export function questDefinition(questId: string): QuestDefinition | undefined {
 }
 
 // Whether a single objective is currently satisfied — the one place that
-// knows how to check each of the 3 objective kinds, shared by both server
+// knows how to check each of the 4 objective kinds, shared by both server
 // (turn-in validation) and client (quest log progress/strikethrough).
+// `flags` covers hasFlag objectives — just PlayerSnapshot.mapUnlocked
+// today, passed in rather than hardcoded so a future flag doesn't need
+// its own new objective kind.
 export function isObjectiveDone(
   objective: QuestObjective,
   progress: QuestProgress,
   skills: Record<string, number>,
-  inventory: string[]
+  inventory: string[],
+  flags: Partial<Record<QuestFlag, boolean>> = {}
 ): boolean {
   if (objective.kind === 'learnSkill') return skills[objective.skill!] !== undefined;
   if (objective.kind === 'haveItem') {
     return inventory.filter((item) => item === objective.itemLabel).length >= (objective.count ?? 1);
   }
+  if (objective.kind === 'hasFlag') return Boolean(flags[objective.flag!]);
   return (progress.killCounts?.[objective.id] ?? 0) >= (objective.count ?? 1);
 }
 
-// "3/5", "10/10" — the quest log's own progress readout; learnSkill
-// objectives are just done/not-done (1/1), no meaningful partial count.
+// "3/5", "10/10" — the quest log's own progress readout; learnSkill/
+// hasFlag objectives are just done/not-done (1/1), no meaningful partial
+// count.
 export function objectiveCurrentCount(objective: QuestObjective, progress: QuestProgress, inventory: string[]): number {
   if (objective.kind === 'haveItem') return inventory.filter((item) => item === objective.itemLabel).length;
   if (objective.kind === 'killMonster') return progress.killCounts?.[objective.id] ?? 0;
   return 0;
 }
 
-export function allObjectivesDone(quest: QuestDefinition, progress: QuestProgress, skills: Record<string, number>, inventory: string[]): boolean {
-  return quest.objectives.every((objective) => isObjectiveDone(objective, progress, skills, inventory));
+export function allObjectivesDone(
+  quest: QuestDefinition,
+  progress: QuestProgress,
+  skills: Record<string, number>,
+  inventory: string[],
+  flags: Partial<Record<QuestFlag, boolean>> = {}
+): boolean {
+  return quest.objectives.every((objective) => isObjectiveDone(objective, progress, skills, inventory, flags));
 }

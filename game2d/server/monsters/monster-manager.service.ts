@@ -155,9 +155,13 @@ export class MonsterManagerService {
     }
   }
 
-  private countOf(kind: Monster['kind']): number {
+  // Keyed by speciesId (MonsterSpecies.id ?? kind), not `kind` alone — two
+  // species entries can share the same `kind` (a follow-up ask's tougher
+  // Grimoak Grounds wild skeleton/goblin populations, distinct from the
+  // original Labyrinth/Great Plains ones) and must be counted separately.
+  private countOf(speciesId: string): number {
     let n = 0;
-    for (const m of this.monsters.values()) if (m.kind === kind) n++;
+    for (const m of this.monsters.values()) if (m.speciesId === speciesId) n++;
     return n;
   }
 
@@ -212,11 +216,11 @@ export class MonsterManagerService {
     return true;
   }
 
-  private randomFreeTile(mapName: MapName): { row: number; col: number } | null {
+  private randomFreeTile(mapName: MapName, minCol = 0): { row: number; col: number } | null {
     const map = getMap(mapName);
     for (let attempt = 0; attempt < 60; attempt++) {
       const row = Math.floor(Math.random() * map.rows);
-      const col = Math.floor(Math.random() * map.cols);
+      const col = minCol + Math.floor(Math.random() * (map.cols - minCol));
       // The moat's own rectangular footprint (ring + the courtyard it
       // encloses) is off-limits for spawning (a follow-up ask: imps
       // "should only spawn on any of the areas outside/surrounding the
@@ -230,7 +234,7 @@ export class MonsterManagerService {
     // budget — fall back to just finding anywhere free at all.
     for (let attempt = 0; attempt < 60; attempt++) {
       const row = Math.floor(Math.random() * map.rows);
-      const col = Math.floor(Math.random() * map.cols);
+      const col = minCol + Math.floor(Math.random() * (map.cols - minCol));
       if (isWithinMoatFootprint(mapName, row, col)) continue;
       if (this.isFree(mapName, row, col)) return { row, col };
     }
@@ -238,7 +242,7 @@ export class MonsterManagerService {
   }
 
   private spawnOne(species: MonsterSpecies): void {
-    const tile = this.randomFreeTile(species.homeMap);
+    const tile = this.randomFreeTile(species.homeMap, species.minSpawnCol ?? 0);
     if (!tile) return;
 
     const carriedItems = (species.carriedItemRolls ?? [])
@@ -247,6 +251,7 @@ export class MonsterManagerService {
 
     const monster: Monster = {
       id: randomUUID(),
+      speciesId: species.id ?? species.kind,
       kind: species.kind,
       monsterClass: species.monsterClass,
       mapName: species.homeMap,
@@ -255,7 +260,7 @@ export class MonsterManagerService {
       hp: species.startingHp,
       maxHp: species.startingHp,
       expReward: species.expReward,
-      level: MONSTER_LEVEL,
+      level: species.level ?? MONSTER_LEVEL,
       strength: MONSTER_BASE_ATTRIBUTE,
       intelligence: MONSTER_BASE_ATTRIBUTE,
       wisdom: MONSTER_BASE_ATTRIBUTE,
@@ -282,7 +287,7 @@ export class MonsterManagerService {
   // as the text game's own respawner) — called on GameGateway's own timer.
   respawnBelowMax(): void {
     for (const species of MONSTER_SPECIES) {
-      if (this.countOf(species.kind) < species.maxCount) {
+      if (this.countOf(species.id ?? species.kind) < species.maxCount) {
         this.spawnOne(species);
         return;
       }

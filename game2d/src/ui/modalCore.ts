@@ -72,6 +72,11 @@ export const chestItemList = document.getElementById('chest-item-list') as HTMLU
 export const bedModal = document.getElementById('bed-modal') as HTMLDivElement;
 export const bedSleepYesBtn = document.getElementById('bed-sleep-yes') as HTMLButtonElement;
 export const bedSleepNoBtn = document.getElementById('bed-sleep-no') as HTMLButtonElement;
+// A bench's own rest-confirmation prompt (a follow-up ask) — same plain
+// Yes/No shape as the bed above.
+export const benchModal = document.getElementById('bench-modal') as HTMLDivElement;
+export const benchRestYesBtn = document.getElementById('bench-rest-yes') as HTMLButtonElement;
+export const benchRestNoBtn = document.getElementById('bench-rest-no') as HTMLButtonElement;
 
 export const ALL_MODALS = [
   charSheetModal,
@@ -89,6 +94,7 @@ export const ALL_MODALS = [
   autopilotModal,
   chestModal,
   bedModal,
+  benchModal,
 ];
 
 // None of these six visually obstruct the map and none has a text input

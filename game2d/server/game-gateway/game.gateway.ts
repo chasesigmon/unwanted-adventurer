@@ -137,6 +137,8 @@ import {
   isBedBlocked,
   BED_REACH_TILES,
   isNearBench,
+  isBenchBlocked,
+  BENCH_REACH_TILES,
 } from '../../shared/lighting.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
 import {
@@ -259,7 +261,8 @@ const SPELL_DURATION_BASE_MS = 3 * 60 * 1000;
 function spellDurationMs(skillPercent: number): number {
   return SPELL_DURATION_BASE_MS + Math.round((skillPercent / MAX_SKILL_PERCENT) * SPELL_DURATION_BASE_MS);
 }
-// The Elemental Casting classroom's own podium, teaching irrigo — same
+// Utility Classroom's 4th podium (moved there from the old Elemental
+// Casting Classroom — a later follow-up ask), teaching irrigo — same
 // shape as the lucem book above.
 const IRRIGO_BOOK_COOLDOWN_TICKS = 2;
 const IRRIGO_BOOK_LEARN_CHANCE = 0.1;
@@ -365,8 +368,16 @@ const HOURS_PER_DAY = 24;
 const STAT_TICK_MS = 30_000;
 // The Learn Spells quest's own completion reward (a follow-up ask) — see
 // handleCompleteQuest/maybeGrowSpellSkill's own enhancedLearningBonusFor.
-const ENHANCED_LEARNING_TICKS = 12;
+// 20 game hours (a later follow-up ask, up from 12) — 20 stat ticks at
+// STAT_TICK_MS(30s) each is exactly 10 real-world minutes.
+const ENHANCED_LEARNING_TICKS = 20;
 const ENHANCED_LEARNING_BONUS_PERCENT = 10;
+// Two follow-up asks: exp for actually learning a new spell from a
+// classroom podium (see each handleReadXBook's own "newly learned"
+// branch), and a smaller amount every time an already-known spell grows
+// (see maybeGrowSpellSkill above).
+const SPELL_LEARN_EXP_REWARD = 50;
+const SPELL_GROWTH_EXP_REWARD = 10;
 const HEAL_PERCENT_RANGE: Record<RestState, [number, number]> = {
   awake: [7, 10],
   resting: [9, 12],
@@ -988,7 +999,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (progress.completedAt) {
       return { ok: false, message: "You've already completed that quest." };
     }
-    if (!allObjectivesDone(quest, progress, client.data.skills, client.data.inventory)) {
+    if (!allObjectivesDone(quest, progress, client.data.skills, client.data.inventory, { mapUnlocked: client.data.mapUnlocked })) {
       return { ok: false, message: "You haven't finished that quest yet." };
     }
 
@@ -996,12 +1007,21 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const grantResult = this.grantExp(client, quest.rewardExp);
     const messages = [`Quest complete: ${quest.title} (+${quest.rewardExp} exp)`];
     if (grantResult.message) messages.push(grantResult.message);
+    // A follow-up bug fix: "after turning in the Learn Spells quest, I
+    // levelled up but it did not show that message in Combat" — a quest
+    // completion has no 'combat' event of its own to piggyback the
+    // ordinary kill-driven level-up notice on (see WorldScene's
+    // applyCombatEvent), so this has to say it explicitly. Same reminder
+    // text as that client-side message.
+    if (grantResult.leveledUp) {
+      messages.push(`${client.data.username} reaches level ${client.data.level}! Open your character sheet to allocate your stat points.`);
+    }
 
     if (quest.id === LEARN_SPELLS_QUEST_ID) {
-      // "12 game hours (ticks) worth of enhanced spell learning for every
+      // "20 game hours (ticks) worth of enhanced spell learning for every
       // spell by 10%" — see maybeGrowSpellSkill's own enhancedLearningBonusFor
-      // check. Stat ticks fire on a fixed STAT_TICK_MS cadence, so 12
-      // ticks from now is exactly the same absolute-expiry-timestamp
+      // check. Stat ticks fire on a fixed STAT_TICK_MS cadence, so this
+      // many ticks from now is exactly the same absolute-expiry-timestamp
       // shape wandLitUntil/celeritasActiveUntil already use.
       client.data.enhancedLearningUntil = Date.now() + ENHANCED_LEARNING_TICKS * STAT_TICK_MS;
       messages.push(`Enhanced learning active for ${ENHANCED_LEARNING_TICKS} hours!`);
@@ -1010,7 +1030,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     const message = messages.join(' ');
-    this.systemMessage(client, message);
+    // combatNotice (not systemMessage/'chat') so this actually shows up in
+    // the Combat log tab, not Chat — same bug as above, just for the
+    // quest-complete message itself this time, not just the level-up line.
+    client.emit('combatNotice', message);
     return { ok: true, message };
   }
 
@@ -1044,7 +1067,37 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // SKILL_GROWTH_CHANCE every other (non-spell) skill use still gets
   // unmodified.
   private maybeGrowSpellSkill(client: GameSocket, skill: string): string | undefined {
-    return this.maybeGrowSkill(client, skill, rollLuckGrowthBonus(client.data.luck) + this.enhancedLearningBonusFor(client));
+    const growthMessage = this.maybeGrowSkill(client, skill, rollLuckGrowthBonus(client.data.luck) + this.enhancedLearningBonusFor(client));
+    if (!growthMessage) return undefined;
+    // "When a player gets better at a spell they should gain 10
+    // experience points" (a follow-up ask) — spells specifically (every
+    // call site here is a spell), not ordinary combat skills like punch/
+    // dagger, which grow through the plain maybeGrowSkill above instead.
+    const grantResult = this.grantExp(client, SPELL_GROWTH_EXP_REWARD);
+    let message = `${growthMessage} (+${SPELL_GROWTH_EXP_REWARD} exp)`;
+    if (grantResult.message) message = `${message} ${grantResult.message}`;
+    if (grantResult.leveledUp) {
+      // No 'combat' event to piggyback the ordinary level-up notice on
+      // here either (same gap handleCompleteQuest just fixed) — same
+      // exact reminder text.
+      client.emit('combatNotice', `${client.data.username} reaches level ${client.data.level}! Open your character sheet to allocate your stat points.`);
+    }
+    return message;
+  }
+
+  // "Every time a player learns a new spell from a classroom they should
+  // gain 50 experience points" (a follow-up ask) — called from each
+  // handleReadXBook's own "newly learned" branch, right after granting
+  // the skill itself. Returns a suffix to append to that handler's own
+  // success message, same "(+N exp)" shape maybeGrowSpellSkill uses.
+  private grantSpellLearnExp(client: GameSocket): string {
+    const grantResult = this.grantExp(client, SPELL_LEARN_EXP_REWARD);
+    let suffix = ` (+${SPELL_LEARN_EXP_REWARD} exp)`;
+    if (grantResult.message) suffix = `${suffix} ${grantResult.message}`;
+    if (grantResult.leveledUp) {
+      client.emit('combatNotice', `${client.data.username} reaches level ${client.data.level}! Open your character sheet to allocate your stat points.`);
+    }
+    return suffix;
   }
 
   // The Learn Spells quest's own completion reward (a follow-up ask) —
@@ -2841,13 +2894,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : LUCEM_BOOK_LEARN_CHANCE)) {
       client.data.skills = { ...client.data.skills, [LUCEM_SKILL]: STARTING_SKILL_PERCENT };
       this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      const expSuffix = this.grantSpellLearnExp(client);
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
       return {
         ok: true,
         skills: client.data.skills,
         lucemBookReadyAtTick: client.data.lucemBookReadyAtTick,
-        message: 'The words swim into focus — you have learned lucem!',
+        message: `The words swim into focus — you have learned lucem!${expSuffix}`,
       };
     }
 
@@ -2886,13 +2940,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : IRRIGO_BOOK_LEARN_CHANCE)) {
       client.data.skills = { ...client.data.skills, [IRRIGO_SKILL]: STARTING_SKILL_PERCENT };
       this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      const expSuffix = this.grantSpellLearnExp(client);
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
       return {
         ok: true,
         skills: client.data.skills,
         irrigoBookReadyAtTick: client.data.irrigoBookReadyAtTick,
-        message: 'The words swim into focus — you have learned irrigo!',
+        message: `The words swim into focus — you have learned irrigo!${expSuffix}`,
       };
     }
 
@@ -2932,13 +2987,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : CELERITAS_BOOK_LEARN_CHANCE)) {
       client.data.skills = { ...client.data.skills, [CELERITAS_SKILL]: STARTING_SKILL_PERCENT };
       this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      const expSuffix = this.grantSpellLearnExp(client);
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
       return {
         ok: true,
         skills: client.data.skills,
         celeritasBookReadyAtTick: client.data.celeritasBookReadyAtTick,
-        message: 'The words swim into focus — you have learned celeritas!',
+        message: `The words swim into focus — you have learned celeritas!${expSuffix}`,
       };
     }
 
@@ -2978,13 +3034,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : AUGUE_BOOK_LEARN_CHANCE)) {
       client.data.skills = { ...client.data.skills, [AUGUE_SKILL]: STARTING_SKILL_PERCENT };
       this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      const expSuffix = this.grantSpellLearnExp(client);
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
       return {
         ok: true,
         skills: client.data.skills,
         augueBookReadyAtTick: client.data.augueBookReadyAtTick,
-        message: 'The words swim into focus — you have learned augue!',
+        message: `The words swim into focus — you have learned augue!${expSuffix}`,
       };
     }
 
@@ -3024,13 +3081,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : RESERA_BOOK_LEARN_CHANCE)) {
       client.data.skills = { ...client.data.skills, [RESERA_SKILL]: STARTING_SKILL_PERCENT };
       this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      const expSuffix = this.grantSpellLearnExp(client);
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
       return {
         ok: true,
         skills: client.data.skills,
         reseraBookReadyAtTick: client.data.reseraBookReadyAtTick,
-        message: 'The words swim into focus — you have learned resera!',
+        message: `The words swim into focus — you have learned resera!${expSuffix}`,
       };
     }
 
@@ -3052,6 +3110,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleCastResera(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastReseraAck {
     if (client.data.skills[RESERA_SKILL] === undefined) {
       return { ok: false, message: "You don't know the resera spell yet." };
+    }
+    if (client.data.equipment.weapon !== WAND_ITEM) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const parsed = z
       .object({
@@ -3202,6 +3263,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleCastAugue(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     if (client.data.skills[AUGUE_SKILL] === undefined) {
       return { ok: false, message: "You don't know the augue spell yet." };
+    }
+    if (client.data.equipment.weapon !== WAND_ITEM) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const cooldownUntil = client.data.skillCooldowns[AUGUE_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
@@ -3395,9 +3459,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : STUPEFACIUNT_BOOK_LEARN_CHANCE)) {
       client.data.skills = { ...client.data.skills, [STUPEFACIUNT_SKILL]: STARTING_SKILL_PERCENT };
       this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      const expSuffix = this.grantSpellLearnExp(client);
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
-      return { ok: true, skills: client.data.skills, message: 'The words swim into focus — you have learned stupefaciunt!' };
+      return {
+        ok: true,
+        skills: client.data.skills,
+        message: `The words swim into focus — you have learned stupefaciunt!${expSuffix}`,
+      };
     }
     return { ok: true, message: 'You pore over the pages, but nothing clicks yet.' };
   }
@@ -3424,9 +3493,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : EXARME_BOOK_LEARN_CHANCE)) {
       client.data.skills = { ...client.data.skills, [EXARME_SKILL]: STARTING_SKILL_PERCENT };
       this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      const expSuffix = this.grantSpellLearnExp(client);
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
-      return { ok: true, skills: client.data.skills, message: 'The words swim into focus — you have learned exarme!' };
+      return {
+        ok: true,
+        skills: client.data.skills,
+        message: `The words swim into focus — you have learned exarme!${expSuffix}`,
+      };
     }
     return { ok: true, message: 'You pore over the pages, but nothing clicks yet.' };
   }
@@ -3441,6 +3515,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleCastStupefaciunt(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     if (client.data.skills[STUPEFACIUNT_SKILL] === undefined) {
       return { ok: false, message: "You don't know the stupefaciunt spell yet." };
+    }
+    if (client.data.equipment.weapon !== WAND_ITEM) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const cooldownUntil = client.data.skillCooldowns[STUPEFACIUNT_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
@@ -3516,6 +3593,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleCastExarme(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     if (client.data.skills[EXARME_SKILL] === undefined) {
       return { ok: false, message: "You don't know the exarme spell yet." };
+    }
+    if (client.data.equipment.weapon !== WAND_ITEM) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const cooldownUntil = client.data.skillCooldowns[EXARME_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
@@ -3633,9 +3713,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : SCUTUM_BOOK_LEARN_CHANCE)) {
       client.data.skills = { ...client.data.skills, [SCUTUM_SKILL]: STARTING_SKILL_PERCENT };
       this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      const expSuffix = this.grantSpellLearnExp(client);
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
-      return { ok: true, skills: client.data.skills, message: 'The words swim into focus — you have learned scutum!' };
+      return {
+        ok: true,
+        skills: client.data.skills,
+        message: `The words swim into focus — you have learned scutum!${expSuffix}`,
+      };
     }
     return { ok: true, message: 'You pore over the pages, but nothing clicks yet.' };
   }
@@ -3653,6 +3738,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleCastScutum(@ConnectedSocket() client: GameSocket): CastSpellAck {
     if (client.data.skills[SCUTUM_SKILL] === undefined) {
       const message = "You don't know the scutum spell yet.";
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+    if (client.data.equipment.weapon !== WAND_ITEM) {
+      const message = 'You need a wand equipped to cast spells.';
       this.systemMessage(client, message);
       return { ok: false, message };
     }
@@ -3720,9 +3810,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : MURUS_LAPIDEUS_BOOK_LEARN_CHANCE)) {
       client.data.skills = { ...client.data.skills, [MURUS_LAPIDEUS_SKILL]: STARTING_SKILL_PERCENT };
       this.worldManager.updateState(client.data.username, { skills: client.data.skills });
+      const expSuffix = this.grantSpellLearnExp(client);
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
-      return { ok: true, skills: client.data.skills, message: 'The words swim into focus — you have learned murus lapideus!' };
+      return {
+        ok: true,
+        skills: client.data.skills,
+        message: `The words swim into focus — you have learned murus lapideus!${expSuffix}`,
+      };
     }
     return { ok: true, message: 'You pore over the pages, but nothing clicks yet.' };
   }
@@ -3737,6 +3832,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleCastMurusLapideus(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     if (client.data.skills[MURUS_LAPIDEUS_SKILL] === undefined) {
       return { ok: false, message: "You don't know the murus lapideus spell yet." };
+    }
+    if (client.data.equipment.weapon !== WAND_ITEM) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const cooldownUntil = client.data.skillCooldowns[MURUS_LAPIDEUS_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
@@ -4111,13 +4209,21 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
   // Utilization's second podium's spell (a later follow-up ask) — same
   // mechanics as lucem (mana cost, success-chance formula, growth-per-
-  // cast), minus the wand requirement (a self-buff, not a light source).
-  // While active, boosts the caster's own movement speed by ~10% (see
-  // WorldScene's effectiveMoveCooldownMs) for spellDurationMs, scaling up
-  // with skill% the same way lucem's own duration does.
+  // cast). Used to skip the wand requirement entirely ("a self-buff, not
+  // a light source") — a later follow-up ask made the wand rule blanket
+  // ("if a wand is not equipped then a player should not be able to cast
+  // A spell"), so that carve-out is gone. While active, boosts the
+  // caster's own movement speed by ~10% (see WorldScene's
+  // effectiveMoveCooldownMs) for spellDurationMs, scaling up with skill%
+  // the same way lucem's own duration does.
   private handleCeleritasCommand(client: GameSocket): CastSpellAck {
     if (client.data.skills[CELERITAS_SKILL] === undefined) {
       const message = "You don't know the celeritas spell yet.";
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+    if (client.data.equipment.weapon !== WAND_ITEM) {
+      const message = 'You need a wand equipped to cast spells.';
       this.systemMessage(client, message);
       return { ok: false, message };
     }
@@ -4203,6 +4309,29 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.sleepingInBed = true;
     this.setRestState(client, 'sleeping');
     const message = "You climb into bed and drift off to sleep. You won't see anything until you wake up.";
+    this.systemMessage(client, message);
+    return { ok: true, message };
+  }
+
+  // A follow-up ask: "make the benches in each room clickable... when in
+  // range (2 feet) and the player clicks a bench a modal should pop up
+  // and ask them if they would like to rest" — same reach-then-confirm
+  // shape as handleSleepInBed above, just resting (with its own +10%
+  // near-a-bench bonus, see applyStatTick's own restingOnBench check)
+  // instead of sleeping.
+  @SubscribeMessage('restOnBench')
+  handleRestOnBench(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): { ok: boolean; message?: string } {
+    const parsed = z.object({ row: z.number(), col: z.number() }).safeParse(payload);
+    if (!parsed.success) return { ok: false, message: 'Invalid bench.' };
+    const { row, col } = parsed.data;
+    if (!isBenchBlocked(client.data.map, row, col)) {
+      return { ok: false, message: "That's not a bench." };
+    }
+    if (!isWithinRadius(client.data.row, client.data.col, row, col, BENCH_REACH_TILES)) {
+      return { ok: false, message: "You're too far away to reach that bench." };
+    }
+    this.setRestState(client, 'resting');
+    const message = 'You sit down on the bench, receiving enhanced regeneration while you rest.';
     this.systemMessage(client, message);
     return { ok: true, message };
   }

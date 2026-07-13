@@ -75,8 +75,8 @@ function renderConnectionsList(mapName: MapName): HTMLUListElement {
 // between. ----------
 const GRIMOAK_ASCII_MAP = `
                           ___________________________________________________________
-                         /   ELEMENTAL    DEFENSE    SUMMONING    UTILITY    OFFENSE  \\
-                        /    CASTING     CLASSROOM   CLASSROOM   CLASSROOM  CLASSROOM  \\
+                         /   SPECIAL-     DEFENSE    SUMMONING    UTILITY    OFFENSE  \\
+                        /    IZATION     CLASSROOM   CLASSROOM   CLASSROOM  CLASSROOM  \\
                         |       ^            ^            ^          ^          ^      |
                         |_______|____________|____________|__________|__________|______|
                                                            |

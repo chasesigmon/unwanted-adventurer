@@ -195,11 +195,14 @@ export class AuthService {
       row: spawn.row,
       col: spawn.col,
       skills: startingSkills(race),
-      // Every young witch/wizard starts with a basic wooden wand (item 9)
-      // — unequipped in their inventory, not auto-equipped, same as every
-      // other starting item convention in this project.
-      // Every young witch/wizard also starts with a canteen (item 7).
-      inventory: [WAND_ITEM, CANTEEN_ITEM],
+      // Every young witch/wizard also starts with a canteen (item 7) —
+      // unequipped in their inventory, like every other consumable.
+      inventory: [CANTEEN_ITEM],
+      // A later follow-up ask: the starting wand is now already equipped
+      // (not sitting unequipped in the inventory) — a wizard shows up
+      // ready to cast, not needing to open their inventory and equip it
+      // first.
+      equipment: { weapon: WAND_ITEM },
     });
 
     return {

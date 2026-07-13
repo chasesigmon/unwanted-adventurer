@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS players (
     'Floro Armorer', 'Floro Pet Salesman', 'Floro Jobs Office',
     'Grimoak Grounds', 'Grimoak Entrance Hall', 'Great Hall',
     'Thistledown Common Room', 'Duskwing Common Room', 'Emberclaw Common Room',
-    'Starfall Common Room', 'Elemental Casting Classroom', 'Defense Classroom', 'Summoning Classroom',
+    'Starfall Common Room', 'Specialization', 'Defense Classroom', 'Summoning Classroom',
     'Utility Classroom', 'Offense Classroom', 'Caverna Secretissima',
     'Thistledown Dorms', 'Duskwing Dorms', 'Emberclaw Dorms', 'Starfall Dorms'
   )),

@@ -41,10 +41,14 @@ export const LUCEM_BOOK_MAP = 'Utility Classroom' as const;
 export const LUCEM_BOOK_POSITION = { row: 6, col: CLASSROOM_MID_COL };
 export const LUCEM_BOOK_LABEL = 'Secrets of the light';
 
-// The Elemental Casting classroom's own spellbook podium, teaching irrigo
-// — same shape/position convention as the Utilization one above.
-export const IRRIGO_BOOK_MAP = 'Elemental Casting Classroom' as const;
-export const IRRIGO_BOOK_POSITION = { row: 6, col: CLASSROOM_MID_COL };
+// A later follow-up ask moved irrigo's own podium out of the Elemental
+// Casting Classroom (which stopped being a classroom at all — see
+// shared/constants.ts's CLASSROOM_MAPS) and into Utility Classroom
+// instead, alongside lucem/celeritas/resera — offset the OTHER way
+// (col - 3, not + 9 past resera) so it doesn't crowd the room's own east
+// wall.
+export const IRRIGO_BOOK_MAP = 'Utility Classroom' as const;
+export const IRRIGO_BOOK_POSITION = { row: LUCEM_BOOK_POSITION.row, col: LUCEM_BOOK_POSITION.col - 3 };
 export const IRRIGO_BOOK_LABEL = 'Secrets of the liquid';
 
 // A second podium standing right next to Utilization's own lucem one (a

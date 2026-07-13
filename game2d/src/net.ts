@@ -807,6 +807,20 @@ export class NetworkManager extends EventTarget {
     });
   }
 
+  // A bench (a follow-up ask) — see game.gateway.ts's handleRestOnBench.
+  restOnBench(target: TileTargetPayload): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('restOnBench', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
   // No ack — purely cosmetic, same as punch.
   chat(message: string): void {
     this.socket?.emit('chat', message);

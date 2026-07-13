@@ -95,6 +95,19 @@ export const CROW_TEXTURE_KEY = 'crow';
 export const FIREPLACE_MANTLE_TEXTURE_KEY = 'fireplace-mantle';
 export const FIREPLACE_FLAME_TEXTURE_KEY = 'fireplace-flame';
 export const STAIRS_TEXTURE_KEY = 'stairs';
+// Classroom door symbols (a follow-up ask) — a small icon above each
+// classroom's own door in the Entrance Hall, showing what subject it
+// teaches at a glance.
+export const CLASSROOM_SYMBOL_TEXTURE_KEYS: Partial<Record<MapName, string>> = {
+  // Still the flame icon (a later follow-up ask renamed the room itself
+  // to "Specialization" and dropped it from CLASSROOM_MAPS, but a door
+  // symbol is purely decorative — no reason to redraw it).
+  Specialization: 'classroom-symbol-elemental',
+  'Defense Classroom': 'classroom-symbol-defense',
+  'Summoning Classroom': 'classroom-symbol-summoning',
+  'Utility Classroom': 'classroom-symbol-utility',
+  'Offense Classroom': 'classroom-symbol-offense',
+};
 // A classroom teacher's desk (a follow-up ask) — furniture, not a
 // separate server entity; positioned from server/worlds/teachers.ts's
 // deskPositionFor, always one tile in front of its teacher.

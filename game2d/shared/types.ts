@@ -289,6 +289,18 @@ export interface TeacherSnapshot {
   // and a button to start it, instead of the plain classroom-teacher
   // tooltip.
   questId?: string;
+  // Which way this teacher's own sprite faces — absent means 'down'
+  // (every existing teacher, standing at the front of their own room
+  // facing the door/players). A follow-up ask's map-quest teacher stands
+  // against the Entrance Hall's own west wall facing the room's center
+  // ('right'/east) instead.
+  facing?: 'down' | 'up' | 'left' | 'right';
+  // The Specialization room's own teacher (a follow-up ask) — opens a
+  // level-gated dialogue instead of the ordinary quest offer/classroom
+  // tooltip: "Return to me when you are level 10" below that, "choose
+  // your path" (with choices TBD) at/above it. No quest, no persisted
+  // state at all — just a live myProfile.level check every time.
+  specializationGate?: boolean;
 }
 
 // Murus lapideus (a later follow-up ask) — a temporary, defensive summon
@@ -432,7 +444,8 @@ export interface ReadLucemBookAck {
   message?: string;
 }
 
-// The Elemental Casting classroom's own podium, teaching irrigo — same
+// Utility Classroom's own 4th podium, teaching irrigo (moved there from
+// the old Elemental Casting Classroom — a later follow-up ask) — same
 // shape as ReadLucemBookAck.
 export interface ReadIrrigoBookAck {
   ok: boolean;
@@ -682,7 +695,8 @@ export interface ClientToServerEvents {
   // per click of learning lucem, gated by a 2-world-tick cooldown; see
   // game.gateway.ts's handleReadLucemBook.
   readLucemBook: (ack: (res: ReadLucemBookAck) => void) => void;
-  // The Elemental Casting classroom's own podium — same shape, teaching
+  // Utility Classroom's 4th podium (moved there from the old Elemental
+  // Casting Classroom — a later follow-up ask) — same shape, teaching
   // irrigo instead; see game.gateway.ts's handleReadIrrigoBook.
   readIrrigoBook: (ack: (res: ReadIrrigoBookAck) => void) => void;
   // Utilization's second podium — same shape again, teaching quick
@@ -760,6 +774,10 @@ export interface ClientToServerEvents {
   // A Dorms bed (a later follow-up ask) — targets a specific bed tile;
   // see game.gateway.ts's handleSleepInBed.
   sleepInBed: (payload: TileTargetPayload, ack: (res: { ok: boolean; message?: string }) => void) => void;
+  // A bench (a follow-up ask) — same targeted-tile shape as sleepInBed
+  // above, resting (with its own near-a-bench bonus) instead of sleeping;
+  // see game.gateway.ts's handleRestOnBench.
+  restOnBench: (payload: TileTargetPayload, ack: (res: { ok: boolean; message?: string }) => void) => void;
   // Drink/pour/irrigo (items 7 & 8's follow-up asks) — all take the
   // targeted inventory item's index (see WorldScene's targetItemIndex).
   drinkItem: (itemIndex: number, ack: (res: CanteenActionAck) => void) => void;

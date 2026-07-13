@@ -118,6 +118,18 @@ function floroShopDoorExits(): MapExit[] {
 // all the way down to a literal 1/3 (60) would leave the moat with
 // nowhere to sit outside the castle's own footprint.
 const GRIMOAK_GROUNDS_SIZE = 80;
+// Extended 25% wider to the right (a follow-up ask) — the castle/moat/
+// gate below are all positioned from CASTLE_DOOR_ON_GROUNDS's own fixed
+// col (40) and fixed offsets from it, not from this size constant, so
+// widening only the COLS here leaves every one of them exactly where
+// they already are; the new 20-tile strip (cols 80-99) is just empty
+// ground to their east for the new wild skeleton/goblin populations
+// (see server/monsters/monster.ts) to roam.
+export const GRIMOAK_GROUNDS_COLS = Math.round(GRIMOAK_GROUNDS_SIZE * 1.25);
+// Where the new 25%-wider strip actually starts (col 80) — the new wild
+// skeleton/goblin populations (server/monsters/monster.ts) only spawn at
+// or past this column.
+export const GRIMOAK_GROUNDS_EXTENSION_MIN_COL = GRIMOAK_GROUNDS_SIZE;
 // Centered horizontally; positioned to leave enough headroom north of the
 // castle (and south of it, for the moat + bridge + a spawn point OUTSIDE
 // the moat) — see GRIMOAK_GROUNDS_SPAWN/startingPositionFor below.
@@ -312,7 +324,7 @@ const GREAT_HALL_MID_ROW = Math.floor(GREAT_HALL_ROWS / 2);
 // instead (a follow-up ask: "only the classrooms should be to the
 // north") — see ENTRANCE_EAST_DOORS/ENTRANCE_WEST_DOORS below.
 const ENTRANCE_NORTH_DOORS: Array<{ col: number; name: MapName }> = [
-  { col: 9, name: 'Elemental Casting Classroom' },
+  { col: 9, name: 'Specialization' },
   { col: 18, name: 'Defense Classroom' },
   { col: 27, name: 'Summoning Classroom' },
   { col: 35, name: 'Utility Classroom' },
@@ -517,12 +529,14 @@ const EMBERCLAW_DORMS = dormsFor('Emberclaw Dorms', EMBERCLAW_COMMON_ROOM);
 const STARFALL_DORMS = dormsFor('Starfall Dorms', STARFALL_COMMON_ROOM);
 const DUSKWING_DORMS = dormsFor('Duskwing Dorms', DUSKWING_COMMON_ROOM);
 
-// The 5 classrooms named in the request — Elemental Casting, Defense,
+// The 5 rooms named in the original request — Elemental Casting, Defense,
 // Summoning, Utility (renamed from Utilization — a follow-up ask),
 // Offense, each with an explicit "Classroom" suffix (another follow-up
-// ask) — the only classrooms in the castle now, all connected directly
-// to the Entrance Hall.
-const ELEMENTAL_CASTING = classroomOffEntranceHall('Elemental Casting Classroom');
+// ask), all connected directly to the Entrance Hall. Elemental Casting
+// stopped being a classroom at all in a later follow-up ask (renamed to
+// "Specialization," dropped from CLASSROOM_MAPS) — same classroomOffEntranceHall
+// shape/size, just no longer counted among "the classrooms."
+const SPECIALIZATION = classroomOffEntranceHall('Specialization');
 const DEFENSE = classroomOffEntranceHall('Defense Classroom');
 const SUMMONING = classroomOffEntranceHall('Summoning Classroom');
 const UTILIZATION = classroomOffEntranceHall('Utility Classroom');
@@ -677,7 +691,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Grimoak Grounds': {
     name: 'Grimoak Grounds',
     rows: GRIMOAK_GROUNDS_SIZE,
-    cols: GRIMOAK_GROUNDS_SIZE,
+    cols: GRIMOAK_GROUNDS_COLS,
     terrain: 'grass',
     exits: [
       {
@@ -700,7 +714,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Duskwing Dorms': DUSKWING_DORMS,
   'Emberclaw Dorms': EMBERCLAW_DORMS,
   'Starfall Dorms': STARFALL_DORMS,
-  'Elemental Casting Classroom': ELEMENTAL_CASTING,
+  Specialization: SPECIALIZATION,
   'Defense Classroom': DEFENSE,
   'Summoning Classroom': SUMMONING,
   'Utility Classroom': UTILIZATION,

@@ -115,13 +115,24 @@ for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
     if (!skillName) return;
     const sourceIndexRaw = e.dataTransfer?.getData(ACTION_SLOT_SOURCE_MIME);
     const sourceIndex = sourceIndexRaw ? Number(sourceIndexRaw) : null;
+    // A follow-up ask: dropping one filled slot onto another filled slot
+    // should SWAP them, not silently delete whatever was already sitting
+    // in the destination — captured before assignActionSlot below
+    // overwrites it.
+    const previousInDest = actionBarSkills[i];
 
     assignActionSlot(i, skillName);
     // Dragging in from ANOTHER slot is a move, not a copy — clear
-    // wherever it came from (unless dropped back onto itself).
+    // wherever it came from (unless dropped back onto itself), putting
+    // whatever WAS in the destination slot there instead of just
+    // discarding it.
     if (sourceIndex !== null && sourceIndex !== i && actionBarSkills[sourceIndex] === skillName) {
-      actionBarSkills[sourceIndex] = null;
-      renderActionSlot(sourceIndex);
+      if (previousInDest && previousInDest !== skillName) {
+        assignActionSlot(sourceIndex, previousInDest);
+      } else {
+        actionBarSkills[sourceIndex] = null;
+        renderActionSlot(sourceIndex);
+      }
     }
     saveActionBar();
   });

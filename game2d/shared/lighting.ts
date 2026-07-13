@@ -54,6 +54,11 @@ export const SHOP_REACH_TILES = 2;
 // handleSleepInBed always agree on the figure.
 export const BED_REACH_TILES = 3;
 
+// "When in range (2 feet)" (a follow-up ask) — shared so the client's own
+// pre-flight reach check (before opening the rest-confirmation modal) and
+// the server's re-validation in handleRestOnBench always agree.
+export const BENCH_REACH_TILES = 2;
+
 export const TORCH_ITEM = 'torch';
 
 // A castle-sized fixture needs a much bigger reach than a town lamp — "a

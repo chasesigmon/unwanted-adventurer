@@ -18,9 +18,13 @@ export interface NewPlayerInput {
   col: number;
   skills: Record<string, number>;
   // Optional — a brand new character starts with an empty inventory
-  // unless the caller gives it one (see auth.service.ts's createCharacter,
-  // which hands every new human wizard a starting wand).
+  // unless the caller gives it one (see auth.service.ts's createCharacter).
   inventory?: string[];
+  // Optional — a brand new character starts with nothing equipped unless
+  // the caller gives it something (see auth.service.ts's createCharacter,
+  // which hands every new human wizard an already-equipped starting
+  // wand).
+  equipment?: Record<string, string>;
 }
 
 export interface PlayerPosition {
