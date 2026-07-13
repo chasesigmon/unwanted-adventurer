@@ -1,6 +1,6 @@
 import type { MapName } from '../../shared/constants.js';
 import type { TeacherSnapshot } from '../../shared/types.js';
-import { LEARN_SPELLS_QUEST_ID } from '../../shared/quests.js';
+import { LEARN_SPELLS_QUEST_ID, KILL_IMPS_QUEST_ID, GATHER_MANA_CRYSTALS_QUEST_ID } from '../../shared/quests.js';
 
 // Static, permanent classroom occupants (a follow-up ask: "Add teacher
 // NPCs to each classroom and they are behind a desk with collision for
@@ -15,9 +15,17 @@ export const TEACHERS: TeacherSnapshot[] = [
   // fireplaces," facing south. The Entrance Hall's own top fireplaces sit
   // at row 8, cols 14 and 38 (see shared/lighting.ts's
   // fireplacePositionsFor) — she stands at their shared row, the midpoint
-  // column between them, with no desk (hasDesk: false) since she's not a
-  // classroom occupant. Offers the Learn Spells quest on click.
-  { id: 'headmistress', name: 'Headmistress Elowen', map: 'Grimoak Entrance Hall', row: 8, col: 26, hasDesk: false, questId: LEARN_SPELLS_QUEST_ID },
+  // column between them. A later follow-up ask gave her a desk after all
+  // (hasDesk defaults to true when absent, same as every classroom
+  // teacher). Offers the Learn Spells quest on click.
+  { id: 'headmistress', name: 'Headmistress Elowen', map: 'Grimoak Entrance Hall', row: 8, col: 26, questId: LEARN_SPELLS_QUEST_ID },
+  // Two more quest-givers flanking her (a later follow-up ask: "add
+  // another teacher left of Elowen"/"right of Elowen"), same row, each
+  // a comfortable 6 columns clear of both her own desk footprint and the
+  // Entrance Hall's own fireplaces (cols 14/38) so none of the 3 desks
+  // or the fireplace collision boxes ever touch.
+  { id: 'imp-hunter-teacher', name: 'Professor Bramwell', map: 'Grimoak Entrance Hall', row: 8, col: 20, questId: KILL_IMPS_QUEST_ID },
+  { id: 'mana-crystal-teacher', name: 'Professor Thistlewood', map: 'Grimoak Entrance Hall', row: 8, col: 32, questId: GATHER_MANA_CRYSTALS_QUEST_ID },
   { id: 'elemental-casting-teacher', name: 'Professor Ashgrove', map: 'Elemental Casting Classroom', row: 2, col: 9 },
   { id: 'defense-teacher', name: 'Professor Vantor', map: 'Defense Classroom', row: 2, col: 9 },
   { id: 'summoning-teacher', name: 'Professor Nyx', map: 'Summoning Classroom', row: 2, col: 9 },

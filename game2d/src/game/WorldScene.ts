@@ -76,6 +76,7 @@ import {
   greatHallStagePlatform,
 } from '../../shared/lighting.js';
 import { MONSTER_KINDS, FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS, COMMON_ROOM_MAPS, DORM_MAPS } from '../../shared/constants.js';
+import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
 import {
   LUCEM_BOOK_MAP,
@@ -206,7 +207,6 @@ import { openTargetInfoModal } from '../ui/targetInfoModal.js';
 import { notifyMapChanged } from '../ui/mapModal.js';
 import { openNpcDialogueModal } from '../ui/npcDialogueModal.js';
 import { hideTargetPanel, updateTargetPanel, updateLockTargetPanel } from '../ui/targetPanel.js';
-import { questDefinition } from '../../shared/quests.js';
 
 const autopilotStatusEl = document.getElementById('autopilot-status') as HTMLDivElement;
 
@@ -506,11 +506,9 @@ export class WorldScene extends Phaser.Scene {
       else if (pointer.leftButtonDown()) this.handleLeftClick(pointer);
     });
     // A sword cursor over an enemy — monsters specifically, not other
-    // players or the friendly training dummy. Individual sprites
-    // (vendors, corpses) already get Phaser's own pointer cursor via
-    // `useHandCursor`; this is a manual check since monster sprites
-    // aren't `setInteractive` themselves (see findTargetableAt's own
-    // bounds-based hit-testing).
+    // players or the friendly training dummy. Monster sprites aren't
+    // `setInteractive` themselves (see findTargetableAt's own
+    // bounds-based hit-testing), hence the manual check here.
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
       if (isInputCaptured()) {
         this.game.canvas.style.cursor = '';
@@ -550,6 +548,16 @@ export class WorldScene extends Phaser.Scene {
         this.doorSprites.some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY)) ||
         Boolean(this.chestSprite?.getBounds().contains(pointer.worldX, pointer.worldY));
       const overBed = this.bedSprites.some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
+      // A follow-up bug fix: "when the cursor hovers over the Great Hall
+      // shopkeeper, make it a pointer" — vendors and corpses use
+      // `useHandCursor` on their own sprites, but that never actually
+      // showed either, for the exact same reason teachers' own
+      // useHandCursor didn't (see the comment above) — this handler fires
+      // on every mouse move and unconditionally overwrote the cursor
+      // Phaser's own pointerover had just set. Both need to be taught to
+      // this handler too, same as teachers were.
+      const overVendor = [...this.vendorSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
+      const overCorpse = [...this.corpseSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
       this.game.canvas.style.cursor = overEnemy
         ? SWORD_CURSOR
         : overLockable
@@ -562,7 +570,9 @@ export class WorldScene extends Phaser.Scene {
                 ? 'pointer'
                 : overTeacher
                   ? 'help'
-                  : '';
+                  : overVendor || overCorpse
+                    ? 'pointer'
+                    : '';
     });
 
     // A window resize can cross the "map fits in the viewport" threshold
@@ -2404,8 +2414,7 @@ export class WorldScene extends Phaser.Scene {
             logCombatMessage(`You're too far away to talk to ${t.name}.`);
             return;
           }
-          const quest = questDefinition(t.questId);
-          if (quest) openNpcDialogueModal(t.name, quest.description, quest.id);
+          openNpcDialogueModal(t.name, t.questId);
           return;
         }
         // A fixed, generic line (a later follow-up ask dropped the
@@ -2563,10 +2572,49 @@ export class WorldScene extends Phaser.Scene {
       });
   }
 
+  // A small wind-streak effect while walking with celeritas active (a
+  // follow-up ask) — a few short lines trailing behind the direction of
+  // travel, drifting further back and fading out over the walk's own
+  // duration. Plain Graphics rather than a texture asset, same "Graphics
+  // for an ephemeral visual effect" treatment the fireplace flame/wand
+  // glow already use.
+  private spawnWindEffect(direction: Direction): void {
+    const { dr, dc } = DIRECTION_DELTAS[direction];
+    const behindX = -dc;
+    const behindY = -dr;
+    const duration = this.effectiveMoveCooldownMs();
+    for (let i = 0; i < 3; i++) {
+      // Perpendicular spread so the 3 streaks fan out a little instead of
+      // stacking exactly on top of each other.
+      const spread = (i - 1) * 6;
+      const perpX = -behindY * spread;
+      const perpY = behindX * spread;
+      const startX = this.player.x + behindX * (TILE_SIZE * 0.3) + perpX;
+      const startY = this.player.y + behindY * (TILE_SIZE * 0.3) + perpY - 6;
+      const line = this.add.graphics().setDepth(1.1);
+      line.lineStyle(2, 0xbfe6ff, 0.8);
+      line.beginPath();
+      line.moveTo(0, 0);
+      line.lineTo(behindX * 10, behindY * 10);
+      line.strokePath();
+      line.setPosition(startX, startY);
+      this.tweens.add({
+        targets: line,
+        x: startX + behindX * TILE_SIZE * 0.6,
+        y: startY + behindY * TILE_SIZE * 0.6,
+        alpha: 0,
+        duration,
+        delay: i * 40,
+        onComplete: () => line.destroy(),
+      });
+    }
+  }
+
   private attemptMove(direction: Direction): void {
     this.facing = facingForDirection(direction);
     this.player.play(walkAnimKey(this.displayKind(), this.facing), true);
     this.isMoving = true;
+    if (myProfile?.celeritasActive) this.spawnWindEffect(direction);
 
     this.network
       .move(direction)

@@ -11,6 +11,8 @@ const statusToggle = document.getElementById('status-toggle') as HTMLButtonEleme
 const statusLevel = document.getElementById('status-level') as HTMLSpanElement;
 const statusHp = document.getElementById('status-hp') as HTMLSpanElement;
 const statusMana = document.getElementById('status-mana') as HTMLSpanElement;
+const statusHunger = document.getElementById('status-hunger') as HTMLSpanElement;
+const statusThirst = document.getElementById('status-thirst') as HTMLSpanElement;
 const statusExp = document.getElementById('status-exp') as HTMLSpanElement;
 const statusGold = document.getElementById('status-gold') as HTMLSpanElement;
 const worldLabel = document.getElementById('world-label') as HTMLDivElement;
@@ -52,6 +54,8 @@ export function updateStatusBar(): void {
   statusLevel.textContent = `Lv ${myProfile.level}`;
   statusHp.textContent = `HP ${myProfile.hp}/${myProfile.maxHp}`;
   statusMana.textContent = `MP ${myProfile.mana}/${myProfile.maxMana}`;
+  statusHunger.textContent = `Hunger ${myProfile.hunger ?? 100}/100`;
+  statusThirst.textContent = `Thirst ${myProfile.thirst ?? 100}/100`;
   statusExp.textContent = `EXP ${myProfile.exp}`;
   statusGold.textContent = `Gold ${myProfile.gold}`;
   updateSleepOverlay();

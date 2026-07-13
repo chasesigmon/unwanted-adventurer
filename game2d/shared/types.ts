@@ -1,6 +1,7 @@
 import type { Server, Socket } from 'socket.io';
 import type { Gender, HairColor, MapName, Race, SkinTone, Direction, MonsterKind, MonsterClass } from './constants.js';
 import type { EquipmentSlot } from './equipment.js';
+import type { QuestProgress } from './quests.js';
 
 // Never persisted across sessions (a fresh connection always starts
 // 'awake') — matches the text game's own restState, which the same
@@ -145,11 +146,18 @@ export interface PlayerSnapshot {
   // copies OTHER players in the room see).
   hunger?: number;
   thirst?: number;
-  // Quest id -> completed objective ids (see shared/quests.ts for the
-  // quest/objective definitions themselves) — a quest id present here
-  // (even with an empty array) means it's been started. Optional for the
-  // same reason as hunger/thirst above.
-  quests?: Record<string, string[]>;
+  // Quest id -> progress (see shared/quests.ts's own QuestProgress and
+  // its quest/objective definitions) — a quest id present here (even with
+  // an empty object) means it's been started. Optional for the same
+  // reason as hunger/thirst above.
+  quests?: Record<string, QuestProgress>;
+  // The Learn Spells quest's own completion reward (a follow-up ask) — a
+  // temporary +10-percentage-point bonus to every spell's own skill-
+  // growth roll (see game.gateway.ts's maybeGrowSpellSkill), same
+  // "absolute epoch-ms expiry, optional, owning-client-only" shape as
+  // wandLitUntil/celeritasActiveUntil. Never persisted (resets on
+  // reconnect, same tradeoff as those).
+  enhancedLearningUntil?: number | null;
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
@@ -777,6 +785,11 @@ export interface ClientToServerEvents {
   // game.gateway.ts's handleStartQuest. A no-op (still ok: true) if
   // already started.
   startQuest: (payload: { questId: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
+  // Turning a finished quest back in to its own quest-giver (a follow-up
+  // ask: "they should have to click to complete the quest") — see
+  // game.gateway.ts's handleCompleteQuest. Rejected if any objective
+  // isn't actually done yet, or if it's already been turned in.
+  completeQuest: (payload: { questId: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
   // ===== TESTING OVERRIDE — REMOVE AFTER TESTING ===== "add a 'cheat'
   // hotkey... pressing it should recover my mana to 100%. This will go
   // away after testing." Bound to the '~' key client-side (see
@@ -886,7 +899,9 @@ export interface SocketData {
   // player doc on connect.
   hunger: number;
   thirst: number;
-  quests: Record<string, string[]>;
+  quests: Record<string, QuestProgress>;
+  // Never persisted — see PlayerSnapshot's own doc comment.
+  enhancedLearningUntil: number | null;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

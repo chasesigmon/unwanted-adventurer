@@ -1,45 +1,79 @@
-// A stationary NPC's own dialogue modal (a follow-up ask: the
-// Headmistress's greeting + a "Quest: <title>" button beneath it) —
-// generic over any future quest-giver, not Headmistress-specific.
+// A stationary quest-giver's own dialogue modal — generic over any
+// quest-giver (the Headmistress and the two follow-up-ask teachers
+// flanking her), not hardcoded to one. Shows a different line + button
+// depending on the player's own progress: the opening greeting with a
+// "Quest: <title>" button (not started), the same greeting with no
+// button (started, still working on it), the quest's own "ready" line
+// with a "Complete Quest" button (every objective done, not yet turned
+// in), or its "completed" line with no button (already turned in).
 import { myProfile, network, setMyProfile } from '../state.js';
-import { QUESTS } from '../../shared/quests.js';
+import { QUESTS, allObjectivesDone } from '../../shared/quests.js';
 import { logCombatMessage } from './log.js';
 import { showCenterToast } from './toast.js';
 import { closeAllModals, npcDialogueActions, npcDialogueModal, npcDialogueName, npcDialogueText, updateInputCaptured } from './modalCore.js';
 
-export function openNpcDialogueModal(name: string, message: string, questId?: string): void {
+export function openNpcDialogueModal(name: string, questId: string): void {
+  const quest = QUESTS[questId];
+  if (!quest) return;
+
   closeAllModals();
   npcDialogueName.textContent = name;
-  npcDialogueText.textContent = message;
   npcDialogueActions.innerHTML = '';
 
-  if (questId) {
-    const quest = QUESTS[questId];
-    const alreadyStarted = Boolean(myProfile?.quests?.[questId]);
-    if (quest && !alreadyStarted) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.textContent = `Quest: ${quest.title}`;
-      btn.addEventListener('click', () => {
-        btn.disabled = true;
-        void network
-          .startQuest(questId)
-          .then((ack) => {
-            if (!ack.ok) {
-              btn.disabled = false;
-              if (ack.message) logCombatMessage(ack.message);
-              return;
-            }
-            if (myProfile) setMyProfile({ ...myProfile, quests: { ...myProfile.quests, [questId]: [] } });
-            if (ack.message) showCenterToast(ack.message);
-            npcDialogueActions.innerHTML = '';
-          })
-          .catch(() => {
+  const progress = myProfile?.quests?.[questId];
+
+  if (!progress) {
+    npcDialogueText.textContent = quest.description;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = `Quest: ${quest.title}`;
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      void network
+        .startQuest(questId)
+        .then((ack) => {
+          if (!ack.ok) {
             btn.disabled = false;
-          });
-      });
-      npcDialogueActions.appendChild(btn);
-    }
+            if (ack.message) logCombatMessage(ack.message);
+            return;
+          }
+          if (myProfile) setMyProfile({ ...myProfile, quests: { ...myProfile.quests, [questId]: {} } });
+          if (ack.message) showCenterToast(ack.message);
+          npcDialogueActions.innerHTML = '';
+        })
+        .catch(() => {
+          btn.disabled = false;
+        });
+    });
+    npcDialogueActions.appendChild(btn);
+  } else if (progress.completedAt) {
+    npcDialogueText.textContent = quest.completedMessage;
+  } else if (allObjectivesDone(quest, progress, myProfile?.skills ?? {}, myProfile?.inventory ?? [])) {
+    npcDialogueText.textContent = quest.readyMessage;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'Complete Quest';
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      void network
+        .completeQuest(questId)
+        .then((ack) => {
+          if (!ack.ok) {
+            btn.disabled = false;
+            if (ack.message) logCombatMessage(ack.message);
+            return;
+          }
+          if (ack.message) showCenterToast(ack.message);
+          npcDialogueText.textContent = quest.completedMessage;
+          npcDialogueActions.innerHTML = '';
+        })
+        .catch(() => {
+          btn.disabled = false;
+        });
+    });
+    npcDialogueActions.appendChild(btn);
+  } else {
+    npcDialogueText.textContent = quest.description;
   }
 
   npcDialogueModal.hidden = false;

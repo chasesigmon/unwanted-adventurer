@@ -26,9 +26,13 @@ export const NPCS: NpcSnapshot[] = [
   // that won't fight back or "run out." Standing in the Entrance Hall,
   // in the same column as its two EAST fireplaces (col 38 — see
   // fireplacePositionsFor's own entrance-hall cols), centered between
-  // their rows (8 and rows-9=27, midpoint 17.5) — "in the middle between
-  // the two fireplaces on the right."
-  ...[14, 18, 22].map((row, i) => ({
+  // their rows (8 and rows-9=25 at the Entrance Hall's current 34-row
+  // size, midpoint 16.5) — "in the middle between the two fireplaces on
+  // the right." A later follow-up ask ("shift the training skeletons up
+  // slightly, they are not directly in the middle") nudged this set from
+  // [14, 18, 22] (centered on 18) to [12, 16, 20] (centered on 16, much
+  // closer to the true 16.5 midpoint).
+  ...[12, 16, 20].map((row, i) => ({
     id: `entrance-hall-training-skeleton-${i + 1}`,
     race: 'skeleton' as const,
     map: 'Grimoak Entrance Hall' as const,

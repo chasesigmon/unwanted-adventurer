@@ -660,8 +660,8 @@ export class NetworkManager extends EventTarget {
     });
   }
 
-  // The Headmistress's own "Quest: Learn spells" button (a follow-up ask)
-  // — see game.gateway.ts's handleStartQuest.
+  // A quest-giver's own "Quest: <title>" button (a follow-up ask) — see
+  // game.gateway.ts's handleStartQuest.
   startQuest(questId: string): Promise<{ ok: boolean; message?: string }> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
@@ -669,6 +669,21 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('startQuest', { questId }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // The "Complete Quest" button (a follow-up ask) — see
+  // game.gateway.ts's handleCompleteQuest.
+  completeQuest(questId: string): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('completeQuest', { questId }, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

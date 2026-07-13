@@ -1,37 +1,86 @@
-import { CLASSROOM_MAPS } from './constants.js';
-import type { MapName } from './constants.js';
+import {
+  IRRIGO_SKILL,
+  SCUTUM_SKILL,
+  MURUS_LAPIDEUS_SKILL,
+  LUCEM_SKILL,
+  CELERITAS_SKILL,
+  RESERA_SKILL,
+  AUGUE_SKILL,
+  STUPEFACIUNT_SKILL,
+  EXARME_SKILL,
+} from './skills.js';
 
 // Quest definitions live entirely in code (not the DB) — a player's own
-// `quests` field (see shared/types.ts's PlayerSnapshot) only ever stores
-// which quest ids have been started and which of ITS objective ids are
-// done; the title/description/objective list itself is always looked up
-// from here, same "content in code, progress in the DB" split the
-// vendor/teacher NPCs already use.
+// `quests` field (see shared/types.ts's PlayerSnapshot/QuestProgress)
+// only ever stores which quests have been started, per-objective kill
+// counters (killMonster objectives only — everything else is checked
+// live), and when a quest was actually turned in; the title/description/
+// objective list itself is always looked up from here, same "content in
+// code, progress in the DB" split the vendor/teacher NPCs already use.
+export type QuestObjectiveKind = 'learnSkill' | 'killMonster' | 'haveItem';
+
 export interface QuestObjective {
   id: string;
-  // "Visit the Elemental Casting Classroom" — shown struck through once
-  // complete, plain otherwise (see src/ui/questLog.ts).
   label: string;
-  // The classroom map that marks this objective complete just by being
-  // walked into (see game.gateway.ts's handleMove) — every objective
-  // today is "visit this classroom," but kept separate from `label` in
-  // case a future objective isn't map-triggered at all.
-  map: MapName;
+  kind: QuestObjectiveKind;
+  // learnSkill only — the skill name that must be present in the
+  // player's own skills map (see shared/skills.ts).
+  skill?: string;
+  // killMonster only — the monster kind to count kills of.
+  monsterKind?: string;
+  // haveItem only — the inventory item label to count.
+  itemLabel?: string;
+  // killMonster/haveItem only — how many are needed. Always 1 if absent.
+  count?: number;
 }
 
 export interface QuestDefinition {
   id: string;
   title: string;
+  // The quest-giver's own opening line, shown before the quest is started
+  // (with a "Quest: <title>" button beneath it) and again (unchanged)
+  // while it's still in progress.
   description: string;
+  // Shown instead of `description`, with a "Complete Quest" button, once
+  // every objective is done but the quest hasn't been turned in yet (a
+  // follow-up ask: "add a message... to return to her once they have
+  // finished the quest").
+  readyMessage: string;
+  // Shown instead of either of the above once the quest has actually
+  // been turned in (completedAt is set) — no button, just flavor.
+  completedMessage: string;
   objectives: QuestObjective[];
+  rewardExp: number;
 }
 
-// The Headmistress's own opening quest (item 2's follow-up ask) — "visit
-// all of the classrooms and begin learning magic," one objective per
-// classroom. Deliberately the only quest that exists today; the
-// Headmistress's own dialogue says "more details to come" on purpose —
-// no completion reward is defined yet.
+// Quest id -> completed objective ids/counts, per player (see
+// shared/types.ts's PlayerSnapshot.quests) — a quest id present as a key
+// (even with an empty object) means it's been started.
+export interface QuestProgress {
+  // killMonster objectives only — objective id -> kills counted so far.
+  // learnSkill/haveItem objectives are always checked live instead (see
+  // isObjectiveDone) since they're facts about current state, not events.
+  killCounts?: Record<string, number>;
+  // Epoch ms once the quest was actually turned in (rewards granted) —
+  // absent means every objective could be done and it'd still just be
+  // sitting there waiting on a return trip to the quest-giver.
+  completedAt?: number;
+}
+
 export const LEARN_SPELLS_QUEST_ID = 'learn-spells';
+export const KILL_IMPS_QUEST_ID = 'kill-imps';
+export const GATHER_MANA_CRYSTALS_QUEST_ID = 'gather-mana-crystals';
+
+// Which spells live behind which classroom's own podium(s) (see
+// shared/spells.ts's own *_BOOK_MAP constants) — Utility and Offense each
+// have 3 podiums, every other classroom has exactly 1.
+const CLASSROOM_SPELLS: Record<string, string[]> = {
+  'Elemental Casting Classroom': [IRRIGO_SKILL],
+  'Defense Classroom': [SCUTUM_SKILL],
+  'Summoning Classroom': [MURUS_LAPIDEUS_SKILL],
+  'Utility Classroom': [LUCEM_SKILL, CELERITAS_SKILL, RESERA_SKILL],
+  'Offense Classroom': [AUGUE_SKILL, STUPEFACIUNT_SKILL, EXARME_SKILL],
+};
 
 export const QUESTS: Record<string, QuestDefinition> = {
   [LEARN_SPELLS_QUEST_ID]: {
@@ -39,14 +88,77 @@ export const QUESTS: Record<string, QuestDefinition> = {
     title: 'Learn Spells',
     description:
       "Welcome to Grimoak Academy! To start your journey I would like for you to visit all of the classrooms and begin learning magic! It's your pick for where you start, the classrooms are located behind me. Good luck!",
-    objectives: (CLASSROOM_MAPS as readonly MapName[]).map((map) => ({
-      id: map,
-      label: `Visit the ${map}`,
-      map,
-    })),
+    readyMessage:
+      "You've learned every spell taught in the classrooms behind me — wonderful work! Click below when you're ready to complete your training.",
+    completedMessage: "Go on now, and put what you've learned to good use.",
+    // A later follow-up ask: not just "visit" each classroom anymore —
+    // one objective per spell taught there (learnSkill, checked live
+    // against the player's own skills), so a classroom with 3 podiums
+    // (Utility, Offense) needs all 3 learned, not just a walk-through.
+    objectives: Object.entries(CLASSROOM_SPELLS).flatMap(([classroomMap, skills]) =>
+      skills.map((skill) => ({
+        id: skill,
+        label: `Learn ${skill} (${classroomMap})`,
+        kind: 'learnSkill' as const,
+        skill,
+      }))
+    ),
+    rewardExp: 200,
+  },
+  [KILL_IMPS_QUEST_ID]: {
+    id: KILL_IMPS_QUEST_ID,
+    title: 'Imp Extermination',
+    description: 'I would like for you to go out and kill 5 imps. Return to me after.',
+    readyMessage: "You've thinned out the imps — well done! Click below when you're ready to complete this quest.",
+    completedMessage: 'Thank you for clearing out those imps.',
+    objectives: [{ id: 'kill-imps', label: 'Kill imps', kind: 'killMonster', monsterKind: 'imp', count: 5 }],
+    rewardExp: 100,
+  },
+  [GATHER_MANA_CRYSTALS_QUEST_ID]: {
+    id: GATHER_MANA_CRYSTALS_QUEST_ID,
+    title: 'Mana Crystal Delivery',
+    description: 'I would like for you to bring me 10 lesser mana crystals. Return to me after.',
+    readyMessage: "You've got enough lesser mana crystals — well done! Click below when you're ready to complete this quest.",
+    completedMessage: 'Thank you for the mana crystals.',
+    // haveItem — checked live against current inventory count, not
+    // tracked incrementally, since "the quest should check the player's
+    // inventory at any given time" (a follow-up ask) — a player could
+    // even start this quest already holding all 10.
+    objectives: [
+      { id: 'lesser-mana-crystals', label: 'Bring lesser mana crystals', kind: 'haveItem', itemLabel: 'lesser mana crystal', count: 10 },
+    ],
+    rewardExp: 150,
   },
 };
 
 export function questDefinition(questId: string): QuestDefinition | undefined {
   return QUESTS[questId];
+}
+
+// Whether a single objective is currently satisfied — the one place that
+// knows how to check each of the 3 objective kinds, shared by both server
+// (turn-in validation) and client (quest log progress/strikethrough).
+export function isObjectiveDone(
+  objective: QuestObjective,
+  progress: QuestProgress,
+  skills: Record<string, number>,
+  inventory: string[]
+): boolean {
+  if (objective.kind === 'learnSkill') return skills[objective.skill!] !== undefined;
+  if (objective.kind === 'haveItem') {
+    return inventory.filter((item) => item === objective.itemLabel).length >= (objective.count ?? 1);
+  }
+  return (progress.killCounts?.[objective.id] ?? 0) >= (objective.count ?? 1);
+}
+
+// "3/5", "10/10" — the quest log's own progress readout; learnSkill
+// objectives are just done/not-done (1/1), no meaningful partial count.
+export function objectiveCurrentCount(objective: QuestObjective, progress: QuestProgress, inventory: string[]): number {
+  if (objective.kind === 'haveItem') return inventory.filter((item) => item === objective.itemLabel).length;
+  if (objective.kind === 'killMonster') return progress.killCounts?.[objective.id] ?? 0;
+  return 0;
+}
+
+export function allObjectivesDone(quest: QuestDefinition, progress: QuestProgress, skills: Record<string, number>, inventory: string[]): boolean {
+  return quest.objectives.every((objective) => isObjectiveDone(objective, progress, skills, inventory));
 }

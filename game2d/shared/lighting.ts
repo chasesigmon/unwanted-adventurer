@@ -265,6 +265,16 @@ export function isBenchBlocked(mapName: MapName, row: number, col: number): bool
   return benchPositionsFor(mapName).some((p) => p.row === row && p.col === col);
 }
 
+// Whether (row, col) is immediately next to one of the room's own
+// benches (a follow-up ask: "if a player sits or rests on one of the
+// benches... offer an extra 10% gain") — a bench's own tile always
+// blocks movement (see isBenchBlocked above), so "sitting on" one
+// necessarily means standing right next to it, same Chebyshev-distance-1
+// adjacency isWithinRadius uses elsewhere for "close enough."
+export function isNearBench(mapName: MapName, row: number, col: number): boolean {
+  return benchPositionsFor(mapName).some((p) => Math.abs(row - p.row) <= 1 && Math.abs(col - p.col) <= 1);
+}
+
 // The Dorms rooms' own 5 beds (a later follow-up ask) — evenly spaced
 // along one row, well clear of the room's own door (see
 // dormsOffCommonRoom in shared/maps.ts).

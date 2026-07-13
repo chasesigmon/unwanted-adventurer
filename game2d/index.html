@@ -100,6 +100,8 @@
             <span id="status-level"></span>
             <span id="status-hp"></span>
             <span id="status-mana"></span>
+            <span id="status-hunger"></span>
+            <span id="status-thirst"></span>
             <span id="status-exp"></span>
             <span id="status-gold"></span>
           </div>
@@ -127,18 +129,18 @@
           <!-- Hidden until myProfile.mapUnlocked (a follow-up ask: the map
                is now found, not given — see server/game-gateway/game.gateway.ts's
                handleTakeChestItem) — see main.ts's own visibility toggle. -->
-          <button type="button" id="map-btn" class="corner-btn" title="Map (m)" hidden>🗺️</button>
-          <button type="button" id="equipment-btn" class="corner-btn" title="Equipment (e)">🗡️</button>
-          <button type="button" id="skills-btn" class="corner-btn" title="Skills (k)">⭐</button>
-          <button type="button" id="spells-btn" class="corner-btn" title="Spells (l)">🪄</button>
-          <button type="button" id="affects-btn" class="corner-btn" title="Affects (f)">✨</button>
+          <button type="button" id="map-btn" class="corner-btn" data-tooltip="Map (m)" hidden>🗺️</button>
+          <button type="button" id="equipment-btn" class="corner-btn" data-tooltip="Equipment (e)">🗡️</button>
+          <button type="button" id="skills-btn" class="corner-btn" data-tooltip="Skills (k)">⭐</button>
+          <button type="button" id="spells-btn" class="corner-btn" data-tooltip="Spells (l)">🪄</button>
+          <button type="button" id="affects-btn" class="corner-btn" data-tooltip="Affects (f)">✨</button>
           <!-- Hidden for now (a follow-up ask) — will come back as an
                unlockable feature later, same "hidden until unlocked"
                treatment as the map button above. -->
-          <button type="button" id="autopilot-btn" class="corner-btn" title="Prompt (p)" hidden>💬</button>
-          <button type="button" id="inventory-btn" class="corner-btn" title="Inventory (i)">🎒</button>
-          <button type="button" id="char-sheet-btn" class="corner-btn" title="Character sheet (c)">📜</button>
-          <button type="button" id="quest-log-btn" class="corner-btn" title="Quest log (q)">📋</button>
+          <button type="button" id="autopilot-btn" class="corner-btn" data-tooltip="Prompt (p)" hidden>💬</button>
+          <button type="button" id="inventory-btn" class="corner-btn" data-tooltip="Inventory (i)">🎒</button>
+          <button type="button" id="char-sheet-btn" class="corner-btn" data-tooltip="Character sheet (c)">📜</button>
+          <button type="button" id="quest-log-btn" class="corner-btn" data-tooltip="Quest log (q)">📋</button>
         </div>
 
         <div id="char-sheet-modal" class="modal" hidden>

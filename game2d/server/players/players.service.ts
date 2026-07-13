@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 import { Player } from './player.entity.js';
 import type { Gender, HairColor, MapName, Race, SkinTone } from '../../shared/constants.js';
+import type { QuestProgress } from '../../shared/quests.js';
 
 export interface NewPlayerInput {
   username: string;
@@ -56,7 +57,7 @@ export interface PlayerStatsUpdate {
   mapUnlocked?: boolean;
   hunger?: number;
   thirst?: number;
-  quests?: Record<string, string[]>;
+  quests?: Record<string, QuestProgress>;
 }
 
 @Injectable()

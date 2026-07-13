@@ -4,7 +4,13 @@
 // open rather than only when it's first opened, so the countdown
 // actually counts down instead of showing a stale snapshot.
 import { myProfile } from '../state.js';
+import { isNearBench } from '../../shared/lighting.js';
 import { affectsBody, affectsModal, registerModalOpenHandler, registerModalRefreshHandler } from './modalCore.js';
+
+// Mirrors game.gateway.ts's own STAT_TICK_MS — "12 game hours (ticks)"
+// (the Learn Spells quest's own enhanced-learning reward) means 12 stat
+// ticks, each this many ms apart, not 12 real-world hours.
+const STAT_TICK_MS = 30_000;
 
 interface ActiveAffect {
   label: string;
@@ -31,7 +37,18 @@ function activeAffects(): ActiveAffect[] {
   if (myProfile.restState === 'sleeping') {
     affects.push({ label: myProfile.sleepingInBed ? 'Sleeping in a bed' : 'Sleeping' });
   } else if (myProfile.restState === 'resting') {
-    affects.push({ label: 'Resting' });
+    // A follow-up ask: "if a player sits or rests on one of the benches...
+    // show it in the affects window: 'Enhanced resting on a bench'" —
+    // replaces the plain "Resting" label rather than showing both.
+    affects.push({ label: isNearBench(myProfile.map, myProfile.row, myProfile.col) ? 'Enhanced resting on a bench' : 'Resting' });
+  }
+  // The Learn Spells quest's own completion reward (a follow-up ask) —
+  // shown as "Enhanced learning - Xh" (hours = stat ticks remaining, not
+  // the usual "2m"/"30s" wall-clock format below, since the ask
+  // specifically wants it in hours) rather than a countdown value column.
+  if (myProfile.enhancedLearningUntil && myProfile.enhancedLearningUntil > Date.now()) {
+    const hoursLeft = Math.max(1, Math.ceil((myProfile.enhancedLearningUntil - Date.now()) / STAT_TICK_MS));
+    affects.push({ label: `Enhanced learning - ${hoursLeft}h` });
   }
   return affects;
 }

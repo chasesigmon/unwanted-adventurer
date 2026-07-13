@@ -692,9 +692,18 @@ body {
   color: #eee;
   font-size: 18px;
   cursor: pointer;
-  display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Same "an unconditional `display` outranks the browser's own
+   `[hidden]` rule" bug as #auth-screen above — the prompt button's own
+   `hidden` attribute (see index.html) was silently doing nothing because
+   this class set display unconditionally too (a follow-up bug report:
+   "the prompt button... still shows"). Flex only while NOT hidden keeps
+   `.hidden` authoritative, same fix shape. */
+.corner-btn:not([hidden]) {
+  display: flex;
 }
 
 .corner-btn:hover {

@@ -136,6 +136,7 @@ import {
   isWithinRadius,
   isBedBlocked,
   BED_REACH_TILES,
+  isNearBench,
 } from '../../shared/lighting.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
 import {
@@ -183,7 +184,7 @@ import {
   HUNGER_RESTORE_PERCENT,
   MAX_HUNGER_THIRST,
 } from '../../shared/items.js';
-import { questDefinition, QUESTS } from '../../shared/quests.js';
+import { questDefinition, QUESTS, LEARN_SPELLS_QUEST_ID, allObjectivesDone } from '../../shared/quests.js';
 import { MONSTER_KINDS } from '../../shared/constants.js';
 import type { Direction, MapName, MonsterClass, MonsterKind, Race } from '../../shared/constants.js';
 
@@ -362,6 +363,10 @@ const TORCH_LIFETIME_MS = 15 * 60 * 1000;
 // percent range depending on restState.
 const HOURS_PER_DAY = 24;
 const STAT_TICK_MS = 30_000;
+// The Learn Spells quest's own completion reward (a follow-up ask) — see
+// handleCompleteQuest/maybeGrowSpellSkill's own enhancedLearningBonusFor.
+const ENHANCED_LEARNING_TICKS = 12;
+const ENHANCED_LEARNING_BONUS_PERCENT = 10;
 const HEAL_PERCENT_RANGE: Record<RestState, [number, number]> = {
   awake: [7, 10],
   resting: [9, 12],
@@ -592,6 +597,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.restState === 'sleeping' && client.data.sleepingInBed) {
       percent *= 1.15;
     }
+    // "If a player sits or rests on one of the benches in any of the
+    // rooms it should offer an extra 10% gain" (a follow-up ask) — a
+    // bench's own tile always blocks movement (see isBenchBlocked), so
+    // being adjacent to one IS "sitting on" it (see isNearBench). Only
+    // for restState 'resting' specifically — sleeping already has its own
+    // distinct dorm-bed bonus above.
+    const restingOnBench = client.data.restState === 'resting' && isNearBench(client.data.map, client.data.row, client.data.col);
+    if (restingOnBench) {
+      percent *= 1.1;
+    }
     const healed = (current: number, statMax: number, healPercent: number) =>
       Math.min(statMax, current + Math.round((healPercent / 100) * statMax));
 
@@ -699,6 +714,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       hunger: client.data.hunger,
       thirst: client.data.thirst,
       quests: client.data.quests,
+      enhancedLearningUntil: client.data.enhancedLearningUntil,
     };
   }
 
@@ -925,7 +941,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true };
   }
 
-  // The Headmistress's own quest offer (a follow-up ask) — see
+  // A quest-giver's own quest offer (a follow-up ask) — see
   // src/game/WorldScene.ts's questGiver click handler for the reach check
   // and dialogue modal this backs. A no-op (still ok: true) if the quest
   // was already started, rather than an error — clicking "Quest: Learn
@@ -943,10 +959,59 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.quests[quest.id] !== undefined) {
       return { ok: true };
     }
-    client.data.quests = { ...client.data.quests, [quest.id]: [] };
+    client.data.quests = { ...client.data.quests, [quest.id]: {} };
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     return { ok: true, message: `Quest added: ${quest.title}` };
+  }
+
+  // Turning a finished quest back in (a follow-up ask: "they should have
+  // to click to complete the quest") — only succeeds once every objective
+  // is actually done (isObjectiveDone/allObjectivesDone are the same
+  // shared check the quest log's own progress display uses) and it
+  // hasn't already been turned in. Grants the quest's flat exp reward,
+  // plus (Learn Spells only) a 12-tick enhanced-learning buff.
+  @SubscribeMessage('completeQuest')
+  handleCompleteQuest(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): { ok: boolean; message?: string } {
+    const parsed = z.object({ questId: z.string() }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid quest.' };
+    }
+    const quest = questDefinition(parsed.data.questId);
+    if (!quest) {
+      return { ok: false, message: "That quest doesn't exist." };
+    }
+    const progress = client.data.quests[quest.id];
+    if (!progress) {
+      return { ok: false, message: "You haven't started that quest." };
+    }
+    if (progress.completedAt) {
+      return { ok: false, message: "You've already completed that quest." };
+    }
+    if (!allObjectivesDone(quest, progress, client.data.skills, client.data.inventory)) {
+      return { ok: false, message: "You haven't finished that quest yet." };
+    }
+
+    client.data.quests = { ...client.data.quests, [quest.id]: { ...progress, completedAt: Date.now() } };
+    const grantResult = this.grantExp(client, quest.rewardExp);
+    const messages = [`Quest complete: ${quest.title} (+${quest.rewardExp} exp)`];
+    if (grantResult.message) messages.push(grantResult.message);
+
+    if (quest.id === LEARN_SPELLS_QUEST_ID) {
+      // "12 game hours (ticks) worth of enhanced spell learning for every
+      // spell by 10%" — see maybeGrowSpellSkill's own enhancedLearningBonusFor
+      // check. Stat ticks fire on a fixed STAT_TICK_MS cadence, so 12
+      // ticks from now is exactly the same absolute-expiry-timestamp
+      // shape wandLitUntil/celeritasActiveUntil already use.
+      client.data.enhancedLearningUntil = Date.now() + ENHANCED_LEARNING_TICKS * STAT_TICK_MS;
+      messages.push(`Enhanced learning active for ${ENHANCED_LEARNING_TICKS} hours!`);
+    }
+
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    const message = messages.join(' ');
+    this.systemMessage(client, message);
+    return { ok: true, message };
   }
 
   // A small chance per attack/defense (hit or miss doesn't matter here,
@@ -979,7 +1044,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // SKILL_GROWTH_CHANCE every other (non-spell) skill use still gets
   // unmodified.
   private maybeGrowSpellSkill(client: GameSocket, skill: string): string | undefined {
-    return this.maybeGrowSkill(client, skill, rollLuckGrowthBonus(client.data.luck));
+    return this.maybeGrowSkill(client, skill, rollLuckGrowthBonus(client.data.luck) + this.enhancedLearningBonusFor(client));
+  }
+
+  // The Learn Spells quest's own completion reward (a follow-up ask) —
+  // +10 percentage points on every spell's own growth roll, for
+  // ENHANCED_LEARNING_TICKS stat ticks after turning the quest in (see
+  // handleCompleteQuest). 0 once it's expired or was never granted.
+  private enhancedLearningBonusFor(client: GameSocket): number {
+    return client.data.enhancedLearningUntil && client.data.enhancedLearningUntil > Date.now() ? ENHANCED_LEARNING_BONUS_PERCENT : 0;
   }
 
   // Which skill an attack's own weapon skill-growth chance targets:
@@ -1422,6 +1495,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.hunger = doc?.hunger ?? MAX_HUNGER_THIRST;
     client.data.thirst = doc?.thirst ?? MAX_HUNGER_THIRST;
     client.data.quests = doc?.quests ?? {};
+    // The Learn Spells quest's own timed reward — never persisted, same
+    // tradeoff as wandLitUntil/celeritasActiveUntil (a fresh connection
+    // always starts with it off, even mid-buff).
+    client.data.enhancedLearningUntil = null;
     // Stacks across levels if never spent (a later follow-up ask) — see
     // handleAllocateStatPoint.
     client.data.statPointsAvailable = doc?.statPointsAvailable ?? 0;
@@ -1596,7 +1673,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       void client.leave(previousMap);
       void client.join(result.mapName);
       this.server.to(previousMap).emit('map:state', this.mapStateFor(previousMap));
-      this.advanceClassroomQuestObjectives(client);
     }
     this.server.to(result.mapName).emit('map:state', this.mapStateFor(result.mapName));
 
@@ -1604,23 +1680,29 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, player: this.snapshotFor(client), message };
   }
 
-  // The Headmistress's own "visit all of the classrooms" quest (a
-  // follow-up ask) — marks whichever objective matches the classroom the
-  // player just walked into as complete, for every quest that's active
-  // and doesn't already have it. Silent no-op once a quest has no
-  // matching/incomplete objective left, so re-entering an already-visited
-  // classroom (or walking anywhere else) doesn't do anything.
-  private advanceClassroomQuestObjectives(client: GameSocket): void {
+  // Kill-count quest objectives (a follow-up ask's imp-extermination
+  // quest, and any future one shaped like it) — called from every
+  // monster-kill site (melee, wand bolt, augue). Silent no-op once a
+  // quest isn't active, is already turned in, or that objective's own
+  // target count is already met, so this is safe to call unconditionally
+  // on every kill.
+  private recordMonsterKillForQuests(client: GameSocket, monsterKind: string): void {
     let changed = false;
     const quests = { ...client.data.quests };
     for (const quest of Object.values(QUESTS)) {
       const progress = quests[quest.id];
-      if (progress === undefined) continue;
-      const objective = quest.objectives.find((o) => o.map === client.data.map);
-      if (!objective || progress.includes(objective.id)) continue;
-      quests[quest.id] = [...progress, objective.id];
-      changed = true;
-      this.systemMessage(client, `Quest objective complete: ${objective.label} (${quest.title})`);
+      if (!progress || progress.completedAt) continue;
+      for (const objective of quest.objectives) {
+        if (objective.kind !== 'killMonster' || objective.monsterKind !== monsterKind) continue;
+        const current = progress.killCounts?.[objective.id] ?? 0;
+        if (current >= (objective.count ?? 1)) continue;
+        const nextCount = current + 1;
+        quests[quest.id] = { ...progress, killCounts: { ...progress.killCounts, [objective.id]: nextCount } };
+        changed = true;
+        if (nextCount >= (objective.count ?? 1)) {
+          this.systemMessage(client, `Quest objective complete: ${objective.label} (${quest.title})`);
+        }
+      }
     }
     if (!changed) return;
     client.data.quests = quests;
@@ -1959,6 +2041,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         expGained = grantResult.message ? undefined : rawExpGained;
         const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
         this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username);
+        this.recordMonsterKillForQuests(client, monster.kind);
         this.playerCombat.delete(client.data.username);
       }
       const message = result.died
@@ -1998,6 +2081,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           npc.row = tile.row;
           npc.col = tile.col;
           this.playerCombat.delete(client.data.username);
+        } else if (npc.carriedItems) {
+          // A follow-up bug fix: this wand-bolt kill path (unlike
+          // resolveHitOnNpc's own melee path) never re-armed the
+          // training skeleton's club on respawn — see that method's own
+          // comment for why this needs to happen at every "npc died and
+          // reset" site, not just one.
+          npc.carriedItems = ['wooden club'];
         }
         npc.hp = npc.maxHp;
       }
@@ -2092,6 +2182,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // lootable, no mechanical use yet.
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
       this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username);
+      this.recordMonsterKillForQuests(client, monster.kind);
       this.playerCombat.delete(client.data.username);
     }
     this.maybeGrowResistanceSkill(client, monster.monsterClass, growthMessages);
@@ -3165,6 +3256,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           const tile = this.randomFreeTileFor(npc.map);
           npc.row = tile.row;
           npc.col = tile.col;
+        } else if (npc.carriedItems) {
+          // Same follow-up bug fix as resolveRangedAutoAttack's own npc
+          // branch — every "npc died and reset" site needs to re-arm the
+          // training skeleton's club, not just resolveHitOnNpc's melee one.
+          npc.carriedItems = ['wooden club'];
         }
         npc.hp = npc.maxHp;
       }
@@ -3245,6 +3341,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (grantResult.message) growthMessages.push(grantResult.message);
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
       this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username);
+      this.recordMonsterKillForQuests(client, monster.kind);
       this.playerCombat.delete(client.data.username);
     }
 

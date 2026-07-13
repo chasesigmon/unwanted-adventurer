@@ -1,5 +1,6 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 import { STARTING_MAP, type Gender, type HairColor, type MapName, type Race, type SkinTone } from '../../shared/constants.js';
+import type { QuestProgress } from '../../shared/quests.js';
 
 // Position fields place a character back where it left off; attribute/
 // vital/level/skill fields back the combat system (see
@@ -165,9 +166,9 @@ export class Player {
   @Column({ type: 'int', default: 100 })
   thirst!: number;
 
-  // Quest id -> completed objective ids (see shared/quests.ts).
+  // Quest id -> progress (see shared/quests.ts's own QuestProgress).
   @Column({ type: 'jsonb', default: () => "'{}'" })
-  quests!: Record<string, string[]>;
+  quests!: Record<string, QuestProgress>;
 
   @Column({ name: 'last_login', type: 'timestamptz', default: () => 'now()' })
   lastLogin!: Date;

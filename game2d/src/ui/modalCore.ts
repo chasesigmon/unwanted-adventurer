@@ -265,6 +265,16 @@ mapBtn.addEventListener('click', () => toggleModal(mapModal));
 affectsBtn.addEventListener('click', () => toggleModal(affectsModal));
 questLogBtn.addEventListener('click', () => toggleModal(questLogModal));
 
+// A follow-up ask: "just like the spells in the action bar have a
+// tooltip pop up with their name, do the same for the icon buttons in
+// the right corner" — every corner button's own `data-tooltip` (see
+// index.html) through the same custom-tooltip mechanism the action bar
+// already uses, rather than the browser's native (unreliable, slow)
+// `title` hover.
+for (const btn of document.querySelectorAll<HTMLButtonElement>('.corner-btn[data-tooltip]')) {
+  attachTooltip(btn, () => btn.dataset.tooltip);
+}
+
 // The map corner button (and its 'm' hotkey, see keyboard.ts) is hidden
 // until myProfile.mapUnlocked (a follow-up ask — the map is now found in
 // the secret room's treasure chest, not given to every character) —
