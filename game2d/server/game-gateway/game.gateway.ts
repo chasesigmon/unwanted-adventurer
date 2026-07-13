@@ -52,6 +52,8 @@ import {
   MAX_SKILL_PERCENT,
   RACE_INNATE_SKILLS,
   SKILL_GROWTH_CHANCE,
+  BIG_SKILL_GROWTH_CHANCE,
+  BIG_SKILL_GROWTH_AMOUNT,
   STAT_POINTS_PER_LEVEL,
   HP_PER_CONSTITUTION,
   MANA_PER_INTELLIGENCE,
@@ -903,7 +905,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (current >= MAX_SKILL_PERCENT) return undefined;
     const chance = SKILL_GROWTH_CHANCE + extraChancePercent / 100;
     if (Math.random() >= chance) return undefined;
-    const next = current + 1;
+    // A later follow-up ask: "within the 5% chance that skills can
+    // increase, there is [also] a 20% chance the skill/spell can
+    // increase by 2%" — a second, independent roll on top of the growth
+    // chance that already just succeeded.
+    const amount = Math.random() < BIG_SKILL_GROWTH_CHANCE ? BIG_SKILL_GROWTH_AMOUNT : 1;
+    const next = Math.min(MAX_SKILL_PERCENT, current + amount);
     client.data.skills = { ...client.data.skills, [skill]: next };
     this.worldManager.updateState(client.data.username, { skills: client.data.skills });
     return skillGrowthMessage(skill, next);
@@ -3012,6 +3019,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!parsed.success) {
       return { ok: false, message: 'Invalid target.' };
     }
+    // A later follow-up bug fix: "Augue doesn't appear to be costing any
+    // mana to cast" — this check (and the matching deduction in each
+    // branch below) was missing entirely; every other spell here already
+    // costs SPELL_ATTACK_MANA_COST regardless of success or fumble.
+    if (client.data.mana < SPELL_ATTACK_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast augue (${SPELL_ATTACK_MANA_COST} needed).` };
+    }
     // A practice scarecrow (or the original Great Plains training dummy)
     // is a valid augue target too (a follow-up ask: "practice their
     // offense spells, like augue, on them") — a much simpler, self-
@@ -3027,6 +3041,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: false, message: "You're too far away to hit that with augue." };
       }
 
+      client.data.mana -= SPELL_ATTACK_MANA_COST;
       this.startSkillCooldown(client, AUGUE_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
       const label = npc.label ?? 'training dummy';
@@ -3062,7 +3077,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           : `${client.data.username}'s augue engulfs the ${label} in flame for ${AUGUE_DAMAGE} damage, defeating it! It leaves a corpse and reappears elsewhere.`
         : `${client.data.username}'s augue engulfs the ${label} in flame for ${AUGUE_DAMAGE} damage.`;
 
+      this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
       void this.persistStats(client);
+      // A later follow-up bug fix: augue's SUCCESS path relied entirely
+      // on the room-broadcast 'combat' event, whose attacker* fields
+      // don't carry mana at all (see applyCombatEvent) — the caster's
+      // own client never actually saw the mana deduction land without
+      // this explicit sync, same as every other spell's own success path.
+      client.emit('sync', { player: this.snapshotFor(client) });
       this.emitCombat(client, {
         targetKind: 'npc',
         target: npc.id,
@@ -3089,6 +3111,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: "You're too far away to hit that with augue." };
     }
 
+    client.data.mana -= SPELL_ATTACK_MANA_COST;
     this.startSkillCooldown(client, AUGUE_SKILL);
     this.startAutoAttackAfterSpell(client, 'monster', monster.id);
 
@@ -3127,7 +3150,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       ? `${client.data.username}'s augue engulfs the ${monster.kind} in flame for ${AUGUE_DAMAGE} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
       : `${client.data.username}'s augue engulfs the ${monster.kind} in flame for ${AUGUE_DAMAGE} damage.`;
 
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
     void this.persistStats(client);
+    // Same mana-sync bug fix as the npc branch above — 'combat's own
+    // attacker* fields never carry mana.
+    client.emit('sync', { player: this.snapshotFor(client) });
     this.emitCombat(client, {
       targetKind: 'monster',
       target: monster.id,

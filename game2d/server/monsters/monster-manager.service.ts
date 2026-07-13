@@ -404,7 +404,20 @@ export class MonsterManagerService {
 
     const dRow = target.row - monster.row;
     const dCol = target.col - monster.col;
-    if (Math.abs(dRow) <= 1 && Math.abs(dCol) <= 1) {
+    // A later follow-up bug fix: "the imp STILL did not attack the
+    // player once in range" — this used to accept DIAGONAL adjacency
+    // (Chebyshev distance 1, both axes within 1) as "close enough, stop
+    // chasing." But every actual attack resolution in this game — the
+    // player's own punch (see engageInDirection's own targetRow/Col,
+    // which only ever checks the one cardinal tile actually faced),
+    // the reactive counter, AND resolveMonsterInitiatedAttack's own
+    // proactive attack below — all require STRICT cardinal adjacency
+    // (Manhattan distance exactly 1). A monster that stopped one tile
+    // too early, diagonally, would sit there "in range" by its own
+    // reckoning forever without ever being ABLE to land a hit. Matching
+    // the same strict shape here means it keeps closing that last
+    // diagonal step until it's actually able to fight.
+    if (Math.abs(dRow) + Math.abs(dCol) === 1) {
       // Already adjacent — stand and fight (the combat tick resolves the
       // actual hit), don't wander off.
       return true;

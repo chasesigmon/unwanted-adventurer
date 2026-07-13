@@ -1072,12 +1072,17 @@ export class WorldScene extends Phaser.Scene {
 
   // A fixed offset per facing direction — not aligned to individual
   // animation frames, just a reasonable "held near the hand" position.
+  // Positive x is always the character's screen-right side (matching
+  // 'right' below) — a later follow-up bug fix: 'up' used to be x: -10
+  // (screen-left), the one case that didn't follow that convention, which
+  // is why the wand/weapon rendered on the wrong side specifically while
+  // facing/walking north.
   private weaponOffsetFor(facing: Facing): { x: number; y: number } {
     switch (facing) {
       case 'down':
         return { x: 10, y: 6 };
       case 'up':
-        return { x: -10, y: -8 };
+        return { x: 10, y: -8 };
       case 'left':
         return { x: -13, y: 2 };
       case 'right':

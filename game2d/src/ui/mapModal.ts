@@ -82,29 +82,28 @@ const GRIMOAK_ASCII_MAP = `
                                                            |
                                                  (secret room <-- hidden behind
                                                   Utility's own locked door)
-      THISTLEDOWN                                         |                          GREAT HALL
-        DORMS                                             |                        (long table +
-          ^                                               |                        faculty stage)
-          |                                                |                             ^
-      THISTLEDOWN <---\\                                     |                            |
-      COMMON ROOM      \\___________________  ENTRANCE HALL __|_______________________/---'
-                                            /                                       \\
-      EMBERCLAW <------------------------/                                          \\------> DUSKWING
-        DORMS                                                                              COMMON ROOM
-          ^                                                                                      ^
-          |                                                                                      |
-      EMBERCLAW                                                                             DUSKWING
-      COMMON ROOM                                                                              DORMS
-          ^
-          |
-      STARFALL
-        DORMS
-          ^
-          |
-      STARFALL
-      COMMON ROOM
                                                            |
-                                                           v  south exit, over the bridge
+  THISTLEDOWN                                              |                            GREAT HALL
+    DORMS                                                  |                          (long table +
+      ^                                                    |                          faculty stage)
+      |                                                    |                                ^
+  THISTLEDOWN ------------------------------.              |              .----------------- |
+  COMMON ROOM                                \\             |             /
+                                              |             |            |
+  EMBERCLAW                                   \\            |           /
+    DORMS                                      |            |          |
+      ^                                        |            |          |
+      |                                        |            |          |
+  EMBERCLAW ---------------------------------- +--- ENTRANCE HALL ---- + ---------------- DUSKWING
+  COMMON ROOM                                  |            |          |                COMMON ROOM
+                                               |            |          |                     ^
+  STARFALL                                     /            |           \\                    |
+    DORMS                                     |             |            |               DUSKWING
+      ^                                       |             |            |                 DORMS
+      |                                       /              |            \\
+  STARFALL -----------------------------------               |             ------------------'
+  COMMON ROOM                                                |
+                                                              v  south exit, over the bridge
                           ___________________________________________________________
                          /   ~~~~~~~~~~~~~~~~~~~~~~~~ MOAT ~~~~~~~~~~~~~~~~~~~~~~~~~ \\
                         /    ~~                                                  ~~   \\
@@ -115,8 +114,8 @@ const GRIMOAK_ASCII_MAP = `
                           \\_______________________________|_________________________/
                                                            v
                                                    >==[ GATE ]==<
-                                            (opens magically for players
-                                                  -- not for imps)
+                                          (Opens magically for players
+                                               -- not for monsters)
 `.trim();
 
 function renderWorldMapTab(): void {

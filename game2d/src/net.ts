@@ -58,7 +58,57 @@ type CharacterResponse = { ok: true; character: CharacterSummary } | { ok: false
 export class NetworkManager extends EventTarget {
   private serverUrl: string;
   socket: GameClientSocket | null = null;
+  // The CURRENT character-level game-socket token only — set exclusively
+  // by selectCharacter, used exclusively by connectSocket. Kept separate
+  // from accountToken below (a later follow-up ask: "the logout from the
+  // top right of the game [should] take you back out to character
+  // selection" — going back needs the ORIGINAL account token still
+  // around to re-list characters with, which selectCharacter used to
+  // overwrite this same field with and lose forever).
   private token: string | null = null;
+  // The ACCOUNT-level token from register/login — survives selecting (or
+  // re-selecting) any number of characters; only a real full logout
+  // clears it. listCharacters/createCharacter/selectCharacter/
+  // deleteCharacter all authenticate with this one, never `token`.
+  // Mirrored into localStorage (same "persist small bits of client state,
+  // guard the read/write in a try/catch for private-browsing" convention
+  // actionBar.ts/log.ts already use) so returning to character select —
+  // which reloads the page, see statusBar.ts's own logout button — can
+  // pick it back up without making the player log in again.
+  private accountToken: string | null = null;
+  private static readonly ACCOUNT_TOKEN_STORAGE_KEY = 'accountToken';
+
+  private setAccountToken(token: string | null): void {
+    this.accountToken = token;
+    try {
+      if (token) localStorage.setItem(NetworkManager.ACCOUNT_TOKEN_STORAGE_KEY, token);
+      else localStorage.removeItem(NetworkManager.ACCOUNT_TOKEN_STORAGE_KEY);
+    } catch {
+      /* localStorage unavailable (private browsing etc.) — not worth surfacing */
+    }
+  }
+
+  // Called once at page load (see main.ts) — if a token was left behind
+  // by a previous session, verifies it's still actually valid (rather
+  // than trusting it blindly forever) by trying to list characters with
+  // it before committing to skipping the login screen.
+  async restoreAccountSession(): Promise<boolean> {
+    let stored: string | null = null;
+    try {
+      stored = localStorage.getItem(NetworkManager.ACCOUNT_TOKEN_STORAGE_KEY);
+    } catch {
+      return false;
+    }
+    if (!stored) return false;
+    this.accountToken = stored;
+    try {
+      await this.listCharacters();
+      return true;
+    } catch {
+      this.setAccountToken(null);
+      return false;
+    }
+  }
 
   constructor(serverUrl: string) {
     super();
@@ -88,17 +138,17 @@ export class NetworkManager extends EventTarget {
   // character.
   async register(email: string, username: string, password: string): Promise<void> {
     const { token } = await this.authFetch('/auth/register', { email, username, password });
-    this.token = token;
+    this.setAccountToken(token);
   }
 
   async login(username: string, password: string): Promise<void> {
     const { token } = await this.authFetch('/auth/login', { username, password });
-    this.token = token;
+    this.setAccountToken(token);
   }
 
   async listCharacters(): Promise<CharacterSummary[]> {
     const res = await fetch(`${this.serverUrl}/characters`, {
-      headers: { Authorization: `Bearer ${this.token}` },
+      headers: { Authorization: `Bearer ${this.accountToken}` },
     });
     const data = (await res.json().catch(() => null)) as CharactersResponse | null;
     if (!res.ok || !data || !data.ok) {
@@ -110,7 +160,7 @@ export class NetworkManager extends EventTarget {
   async createCharacter(name: string, gender: Gender, hairColor: HairColor, skinTone: SkinTone): Promise<CharacterSummary> {
     const res = await fetch(`${this.serverUrl}/characters`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.accountToken}` },
       body: JSON.stringify({ name, gender, hairColor, skinTone }),
     });
     const data = (await res.json().catch(() => null)) as CharacterResponse | null;
@@ -120,13 +170,15 @@ export class NetworkManager extends EventTarget {
     return data.character;
   }
 
-  // Swaps the held account-level token for a character-level one — only
-  // after this does connectSocket() below have a token the game socket
-  // will actually accept.
+  // Issues a character-level token (held ONLY in `token`, see its own
+  // doc comment) — only after this does connectSocket() below have a
+  // token the game socket will actually accept. The account token this
+  // authenticates WITH is untouched, so selecting again (including after
+  // returning from in-game via leaveCharacterSession below) always works.
   async selectCharacter(name: string): Promise<void> {
     const res = await fetch(`${this.serverUrl}/characters/${encodeURIComponent(name)}/select`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${this.token}` },
+      headers: { Authorization: `Bearer ${this.accountToken}` },
     });
     const data = (await res.json().catch(() => null)) as AuthResponse | null;
     if (!res.ok || !data || !data.ok) {
@@ -141,7 +193,7 @@ export class NetworkManager extends EventTarget {
   async deleteCharacter(name: string): Promise<void> {
     const res = await fetch(`${this.serverUrl}/characters/${encodeURIComponent(name)}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${this.token}` },
+      headers: { Authorization: `Bearer ${this.accountToken}` },
     });
     const data = (await res.json().catch(() => null)) as AuthResponse | { ok: true } | null;
     if (!res.ok || !data || !data.ok) {
@@ -191,13 +243,43 @@ export class NetworkManager extends EventTarget {
     this.token = null;
   }
 
-  // Invalidates the session server-side (see auth.controller.ts's own
-  // /auth/logout) before tearing down the socket — best-effort: even if
-  // the HTTP call fails (server unreachable, token already expired), the
-  // client still disconnects and forgets its token locally either way.
-  async logout(): Promise<void> {
+  // A later follow-up ask: "the logout from the top right of the game
+  // [should] take you back out to character selection" — auth.service.ts's
+  // own logout(token) already branches on WHICH KIND of token it's handed
+  // (see its own payload.kind check): handing it the CHARACTER token only
+  // clears that one character's session/connection, leaving the account
+  // session (and accountToken here) fully intact to go back and pick
+  // again — a real, if lighter-weight, server-side logout, not just a
+  // client-side screen swap.
+  async leaveCharacterSession(): Promise<void> {
     const token = this.token;
+    this.socket?.disconnect();
+    this.socket = null;
+    this.token = null;
+    if (!token) return;
+    try {
+      await fetch(`${this.serverUrl}/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      /* best-effort — the local character session is already torn down above */
+    }
+  }
+
+  // Invalidates the ACCOUNT session server-side (see auth.controller.ts's
+  // own /auth/logout, and auth.service.ts's own logout(token) branching
+  // on the account-kind token this passes) before tearing down the
+  // socket — best-effort: even if the HTTP call fails (server
+  // unreachable, token already expired), the client still disconnects
+  // and forgets both tokens locally either way. This is the "fully log
+  // the person out so they'd have to login again or register" path —
+  // see leaveCharacterSession above for the lighter "back to character
+  // select" one.
+  async logout(): Promise<void> {
+    const token = this.accountToken;
     this.disconnectAndReset();
+    this.setAccountToken(null);
     if (!token) return;
     try {
       await fetch(`${this.serverUrl}/auth/logout`, {

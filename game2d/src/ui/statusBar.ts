@@ -22,12 +22,17 @@ const darkFogOverlay = document.getElementById('dark-fog-overlay') as HTMLDivEle
 
 setupCollapsible(statusBarPanel, statusToggle);
 
-// Item 16 — invalidates the session server-side, tears down the socket,
-// and reloads straight back to the login screen (same "just reload"
-// reset the 'kicked' handler already uses elsewhere, rather than trying
-// to hand-unwind the live Phaser game instance).
+// A later follow-up ask: "the logout from the top right of the game
+// [should] take you back out to character selection" — only the
+// CHARACTER-level session is invalidated (see leaveCharacterSession's own
+// doc comment), not the account itself; the account token stays behind
+// in localStorage so the reload (same "just reload" reset the 'kicked'
+// handler already uses elsewhere, rather than hand-unwinding the live
+// Phaser game instance) lands back on character select, not the login
+// screen. Logging out of the ACCOUNT entirely is now the character
+// SELECT screen's own logout button (see characterSelect.ts).
 logoutBtn.addEventListener('click', () => {
-  void network.logout().finally(() => window.location.reload());
+  void network.leaveCharacterSession().finally(() => window.location.reload());
 });
 
 export function updateWorldLabel(mapName: MapName): void {

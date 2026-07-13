@@ -72,10 +72,29 @@ function startGame(): void {
 // steps (item 1) — succeeding at the first shows the character-select
 // screen; picking (or creating) a character there is what actually
 // starts the game.
-initAuthScreen(() => {
-  hideAuthScreen();
-  showCharacterSelectScreen(() => {
-    hideCharacterSelectScreen();
-    startGame();
+function onCharacterChosen(): void {
+  hideCharacterSelectScreen();
+  startGame();
+}
+
+// A later follow-up ask: "the logout from the top right of the game
+// [should] take you back out to character selection... login again or
+// register [only after] the account/character selection [logout]." The
+// top-right logout (see statusBar.ts) reloads the page rather than
+// tearing down the live Phaser scene in place (WorldScene registers a
+// pile of its own `network` event listeners with nothing that currently
+// removes them again, so a second scene instance without a real reload
+// would double them up) — restoreAccountSession picks the account
+// session back up from localStorage so that reload lands straight on
+// character select instead of making the player log in again.
+void network.restoreAccountSession().then((restored) => {
+  if (restored) {
+    hideAuthScreen();
+    showCharacterSelectScreen(onCharacterChosen);
+    return;
+  }
+  initAuthScreen(() => {
+    hideAuthScreen();
+    showCharacterSelectScreen(onCharacterChosen);
   });
 });

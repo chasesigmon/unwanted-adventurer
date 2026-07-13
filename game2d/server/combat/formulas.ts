@@ -64,6 +64,13 @@ export const STARTING_GOLD = 20;
 // "Increase the chance that skills can get better with usage to 5% per
 // cast" (a later follow-up ask, up from 2%).
 export const SKILL_GROWTH_CHANCE = 0.05;
+// "Within the 5% chance that skills can increase, that also there is a
+// 20% chance the skill/spell can increase by 2%" (a later follow-up ask)
+// — a second, nested roll: once the ordinary growth chance above already
+// hit, 20% of THOSE successes bump the skill by BIG_SKILL_GROWTH_AMOUNT
+// instead of the usual 1.
+export const BIG_SKILL_GROWTH_CHANCE = 0.2;
+export const BIG_SKILL_GROWTH_AMOUNT = 2;
 
 // Every race gets the universal kit (punch/dodge/parry/shield block/
 // dagger) at STARTING_SKILL_PERCENT, PLUS its own innate skill(s) (see
