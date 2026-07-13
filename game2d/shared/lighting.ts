@@ -237,7 +237,9 @@ export function benchPositionsFor(mapName: MapName): Array<{ row: number; col: n
   const def = getMap(mapName);
   const midRow = Math.floor(def.rows / 2);
   const midCol = Math.floor(def.cols / 2);
-  const offset = 4;
+  // A later follow-up ask brought the 4 benches in slightly closer
+  // together (from 4) while still keeping them centered on the room.
+  const offset = 3;
   const positions = [
     { row: midRow - offset, col: midCol, angle: 0 }, // north of center, faces south
     { row: midRow + offset, col: midCol, angle: 180 }, // south of center, faces north

@@ -74,23 +74,18 @@ export const TEACHERS: TeacherSnapshot[] = [
     robeColorKey: 'forest',
     longHair: true,
   },
-  // The house-assignment teacher (a follow-up ask, since adjusted) —
-  // "10 feet in front of the door, behind the bench, not overlapping or
-  // in front of it." The Entrance Hall's own south door sits at row
-  // ENTRANCE_ROWS-1 = 33; its nearest bench (see benchPositionsFor's
-  // midRow+4) sits at row 21, only 12 tiles in from the door — a strict
-  // 10-tiles-in position (row 23) would land IN FRONT of that bench
-  // (between it and the door), the opposite of what's asked. Prioritizing
-  // "behind the bench" as the harder constraint: row 20 sits 1 tile
-  // north of (behind) the bench, clear of its footprint, at roughly the
-  // requested distance rather than the exact figure. Same column
-  // (ENTRANCE_MID_COL = 25) and facing 'down' (south, the default,
-  // omitted below) as before, to greet arriving students face-on.
+  // The house-assignment teacher (a follow-up ask, since adjusted again)
+  // — "south of the bench with about 5 feet of space between them."
+  // The Entrance Hall's own south bench (see benchPositionsFor's
+  // midRow+offset, offset now 3) sits at row 20, col ENTRANCE_MID_COL=25
+  // — 5 tiles further south (row 25), same column, lands him directly
+  // below it, facing 'down' (south, the default, omitted below) toward
+  // the door to greet arriving students face-on.
   {
     id: 'house-teacher',
     name: 'Professor Caldwell',
     map: 'Grimoak Entrance Hall',
-    row: 20,
+    row: 25,
     col: 25,
     houseChoiceGate: true,
     robeColorKey: 'slate',

@@ -2946,6 +2946,20 @@ export class WorldScene extends Phaser.Scene {
     return { kind: this.targetKind, id: this.targetId };
   }
 
+  // Read by the global Escape handler (a follow-up ask) — mutually
+  // exclusive with each other (see setTarget/setLockTarget), so checking
+  // all three covers "is anything selected right now" regardless of
+  // which kind it is.
+  hasSelection(): boolean {
+    return Boolean(this.targetKind || this.lockTarget || this.selectedStoneBlockId);
+  }
+
+  clearSelection(): void {
+    if (this.targetKind) this.clearTarget();
+    if (this.lockTarget) this.clearLockTarget();
+    if (this.selectedStoneBlockId) this.clearBlockmanTarget();
+  }
+
   // A wholly separate targeting concept from targetKind/targetId above —
   // "which inventory item is currently aimed at" for drink/pour/irrigo
   // (item 11's follow-up ask). Tracked by NAME rather than array index —

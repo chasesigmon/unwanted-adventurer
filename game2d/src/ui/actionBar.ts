@@ -112,6 +112,17 @@ export function loadActionBarOnce(username: string): void {
 // slot too) apart from "dragging a fresh copy in from the modal".
 const ACTION_SLOT_SOURCE_MIME = 'application/x-action-slot-index';
 
+// Shared by a slot's own click handler AND the global number-key
+// shortcuts (a follow-up ask: "pressing 1-9,0 where a skill is on the
+// action bar should trigger it") — the exact same useTargetedSkill entry
+// point either way, so murus's own "arm targeting, wait for a map click"
+// behavior (and every other skill's own rules) apply identically no
+// matter how the slot was triggered.
+export function triggerActionSlot(index: number): void {
+  const skillName = actionBarSkills[index];
+  if (skillName) activeScene?.useTargetedSkill(skillName);
+}
+
 export function assignActionSlot(index: number, skillName: string): void {
   // Punch and dagger share one "Attack" slot — dropping either one bumps
   // whichever OTHER slot currently holds the other, rather than allowing
@@ -185,10 +196,7 @@ for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
       saveActionBar();
     }
   });
-  slot.addEventListener('click', () => {
-    const skillName = actionBarSkills[i];
-    if (skillName) activeScene?.useTargetedSkill(skillName);
-  });
+  slot.addEventListener('click', () => triggerActionSlot(i));
   // A follow-up ask: "little black tooltips with the spell name" on
   // hover — same custom tooltip component the Skills modal's own name
   // hover already uses, just showing the bare skill name here (attached

@@ -77,6 +77,11 @@ export const bedSleepNoBtn = document.getElementById('bed-sleep-no') as HTMLButt
 export const benchModal = document.getElementById('bench-modal') as HTMLDivElement;
 export const benchRestYesBtn = document.getElementById('bench-rest-yes') as HTMLButtonElement;
 export const benchRestNoBtn = document.getElementById('bench-rest-no') as HTMLButtonElement;
+// The Escape-key logout confirmation (a follow-up ask) — no dedicated
+// "No" button, same as every other modal: the 'x'/backdrop-click below
+// already covers dismissing it.
+export const logoutConfirmModal = document.getElementById('logout-confirm-modal') as HTMLDivElement;
+export const logoutConfirmYesBtn = document.getElementById('logout-confirm-yes') as HTMLButtonElement;
 
 export const ALL_MODALS = [
   charSheetModal,
@@ -95,6 +100,7 @@ export const ALL_MODALS = [
   chestModal,
   bedModal,
   benchModal,
+  logoutConfirmModal,
 ];
 
 // None of these six visually obstruct the map and none has a text input
@@ -270,6 +276,15 @@ equipmentBtn.addEventListener('click', () => toggleModal(equipmentModal));
 mapBtn.addEventListener('click', () => toggleModal(mapModal));
 affectsBtn.addEventListener('click', () => toggleModal(affectsModal));
 questLogBtn.addEventListener('click', () => toggleModal(questLogModal));
+
+// A single shared collapse button (a follow-up ask), same plain
+// toggle-a-class shape as the top-right world-info-toggle.
+const cornerButtonsGroup = document.getElementById('corner-buttons') as HTMLDivElement;
+const cornerButtonsToggle = document.getElementById('corner-buttons-toggle') as HTMLButtonElement;
+cornerButtonsToggle.addEventListener('click', () => {
+  const collapsed = cornerButtonsGroup.classList.toggle('collapsed');
+  cornerButtonsToggle.textContent = collapsed ? '+' : '−';
+});
 
 // A follow-up ask: "just like the spells in the action bar have a
 // tooltip pop up with their name, do the same for the icon buttons in

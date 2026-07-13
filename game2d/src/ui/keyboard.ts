@@ -19,6 +19,8 @@ import {
 } from './modalCore.js';
 import { openChatInput, openChatInputWithSlash } from './log.js';
 import { dismissAutopilotModal } from './autopilotModal.js';
+import { openLogoutConfirmModal } from './logoutModal.js';
+import { triggerActionSlot } from './actionBar.js';
 
 const gameRoot = document.getElementById('game-root') as HTMLDivElement;
 
@@ -38,11 +40,20 @@ export function initGlobalKeyboardShortcuts(): void {
       // (corpse, shop, target info, char sheet, inventory, ...) had no
       // Escape shortcut at all (item 8). The prompt/autopilot modal keeps
       // its own dedicated dismissAutopilotModal (which also ends the
-      // hunt); anything else open just closes normally.
+      // hunt); anything else open just closes normally. A later follow-up
+      // ask extends this further, in priority order: with nothing open,
+      // Escape deselects whatever's currently targeted (a player/npc/
+      // monster, a door/chest, or a summoned stone block) if anything is;
+      // with NEITHER a modal open NOR a selection to clear, it's read as
+      // "I want to leave" and offers a logout confirmation instead.
       if (!autopilotModal.hidden) {
         dismissAutopilotModal();
       } else if (ALL_MODALS.some((m) => !m.hidden)) {
         closeAllModals();
+      } else if (activeScene?.hasSelection()) {
+        activeScene.clearSelection();
+      } else {
+        openLogoutConfirmModal();
       }
       activeScene?.stopAutopilot('Autopilot stopped.');
       return;
@@ -100,6 +111,16 @@ export function initGlobalKeyboardShortcuts(): void {
       // armed, without needing a modal open at all.
       e.preventDefault();
       activeScene?.stopAutoAttack();
+    } else {
+      // The action bar's own top row (a follow-up ask) — 1-9 then 0 map
+      // onto slots 0-9 in order, triggering whatever's slotted there the
+      // exact same way clicking it would (see actionBar.ts's
+      // triggerActionSlot, shared with the slot's own click handler).
+      const digitIndex = '1234567890'.indexOf(e.key);
+      if (digitIndex !== -1) {
+        e.preventDefault();
+        triggerActionSlot(digitIndex);
+      }
     }
   });
 }

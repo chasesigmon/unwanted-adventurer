@@ -681,15 +681,25 @@ body {
 
 /* ---------- Corner buttons (character sheet / inventory) ---------- */
 
-#corner-buttons {
+#corner-buttons-wrapper {
   position: absolute;
   bottom: 12px;
   right: 12px;
   display: flex;
+  align-items: center;
   gap: 8px;
   /* Stays clickable above the sleep overlay — you can still e.g. open
      the map/chat to type /wake even while blacked out. */
   z-index: 60;
+}
+
+#corner-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+#corner-buttons.collapsed {
+  display: none;
 }
 
 .corner-btn {

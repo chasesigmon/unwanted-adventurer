@@ -152,10 +152,22 @@ export function houseForMap(map: MapName): HouseName | undefined {
   return HOUSE_NAMES.find((house) => map === houseCommonRoomFor(house) || map === houseDormsFor(house));
 }
 
-// The 6 specialization paths (a follow-up ask) — mechanics TBD, this
-// batch just records the player's choice (see game.gateway.ts's
+// The 10 specialization paths (a later follow-up ask replaced the
+// original elemental/light-dark set entirely with these) — mechanics
+// TBD, this just records the player's choice (see game.gateway.ts's
 // handleChooseSpecialization).
-export const SPECIALIZATION_PATHS = ['fire', 'water', 'lightning', 'earth', 'light', 'dark'] as const;
+export const SPECIALIZATION_PATHS = [
+  'necromancer',
+  'enhancer',
+  'elementalist',
+  'summoner',
+  'illusionist',
+  'battlemage',
+  'cleric',
+  'druid',
+  'diabolist',
+  'hemomancer',
+] as const;
 export type SpecializationPath = (typeof SPECIALIZATION_PATHS)[number];
 
 // Shared between the client's own live dialogue check (src/ui/

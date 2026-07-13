@@ -128,22 +128,25 @@
           <div id="log-resize-handle" title="Drag to resize"></div>
         </div>
 
-        <div id="corner-buttons">
-          <!-- Hidden until myProfile.mapUnlocked (a follow-up ask: the map
-               is now found, not given — see server/game-gateway/game.gateway.ts's
-               handleTakeChestItem) — see main.ts's own visibility toggle. -->
-          <button type="button" id="map-btn" class="corner-btn" data-tooltip="Map (m)" hidden>🗺️</button>
-          <button type="button" id="equipment-btn" class="corner-btn" data-tooltip="Equipment (e)">🗡️</button>
-          <button type="button" id="skills-btn" class="corner-btn" data-tooltip="Skills (k)">⭐</button>
-          <button type="button" id="spells-btn" class="corner-btn" data-tooltip="Spells (l)">🪄</button>
-          <button type="button" id="affects-btn" class="corner-btn" data-tooltip="Affects (f)">✨</button>
-          <!-- Hidden for now (a follow-up ask) — will come back as an
-               unlockable feature later, same "hidden until unlocked"
-               treatment as the map button above. -->
-          <button type="button" id="autopilot-btn" class="corner-btn" data-tooltip="Prompt (p)" hidden>💬</button>
-          <button type="button" id="inventory-btn" class="corner-btn" data-tooltip="Inventory (i)">🎒</button>
-          <button type="button" id="char-sheet-btn" class="corner-btn" data-tooltip="Character sheet (c)">📜</button>
-          <button type="button" id="quest-log-btn" class="corner-btn" data-tooltip="Quest log (q)">📋</button>
+        <div id="corner-buttons-wrapper">
+          <button type="button" id="corner-buttons-toggle" class="corner-btn" title="Collapse">&minus;</button>
+          <div id="corner-buttons">
+            <!-- Hidden until myProfile.mapUnlocked (a follow-up ask: the map
+                 is now found, not given — see server/game-gateway/game.gateway.ts's
+                 handleTakeChestItem) — see main.ts's own visibility toggle. -->
+            <button type="button" id="map-btn" class="corner-btn" data-tooltip="Map (m)" hidden>🗺️</button>
+            <button type="button" id="equipment-btn" class="corner-btn" data-tooltip="Equipment (e)">🗡️</button>
+            <button type="button" id="skills-btn" class="corner-btn" data-tooltip="Skills (k)">⭐</button>
+            <button type="button" id="spells-btn" class="corner-btn" data-tooltip="Spells (l)">🪄</button>
+            <button type="button" id="affects-btn" class="corner-btn" data-tooltip="Affects (f)">✨</button>
+            <!-- Hidden for now (a follow-up ask) — will come back as an
+                 unlockable feature later, same "hidden until unlocked"
+                 treatment as the map button above. -->
+            <button type="button" id="autopilot-btn" class="corner-btn" data-tooltip="Prompt (p)" hidden>💬</button>
+            <button type="button" id="inventory-btn" class="corner-btn" data-tooltip="Inventory (i)">🎒</button>
+            <button type="button" id="char-sheet-btn" class="corner-btn" data-tooltip="Character sheet (c)">📜</button>
+            <button type="button" id="quest-log-btn" class="corner-btn" data-tooltip="Quest log (q)">📋</button>
+          </div>
         </div>
 
         <div id="char-sheet-modal" class="modal" hidden>
@@ -239,6 +242,17 @@
             <div class="modal-actions">
               <button type="button" id="bench-rest-yes">Yes</button>
               <button type="button" id="bench-rest-no" class="modal-close">No</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="logout-confirm-modal" class="modal" hidden>
+          <div class="modal-box">
+            <button type="button" class="modal-close">&times;</button>
+            <h2>Log Out</h2>
+            <p>Are you sure you want to log out?</p>
+            <div class="modal-actions">
+              <button type="button" id="logout-confirm-yes">Log Out</button>
             </div>
           </div>
         </div>

@@ -116,7 +116,13 @@ CREATE TABLE IF NOT EXISTS players (
   -- house gates which house's own Common Room/Dorms this player may
   -- enter (see game2d/shared/constants.ts's houseForMap).
   house VARCHAR(16) CHECK (house IS NULL OR house IN ('Thistledown', 'Duskwing', 'Emberclaw', 'Starfall')),
-  specialization VARCHAR(16) CHECK (specialization IS NULL OR specialization IN ('fire', 'water', 'lightning', 'earth', 'light', 'dark')),
+  specialization VARCHAR(16) CHECK (
+    specialization IS NULL
+    OR specialization IN (
+      'necromancer', 'enhancer', 'elementalist', 'summoner', 'illusionist',
+      'battlemage', 'cleric', 'druid', 'diabolist', 'hemomancer'
+    )
+  ),
   last_login TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
