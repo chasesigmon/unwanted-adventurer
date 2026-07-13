@@ -71,7 +71,7 @@ import {
   greatHallChairPositionsFor,
   greatHallStagePlatform,
 } from '../../shared/lighting.js';
-import { MONSTER_KINDS, FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS } from '../../shared/constants.js';
+import { MONSTER_KINDS, FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS, COMMON_ROOM_MAPS, DORM_MAPS } from '../../shared/constants.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
 import {
   LUCEM_BOOK_MAP,
@@ -140,6 +140,8 @@ import {
   HEAD_CHAIR_TEXTURE_KEY,
   GREAT_HALL_STAGE_TEXTURE_KEY,
   CLASSROOM_ZOOM,
+  COMMON_ROOM_ZOOM,
+  DORM_ZOOM,
   CORPSE_SCALE,
   CROW_TEXTURE_KEY,
   DAGGER_TEXTURE_KEY,
@@ -719,22 +721,28 @@ export class WorldScene extends Phaser.Scene {
   }
 
   // Sleeping is a static 90-degree "lying down" rotation (no dedicated
-  // sprite art). Resting/sitting is a genuine looping animation instead —
-  // a gentle squash-and-stretch "settling down" breathing tween — since
-  // there's no separate sit-frame art either, but a rotation would look
-  // wrong for "sitting up". Only re-applied when the state actually
+  // sprite art). Resting/sitting and dancing are genuine looping
+  // animations instead (a gentle "settling down" squash for resting, a
+  // lively side-to-side swing for dancing — see the /dance follow-up
+  // ask) — no dedicated pose art for either, so both are built from
+  // tweens over the ordinary idle frame. Only ONE pose can be active at
+  // once (dancing forces the player awake server-side — see
+  // handleDanceCommand), so this takes a single combined `pose` value
+  // rather than juggling restState and dancing as two independent tween
+  // systems that could otherwise stomp on each other's angle/scale via
+  // the same killTweensOf call. Only re-applied when the pose actually
   // changes (tracked via getData) so repeated map:state/sync ticks for
-  // an unchanged restState don't restart the tween from scratch.
-  private applyRestPose(sprite: Phaser.GameObjects.Sprite, restState: RestState, baseScale: number): void {
-    if (sprite.getData('restState') === restState) return;
-    sprite.setData('restState', restState);
+  // an unchanged pose don't restart the tween from scratch.
+  private applyPose(sprite: Phaser.GameObjects.Sprite, pose: RestState | 'dancing', baseScale: number): void {
+    if (sprite.getData('pose') === pose) return;
+    sprite.setData('pose', pose);
     this.tweens.killTweensOf(sprite);
     sprite.setAngle(0);
     sprite.setScale(baseScale);
 
-    if (restState === 'sleeping') {
+    if (pose === 'sleeping') {
       sprite.setAngle(90);
-    } else if (restState === 'resting') {
+    } else if (pose === 'resting') {
       // A "settled down" seated pose (a follow-up ask: the previous
       // version's fast (900ms), large (18%) height-only squash read as
       // the character rapidly bobbing/jumping in place, not sitting).
@@ -747,6 +755,12 @@ export class WorldScene extends Phaser.Scene {
       const sitScaleY = baseScale * 0.8;
       const sitScaleX = baseScale * 1.08;
       sprite.setScale(sitScaleX, sitScaleY);
+    } else if (pose === 'dancing') {
+      // A snappy side-to-side swing (unlike resting's slow settle) —
+      // "bust a move" reads better fast — layered with a small bouncy
+      // vertical pulse so it doesn't look like a pure rigid pendulum.
+      this.tweens.add({ targets: sprite, angle: 16, duration: 220, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      this.tweens.add({ targets: sprite, scaleY: baseScale * 1.12, duration: 260, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     }
   }
 
@@ -1172,8 +1186,8 @@ export class WorldScene extends Phaser.Scene {
 
   private destroyEntitySprite(sprite: Phaser.GameObjects.Sprite): void {
     // Same reasoning as the map-decoration destroy loops in renderMap
-    // (fireplaces/torches/crows/trees) — a resting other-player/monster
-    // can be mid rest-pose breathing tween (see applyRestPose) when they
+    // (fireplaces/torches/crows/trees) — a resting or dancing other-
+    // player/monster can be mid pose tween (see applyPose) when they
     // leave the map, and destroying the sprite without stopping that
     // tween first risks the same "tween throws on a destroyed target,
     // freezing all tween processing" crash a follow-up bug report traced
@@ -1222,7 +1236,6 @@ export class WorldScene extends Phaser.Scene {
     sprite.setData('row', row);
     sprite.setData('col', col);
 
-    if (sprite.getData('isPunching')) return;
     if (prevRow === row && prevCol === col) return;
 
     const dRow = row - prevRow;
@@ -1231,13 +1244,27 @@ export class WorldScene extends Phaser.Scene {
     sprite.setData('facing', facing);
     const pos = this.tilePosition(row, col);
 
-    sprite.play(walkAnimKey(kind, facing), true);
+    // A later follow-up bug fix: "imps still are not moving toward the
+    // player... their sprite stays in the same place while getting
+    // attacked" — a monster's own counter-attack swing (see
+    // playMonsterCounterAnim) sets isPunching on the SAME combat tick
+    // this position update arrives (both are driven by the same ~3s
+    // tick), so this used to skip the tween ENTIRELY whenever isPunching
+    // was set, which is every single tick of an ongoing fight — freezing
+    // the sprite in place for as long as combat continued even though
+    // its real row/col kept advancing server-side. The position tween
+    // must always run; only the walk ANIMATION (which would visually
+    // fight the punch swing) skips while mid-swing.
+    if (!sprite.getData('isPunching')) {
+      sprite.play(walkAnimKey(kind, facing), true);
+    }
     this.tweens.add({
       targets: sprite,
       x: pos.x,
       y: pos.y,
       duration: REMOTE_STEP_TWEEN_MS,
       onComplete: () => {
+        if (sprite.getData('isPunching')) return; // let the swing animation keep playing/finish on its own
         sprite.anims.stop();
         sprite.setTexture(textureKeyFor(kind), idleFrameFor(kind, facing));
       },
@@ -1263,7 +1290,17 @@ export class WorldScene extends Phaser.Scene {
     // standard room's tile footprint but still need to "fill up the
     // whole screen" — zooming in compensates for the smaller grid so the
     // effective on-screen coverage matches a full-size room at zoom 1.
-    const zoom = (CLASSROOM_MAPS as readonly string[]).includes(this.currentMap) ? CLASSROOM_ZOOM : 1;
+    // The secret room shares the classrooms' own exact footprint (see
+    // shared/maps.ts's CAVERNA_SECRETISSIMA), so it gets the same
+    // treatment even though it isn't itself a CLASSROOM_MAPS entry. Dorms
+    // and common rooms/Great Hall (a later follow-up ask: "make each
+    // dorm... fullscreen, just like how the classrooms are") get their
+    // own zoom factors instead, computed for their own (different)
+    // footprints — see mapRender.ts's COMMON_ROOM_ZOOM/DORM_ZOOM.
+    const isClassroomSized = (CLASSROOM_MAPS as readonly string[]).includes(this.currentMap) || this.currentMap === 'Caverna Secretissima';
+    const isCommonRoomSized = (COMMON_ROOM_MAPS as readonly string[]).includes(this.currentMap) || this.currentMap === 'Great Hall';
+    const isDormSized = (DORM_MAPS as readonly string[]).includes(this.currentMap);
+    const zoom = isClassroomSized ? CLASSROOM_ZOOM : isCommonRoomSized ? COMMON_ROOM_ZOOM : isDormSized ? DORM_ZOOM : 1;
     cam.setZoom(zoom);
     cam.setBounds(0, 0, pixelWidth, pixelHeight);
     const fitsWidth = pixelWidth * zoom <= cam.width;
@@ -1763,8 +1800,11 @@ export class WorldScene extends Phaser.Scene {
       // (96px) apart, and even the previous 8px single-line label was
       // wide enough to spill into its neighbor's; wrapping to a ~52px
       // column keeps each label's own footprint well inside that gap.
+      // Nudged up further still (a later follow-up ask: "overlapping
+      // with the podium's white pages") — the podium sprite's own open-
+      // book art sits higher than -26px cleared.
       const text = this.add
-        .text(pos.x, pos.y - 26, label, { fontSize: '6px', color: '#d8c888', fontStyle: 'italic', align: 'center', wordWrap: { width: 52 } })
+        .text(pos.x, pos.y - 34, label, { fontSize: '6px', color: '#d8c888', fontStyle: 'italic', align: 'center', wordWrap: { width: 52 } })
         .setOrigin(0.5, 1)
         .setDepth(-0.4);
       this.podiumLabelSprites.push(text);
@@ -1978,7 +2018,7 @@ export class WorldScene extends Phaser.Scene {
     // correctly reverted (that part is purely reactive to
     // myProfile.equipment, recomputed fresh every frame).
     this.updateOwnTorchSprite(player.equipment.shield === TORCH_ITEM);
-    this.applyRestPose(this.player, player.restState, CHAR_SCALE);
+    this.applyPose(this.player, player.dancing ? 'dancing' : player.restState, CHAR_SCALE);
   }
 
   private applyMapState(state: MapStatePayload): void {
@@ -2041,7 +2081,7 @@ export class WorldScene extends Phaser.Scene {
       this.ensureWandSprite(sprite, p.equipment.weapon === WAND_ITEM, (sprite.getData('facing') as Facing) ?? 'down');
       this.ensureShieldSprite(sprite, p.equipment.shield === 'bone shield', (sprite.getData('facing') as Facing) ?? 'down');
       this.ensureTorchSprite(sprite, p.equipment.shield === TORCH_ITEM, (sprite.getData('facing') as Facing) ?? 'down');
-      this.applyRestPose(sprite, p.restState, CHAR_SCALE);
+      this.applyPose(sprite, p.dancing ? 'dancing' : p.restState, CHAR_SCALE);
       if (this.targetKind === 'player' && this.targetId === p.username) updateTargetPanel(p.username, p.level, p.hp, p.maxHp);
     }
     for (const [username, sprite] of this.otherPlayers) {
@@ -2809,17 +2849,21 @@ export class WorldScene extends Phaser.Scene {
     // game.gateway.ts's AUGUE_RANGE_TILES) — unlike every skill below,
     // which is melee and walks the player into contact range first (see
     // tryEngage), this resolves immediately server-side with no walking
-    // involved. The actual hit result (damage, hp bar, log line) arrives
-    // through the ordinary 'combat' broadcast (see applyCombatEvent),
-    // same as any other attack — this only needs to surface a pre-flight
-    // rejection (not learned/on cooldown/out of range) that only the
-    // caster would otherwise see.
+    // involved. A successful HIT rides the ordinary 'combat' broadcast
+    // (see applyCombatEvent) same as any other attack, but a fumbled cast
+    // (a later follow-up ask: augue now rolls against its own learned
+    // skill percent instead of always landing) has no 'combat' event at
+    // all — its ack.message is the ONLY place that text lives, so this
+    // has to show it unconditionally, not just on outright rejection
+    // (the old `!ack.ok &&` check silently swallowed every fumble, since
+    // a fumble still comes back as `ok: true`) — same bug class already
+    // fixed for stupefaciunt/exarme/murus lapideus.
     if (skillName === AUGUE_SKILL) {
       const targetKind = this.targetKind;
       const targetId = this.targetId;
       this.tryRangedAction(targetKind, targetId, SPELL_ATTACK_RANGE_TILES, () => {
         void this.network.castAugue({ targetKind, targetId }).then((ack) => {
-          if (!ack.ok && ack.message) showCenterToast(ack.message);
+          if (ack.message) showCenterToast(ack.message);
         });
       });
       return;

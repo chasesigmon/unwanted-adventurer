@@ -48,6 +48,10 @@ export interface PlayerState extends Location, Attributes {
   // as well, not just the caster's own Affects modal.
   scutumActive: boolean;
   canteenDrinks: number;
+  // The /dance command (a later follow-up ask) — needed here too so
+  // getMapState's player list shows every OTHER nearby player dancing,
+  // not just the dancer's own client.
+  dancing: boolean;
 }
 
 export type MoveResult =

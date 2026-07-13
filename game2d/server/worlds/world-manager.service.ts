@@ -196,6 +196,7 @@ export class WorldManagerService {
         wandLit: state.wandLit,
         celeritasActive: state.celeritasActive,
         scutumActive: state.scutumActive,
+        dancing: state.dancing,
         gold: state.gold,
         mimicableRaces: state.mimicableRaces,
         mimicForm: state.mimicForm,

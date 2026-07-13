@@ -47,6 +47,13 @@ export interface PlayerSnapshot {
   // Optional for the same reason as wandLitUntil/mapUnlocked above — only
   // the OWNING client's own snapshot ever needs it.
   sleepingInBed?: boolean;
+  // The /dance command (a later follow-up ask) — purely cosmetic, no
+  // heal-rate effect like restState above; moving cancels it (see
+  // game.gateway.ts's handleMove). Visible to every other nearby player
+  // too (see WorldScene's applyDancePose), not just the dancer's own
+  // client, so it's a plain required boolean rather than optional like
+  // sleepingInBed.
+  dancing: boolean;
   // Whether THIS player currently EMITS light (a carried torch) that a
   // nearby ally could benefit from — infravision is deliberately excluded
   // (personal vision, not light emitted into the world); see
@@ -746,6 +753,9 @@ export interface SocketData {
   // See PlayerSnapshot's own doc comment — never persisted, resets to
   // false on reconnect same as restState itself.
   sleepingInBed: boolean;
+  // The /dance command's own state — never persisted, resets to false on
+  // reconnect same as restState/sleepingInBed above.
+  dancing: boolean;
   gold: number;
   mimicableRaces: (Race | MonsterKind)[];
   mimicForm: (Race | MonsterKind) | null;

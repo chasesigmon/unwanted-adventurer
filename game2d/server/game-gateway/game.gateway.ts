@@ -649,6 +649,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       consumeExp: client.data.consumeExp,
       restState: client.data.restState,
       sleepingInBed: client.data.sleepingInBed,
+      dancing: client.data.dancing,
       hasLight: emitsLight(client.data.equipment) || client.data.wandLit,
       wandLit: client.data.wandLit,
       celeritasActive: client.data.celeritasActive,
@@ -1253,6 +1254,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // the text game's own restState.
     client.data.restState = 'awake';
     client.data.sleepingInBed = false;
+    // Never persisted — a fresh connection always starts standing still,
+    // same tradeoff as restState.
+    client.data.dancing = false;
     // Never persisted either — a fresh connection always starts off
     // cooldown.
     client.data.eatBrainsReadyAtTick = 0;
@@ -1327,6 +1331,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       wandLit: client.data.wandLit,
       celeritasActive: client.data.celeritasActive,
       scutumActive: client.data.scutumActive,
+      dancing: client.data.dancing,
     });
     void client.join(client.data.map);
 
@@ -1371,6 +1376,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     this.wakeIfNeeded(client);
+    this.stopDancingIfNeeded(client);
 
     const { username } = client.data;
 
@@ -3571,6 +3577,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     "/sleep - lie down and close your eyes, recovering hp/mana faster until you wake up (moving or attacking wakes you)",
     '/rest, /sit - sit down to rest, recovering a bit faster than standing around',
     '/wake, /stand - get up from sleeping or resting',
+    '/dance - bust a move (moving cancels it)',
     '/mimic [race] - slime only: with no argument, lists what you can mimic; with one, shifts your form to it',
     '/revert - slime only: shift back to your natural slime form',
     '/time - show the current game hour and whether it is day or night',
@@ -3599,6 +3606,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       case 'wake':
       case 'stand':
         this.handleWakeCommand(client);
+        break;
+      case 'dance':
+        this.handleDanceCommand(client);
         break;
       case 'mimic':
         this.handleMimicCommand(client, arg);
@@ -3878,6 +3888,36 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const was = client.data.restState;
     this.setRestState(client, 'awake');
     this.systemMessage(client, was === 'sleeping' ? 'You wake up.' : 'You stand up.');
+  }
+
+  // The /dance command (a later follow-up ask) — a toggle, same shape as
+  // lucem/celeritas: issuing it again stops early. "Moving should cancel
+  // it" is handled by stopDancingIfNeeded below, called from handleMove
+  // the same way wakeIfNeeded is.
+  private setDancing(client: GameSocket, dancing: boolean): void {
+    client.data.dancing = dancing;
+    this.worldManager.updateState(client.data.username, { dancing });
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+  }
+
+  private handleDanceCommand(client: GameSocket): void {
+    if (client.data.dancing) {
+      this.setDancing(client, false);
+      this.systemMessage(client, 'You stop dancing.');
+      return;
+    }
+    this.wakeIfNeeded(client);
+    this.setDancing(client, true);
+    this.systemMessage(client, 'You start dancing!');
+  }
+
+  // Moving cancels the dance (a later follow-up ask) — silent (no "you
+  // stop dancing" message) since the player already knows they just
+  // moved; unlike wakeIfNeeded, this never needs a message of its own.
+  private stopDancingIfNeeded(client: GameSocket): void {
+    if (!client.data.dancing) return;
+    this.setDancing(client, false);
   }
 
   // Backs the map modal's "Who" (everyone online) and "Where" (filtered

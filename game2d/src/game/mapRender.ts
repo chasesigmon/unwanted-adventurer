@@ -13,6 +13,20 @@ export const TILE_SIZE = 32;
 // factor the footprint shrank by restores the same on-screen coverage a
 // full-size room gets at zoom 1 (see WorldScene's applyCameraBounds).
 export const CLASSROOM_ZOOM = 3;
+// "Make each dorm, each common room, the great hall, and the secret room
+// ... fullscreen, just like how the classrooms are" (a later follow-up
+// ask) — same "zoom in to restore full-screen coverage" reasoning as
+// classrooms above, just computed per room family since each shrank by a
+// different factor (see shared/maps.ts's own COMMON_ROOM_ROWS/COLS,
+// DORM_ROOM_ROWS/COLS): min(ROOM_ROWS/theirRows, ROOM_COLS/theirCols),
+// the same ROOM_ROWS/COLS(40x56) "standard room" reference frame
+// CLASSROOM_ZOOM was calibrated against — taking the smaller of the two
+// axis ratios keeps the whole room on screen without cropping either
+// dimension. The secret room is already classroom-sized on its own (see
+// CAVERNA_SECRETISSIMA's own rows/cols), so it just reuses CLASSROOM_ZOOM
+// directly rather than needing its own constant.
+export const COMMON_ROOM_ZOOM = 1.4;
+export const DORM_ZOOM = 3.1;
 export const TREE_TEXTURE_KEY = 'tree';
 export const DAGGER_TEXTURE_KEY = 'held-dagger';
 export const BONE_SHIELD_TEXTURE_KEY = 'held-bone-shield';
