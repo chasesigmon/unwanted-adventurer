@@ -10,8 +10,33 @@ import { attachTooltip } from './tooltip.js';
 
 export const ACTION_BAR_SLOT_COUNT = 20;
 const actionBar = document.getElementById('action-bar') as HTMLDivElement;
+const actionBarToggle = document.getElementById('action-bar-toggle') as HTMLButtonElement;
 const actionSlots: HTMLDivElement[] = [];
 export const actionBarSkills: Array<string | null> = new Array(ACTION_BAR_SLOT_COUNT).fill(null);
+
+// Collapsible (a follow-up ask) — persisted per-username in localStorage,
+// same convention as the loadout itself.
+function actionBarCollapsedStorageKey(username: string): string {
+  return `game2d:actionBarCollapsed:${username}`;
+}
+
+function setActionBarCollapsed(collapsed: boolean): void {
+  actionBar.classList.toggle('collapsed', collapsed);
+  actionBarToggle.textContent = collapsed ? '▴' : '▾';
+  actionBarToggle.title = collapsed ? 'Expand action bar' : 'Collapse action bar';
+}
+
+actionBarToggle.addEventListener('click', () => {
+  const collapsed = !actionBar.classList.contains('collapsed');
+  setActionBarCollapsed(collapsed);
+  if (myProfile) {
+    try {
+      localStorage.setItem(actionBarCollapsedStorageKey(myProfile.username), String(collapsed));
+    } catch {
+      /* localStorage unavailable (private browsing etc.) — not worth surfacing */
+    }
+  }
+});
 
 function renderActionSlot(index: number): void {
   // Always called with an index this same module just created below, so
@@ -60,6 +85,11 @@ let actionBarLoadedForUsername: string | null = null;
 export function loadActionBarOnce(username: string): void {
   if (actionBarLoadedForUsername === username) return;
   actionBarLoadedForUsername = username;
+  try {
+    setActionBarCollapsed(localStorage.getItem(actionBarCollapsedStorageKey(username)) === 'true');
+  } catch {
+    /* localStorage unavailable — leave it expanded */
+  }
   try {
     const raw = localStorage.getItem(actionBarStorageKey(username));
     if (!raw) return;

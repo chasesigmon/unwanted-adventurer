@@ -34,7 +34,7 @@ import {
 } from '../../shared/maps.js';
 import { resolveMove } from '../worlds/resolveMove.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
-import { STARTING_MAP, DIRECTIONS, MAP_NAMES } from '../../shared/constants.js';
+import { STARTING_MAP, DIRECTIONS, MAP_NAMES, HOUSE_NAMES, SPECIALIZATION_PATHS, SPECIALIZATION_LEVEL_REQUIREMENT, houseForMap } from '../../shared/constants.js';
 import {
   type CombatantStats,
   PUNCH_SKILL,
@@ -726,6 +726,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       thirst: client.data.thirst,
       quests: client.data.quests,
       enhancedLearningUntil: client.data.enhancedLearningUntil,
+      house: client.data.house ?? undefined,
+      specialization: client.data.specialization ?? undefined,
     };
   }
 
@@ -835,6 +837,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         hunger: client.data.hunger,
         thirst: client.data.thirst,
         quests: client.data.quests,
+        house: client.data.house,
+        specialization: client.data.specialization,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1034,6 +1038,51 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // the Combat log tab, not Chat — same bug as above, just for the
     // quest-complete message itself this time, not just the level-up line.
     client.emit('combatNotice', message);
+    return { ok: true, message };
+  }
+
+  // The new house-assignment teacher's own dialogue (a follow-up ask) —
+  // permanent once chosen; a direct-emit attempt at re-choosing (or
+  // choosing an invalid house) is rejected rather than silently
+  // overwriting an existing choice.
+  @SubscribeMessage('chooseHouse')
+  handleChooseHouse(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): { ok: boolean; message?: string } {
+    const parsed = z.object({ house: z.enum(HOUSE_NAMES) }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid house.' };
+    }
+    if (client.data.house) {
+      return { ok: false, message: 'You have chosen your house already. Let glory and fame be yours!' };
+    }
+    client.data.house = parsed.data.house;
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    const message = `You have been sorted into ${parsed.data.house}!`;
+    this.systemMessage(client, message);
+    return { ok: true, message };
+  }
+
+  // The Specialization room's own path choice (a follow-up ask) —
+  // level-10-gated (mirroring the dialogue's own live level check),
+  // permanent once chosen. No mechanics wired to the choice itself yet
+  // ("mechanics on the paths will come in the future").
+  @SubscribeMessage('chooseSpecialization')
+  handleChooseSpecialization(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): { ok: boolean; message?: string } {
+    const parsed = z.object({ path: z.enum(SPECIALIZATION_PATHS) }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid path.' };
+    }
+    if (client.data.level < SPECIALIZATION_LEVEL_REQUIREMENT) {
+      return { ok: false, message: `Return to me when you are level ${SPECIALIZATION_LEVEL_REQUIREMENT}.` };
+    }
+    if (client.data.specialization) {
+      return { ok: false, message: 'Your path has been chosen, may you make it your own.' };
+    }
+    client.data.specialization = parsed.data.path;
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    const message = `You have chosen the path of ${parsed.data.path}.`;
+    this.systemMessage(client, message);
     return { ok: true, message };
   }
 
@@ -1600,6 +1649,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.secretDoorUnlocked = doc?.secretDoorUnlocked ?? false;
     client.data.secretChestUnlocked = doc?.secretChestUnlocked ?? false;
     client.data.mapUnlocked = doc?.mapUnlocked ?? false;
+    // The house/specialization system (a follow-up ask) — persisted,
+    // null until chosen (see handleChooseHouse/handleChooseSpecialization).
+    client.data.house = doc?.house ?? null;
+    client.data.specialization = doc?.specialization ?? null;
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
@@ -1703,6 +1756,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // no side effects" shape as the town gate above.
       if (preview.ok && preview.transitioned && preview.mapName === 'Caverna Secretissima' && !client.data.secretDoorUnlocked) {
         return { ok: false, player: this.snapshotFor(client), message: 'The door is locked.' };
+      }
+      // House gate (a follow-up ask: "the player should only be allowed
+      // in their assigned common room/dorms... emberclaw students should
+      // not be allowed in duskwing") — houseForMap returns undefined for
+      // every map that isn't a house's own Common Room/Dorms, so this is
+      // a no-op everywhere else.
+      if (preview.ok && preview.transitioned) {
+        const requiredHouse = houseForMap(preview.mapName);
+        if (requiredHouse && client.data.house !== requiredHouse) {
+          return { ok: false, player: this.snapshotFor(client), message: `Only ${requiredHouse} students may enter here.` };
+        }
       }
     }
 
@@ -3866,12 +3930,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     client.data.mana -= SPELL_ATTACK_MANA_COST;
-    this.startSkillCooldown(client, MURUS_LAPIDEUS_SKILL);
 
     let message: string;
     if (!this.rollSpellSuccess(client, MURUS_LAPIDEUS_SKILL)) {
       message = 'You fumble the incantation and nothing happens.';
     } else {
+      // A follow-up ask: cooldown should only start on an actual
+      // success, not a fumble — a fumbled cast still costs mana but
+      // shouldn't lock the player out of trying again right away.
+      this.startSkillCooldown(client, MURUS_LAPIDEUS_SKILL);
       const id = randomUUID();
       this.stoneBlocks.set(id, {
         id,
@@ -4621,7 +4688,25 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     delete equipment[slot];
     client.data.equipment = equipment;
     if (slot === 'shield' && item === TORCH_ITEM) this.pauseTorch(client);
+    // Unequipping the wand while lucem is lit (a follow-up ask) — the
+    // glow animation itself already checks equipment.weapon === WAND_ITEM
+    // (see WorldScene's showGlow), so it stops immediately, but wandLit
+    // itself must also be cleared here or re-equipping the SAME wand
+    // later would silently resume the glow (and its light radius/mana
+    // upkeep) without ever re-casting.
+    const messages: string[] = [];
+    if (slot === 'weapon' && client.data.wandLit) {
+      client.data.wandLit = false;
+      client.data.wandLitUntil = null;
+      this.worldManager.updateState(client.data.username, { wandLit: false });
+      // UseItemAck doesn't carry wandLit itself — the client's own
+      // myProfile.wandLit (read directly by affectsPanel/WorldScene's
+      // light-radius and re-equip glow checks) needs its own fresh sync,
+      // not just the equipment/inventory fields the ack already returns.
+      client.emit('sync', { player: this.snapshotFor(client) });
+      messages.push('Your wand goes dark as you unequip it.');
+    }
     const inventory = [...client.data.inventory, item];
-    return this.finishItemAction(client, inventory, 'unequipped', []);
+    return this.finishItemAction(client, inventory, 'unequipped', messages);
   }
 }

@@ -1280,15 +1280,14 @@ body {
 
 /* ---------- Action bar (2x10 skill slots — item 13) ---------- */
 
-#action-bar {
+#action-bar-wrapper {
   position: absolute;
   bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
-  display: grid;
-  grid-template-columns: repeat(10, 36px);
-  grid-template-rows: repeat(2, 36px);
-  gap: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   /* Higher than .modal (70) deliberately — dragging a skill icon out of
      the (open) Skills modal onto this bar is the whole point of it, but
      a modal's full-screen backdrop sitting above it meant every 'drop'
@@ -1297,6 +1296,39 @@ body {
      front of an open modal near the bottom of the screen) that's worth
      it for drag-and-drop to actually work. */
   z-index: 80;
+}
+
+/* Collapsible (a follow-up ask) — a small tab above the bar toggles it
+   out of the way entirely rather than just shrinking it, so a collapsed
+   bar reclaims the full width of screen it was covering. */
+#action-bar-toggle {
+  width: 28px;
+  height: 14px;
+  margin-bottom: 3px;
+  padding: 0;
+  background: rgba(20, 20, 28, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  color: #f0e8d0;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#action-bar-toggle:hover {
+  background: rgba(40, 40, 54, 0.85);
+}
+
+#action-bar {
+  display: grid;
+  grid-template-columns: repeat(10, 36px);
+  grid-template-rows: repeat(2, 36px);
+  gap: 4px;
+}
+
+#action-bar.collapsed {
+  display: none;
 }
 
 .action-slot {

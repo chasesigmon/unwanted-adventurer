@@ -1,5 +1,5 @@
 import type { Server, Socket } from 'socket.io';
-import type { Gender, HairColor, MapName, Race, SkinTone, Direction, MonsterKind, MonsterClass } from './constants.js';
+import type { Gender, HairColor, MapName, Race, SkinTone, Direction, MonsterKind, MonsterClass, HouseName, SpecializationPath } from './constants.js';
 import type { EquipmentSlot } from './equipment.js';
 import type { QuestProgress } from './quests.js';
 
@@ -158,6 +158,18 @@ export interface PlayerSnapshot {
   // wandLitUntil/celeritasActiveUntil. Never persisted (resets on
   // reconnect, same tradeoff as those).
   enhancedLearningUntil?: number | null;
+  // Which of the 4 houses this player has chosen (a follow-up ask) —
+  // permanent once set (see game.gateway.ts's handleChooseHouse), gates
+  // which house's own Common Room/Dorms this player may enter (see
+  // shared/constants.ts's houseCommonRoomFor/houseDormsFor). Optional for
+  // the same reason as mapUnlocked above.
+  house?: HouseName;
+  // Which specialization path this player has chosen (a follow-up ask) —
+  // permanent once set, level-10-gated (see game.gateway.ts's
+  // handleChooseSpecialization); no mechanics wired to it yet beyond
+  // recording the choice. Optional for the same reason as mapUnlocked
+  // above.
+  specialization?: SpecializationPath;
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
@@ -301,7 +313,48 @@ export interface TeacherSnapshot {
   // your path" (with choices TBD) at/above it. No quest, no persisted
   // state at all — just a live myProfile.level check every time.
   specializationGate?: boolean;
+  // The Entrance Hall's own house-assignment teacher (a follow-up ask) —
+  // opens a dialogue offering the 4 houses as clickable choices (see
+  // src/ui/npcDialogueModal.ts's openHouseChoiceDialogue) if the player
+  // hasn't picked one yet, or a fixed "already chosen" line with no
+  // buttons if they have. No quest, permanent once chosen (see
+  // game.gateway.ts's handleChooseHouse).
+  houseChoiceGate?: boolean;
+  // A distinct robe color per teacher (a follow-up ask) — absent means
+  // the spritesheet's own base navy. See src/characterSprites.ts's
+  // teacher-${TeacherRobeColor} variant textures (one full recolored
+  // spritesheet per name, generated from the base art — see assets/
+  // teacher-spritesheet-*.png).
+  robeColorKey?: TeacherRobeColor;
 }
+
+export const TEACHER_ROBE_COLORS = ['violet', 'crimson', 'teal', 'forest', 'amber', 'steel', 'plum', 'olive', 'maroon', 'slate'] as const;
+export type TeacherRobeColor = (typeof TEACHER_ROBE_COLORS)[number];
+
+export type TeacherFacing = NonNullable<TeacherSnapshot['facing']>;
+
+// The desk sits one tile in front of the teacher, in whichever direction
+// they face (absent facing defaults to 'down', same as TeacherSnapshot
+// itself) — shared so server/worlds/teachers.ts's collision footprint
+// and WorldScene's own desk sprite placement can never drift apart.
+export function deskOffsetForFacing(facing: TeacherFacing | undefined): { dRow: number; dCol: number } {
+  switch (facing) {
+    case 'up':
+      return { dRow: -1, dCol: 0 };
+    case 'left':
+      return { dRow: 0, dCol: -1 };
+    case 'right':
+      return { dRow: 0, dCol: 1 };
+    case 'down':
+    default:
+      return { dRow: 1, dCol: 0 };
+  }
+}
+
+// The desk sprite art is drawn extending "up" (toward a south-facing
+// teacher) by default — rotated clockwise here to match whichever
+// direction the teacher actually faces (see WorldScene's desk sprite).
+export const DESK_ANGLE_FOR_FACING: Record<TeacherFacing, number> = { down: 0, right: 90, up: 180, left: 270 };
 
 // Murus lapideus (a later follow-up ask) — a temporary, defensive summon
 // standing wherever the caster clicked; rendered like an NPC (a health
@@ -808,6 +861,14 @@ export interface ClientToServerEvents {
   // game.gateway.ts's handleCompleteQuest. Rejected if any objective
   // isn't actually done yet, or if it's already been turned in.
   completeQuest: (payload: { questId: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
+  // The new house-assignment teacher's own dialogue (a follow-up ask) —
+  // permanent once chosen; rejected if the player already has one (see
+  // game.gateway.ts's handleChooseHouse).
+  chooseHouse: (payload: { house: HouseName }, ack: (res: { ok: boolean; message?: string }) => void) => void;
+  // The Specialization room's own path choice (a follow-up ask) —
+  // level-10-gated, permanent once chosen (see game.gateway.ts's
+  // handleChooseSpecialization).
+  chooseSpecialization: (payload: { path: SpecializationPath }, ack: (res: { ok: boolean; message?: string }) => void) => void;
   // ===== TESTING OVERRIDE — REMOVE AFTER TESTING ===== "add a 'cheat'
   // hotkey... pressing it should recover my mana to 100%. This will go
   // away after testing." Bound to the '~' key client-side (see
@@ -920,6 +981,11 @@ export interface SocketData {
   quests: Record<string, QuestProgress>;
   // Never persisted — see PlayerSnapshot's own doc comment.
   enhancedLearningUntil: number | null;
+  // House/specialization choice (a follow-up ask) — persisted; loaded
+  // from the player doc on connect, null until chosen (permanent once
+  // set). See PlayerSnapshot's own doc comment for what each gates.
+  house: HouseName | null;
+  specialization: SpecializationPath | null;
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

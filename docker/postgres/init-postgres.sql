@@ -110,6 +110,13 @@ CREATE TABLE IF NOT EXISTS players (
   -- means it's been started. See game2d/shared/quests.ts for the quest/
   -- objective definitions themselves, which live in code, not the DB.
   quests JSONB NOT NULL DEFAULT '{}',
+  -- The house/specialization system (a follow-up ask) — both null until
+  -- chosen, permanent afterward (see game2d/server/game-gateway/
+  -- game.gateway.ts's handleChooseHouse/handleChooseSpecialization).
+  -- house gates which house's own Common Room/Dorms this player may
+  -- enter (see game2d/shared/constants.ts's houseForMap).
+  house VARCHAR(16) CHECK (house IS NULL OR house IN ('Thistledown', 'Duskwing', 'Emberclaw', 'Starfall')),
+  specialization VARCHAR(16) CHECK (specialization IS NULL OR specialization IN ('fire', 'water', 'lightning', 'earth', 'light', 'dark')),
   last_login TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

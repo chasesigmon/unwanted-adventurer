@@ -127,6 +127,43 @@ export const COMMON_ROOM_MAPS = ['Thistledown Common Room', 'Duskwing Common Roo
 // own convenient lookup.
 export const DORM_MAPS = ['Thistledown Dorms', 'Duskwing Dorms', 'Emberclaw Dorms', 'Starfall Dorms'] as const;
 
+// The 4 houses themselves (a follow-up ask: "the player should only be
+// allowed in their assigned common room/dorms") — bare names, one per
+// COMMON_ROOM_MAPS/DORM_MAPS entry (each literally "<House> Common Room"/
+// "<House> Dorms"), so a player's own chosen HouseName can be turned back
+// into either room name with a plain template literal — see
+// houseCommonRoomFor/houseDormsFor below.
+export const HOUSE_NAMES = ['Thistledown', 'Duskwing', 'Emberclaw', 'Starfall'] as const;
+export type HouseName = (typeof HOUSE_NAMES)[number];
+
+export function houseCommonRoomFor(house: HouseName): (typeof COMMON_ROOM_MAPS)[number] {
+  return `${house} Common Room`;
+}
+
+export function houseDormsFor(house: HouseName): (typeof DORM_MAPS)[number] {
+  return `${house} Dorms`;
+}
+
+// Which house (if any) a given Common Room/Dorms map belongs to — the
+// inverse of houseCommonRoomFor/houseDormsFor, used to gate entry (see
+// game.gateway.ts's handleMove): undefined for every map that isn't a
+// house's own common room/dorms (nothing to gate).
+export function houseForMap(map: MapName): HouseName | undefined {
+  return HOUSE_NAMES.find((house) => map === houseCommonRoomFor(house) || map === houseDormsFor(house));
+}
+
+// The 6 specialization paths (a follow-up ask) — mechanics TBD, this
+// batch just records the player's choice (see game.gateway.ts's
+// handleChooseSpecialization).
+export const SPECIALIZATION_PATHS = ['fire', 'water', 'lightning', 'earth', 'light', 'dark'] as const;
+export type SpecializationPath = (typeof SPECIALIZATION_PATHS)[number];
+
+// Shared between the client's own live dialogue check (src/ui/
+// npcDialogueModal.ts's openSpecializationDialogue) and the server's
+// re-validation (game.gateway.ts's handleChooseSpecialization) so the
+// two can never drift apart.
+export const SPECIALIZATION_LEVEL_REQUIREMENT = 10;
+
 export const MAP_NAMES = [
   'Great Plains',
   'Labyrinth',

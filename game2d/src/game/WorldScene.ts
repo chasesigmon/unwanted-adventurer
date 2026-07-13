@@ -122,6 +122,7 @@ import type {
   WorldTimePayload,
   LockTarget,
 } from '../../shared/types.js';
+import { deskOffsetForFacing, DESK_ANGLE_FOR_FACING } from '../../shared/types.js';
 import {
   BAR_STACK_GAP,
   BONE_SHIELD_TEXTURE_KEY,
@@ -208,7 +209,7 @@ import { openBenchModal } from '../ui/benchModal.js';
 import { openShopModal } from '../ui/shopModal.js';
 import { openTargetInfoModal } from '../ui/targetInfoModal.js';
 import { notifyMapChanged } from '../ui/mapModal.js';
-import { openNpcDialogueModal, openSpecializationDialogue } from '../ui/npcDialogueModal.js';
+import { openNpcDialogueModal, openSpecializationDialogue, openHouseChoiceDialogue } from '../ui/npcDialogueModal.js';
 import { hideTargetPanel, updateTargetPanel, updateLockTargetPanel } from '../ui/targetPanel.js';
 
 const autopilotStatusEl = document.getElementById('autopilot-status') as HTMLDivElement;
@@ -558,7 +559,10 @@ export class WorldScene extends Phaser.Scene {
       // plain pointer cursor instead of the ordinary classroom teacher's
       // 'help' — clicking her actually DOES something (opens her dialogue
       // and offers a quest), it isn't just an info tooltip.
-      const overQuestGiverTeacher = Boolean(hoveredTeacher?.getData('questId')) || Boolean(hoveredTeacher?.getData('specializationGate'));
+      const overQuestGiverTeacher =
+        Boolean(hoveredTeacher?.getData('questId')) ||
+        Boolean(hoveredTeacher?.getData('specializationGate')) ||
+        Boolean(hoveredTeacher?.getData('houseChoiceGate'));
       // A key cursor over any door or the treasure chest (a follow-up
       // ask) — every door is resera-targetable now, not just the secret
       // one (see the doorSprites click handler below).
@@ -1984,16 +1988,21 @@ export class WorldScene extends Phaser.Scene {
       return sprite;
     });
 
-    // Classroom door symbols (a follow-up ask) — a small icon floating
-    // just above whichever door leads to a classroom, purely decorative
+    // Classroom door symbols (a follow-up ask) — a small icon to the
+    // right of whichever door leads to a classroom, purely decorative
     // (not interactive), so a player can tell what's taught behind each
-    // one at a glance.
+    // one at a glance. Previously floated above the door (row - 0.9
+    // tiles), which for the Entrance Hall's own north-wall doors (row 0)
+    // put it at a negative Y the camera's scroll bounds (fixed to start
+    // at (0,0) — see applyCameraBounds) can never actually show, making
+    // it permanently invisible there — to the side, same row, stays
+    // on-grid and visible everywhere.
     for (const sprite of this.classroomSymbolSprites) sprite.destroy();
     this.classroomSymbolSprites = def.exits
       .filter((exit) => CLASSROOM_SYMBOL_TEXTURE_KEYS[exit.toMap])
       .map((exit) => {
-        const pos = this.tilePosition(exit.row, exit.col);
-        return this.add.sprite(pos.x, pos.y - TILE_SIZE * 0.9, CLASSROOM_SYMBOL_TEXTURE_KEYS[exit.toMap]!).setDepth(-0.4);
+        const pos = this.tilePosition(exit.row, exit.col + 1);
+        return this.add.sprite(pos.x, pos.y, CLASSROOM_SYMBOL_TEXTURE_KEYS[exit.toMap]!).setDepth(-0.4);
       });
 
     // The secret room's own treasure chest (a later follow-up ask) — a
@@ -2448,9 +2457,20 @@ export class WorldScene extends Phaser.Scene {
       // hasDesk: false (a follow-up ask's Headmistress) skips the desk
       // sprite entirely — she stands between the fireplaces, not at a
       // classroom desk (see server/worlds/teachers.ts's own comment).
+      // Position AND rotation both follow the teacher's own facing (a
+      // later follow-up ask's Professor Hollowell, facing the Entrance
+      // Hall's own benches instead of straight down) — see shared/types.
+      // ts's deskOffsetForFacing/DESK_ANGLE_FOR_FACING, the same mapping
+      // server/worlds/teachers.ts's own collision footprint now uses.
       if (t.hasDesk !== false) {
-        const deskPos = this.tilePosition(t.row + 1, t.col);
-        const deskSprite = this.add.sprite(deskPos.x, deskPos.y, CLASSROOM_DESK_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
+        const facing = t.facing ?? 'down';
+        const { dRow, dCol } = deskOffsetForFacing(facing);
+        const deskPos = this.tilePosition(t.row + dRow, t.col + dCol);
+        const deskSprite = this.add
+          .sprite(deskPos.x, deskPos.y, CLASSROOM_DESK_TEXTURE_KEY)
+          .setOrigin(0.5, 0.85)
+          .setAngle(DESK_ANGLE_FOR_FACING[facing])
+          .setDepth(-0.5);
         this.teacherDeskSprites.set(t.id, deskSprite);
       }
 
@@ -2461,12 +2481,17 @@ export class WorldScene extends Phaser.Scene {
       // case (sword/feather/help/pointer) now, and fighting Phaser's own
       // hover cursor here is what silently broke it before (see that
       // handler's own comment).
+      // A distinct robe color per teacher (a follow-up ask) — a fully
+      // recolored variant spritesheet, same frame layout as the base
+      // 'teacher' sheet (see characterSprites.ts's TeacherVariantKind).
+      const teacherKind = t.robeColorKey ? (`teacher-${t.robeColorKey}` as const) : 'teacher';
       const sprite = this.add
-        .sprite(pos.x, pos.y, textureKeyFor('teacher'), idleFrameFor('teacher', t.facing ?? 'down'))
+        .sprite(pos.x, pos.y, textureKeyFor(teacherKind), idleFrameFor(teacherKind, t.facing ?? 'down'))
         .setScale(CHAR_SCALE)
         .setInteractive();
       sprite.setData('questId', t.questId);
       sprite.setData('specializationGate', t.specializationGate);
+      sprite.setData('houseChoiceGate', t.houseChoiceGate);
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
         // A follow-up ask: the Headmistress opens a dialogue modal (with
@@ -2490,6 +2515,17 @@ export class WorldScene extends Phaser.Scene {
             return;
           }
           openSpecializationDialogue(t.name);
+          return;
+        }
+        // The Entrance Hall's own house-assignment teacher (a later
+        // follow-up ask) — no quest, just a one-time choice, same reach
+        // concept.
+        if (t.houseChoiceGate) {
+          if (!isWithinRadius(this.row, this.col, t.row, t.col, SHOP_REACH_TILES)) {
+            logCombatMessage(`You're too far away to talk to ${t.name}.`);
+            return;
+          }
+          openHouseChoiceDialogue(t.name);
           return;
         }
         // A fixed, generic line (a later follow-up ask dropped the

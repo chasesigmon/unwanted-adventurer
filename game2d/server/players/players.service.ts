@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 import { Player } from './player.entity.js';
-import type { Gender, HairColor, MapName, Race, SkinTone } from '../../shared/constants.js';
+import type { Gender, HairColor, MapName, Race, SkinTone, HouseName, SpecializationPath } from '../../shared/constants.js';
 import type { QuestProgress } from '../../shared/quests.js';
 
 export interface NewPlayerInput {
@@ -62,6 +62,8 @@ export interface PlayerStatsUpdate {
   hunger?: number;
   thirst?: number;
   quests?: Record<string, QuestProgress>;
+  house?: HouseName | null;
+  specialization?: SpecializationPath | null;
 }
 
 @Injectable()

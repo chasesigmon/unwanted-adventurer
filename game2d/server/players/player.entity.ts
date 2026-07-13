@@ -1,5 +1,14 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
-import { STARTING_MAP, type Gender, type HairColor, type MapName, type Race, type SkinTone } from '../../shared/constants.js';
+import {
+  STARTING_MAP,
+  type Gender,
+  type HairColor,
+  type MapName,
+  type Race,
+  type SkinTone,
+  type HouseName,
+  type SpecializationPath,
+} from '../../shared/constants.js';
 import type { QuestProgress } from '../../shared/quests.js';
 
 // Position fields place a character back where it left off; attribute/
@@ -169,6 +178,15 @@ export class Player {
   // Quest id -> progress (see shared/quests.ts's own QuestProgress).
   @Column({ type: 'jsonb', default: () => "'{}'" })
   quests!: Record<string, QuestProgress>;
+
+  // The house/specialization system (a follow-up ask) — both null until
+  // chosen, permanent afterward (see game.gateway.ts's handleChooseHouse/
+  // handleChooseSpecialization).
+  @Column({ type: 'varchar', length: 16, nullable: true, default: null })
+  house!: HouseName | null;
+
+  @Column({ type: 'varchar', length: 16, nullable: true, default: null })
+  specialization!: SpecializationPath | null;
 
   @Column({ name: 'last_login', type: 'timestamptz', default: () => 'now()' })
   lastLogin!: Date;

@@ -34,7 +34,7 @@ import type {
   AllocatableStat,
   AllocateStatPointAck,
 } from '../shared/types.js';
-import type { Direction, Gender, HairColor, SkinTone } from '../shared/constants.js';
+import type { Direction, Gender, HairColor, SkinTone, HouseName, SpecializationPath } from '../shared/constants.js';
 import type { EquipmentSlot } from '../shared/equipment.js';
 
 type GameClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -684,6 +684,36 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('completeQuest', { questId }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // The house-assignment teacher's own dialogue (a follow-up ask) — see
+  // game.gateway.ts's handleChooseHouse.
+  chooseHouse(house: HouseName): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('chooseHouse', { house }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // The Specialization room's own path choice (a follow-up ask) — see
+  // game.gateway.ts's handleChooseSpecialization.
+  chooseSpecialization(path: SpecializationPath): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('chooseSpecialization', { path }, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

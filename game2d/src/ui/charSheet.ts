@@ -90,6 +90,11 @@ export function renderCharSheet(): void {
   const hasPoints = myProfile.statPointsAvailable > 0;
 
   appendStatRow(charSheetBody, 'Race', myProfile.race);
+  // House/specialization (a follow-up ask) — "None" until chosen (see
+  // the new house-assignment teacher/Specialization room's own
+  // dialogues), permanent afterward.
+  appendStatRow(charSheetBody, 'House', myProfile.house ?? 'None');
+  appendStatRow(charSheetBody, 'Specialization', myProfile.specialization ?? 'None');
   appendStatRow(charSheetBody, 'Level', myProfile.level);
   appendStatRow(charSheetBody, 'Exp', myProfile.exp, CHAR_SHEET_STAT_DESCRIPTIONS.Exp);
   appendStatRow(charSheetBody, 'HP', `${myProfile.hp}/${myProfile.maxHp}`);
