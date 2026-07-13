@@ -19,23 +19,25 @@ export const NPCS: NpcSnapshot[] = [
     hp: STARTING_VITAL,
     maxHp: STARTING_VITAL,
   },
-  // 3 practice scarecrows (a follow-up ask) — immortal (see
-  // resolveHitOnNpc's own immortal branch: resets to full hp in place,
-  // never counter-attacks, no corpse), so a player can freely practice
-  // offense spells (augue, ...) on something that won't fight back or
-  // "run out." Standing in the Entrance Hall, to the right of its social
-  // benches (centered at col 26) and left of the east fireplace
-  // (col 38) — a clear stretch of open floor between the two.
+  // 3 practice training skeletons (a follow-up ask renamed these from
+  // "scarecrow") — immortal (see resolveHitOnNpc's own immortal branch:
+  // resets to full hp in place, never counter-attacks, no corpse), so a
+  // player can freely practice offense spells (augue, ...) on something
+  // that won't fight back or "run out." Standing in the Entrance Hall,
+  // in the same column as its two EAST fireplaces (col 38 — see
+  // fireplacePositionsFor's own entrance-hall cols), centered between
+  // their rows (8 and rows-9=27, midpoint 17.5) — "in the middle between
+  // the two fireplaces on the right."
   ...[14, 18, 22].map((row, i) => ({
-    id: `entrance-hall-scarecrow-${i + 1}`,
+    id: `entrance-hall-training-skeleton-${i + 1}`,
     race: 'skeleton' as const,
     map: 'Grimoak Entrance Hall' as const,
     row,
-    col: 34,
+    col: 38,
     level: STARTING_LEVEL,
     hp: STARTING_VITAL,
     maxHp: STARTING_VITAL,
     immortal: true,
-    label: 'scarecrow',
+    label: 'training skeleton',
   })),
 ];

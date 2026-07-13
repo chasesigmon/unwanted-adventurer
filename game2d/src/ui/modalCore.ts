@@ -13,7 +13,6 @@ export const inventoryModal = document.getElementById('inventory-modal') as HTML
 export const inventoryList = document.getElementById('inventory-list') as HTMLUListElement;
 export const skillsModal = document.getElementById('skills-modal') as HTMLDivElement;
 export const skillsBody = document.getElementById('skills-body') as HTMLDivElement;
-export const skillsShowAllToggle = document.getElementById('skills-show-all-toggle') as HTMLButtonElement;
 // Spells and skills are different things (players will eventually have
 // both) — a separate modal/button rather than a tab bolted onto Skills.
 export const spellsModal = document.getElementById('spells-modal') as HTMLDivElement;

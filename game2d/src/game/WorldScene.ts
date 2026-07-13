@@ -740,19 +740,13 @@ export class WorldScene extends Phaser.Scene {
       // the character rapidly bobbing/jumping in place, not sitting).
       // Shorter AND a little wider as its static BASE pose — closer to
       // what a seated silhouette actually reads as than a pure vertical
-      // squash — with only a small, slow breathing motion layered on top
-      // (felt more than seen) instead of one big fast oscillation.
+      // squash. Purely static once settled (a later follow-up ask: the
+      // small looping "breathing" tween this used to have on top was
+      // still a visible wobble — the shrink itself is the whole pose now,
+      // no motion layered on top of it).
       const sitScaleY = baseScale * 0.8;
       const sitScaleX = baseScale * 1.08;
       sprite.setScale(sitScaleX, sitScaleY);
-      this.tweens.add({
-        targets: sprite,
-        scaleY: sitScaleY * 0.97,
-        duration: 2200,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
-      });
     }
   }
 

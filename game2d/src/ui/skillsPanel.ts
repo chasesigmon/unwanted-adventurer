@@ -1,56 +1,16 @@
-// The Skills modal — every learned skill plus, optionally, a "Show All"
-// preview of skills this character could still acquire down their
-// current path.
+// The Skills modal — every skill the character has learned.
 import { myProfile } from '../state.js';
-import {
-  LUCEM_SKILL,
-  IRRIGO_SKILL,
-  CELERITAS_SKILL,
-  AUGUE_SKILL,
-  RESERA_SKILL,
-  STUPEFACIUNT_SKILL,
-  EXARME_SKILL,
-  SCUTUM_SKILL,
-  MURUS_LAPIDEUS_SKILL,
-} from '../../shared/skills.js';
 import { attachTooltip } from './tooltip.js';
 import { SKILL_DESCRIPTIONS, SKILL_CATEGORIES, skillCategory, createCooldownOverlay, isAttackSkill, isUsableSkill, skillIconColor } from './skillMeta.js';
 import { skillIconGlyphUrl } from './skillIcons.js';
 import { actionBarSkills, assignActionSlot, saveActionBar } from './actionBar.js';
 import { logCombatMessage } from './log.js';
-import { registerModalOpenHandler, registerModalRefreshHandler, skillsBody, skillsModal, skillsShowAllToggle } from './modalCore.js';
-
-// There's no real per-level skill unlock system in this project — skills
-// are granted at creation or by chance on some interaction, never gated
-// behind a specific character level. "Show All" previews every skill this
-// character could still acquire, so the player can see what's left to
-// earn. The old goblin-game skill pool (starting kit, Hobgoblin evolution,
-// monster-part resistances) was removed here — this project's playable
-// race is exclusively human now (see shared/constants.ts's RACES doc
-// comment), so none of that applies to any character that can actually
-// exist anymore. Lucem/irrigo/celeritas (learnable at their own
-// classroom spellbook podiums) are the skills currently worth previewing
-// this way.
-let showAllSkills = false;
-
-function acquirableSkillPool(): string[] {
-  return [
-    LUCEM_SKILL,
-    IRRIGO_SKILL,
-    CELERITAS_SKILL,
-    AUGUE_SKILL,
-    RESERA_SKILL,
-    STUPEFACIUNT_SKILL,
-    EXARME_SKILL,
-    SCUTUM_SKILL,
-    MURUS_LAPIDEUS_SKILL,
-  ];
-}
+import { registerModalOpenHandler, registerModalRefreshHandler, skillsBody, skillsModal } from './modalCore.js';
 
 // A skill row with a small icon to the left of its name — built by hand
 // rather than reusing appendStatRow, since a usable skill's icon also
 // needs to be draggable into the action bar.
-function renderSkillRow(skillName: string, valueText: string, notAcquired: boolean): void {
+function renderSkillRow(skillName: string, valueText: string): void {
   const labelEl = document.createElement('div');
   labelEl.className = 'stat-label skill-label';
 
@@ -62,7 +22,7 @@ function renderSkillRow(skillName: string, valueText: string, notAcquired: boole
   icon.style.backgroundRepeat = 'no-repeat';
   icon.style.backgroundPosition = 'center';
 
-  const usable = !notAcquired && isUsableSkill(skillName);
+  const usable = isUsableSkill(skillName);
   if (usable) {
     icon.draggable = true;
     icon.classList.add('draggable');
@@ -106,7 +66,6 @@ function renderSkillRow(skillName: string, valueText: string, notAcquired: boole
   const valueEl = document.createElement('div');
   valueEl.className = 'stat-value';
   valueEl.textContent = valueText;
-  if (notAcquired) valueEl.classList.add('not-acquired');
 
   skillsBody.appendChild(labelEl);
   skillsBody.appendChild(valueEl);
@@ -126,33 +85,21 @@ export function renderSkills(): void {
   if (!myProfile) return;
   skillsBody.innerHTML = '';
 
-  // Every skill the character has (or, with Show All on, could still
-  // acquire) grouped into its own category, alphabetized WITHIN each
-  // category (a follow-up ask) — the categories themselves stay in
-  // SKILL_CATEGORIES' own fixed order, not alphabetical.
+  // Every learned skill, grouped into its own category, alphabetized
+  // WITHIN each category (a follow-up ask) — the categories themselves
+  // stay in SKILL_CATEGORIES' own fixed order, not alphabetical.
   const learned = new Set(Object.keys(myProfile.skills));
-  const acquirable = showAllSkills ? acquirableSkillPool().filter((s) => !learned.has(s)) : [];
 
   for (const category of SKILL_CATEGORIES) {
     const learnedInCategory = [...learned].filter((s) => skillCategory(s) === category).sort((a, b) => a.localeCompare(b));
-    const acquirableInCategory = acquirable.filter((s) => skillCategory(s) === category).sort((a, b) => a.localeCompare(b));
-    if (learnedInCategory.length === 0 && acquirableInCategory.length === 0) continue;
+    if (learnedInCategory.length === 0) continue;
 
     renderCategoryHeader(category);
     for (const skillName of learnedInCategory) {
-      renderSkillRow(skillName, `${myProfile.skills[skillName]}%`, false);
-    }
-    for (const skillName of acquirableInCategory) {
-      renderSkillRow(skillName, '(not yet acquired)', true);
+      renderSkillRow(skillName, `${myProfile.skills[skillName]}%`);
     }
   }
 }
-
-skillsShowAllToggle.addEventListener('click', () => {
-  showAllSkills = !showAllSkills;
-  skillsShowAllToggle.classList.toggle('active', showAllSkills);
-  renderSkills();
-});
 
 registerModalOpenHandler(skillsModal, renderSkills);
 registerModalRefreshHandler(skillsModal, renderSkills);

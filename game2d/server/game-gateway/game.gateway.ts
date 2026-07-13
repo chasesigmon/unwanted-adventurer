@@ -1549,6 +1549,20 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // after a queued skill actually resolves (see resolveHitOnMonster/Npc/
   // Player), not at engage time, so spamming useSkill while a hit is
   // still pending doesn't start the clock early.
+  // Every spell should honor its own learned skill percent (a later
+  // follow-up ask: "Augue seems to be working every time" — several
+  // spells were rolling no success check at all, always landing their
+  // effect once cooldown/mana/range passed). Same (skill percent +
+  // SPELL_CAST_SUCCESS_BONUS, capped at 100)% formula resera/lucem/
+  // celeritas/irrigo already used — pulled out here now that it's about
+  // to be reused by augue/stupefaciunt/exarme/scutum/murus lapideus too,
+  // instead of copy-pasting the same two lines a 5th-9th time.
+  private rollSpellSuccess(client: GameSocket, skill: string): boolean {
+    const skillPercent = client.data.skills[skill] ?? STARTING_SKILL_PERCENT;
+    const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS);
+    return Math.random() * 100 < successChance;
+  }
+
   private startSkillCooldown(client: GameSocket, skill: string): void {
     const durationMs = SKILL_COOLDOWN_MS[skill];
     if (durationMs === undefined) return;
@@ -2894,9 +2908,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
       this.startSkillCooldown(client, AUGUE_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
+      const label = npc.label ?? 'training dummy';
+
+      if (!this.rollSpellSuccess(client, AUGUE_SKILL)) {
+        const growth = this.maybeGrowSkill(client, AUGUE_SKILL);
+        const message = `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
+        void this.persistStats(client);
+        client.emit('sync', { player: this.snapshotFor(client) });
+        this.systemMessage(client, message);
+        return { ok: true, skills: client.data.skills, message };
+      }
+
       npc.hp = Math.max(0, npc.hp - AUGUE_DAMAGE);
       const died = npc.hp <= 0;
-      const label = npc.label ?? 'training dummy';
       if (died) {
         if (!npc.immortal) {
           this.corpseManager.spawn(npc.race, npc.level, [bodyPartLabelFor(npc.race), 'bone dagger'], npc.map, npc.row, npc.col);
@@ -2934,7 +2958,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: true, skills: client.data.skills, message };
     }
     if (parsed.data.targetKind !== 'monster') {
-      return { ok: false, message: "Augue can only target a monster or scarecrow right now — that's the only kind of target you can select." };
+      return { ok: false, message: "Augue can only target a monster or training skeleton right now — that's the only kind of target you can select." };
     }
     const monster = this.monsterManager.getMonster(parsed.data.targetId);
     if (!monster || monster.mapName !== client.data.map) {
@@ -2946,6 +2970,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     this.startSkillCooldown(client, AUGUE_SKILL);
     this.startAutoAttackAfterSpell(client, 'monster', monster.id);
+
+    if (!this.rollSpellSuccess(client, AUGUE_SKILL)) {
+      const growth = this.maybeGrowSkill(client, AUGUE_SKILL);
+      const message = `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      this.systemMessage(client, message);
+      return { ok: true, skills: client.data.skills, message };
+    }
+
     const result = this.monsterManager.applyDamage(monster.id, AUGUE_DAMAGE);
     if (!result) {
       return { ok: false, message: 'Your target is no longer here.' };
@@ -3086,8 +3120,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.startSkillCooldown(client, STUPEFACIUNT_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
       const label = npc.label ?? 'training dummy';
+      const succeeded = this.rollSpellSuccess(client, STUPEFACIUNT_SKILL);
       const growth = this.maybeGrowSkill(client, STUPEFACIUNT_SKILL);
-      const message = `${client.data.username} stuns the ${label} in place!${growth ? ` ${growth}` : ''}`;
+      const message = succeeded
+        ? `${client.data.username} stuns the ${label} in place!${growth ? ` ${growth}` : ''}`
+        : `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
       this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
@@ -3095,7 +3132,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
     }
     if (parsed.data.targetKind !== 'monster') {
-      return { ok: false, message: 'Stupefaciunt can only target a monster or scarecrow right now.' };
+      return { ok: false, message: 'Stupefaciunt can only target a monster or training skeleton right now.' };
     }
     const monster = this.monsterManager.getMonster(parsed.data.targetId);
     if (!monster || monster.mapName !== client.data.map) {
@@ -3108,9 +3145,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.mana -= SPELL_ATTACK_MANA_COST;
     this.startSkillCooldown(client, STUPEFACIUNT_SKILL);
     this.startAutoAttackAfterSpell(client, 'monster', monster.id);
-    this.monsterManager.stun(monster.id, this.combatTickCount + STUPEFACIUNT_STUN_TICKS);
+    const stupefaciuntSucceeded = this.rollSpellSuccess(client, STUPEFACIUNT_SKILL);
+    if (stupefaciuntSucceeded) this.monsterManager.stun(monster.id, this.combatTickCount + STUPEFACIUNT_STUN_TICKS);
     const growth = this.maybeGrowSkill(client, STUPEFACIUNT_SKILL);
-    const message = `${client.data.username}'s stupefaciunt freezes the ${monster.kind} in place!${growth ? ` ${growth}` : ''}`;
+    const message = stupefaciuntSucceeded
+      ? `${client.data.username}'s stupefaciunt freezes the ${monster.kind} in place!${growth ? ` ${growth}` : ''}`
+      : `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
     void this.persistStats(client);
@@ -3153,9 +3193,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       client.data.mana -= SPELL_ATTACK_MANA_COST;
       this.startSkillCooldown(client, EXARME_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
+      const succeeded = this.rollSpellSuccess(client, EXARME_SKILL);
       const growth = this.maybeGrowSkill(client, EXARME_SKILL);
       const label = npc.label ?? 'training dummy';
-      const message = `The ${label} isn't wielding a weapon.${growth ? ` ${growth}` : ''}`;
+      const message = succeeded
+        ? `The ${label} isn't wielding a weapon.${growth ? ` ${growth}` : ''}`
+        : `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
       this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
@@ -3163,7 +3206,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
     }
     if (parsed.data.targetKind !== 'monster') {
-      return { ok: false, message: 'Exarme can only target a monster or scarecrow right now.' };
+      return { ok: false, message: 'Exarme can only target a monster or training skeleton right now.' };
     }
     const monster = this.monsterManager.getMonster(parsed.data.targetId);
     if (!monster || monster.mapName !== client.data.map) {
@@ -3176,16 +3219,20 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.mana -= SPELL_ATTACK_MANA_COST;
     this.startSkillCooldown(client, EXARME_SKILL);
     this.startAutoAttackAfterSpell(client, 'monster', monster.id);
-    const weaponIndex = monster.carriedItems.findIndex((item) => item.toLowerCase().includes('dagger'));
     let message: string;
-    if (weaponIndex === -1) {
-      message = `The ${monster.kind} isn't wielding a weapon.`;
+    if (!this.rollSpellSuccess(client, EXARME_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
     } else {
-      const [weapon] = monster.carriedItems.splice(weaponIndex, 1);
-      delete monster.skills[DAGGER_SKILL];
-      client.data.inventory = [...client.data.inventory, weapon!];
-      this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
-      message = `${client.data.username}'s exarme knocks the ${weapon} from the ${monster.kind}'s grip!`;
+      const weaponIndex = monster.carriedItems.findIndex((item) => item.toLowerCase().includes('dagger'));
+      if (weaponIndex === -1) {
+        message = `The ${monster.kind} isn't wielding a weapon.`;
+      } else {
+        const [weapon] = monster.carriedItems.splice(weaponIndex, 1);
+        delete monster.skills[DAGGER_SKILL];
+        client.data.inventory = [...client.data.inventory, weapon!];
+        this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+        message = `${client.data.username}'s exarme knocks the ${weapon} from the ${monster.kind}'s grip!`;
+      }
     }
     const growth = this.maybeGrowSkill(client, EXARME_SKILL);
     if (growth) message = `${message} ${growth}`;
@@ -3232,8 +3279,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // manual toggle-off — see checkScutumExpiry for how it wears off on its
   // own), driving a blue-sphere visual for every nearby player (see
   // WorldScene's updateScutumVisual) and the Affects modal's own
-  // countdown. No success-chance roll — deterministic once known and
-  // affordable, gated only by its own cooldown.
+  // countdown. Rolls the same success-chance every other spell does (a
+  // later follow-up ask — this used to be deterministic once known and
+  // affordable, gated only by its own cooldown; still costs mana and
+  // starts the cooldown even on a fumble).
   @SubscribeMessage('castScutum')
   handleCastScutum(@ConnectedSocket() client: GameSocket): CastSpellAck {
     if (client.data.skills[SCUTUM_SKILL] === undefined) {
@@ -3256,19 +3305,25 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     client.data.mana -= SPELL_ATTACK_MANA_COST;
     this.startSkillCooldown(client, SCUTUM_SKILL);
-    client.data.scutumActive = true;
-    client.data.scutumActiveUntil = Date.now() + SCUTUM_DURATION_MS;
-    let message = 'A shimmering shield surrounds you.';
+    const succeeded = this.rollSpellSuccess(client, SCUTUM_SKILL);
+    let message: string;
+    if (succeeded) {
+      client.data.scutumActive = true;
+      client.data.scutumActiveUntil = Date.now() + SCUTUM_DURATION_MS;
+      message = 'A shimmering shield surrounds you.';
+    } else {
+      message = 'You fumble the incantation and nothing happens.';
+    }
 
     const growth = this.maybeGrowSkill(client, SCUTUM_SKILL);
     if (growth) message = `${message} ${growth}`;
 
-    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills, scutumActive: true });
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills, scutumActive: client.data.scutumActive });
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     this.systemMessage(client, message);
-    return { ok: true, active: true, mana: client.data.mana, skills: client.data.skills, message };
+    return { ok: true, active: succeeded, mana: client.data.mana, skills: client.data.skills, message };
   }
 
   // Summoning's own podium (a later follow-up ask), teaching murus
@@ -3343,25 +3398,30 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.mana -= SPELL_ATTACK_MANA_COST;
     this.startSkillCooldown(client, MURUS_LAPIDEUS_SKILL);
 
-    const id = randomUUID();
-    this.stoneBlocks.set(id, {
-      id,
-      ownerUsername: client.data.username,
-      mapName: client.data.map,
-      row,
-      col,
-      hp: MURUS_LAPIDEUS_HP,
-      maxHp: MURUS_LAPIDEUS_HP,
-      expiresAt: Date.now() + MURUS_LAPIDEUS_DURATION_MS,
-    });
+    let message: string;
+    if (!this.rollSpellSuccess(client, MURUS_LAPIDEUS_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else {
+      const id = randomUUID();
+      this.stoneBlocks.set(id, {
+        id,
+        ownerUsername: client.data.username,
+        mapName: client.data.map,
+        row,
+        col,
+        hp: MURUS_LAPIDEUS_HP,
+        maxHp: MURUS_LAPIDEUS_HP,
+        expiresAt: Date.now() + MURUS_LAPIDEUS_DURATION_MS,
+      });
 
-    const aggroedMonster = this.monsterManager.findMonsterAggroedOnto(client.data.username);
-    if (aggroedMonster) {
-      this.monsterManager.redirectAggroToStoneBlock(aggroedMonster.id, id, this.combatTickCount);
+      const aggroedMonster = this.monsterManager.findMonsterAggroedOnto(client.data.username);
+      if (aggroedMonster) {
+        this.monsterManager.redirectAggroToStoneBlock(aggroedMonster.id, id, this.combatTickCount);
+      }
+      message = 'A block of stone rises from the ground, eyes blinking open.';
     }
 
     const growth = this.maybeGrowSkill(client, MURUS_LAPIDEUS_SKILL);
-    let message = 'A block of stone rises from the ground, eyes blinking open.';
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });

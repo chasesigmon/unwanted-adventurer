@@ -132,7 +132,10 @@
           <button type="button" id="skills-btn" class="corner-btn" title="Skills (k)">⭐</button>
           <button type="button" id="spells-btn" class="corner-btn" title="Spells (l)">🪄</button>
           <button type="button" id="affects-btn" class="corner-btn" title="Affects (f)">✨</button>
-          <button type="button" id="autopilot-btn" class="corner-btn" title="Prompt (p)">💬</button>
+          <!-- Hidden for now (a follow-up ask) — will come back as an
+               unlockable feature later, same "hidden until unlocked"
+               treatment as the map button above. -->
+          <button type="button" id="autopilot-btn" class="corner-btn" title="Prompt (p)" hidden>💬</button>
           <button type="button" id="inventory-btn" class="corner-btn" title="Inventory (i)">🎒</button>
           <button type="button" id="char-sheet-btn" class="corner-btn" title="Character sheet (c)">📜</button>
         </div>
@@ -157,7 +160,6 @@
           <div class="modal-box">
             <button type="button" class="modal-close">&times;</button>
             <h2>Skills</h2>
-            <button type="button" id="skills-show-all-toggle" class="secondary-btn">Show All</button>
             <div id="skills-body" class="modal-stats"></div>
           </div>
         </div>

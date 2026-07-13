@@ -17,7 +17,6 @@ export interface SpellDefinition {
 export const SPELLS: SpellDefinition[] = [
   { name: 'resera', description: 'Unlocks locks and doors.' },
   { name: 'lucem', description: 'Illuminates light from your wand, or puts it out.' },
-  { name: 'figo', description: 'Fixes broken objects.' },
   { name: 'exarme', description: "A disarming charm — knocks a weapon from its target's grip." },
   { name: 'scutum', description: 'Conjures a protective shield.' },
   { name: 'stupefaciunt', description: 'Stuns a target.' },

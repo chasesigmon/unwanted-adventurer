@@ -382,6 +382,15 @@ export class MonsterManagerService {
       this.aggro.delete(monster.id);
       return false;
     }
+    // A follow-up bug fix: "imps still are not moving toward the player
+    // to attack" — this was NEVER refreshed while actively chasing
+    // (only set once, back at the original setAggro call), unlike the
+    // stone-block aggro branch above which already refreshes its own
+    // lastContactTick on every successful step. Any chase further than
+    // AGGRO_TIMEOUT_TICKS worth of walking (~30s) silently expired
+    // mid-pursuit — still being able to LOCATE the target every tick (as
+    // we just did, right above) is itself "contact," so refresh here too.
+    aggro.lastContactTick = currentTick;
 
     const dRow = target.row - monster.row;
     const dCol = target.col - monster.col;
