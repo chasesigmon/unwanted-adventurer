@@ -303,6 +303,11 @@ const STUPEFACIUNT_STUN_TICKS = 2;
 // unlike lucem/celeritas's skill%-scaling spellDurationMs, since nothing
 // asked for scutum to scale with skill).
 const SCUTUM_DURATION_MS = 60 * 1000;
+// "Scutum while active should reduce all damage by 3" (a later follow-up
+// ask) — a flat reduction, same shape as monsterDamageReduction, applied
+// to every source of damage a player can take (see
+// resolveMonsterCounterAttack/resolveHitOnPlayer).
+const SCUTUM_DAMAGE_REDUCTION = 3;
 // Summoning's own podium (a later follow-up ask), teaching murus
 // lapideus — same learn-chance shape as the others.
 const MURUS_LAPIDEUS_BOOK_COOLDOWN_TICKS = 2;
@@ -311,8 +316,9 @@ const MURUS_LAPIDEUS_BOOK_LEARN_CHANCE = 0.1;
 // check here uses despite the flavor-text "feet."
 const MURUS_LAPIDEUS_RANGE_TILES = 10;
 const MURUS_LAPIDEUS_HP = 20;
-// "Lasts for 20 seconds or until destroyed by a monster."
-const MURUS_LAPIDEUS_DURATION_MS = 20 * 1000;
+// "Increase the duration of the stone to 30 seconds" (a later follow-up
+// ask, up from 20s) "or until destroyed by a monster."
+const MURUS_LAPIDEUS_DURATION_MS = 30 * 1000;
 // "Takes 1 reduced damage from an enemy since it is a stone and is
 // defensive" — subtracted from whatever a monster's own hit would be
 // (see MonsterManagerService's stone-block damager callback above).
@@ -437,15 +443,30 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         const block = this.stoneBlocks.get(id);
         return block ? { mapName: block.mapName, row: block.row, col: block.col } : undefined;
       },
-      (id, amount) => {
+      (id, amount, attackerLabel) => {
         const block = this.stoneBlocks.get(id);
         if (!block) return undefined;
-        block.hp = Math.max(0, block.hp - Math.max(0, amount - MURUS_LAPIDEUS_DAMAGE_REDUCTION));
-        if (block.hp <= 0) {
-          this.stoneBlocks.delete(id);
-          return 0;
+        const dealt = Math.max(0, amount - MURUS_LAPIDEUS_DAMAGE_REDUCTION);
+        block.hp = Math.max(0, block.hp - dealt);
+        const died = block.hp <= 0;
+        if (died) this.stoneBlocks.delete(id);
+
+        // A follow-up ask: "show a message when the monster hits
+        // anything that concerns the player... including the stone" —
+        // private to the block's own owner (see combatNotice's own doc
+        // comment), not broadcast to the room.
+        const ownerSocketId = this.activeConnections.getActiveSocketId(block.ownerUsername);
+        const ownerSocket = ownerSocketId ? this.server.sockets.sockets.get(ownerSocketId) : undefined;
+        if (ownerSocket) {
+          ownerSocket.emit(
+            'combatNotice',
+            died
+              ? `The ${attackerLabel} smashes your Blockman to rubble!`
+              : `The ${attackerLabel} hits your Blockman for ${dealt} damage (${block.hp}/${block.maxHp} hp).`
+          );
         }
-        return block.hp;
+
+        return died ? 0 : block.hp;
       }
     );
     this.monsterManager.spawnInitial();
@@ -460,6 +481,20 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const mapsToBroadcast = new Set<MapName>([...ACTIVE_MONSTER_MAPS, ...expiredCorpseMaps, ...stoneBlockMaps]);
       for (const mapName of mapsToBroadcast) {
         this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
+      }
+      // A follow-up bug fix: "scutum ended (0s) but the shield didn't go
+      // away immediately" — these used to only be checked once per
+      // global stat tick (every 30-40s, see scheduleStatTick), so an
+      // expired timed spell could sit "done" client-side (the Affects
+      // countdown is computed live off the SAME absolute timestamp) for
+      // up to that long before the server actually cleared it. Checking
+      // them on this much faster ~3s tick instead closes that gap for
+      // lucem/celeritas/scutum alike.
+      for (const socket of this.server.sockets.sockets.values()) {
+        const client = socket as GameSocket;
+        this.checkLucemExpiry(client);
+        this.checkCeleritasExpiry(client);
+        this.checkScutumExpiry(client);
       }
     }, MONSTER_TICK_INTERVAL_MS);
 
@@ -520,9 +555,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     for (const socket of this.server.sockets.sockets.values()) {
       this.applyStatTick(socket as GameSocket);
       this.checkTorchBurnout(socket as GameSocket);
-      this.checkLucemExpiry(socket as GameSocket);
-      this.checkCeleritasExpiry(socket as GameSocket);
-      this.checkScutumExpiry(socket as GameSocket);
+      // Lucem/celeritas/scutum expiry moved to the much faster ~3s
+      // combat-tick interval (see its own setInterval above) — a bug fix
+      // for scutum's shield lingering up to this whole 30-40s tick past
+      // its own countdown hitting 0.
     }
     this.scheduleStatTick();
   }
@@ -1039,7 +1075,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     attackerLabel: string,
     monsterClass: MonsterClass | undefined,
     growthMessages: string[],
-    attacker?: { skills: Record<string, number>; carriedItems: string[] }
+    attacker?: { skills: Record<string, number>; carriedItems: string[]; attackDamage?: number }
   ): string {
     const defense = this.resolveDefense(this.attackerStatsFor(client), client.data.skills, client.data.equipment, attackerStats);
     if (defense.skill) {
@@ -1057,9 +1093,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const skillPercent = attacker ? (attacker.skills[hasWeapon ? DAGGER_SKILL : PUNCH_SKILL] ?? 0) : 0;
     const weaponBonus = hasWeapon ? (WEAPON_DAMAGE_BONUS['bone dagger'] ?? 0) : 0;
     const defenderAC = armorClassFor(client.data.dexterity, armorEquipmentBonus(client.data.equipment));
-    const rawDamage = punchDamage(attackerStats, this.attackerStatsFor(client), skillPercent, weaponBonus, defenderAC);
+    // A species with its own flat attackDamage (a later follow-up ask:
+    // "the imps have a physical attack/punch that should do 5 damage per
+    // hit") counter-attacks for exactly that instead of the shared
+    // punchDamage() formula.
+    const rawDamage = attacker?.attackDamage ?? punchDamage(attackerStats, this.attackerStatsFor(client), skillPercent, weaponBonus, defenderAC);
     const reduction = monsterClass ? monsterDamageReduction(monsterClass, client.data.skills) : 0;
-    const damage = Math.max(0, rawDamage - reduction);
+    const scutumReduction = client.data.scutumActive ? SCUTUM_DAMAGE_REDUCTION : 0;
+    const damage = Math.max(0, rawDamage - reduction - scutumReduction);
     const verb = hasWeapon ? 'stabs' : 'punches';
 
     client.data.hp = Math.max(0, client.data.hp - damage);
@@ -1473,6 +1514,24 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.monsterManager.setAggro(parsed.data.targetId, client.data.username, this.combatTickCount);
     }
     return { ok: true };
+  }
+
+  // A later follow-up bug fix: "the imp did not start moving toward the
+  // player when the player attacked" — fired once by WorldScene's
+  // tryEngage the moment a melee approach STARTS (target not yet
+  // adjacent), purely to arm the monster's own aggro immediately instead
+  // of waiting for the player to close the entire distance alone and
+  // throw an actual punch. No ack, no damage — just a cheap "start
+  // chasing me back" signal.
+  @SubscribeMessage('engageMelee')
+  handleEngageMelee(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): void {
+    const limiter = this.commandLimiters.get(client.id);
+    if (limiter && !limiter.tryConsume()) return;
+    const parsed = augueTargetSchema.safeParse(payload);
+    if (!parsed.success || parsed.data.targetKind !== 'monster') return;
+    const monster = this.monsterManager.getMonster(parsed.data.targetId);
+    if (!monster || monster.mapName !== client.data.map) return;
+    this.monsterManager.setAggro(monster.id, client.data.username, this.combatTickCount);
   }
 
   // The 'x' hotkey (a later follow-up ask) — clears whatever combat
@@ -2103,6 +2162,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
       const attackGrowth = this.maybeGrowSkill(client, attackSkill);
       if (attackGrowth) growthMessages.push(attackGrowth);
+    }
+    // "Scutum... should reduce all damage by 3" (a later follow-up ask) —
+    // applied once to the whole attack's total, not per individual swing.
+    if (targetClient.data.scutumActive && damage > 0) {
+      damage = Math.max(0, damage - SCUTUM_DAMAGE_REDUCTION);
     }
     // Only worth narrating the dodge/parry/block if EVERY swing was
     // avoided — if at least one landed, the damage number speaks for
@@ -3020,6 +3084,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
       client.data.mana -= SPELL_ATTACK_MANA_COST;
       this.startSkillCooldown(client, STUPEFACIUNT_SKILL);
+      this.startAutoAttackAfterSpell(client, 'npc', npc.id);
       const label = npc.label ?? 'training dummy';
       const growth = this.maybeGrowSkill(client, STUPEFACIUNT_SKILL);
       const message = `${client.data.username} stuns the ${label} in place!${growth ? ` ${growth}` : ''}`;
@@ -3042,6 +3107,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     client.data.mana -= SPELL_ATTACK_MANA_COST;
     this.startSkillCooldown(client, STUPEFACIUNT_SKILL);
+    this.startAutoAttackAfterSpell(client, 'monster', monster.id);
     this.monsterManager.stun(monster.id, this.combatTickCount + STUPEFACIUNT_STUN_TICKS);
     const growth = this.maybeGrowSkill(client, STUPEFACIUNT_SKILL);
     const message = `${client.data.username}'s stupefaciunt freezes the ${monster.kind} in place!${growth ? ` ${growth}` : ''}`;
@@ -3086,6 +3152,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
       client.data.mana -= SPELL_ATTACK_MANA_COST;
       this.startSkillCooldown(client, EXARME_SKILL);
+      this.startAutoAttackAfterSpell(client, 'npc', npc.id);
       const growth = this.maybeGrowSkill(client, EXARME_SKILL);
       const label = npc.label ?? 'training dummy';
       const message = `The ${label} isn't wielding a weapon.${growth ? ` ${growth}` : ''}`;
@@ -3108,6 +3175,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     client.data.mana -= SPELL_ATTACK_MANA_COST;
     this.startSkillCooldown(client, EXARME_SKILL);
+    this.startAutoAttackAfterSpell(client, 'monster', monster.id);
     const weaponIndex = monster.carriedItems.findIndex((item) => item.toLowerCase().includes('dagger'));
     let message: string;
     if (weaponIndex === -1) {

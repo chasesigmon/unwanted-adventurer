@@ -247,12 +247,13 @@ const ENTRANCE_COLS = 53;
 const ENTRANCE_MID_ROW = Math.floor(ENTRANCE_ROWS / 2);
 const ENTRANCE_MID_COL = Math.floor(ENTRANCE_COLS / 2);
 
-// The Great Hall still matches the Entrance Hall's own size exactly (a
-// follow-up ask: "reduce the size of the great hall and common rooms to
-// be the same as the entrance hall"), but the 4 house common rooms got
-// shrunk FURTHER still by a later follow-up ask ("reduce the size of
-// each common room by 25%") — no longer tied to the Entrance Hall's own
-// footprint at all.
+// The Great Hall originally matched the Entrance Hall's own size exactly
+// (a follow-up ask: "reduce the size of the great hall and common rooms
+// to be the same as the entrance hall"), but got shrunk another 25% by a
+// later follow-up ask ("reduce the size of the Great Hall by 25%," to
+// make room for the new banquet-table/faculty-stage furniture below
+// without an oversized empty room) — no longer tied to the Entrance
+// Hall's own footprint at all, same as the house common rooms below.
 const COMMON_ROOM_ROWS = Math.round(ENTRANCE_ROWS * 0.75);
 const COMMON_ROOM_COLS = Math.round(ENTRANCE_COLS * 0.75);
 const COMMON_ROOM_MID_ROW = Math.floor(COMMON_ROOM_ROWS / 2);
@@ -268,8 +269,8 @@ const DORM_ROOM_ROWS = Math.round(COMMON_ROOM_ROWS * DORM_ROOM_SCALE);
 const DORM_ROOM_COLS = Math.round(COMMON_ROOM_COLS * DORM_ROOM_SCALE);
 const DORM_ROOM_MID_COL = Math.floor(DORM_ROOM_COLS / 2);
 
-const GREAT_HALL_ROWS = ENTRANCE_ROWS;
-const GREAT_HALL_COLS = ENTRANCE_COLS;
+const GREAT_HALL_ROWS = Math.round(ENTRANCE_ROWS * 0.75);
+const GREAT_HALL_COLS = Math.round(ENTRANCE_COLS * 0.75);
 const GREAT_HALL_MID_ROW = Math.floor(GREAT_HALL_ROWS / 2);
 
 // A simplified castle (a follow-up ask): every classroom hangs directly

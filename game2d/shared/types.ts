@@ -570,6 +570,15 @@ export interface ServerToClientEvents {
   chat: (data: ChatPayload) => void;
   statTick: (data: StatTickPayload) => void;
   worldTime: (data: WorldTimePayload) => void;
+  // A later follow-up ask: "show a message when the monster hits
+  // anything that concerns the player... including the stone." Unlike
+  // 'combat' (broadcast to the whole room, since sprites/hp bars need to
+  // update for every bystander too), this is a plain visible-combat-log
+  // line sent to exactly ONE client — used for things that don't fit
+  // CombatEventPayload's own player-vs-target shape (a monster hitting
+  // the player's OWN summoned stone block, which isn't a player/npc/
+  // monster attacker at all).
+  combatNotice: (message: string) => void;
 }
 
 export interface ClientToServerEvents {
@@ -640,6 +649,16 @@ export interface ClientToServerEvents {
   // (no wand equipped, target out of range) can be shown right away
   // instead of silently doing nothing until the session quietly times out.
   engageRangedAttack: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  // A later follow-up bug fix: "the imp did not start moving toward the
+  // player when the player attacked" — a melee approach (see WorldScene's
+  // tryEngage) walks the player toward a not-yet-adjacent target with NO
+  // server round-trip at all until contact, so the monster had no aggro
+  // to chase back with the whole time the player was closing the
+  // distance. Fire-and-forget (no ack needed, same shape as punch/chat)
+  // — just arms the monster's own aggro immediately so it starts
+  // approaching too, "meeting in the middle" rather than making the
+  // player close the entire gap alone.
+  engageMelee: (payload: AugueTargetPayload) => void;
   // The 'x' hotkey (a later follow-up ask: "make the player stop auto
   // attacking") — clears whatever playerCombat session (melee OR ranged)
   // is currently armed. No payload/ack needed, same fire-and-forget shape

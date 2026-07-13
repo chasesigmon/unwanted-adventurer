@@ -163,8 +163,8 @@ export const SKILL_COOLDOWN_MS: Partial<Record<string, number>> = {
   [EXARME_SKILL]: 3 * 3000,
   // "A cooldown of 2 minutes" (a later follow-up ask).
   [SCUTUM_SKILL]: 2 * 60 * 1000,
-  // "A cooldown of 40 seconds" (a later follow-up ask).
-  [MURUS_LAPIDEUS_SKILL]: 40 * 1000,
+  // "The cooldown to 1 minute" (a later follow-up ask, up from 40s).
+  [MURUS_LAPIDEUS_SKILL]: 60 * 1000,
 };
 
 export const RACE_INNATE_SKILLS: Record<Race, string[]> = {

@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, Post, UseGuards, UsePipes } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, Post, UseGuards, UsePipes } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 
 import { AuthService, type CharacterSummary } from '../auth/auth.service.js';
@@ -50,5 +50,15 @@ export class CharactersController {
     const token = this.extractBearerToken(authorization);
     const { token: characterToken } = await this.authService.selectCharacter(token, name);
     return { ok: true, token: characterToken };
+  }
+
+  // A follow-up ask: "the ability for people to delete players from
+  // their character selection page" — permanent, unlike condemned.
+  @Delete(':name')
+  @HttpCode(HttpStatus.OK)
+  async remove(@Param('name') name: string, @Headers('authorization') authorization?: string): Promise<{ ok: true }> {
+    const token = this.extractBearerToken(authorization);
+    await this.authService.deleteCharacter(token, name);
+    return { ok: true };
   }
 }

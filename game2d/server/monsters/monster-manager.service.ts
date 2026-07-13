@@ -2,7 +2,14 @@ import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import { getMap, isCastleExteriorBlocked, isMoatBlocked, isWithinMoatFootprint } from '../../shared/maps.js';
 import { isTreeTile } from '../../shared/trees.js';
-import { isFireplaceBlocked, isBenchBlocked, isBedBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
+import {
+  isFireplaceBlocked,
+  isBenchBlocked,
+  isBedBlocked,
+  studentDeskPositionsFor,
+  isGreatHallTableBlocked,
+  isGreatHallChairBlocked,
+} from '../../shared/lighting.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
 import { vendorsForMap } from '../worlds/vendors.js';
@@ -20,7 +27,7 @@ export type StoneBlockLocator = (id: string) => { mapName: MapName; row: number;
 // Returns the stone block's REMAINING hp after the hit, or undefined if
 // it no longer exists (already destroyed/expired) — lets
 // stepTowardAggroTarget know whether to keep chasing it.
-export type StoneBlockDamager = (id: string, amount: number) => number | undefined;
+export type StoneBlockDamager = (id: string, amount: number, attackerLabel: string) => number | undefined;
 
 // A much smaller version of the text game's own monster-manager.service.ts
 // — no engaged-in-combat tracking (a punch here is a single instant
@@ -76,6 +83,21 @@ export class MonsterManagerService {
 
   clearAggro(monsterId: string): void {
     this.aggro.delete(monsterId);
+  }
+
+  // A later follow-up ask ("they should move into range to hit the
+  // player if aggro'd") needs to resolve a PROACTIVE monster attack once
+  // adjacent, independent of whether the player is also attacking that
+  // same tick — this is what GameGateway's own combat tick iterates to
+  // find candidates (only species with Monster.attackDamage actually do
+  // anything with an entry here, see resolveMonsterInitiatedAttack).
+  getAggroedMonsters(): Array<{ monster: Monster; targetUsername: string }> {
+    const result: Array<{ monster: Monster; targetUsername: string }> = [];
+    for (const [monsterId, entry] of this.aggro) {
+      const monster = this.monsters.get(monsterId);
+      if (monster) result.push({ monster, targetUsername: entry.targetUsername });
+    }
+    return result;
   }
 
   // Murus lapideus (a later follow-up ask): "It should draw aggro from a
@@ -144,6 +166,8 @@ export class MonsterManagerService {
     if (isBenchBlocked(mapName, row, col)) return false;
     if (isBedBlocked(mapName, row, col)) return false;
     if (studentDeskPositionsFor(mapName).some((p) => p.row === row && p.col === col)) return false;
+    if (isGreatHallTableBlocked(mapName, row, col)) return false;
+    if (isGreatHallChairBlocked(mapName, row, col)) return false;
     // Same "own tile + shopfront tile in front of it" collision shape as
     // WorldManagerService.isOccupied — a wandering/spawning monster
     // shouldn't stand inside the shop stall either.
@@ -239,6 +263,7 @@ export class MonsterManagerService {
             patrolRangeTiles: species.patrolRangeTiles,
           }
         : {}),
+      ...(species.attackDamage !== undefined ? { attackDamage: species.attackDamage } : {}),
     };
     this.monsters.set(monster.id, monster);
   }
@@ -334,7 +359,7 @@ export class MonsterManagerService {
       const dRow = target.row - monster.row;
       const dCol = target.col - monster.col;
       if (Math.abs(dRow) <= 1 && Math.abs(dCol) <= 1) {
-        const remainingHp = this.damageStoneBlock(stoneAggro.stoneBlockId, MonsterManagerService.MONSTER_VS_STONE_BLOCK_DAMAGE);
+        const remainingHp = this.damageStoneBlock(stoneAggro.stoneBlockId, MonsterManagerService.MONSTER_VS_STONE_BLOCK_DAMAGE, monster.kind);
         if (remainingHp === undefined || remainingHp <= 0) this.stoneBlockAggro.delete(monster.id);
         return true;
       }

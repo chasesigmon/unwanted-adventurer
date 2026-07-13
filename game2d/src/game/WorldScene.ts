@@ -67,6 +67,9 @@ import {
   benchPositionsFor,
   bedPositionsFor,
   BED_REACH_TILES,
+  greatHallTableFootprint,
+  greatHallChairPositionsFor,
+  greatHallStagePlatform,
 } from '../../shared/lighting.js';
 import { MONSTER_KINDS, FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS } from '../../shared/constants.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
@@ -132,6 +135,10 @@ import {
   CHEST_UNLOCKED_TEXTURE_KEY,
   STONE_BLOCK_TEXTURE_KEY,
   BED_TEXTURE_KEY,
+  LONG_TABLE_TEXTURE_KEY,
+  HALL_CHAIR_TEXTURE_KEY,
+  HEAD_CHAIR_TEXTURE_KEY,
+  GREAT_HALL_STAGE_TEXTURE_KEY,
   CLASSROOM_ZOOM,
   CORPSE_SCALE,
   CROW_TEXTURE_KEY,
@@ -225,6 +232,10 @@ export class WorldScene extends Phaser.Scene {
   // is clicked in the action bar, consumed by the very next left-click
   // anywhere on the map (see handleLeftClick).
   private murusLapideusTargeting = false;
+  // A selected stone block (a later follow-up ask: "so the player can see
+  // the health and name 'Blockman'") — same "not a real combat target"
+  // reasoning as lockTarget above, purely for the top-left display panel.
+  private selectedStoneBlockId: string | null = null;
   // The decorative shop building standing behind each of Floro's shop
   // doors (item 13) — only populated while rendering the 'Floro' map
   // itself (the shop interiors don't need their own exterior rendered).
@@ -252,6 +263,15 @@ export class WorldScene extends Phaser.Scene {
   // The Dorms rooms' own 5 beds (a later follow-up ask) — clickable, see
   // bedPositionsFor.
   private bedSprites: Phaser.GameObjects.Sprite[] = [];
+  // The Great Hall's own banquet table, dining/stage chairs, and faculty
+  // stage platform (a later follow-up ask) — furniture only, no click
+  // handler, collision is server-side (see isGreatHallTableBlocked/
+  // isGreatHallChairBlocked). Table and stage are single sprites scaled
+  // to their own server-side footprint; chairs are individually placed
+  // and rotated per greatHallChairPositionsFor's own `angle`.
+  private greatHallTableSprite: Phaser.GameObjects.Sprite | null = null;
+  private greatHallStageSprite: Phaser.GameObjects.Sprite | null = null;
+  private greatHallChairSprites: Phaser.GameObjects.Sprite[] = [];
   // The Utilization classroom's clickable spellbook podium (item 8) —
   // only ever populated while rendering that one map.
   private spellbookPodiumSprite: Phaser.GameObjects.Sprite | null = null;
@@ -407,6 +427,10 @@ export class WorldScene extends Phaser.Scene {
     this.load.image(CHEST_LOCKED_TEXTURE_KEY, '/chest-locked.png');
     this.load.image(CHEST_UNLOCKED_TEXTURE_KEY, '/chest-unlocked.png');
     this.load.image(STONE_BLOCK_TEXTURE_KEY, '/stone-block.png');
+    this.load.image(LONG_TABLE_TEXTURE_KEY, '/long-table.png');
+    this.load.image(HALL_CHAIR_TEXTURE_KEY, '/hall-chair.png');
+    this.load.image(HEAD_CHAIR_TEXTURE_KEY, '/head-chair.png');
+    this.load.image(GREAT_HALL_STAGE_TEXTURE_KEY, '/great-hall-stage.png');
     this.load.image(BED_TEXTURE_KEY, '/bed.png');
     createWallTorchTexture(this);
     preloadCharacterSprites(this);
@@ -524,6 +548,12 @@ export class WorldScene extends Phaser.Scene {
     this.network.addEventListener('punch', ((e: CustomEvent<PunchPayload>) => this.applyRemotePunch(e.detail)) as EventListener);
     this.network.addEventListener('combat', ((e: CustomEvent<CombatEventPayload>) => this.applyCombatEvent(e.detail)) as EventListener);
     this.network.addEventListener('chat', ((e: CustomEvent<ChatPayload>) => logChatMessage(e.detail.username, e.detail.message)) as EventListener);
+    // A later follow-up ask ("show a message when the monster hits
+    // anything that concerns the player... including the stone") — a
+    // private, visible-combat-log-only notice (see net.ts/shared/
+    // types.ts's combatNotice), used for things that don't fit the
+    // ordinary player-vs-target 'combat' broadcast shape.
+    this.network.addEventListener('combatNotice', ((e: CustomEvent<string>) => logCombatMessage(e.detail)) as EventListener);
     this.network.addEventListener('statTick', ((e: CustomEvent<StatTickPayload>) => this.applyOwnStats(e.detail)) as EventListener);
     this.network.addEventListener('worldTime', ((e: CustomEvent<WorldTimePayload>) => this.handleWorldTime(e.detail.hour, e.detail.tick)) as EventListener);
     this.network.addEventListener('kicked', ((e: CustomEvent<KickedPayload>) => {
@@ -861,6 +891,12 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
 
+    // A later follow-up bug fix: "the imp did not start moving toward
+    // the player when the player attacked" — tell the server right away
+    // so the monster starts chasing back while the player is still
+    // walking over, instead of only learning about this fight once
+    // contact is finally made.
+    if (kind === 'monster') this.network.engageMelee({ targetKind: kind, targetId: id });
     this.approach = { kind, id, onInRange: () => this.tryEngage(kind, id, skill) };
   }
 
@@ -1266,8 +1302,10 @@ export class WorldScene extends Phaser.Scene {
       .setOrigin(0, 0)
       .setDepth(-1);
 
-    // A lock target from the PREVIOUS map never applies here.
+    // A lock target/Blockman selection from the PREVIOUS map never
+    // applies here.
     if (this.lockTarget) this.clearLockTarget();
+    if (this.selectedStoneBlockId) this.clearBlockmanTarget();
 
     // Doors + the secret room's own treasure chest (item 4's follow-up
     // fix: "the teacher and desk disappeared" when resera re-rendered
@@ -1591,6 +1629,45 @@ export class WorldScene extends Phaser.Scene {
       this.bedSprites.push(bed);
     }
 
+    // The Great Hall's own banquet table, faculty stage, and every chair
+    // around both (a later follow-up ask) — furniture only, no click
+    // handler, collision is server-side (see isGreatHallTableBlocked/
+    // isGreatHallChairBlocked). The table/stage sprites are pre-sized (by
+    // their own gen-long-table.mjs/gen-great-hall-stage.mjs) to exactly
+    // match their own server-side footprint in pixels, so they're placed
+    // by their top-left corner (origin 0,0) rather than tile-centered.
+    this.greatHallTableSprite?.destroy();
+    this.greatHallTableSprite = null;
+    const tableFootprint = greatHallTableFootprint(mapName);
+    if (tableFootprint) {
+      this.greatHallTableSprite = this.add
+        .sprite(tableFootprint.colStart * TILE_SIZE, tableFootprint.rowStart * TILE_SIZE, LONG_TABLE_TEXTURE_KEY)
+        .setOrigin(0, 0)
+        .setDepth(-0.5);
+    }
+
+    this.greatHallStageSprite?.destroy();
+    this.greatHallStageSprite = null;
+    const stageFootprint = greatHallStagePlatform(mapName);
+    if (stageFootprint) {
+      this.greatHallStageSprite = this.add
+        .sprite(stageFootprint.colStart * TILE_SIZE, stageFootprint.rowStart * TILE_SIZE, GREAT_HALL_STAGE_TEXTURE_KEY)
+        .setOrigin(0, 0)
+        .setDepth(-0.6);
+    }
+
+    for (const sprite of this.greatHallChairSprites) sprite.destroy();
+    this.greatHallChairSprites = [];
+    for (const { row, col, angle, big } of greatHallChairPositionsFor(mapName)) {
+      const pos = this.tilePosition(row, col);
+      const chair = this.add
+        .sprite(pos.x, pos.y, big ? HEAD_CHAIR_TEXTURE_KEY : HALL_CHAIR_TEXTURE_KEY)
+        .setOrigin(0.5, 0.85)
+        .setAngle(angle)
+        .setDepth(-0.5);
+      this.greatHallChairSprites.push(chair);
+    }
+
     // The classroom spellbook podiums (item 8, item 9's follow-up ask) —
     // clickable, roll a 10% chance of learning their own spell server-side;
     // reach-gated the same way a vendor/corpse is. Half-sized (item 5's
@@ -1794,6 +1871,7 @@ export class WorldScene extends Phaser.Scene {
     this.lockTarget = target;
     this.targetKind = null;
     this.targetId = null;
+    this.selectedStoneBlockId = null;
     updateLockTargetPanel(label);
   }
 
@@ -1804,6 +1882,23 @@ export class WorldScene extends Phaser.Scene {
   // caller.
   private clearLockTarget(): void {
     this.lockTarget = null;
+    hideTargetPanel();
+  }
+
+  // A summoned stone block "target" (a later follow-up ask) — same
+  // top-left panel a monster's own selection uses (name + hp bar, unlike
+  // the door/chest one above), mutually exclusive with every other
+  // selection concept in the scene.
+  private setBlockmanTarget(id: string, hp: number, maxHp: number): void {
+    this.selectedStoneBlockId = id;
+    this.targetKind = null;
+    this.targetId = null;
+    this.lockTarget = null;
+    updateTargetPanel('Blockman', 1, hp, maxHp);
+  }
+
+  private clearBlockmanTarget(): void {
+    this.selectedStoneBlockId = null;
     hideTargetPanel();
   }
 
@@ -2030,21 +2125,31 @@ export class WorldScene extends Phaser.Scene {
     // Murus lapideus's own stone blocks (a later follow-up ask) — same
     // create-or-update + seen-set cleanup shape as monsters above, since
     // these come and go dynamically too (destroyed early or expiring).
+    // Selectable (a later follow-up ask: "so the player can see the
+    // health and name") via its own selectedStoneBlockId, a separate
+    // concept from targetKind/targetId — same "doesn't need real combat
+    // targeting" reasoning as lockTarget.
     const seenStoneBlocks = new Set<string>();
     for (const b of state.stoneBlocks) {
       seenStoneBlocks.add(b.id);
       let sprite = this.stoneBlockSprites.get(b.id);
       if (!sprite) {
         const pos = this.tilePosition(b.row, b.col);
-        sprite = this.add.sprite(pos.x, pos.y, STONE_BLOCK_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
+        sprite = this.add.sprite(pos.x, pos.y, STONE_BLOCK_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5).setInteractive();
+        sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+          if (isInputCaptured() || !pointer.leftButtonDown()) return;
+          this.setBlockmanTarget(b.id, b.hp, b.maxHp);
+        });
         this.stoneBlockSprites.set(b.id, sprite);
       }
       this.ensureHpBar(sprite, b.hp, b.maxHp);
+      if (this.selectedStoneBlockId === b.id) updateTargetPanel('Blockman', 1, b.hp, b.maxHp);
     }
     for (const [id, sprite] of this.stoneBlockSprites) {
       if (!seenStoneBlocks.has(id)) {
         this.destroyEntitySprite(sprite);
         this.stoneBlockSprites.delete(id);
+        if (this.selectedStoneBlockId === id) this.clearBlockmanTarget();
       }
     }
 
@@ -2437,7 +2542,9 @@ export class WorldScene extends Phaser.Scene {
       this.murusLapideusTargeting = false;
       const { row, col } = this.tileAt(pointer.worldX, pointer.worldY);
       void this.network.castMurusLapideus({ row, col }).then((ack) => {
-        if (!ack.ok && ack.message) showCenterToast(ack.message);
+        // A follow-up bug fix (see the stupefaciunt branch's own comment
+        // above) — the success message was silently dropped here too.
+        if (ack.message) showCenterToast(ack.message);
       });
       return;
     }
@@ -2468,6 +2575,10 @@ export class WorldScene extends Phaser.Scene {
         s.getBounds().contains(pointer.worldX, pointer.worldY)
       );
       if (!hitLockable && this.lockTarget) this.clearLockTarget();
+      // Same "already handled by its own pointerdown handler, don't
+      // immediately undo it" reasoning for a Blockman selection.
+      const hitBlockman = [...this.stoneBlockSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
+      if (!hitBlockman && this.selectedStoneBlockId) this.clearBlockmanTarget();
       return;
     }
     this.setTarget(found.kind, found.id, found.sprite);
@@ -2484,9 +2595,11 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private setTarget(kind: 'player' | 'npc' | 'monster', id: string, sprite: Phaser.GameObjects.Sprite): void {
-    // Mutually exclusive with the lock target (a follow-up ask) — only
-    // one thing shows in the top-left panel at a time.
+    // Mutually exclusive with the lock target and Blockman selection (a
+    // follow-up ask) — only one thing shows in the top-left panel at a
+    // time.
     this.lockTarget = null;
+    this.selectedStoneBlockId = null;
     this.targetKind = kind;
     this.targetId = id;
     const label = (sprite.getData('label') as string | undefined) ?? id;
@@ -2723,8 +2836,14 @@ export class WorldScene extends Phaser.Scene {
       const targetKind = this.targetKind;
       const targetId = this.targetId;
       this.tryRangedAction(targetKind, targetId, SPELL_ATTACK_RANGE_TILES, () => {
+        // A follow-up bug fix: "new spells being added are not showing
+        // messages" — unlike augue (whose success message rides the
+        // 'combat' broadcast), stupefaciunt has no hp-bar/damage event to
+        // piggyback on, so its own ack.message is the ONLY place the
+        // success text lives; showing it only on failure (the old check
+        // here) silently dropped every successful cast.
         void this.network.castStupefaciunt({ targetKind, targetId }).then((ack) => {
-          if (!ack.ok && ack.message) showCenterToast(ack.message);
+          if (ack.message) showCenterToast(ack.message);
         });
       });
       return;
@@ -2734,7 +2853,7 @@ export class WorldScene extends Phaser.Scene {
       const targetId = this.targetId;
       this.tryRangedAction(targetKind, targetId, SPELL_ATTACK_RANGE_TILES, () => {
         void this.network.castExarme({ targetKind, targetId }).then((ack) => {
-          if (!ack.ok && ack.message) showCenterToast(ack.message);
+          if (ack.message) showCenterToast(ack.message);
         });
       });
       return;
@@ -2909,20 +3028,28 @@ export class WorldScene extends Phaser.Scene {
     const involvesMe = event.attacker === this.myUsername || (event.targetKind === 'player' && event.target === this.myUsername);
     if (involvesMe) noteCombatActivity();
     const logKind = event.targetDied ? 'death' : event.leveledUp ? 'level-up' : undefined;
-    logCombatMessage(event.message, logKind);
+    // A follow-up ask: "players should not see combat messages for other
+    // players that are nearby" — this combat event is broadcast to the
+    // whole map/room (so hp bars/sprites update for every bystander too),
+    // but the actual LOG LINE (which reads like "X hits Y for Z damage.
+    // Y hits YOU back for W damage" from the fighters' own point of
+    // view) is only relevant to the two people actually in it.
+    if (involvesMe) logCombatMessage(event.message, logKind);
     if (event.leveledUp && event.attacker === this.myUsername) {
       logCombatMessage(`${this.myUsername} reaches level ${event.attackerLevel}!`, 'level-up');
     }
-    for (const growthMessage of event.growthMessages ?? []) {
-      logCombatMessage(growthMessage, 'level-up');
-      // Item 1: a skill-percent-growth notice (not the OTHER kinds of
-      // flavor lines that share this same array — "second attack
-      // triggers!", a glare paralysis notice, ...) additionally pops up
-      // as a center-screen toast, but only for the LOCAL player's own
-      // growth — not for every combat line broadcast to the room from
-      // someone else's fight.
-      if (event.attacker === this.myUsername && /skill has increased to \d+%!/.test(growthMessage)) {
-        showCenterToast(growthMessage);
+    if (involvesMe) {
+      for (const growthMessage of event.growthMessages ?? []) {
+        logCombatMessage(growthMessage, 'level-up');
+        // Item 1: a skill-percent-growth notice (not the OTHER kinds of
+        // flavor lines that share this same array — "second attack
+        // triggers!", a glare paralysis notice, ...) additionally pops up
+        // as a center-screen toast, but only for the LOCAL player's own
+        // growth — not for every combat line broadcast to the room from
+        // someone else's fight.
+        if (event.attacker === this.myUsername && /skill has increased to \d+%!/.test(growthMessage)) {
+          showCenterToast(growthMessage);
+        }
       }
     }
 

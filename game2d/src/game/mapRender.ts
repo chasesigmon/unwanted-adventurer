@@ -102,6 +102,13 @@ export const STONE_BLOCK_TEXTURE_KEY = 'stone-block';
 // A Dorms room's own beds (a later follow-up ask) — see
 // shared/lighting.ts's bedPositionsFor.
 export const BED_TEXTURE_KEY = 'bed';
+// The Great Hall's own long banquet table, dining/stage chairs, and
+// faculty stage (a follow-up ask) — see shared/lighting.ts's
+// greatHallTableFootprint/greatHallChairPositionsFor/greatHallStagePlatform.
+export const LONG_TABLE_TEXTURE_KEY = 'long-table';
+export const HALL_CHAIR_TEXTURE_KEY = 'hall-chair';
+export const HEAD_CHAIR_TEXTURE_KEY = 'head-chair';
+export const GREAT_HALL_STAGE_TEXTURE_KEY = 'great-hall-stage';
 
 export const CHAR_SCALE = 0.275;
 export const CORPSE_SCALE = 0.35;

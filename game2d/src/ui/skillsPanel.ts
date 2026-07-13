@@ -14,7 +14,7 @@ import {
   MURUS_LAPIDEUS_SKILL,
 } from '../../shared/skills.js';
 import { attachTooltip } from './tooltip.js';
-import { SKILL_DESCRIPTIONS, createCooldownOverlay, isAttackSkill, isUsableSkill, skillIconColor } from './skillMeta.js';
+import { SKILL_DESCRIPTIONS, SKILL_CATEGORIES, skillCategory, createCooldownOverlay, isAttackSkill, isUsableSkill, skillIconColor } from './skillMeta.js';
 import { skillIconGlyphUrl } from './skillIcons.js';
 import { actionBarSkills, assignActionSlot, saveActionBar } from './actionBar.js';
 import { logCombatMessage } from './log.js';
@@ -112,15 +112,37 @@ function renderSkillRow(skillName: string, valueText: string, notAcquired: boole
   skillsBody.appendChild(valueEl);
 }
 
+// A category header spanning both grid columns (a follow-up ask:
+// "separate each skill by category") — plain text, no icon/value, so it
+// reads as a section break rather than another row.
+function renderCategoryHeader(category: string): void {
+  const header = document.createElement('div');
+  header.className = 'skill-category-header';
+  header.textContent = category;
+  skillsBody.appendChild(header);
+}
+
 export function renderSkills(): void {
   if (!myProfile) return;
   skillsBody.innerHTML = '';
-  for (const [skillName, percent] of Object.entries(myProfile.skills)) {
-    renderSkillRow(skillName, `${percent}%`, false);
-  }
-  if (showAllSkills) {
-    for (const skillName of acquirableSkillPool()) {
-      if (myProfile.skills[skillName] !== undefined) continue;
+
+  // Every skill the character has (or, with Show All on, could still
+  // acquire) grouped into its own category, alphabetized WITHIN each
+  // category (a follow-up ask) — the categories themselves stay in
+  // SKILL_CATEGORIES' own fixed order, not alphabetical.
+  const learned = new Set(Object.keys(myProfile.skills));
+  const acquirable = showAllSkills ? acquirableSkillPool().filter((s) => !learned.has(s)) : [];
+
+  for (const category of SKILL_CATEGORIES) {
+    const learnedInCategory = [...learned].filter((s) => skillCategory(s) === category).sort((a, b) => a.localeCompare(b));
+    const acquirableInCategory = acquirable.filter((s) => skillCategory(s) === category).sort((a, b) => a.localeCompare(b));
+    if (learnedInCategory.length === 0 && acquirableInCategory.length === 0) continue;
+
+    renderCategoryHeader(category);
+    for (const skillName of learnedInCategory) {
+      renderSkillRow(skillName, `${myProfile.skills[skillName]}%`, false);
+    }
+    for (const skillName of acquirableInCategory) {
       renderSkillRow(skillName, '(not yet acquired)', true);
     }
   }

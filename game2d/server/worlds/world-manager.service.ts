@@ -7,7 +7,15 @@ import type { MapName, Direction } from '../../shared/constants.js';
 import type { PlayerSnapshot, MapStatePayload } from '../../shared/types.js';
 import type { PlayerState, MoveResult } from './types.js';
 import { isTreeTile } from '../../shared/trees.js';
-import { emitsLight, isFireplaceBlocked, isBenchBlocked, isBedBlocked, studentDeskPositionsFor } from '../../shared/lighting.js';
+import {
+  emitsLight,
+  isFireplaceBlocked,
+  isBenchBlocked,
+  isBedBlocked,
+  studentDeskPositionsFor,
+  isGreatHallTableBlocked,
+  isGreatHallChairBlocked,
+} from '../../shared/lighting.js';
 import { isCastleExteriorBlocked, isMoatBlocked } from '../../shared/maps.js';
 import { vendorsForMap } from './vendors.js';
 import { teachersForMap, teacherDeskFootprintFor } from './teachers.js';
@@ -85,6 +93,8 @@ export class WorldManagerService {
     if (isBenchBlocked(mapName, row, col)) return true;
     if (isBedBlocked(mapName, row, col)) return true;
     if (studentDeskPositionsFor(mapName).some((p) => p.row === row && p.col === col)) return true;
+    if (isGreatHallTableBlocked(mapName, row, col)) return true;
+    if (isGreatHallChairBlocked(mapName, row, col)) return true;
 
     const npcHit = NPCS.some((npc) => npc.map === mapName && npc.row === row && npc.col === col);
     if (npcHit) return true;

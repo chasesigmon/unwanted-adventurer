@@ -6,6 +6,7 @@
 import { activeScene, myProfile } from '../state.js';
 import { createCooldownOverlay, isAttackSkill, skillIconColor, updateCooldownOverlay } from './skillMeta.js';
 import { skillIconGlyphUrl } from './skillIcons.js';
+import { attachTooltip } from './tooltip.js';
 
 export const ACTION_BAR_SLOT_COUNT = 20;
 const actionBar = document.getElementById('action-bar') as HTMLDivElement;
@@ -28,14 +29,12 @@ function renderActionSlot(index: number): void {
     slot.style.backgroundSize = '60%';
     slot.style.backgroundRepeat = 'no-repeat';
     slot.style.backgroundPosition = 'center';
-    slot.title = `${skillName} (click to use on your selected target, drag off to remove)`;
     overlay.dataset.skill = skillName;
   } else {
     slot.textContent = '';
     slot.appendChild(overlay);
     slot.style.background = '';
     slot.style.backgroundImage = '';
-    slot.title = '';
     delete overlay.dataset.skill;
   }
   updateCooldownOverlay(overlay);
@@ -149,6 +148,12 @@ for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
     const skillName = actionBarSkills[i];
     if (skillName) activeScene?.useTargetedSkill(skillName);
   });
+  // A follow-up ask: "little black tooltips with the spell name" on
+  // hover — same custom tooltip component the Skills modal's own name
+  // hover already uses, just showing the bare skill name here (attached
+  // once per slot, re-reading actionBarSkills[i] fresh on every hover so
+  // it stays accurate as the slot gets filled/emptied/dragged around).
+  attachTooltip(slot, () => actionBarSkills[i] ?? undefined);
   actionBar.appendChild(slot);
   actionSlots.push(slot);
 }

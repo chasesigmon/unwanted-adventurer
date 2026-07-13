@@ -51,6 +51,16 @@ export interface Monster extends CombatantStats {
   // MonsterManagerService.isStunned/stun). Undefined (the common case)
   // means "not currently stunned."
   stunUntilTick?: number;
+  // Copied from MonsterSpecies.attackDamage at spawn time (a later
+  // follow-up ask: "the imp did not start moving toward the player when
+  // attacked... they should move into range to hit the player if
+  // aggro'd") — a species with this set proactively attacks an aggro'd,
+  // adjacent player for this flat amount every combat tick, independent
+  // of whether the player is also attacking THIS tick (see
+  // game.gateway.ts's resolveMonsterInitiatedAttack). Undefined means the
+  // species has no proactive attack at all, only its existing reactive
+  // counter-attack when hit.
+  attackDamage?: number;
 }
 
 export interface CarriedItemRoll {
@@ -74,6 +84,8 @@ export interface MonsterSpecies {
   // follow-up ask, imps only, see Monster.patrolAxis/patrolDirection) —
   // how many tiles either side of its spawn point it's willing to walk.
   patrolRangeTiles?: number;
+  // See Monster.attackDamage's own doc comment.
+  attackDamage?: number;
 }
 
 // Every wild monster starts at level 1 with every attribute at 1 — so a
@@ -143,5 +155,9 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     // follow-up ask), rather than roaming the whole map the way a wild
     // goblin/skeleton does — see MonsterManagerService.stepPatrol.
     patrolRangeTiles: 3,
+    // "The imps have a physical attack/punch that should do 5 damage per
+    // hit. They should move into range to hit the player if aggro'd" (a
+    // later follow-up ask) — see Monster.attackDamage's own doc comment.
+    attackDamage: 5,
   },
 ];

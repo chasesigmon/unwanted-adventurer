@@ -7,6 +7,7 @@ import {
   PARRY_SKILL,
   SHIELD_BLOCK_SKILL,
   DAGGER_SKILL,
+  WAND_BOLT_SKILL,
   SECOND_ATTACK_SKILL,
   THIRD_ATTACK_SKILL,
   ENHANCED_DAMAGE_SKILL,
@@ -227,4 +228,60 @@ export function updateCooldownOverlay(overlay: HTMLElement): void {
 // world-tick-based, not a SKILL_COOLDOWN_MS entry.
 export function refreshCooldownOverlays(): void {
   document.querySelectorAll<HTMLElement>('.cooldown-overlay[data-skill]').forEach(updateCooldownOverlay);
+}
+
+// A follow-up ask: "separate each skill by category like Offense,
+// Defense, Utility, Summoning, Elemental" — the same 5 subjects the
+// castle's own classrooms are named after (see shared/constants.ts's
+// CLASSROOM_MAPS), which every REAL spell already maps onto cleanly;
+// every other (non-spell) skill slots in wherever it reads most
+// naturally — a bare-handed/weapon attack skill under Offense, an
+// avoid-or-reduce-the-hit skill under Defense, everything else
+// (race-innate utility skills, canteen actions) under Utility. Order
+// here is also the section order in the Skills modal (see
+// skillsPanel.ts's renderSkills) — the exact order the request listed
+// the 5 categories in, not alphabetical (only the skills WITHIN each
+// category are alphabetized).
+export const SKILL_CATEGORIES = ['Offense', 'Defense', 'Utility', 'Summoning', 'Elemental'] as const;
+export type SkillCategory = (typeof SKILL_CATEGORIES)[number];
+
+const SKILL_CATEGORY_MAP: Record<string, SkillCategory> = {
+  [PUNCH_SKILL]: 'Offense',
+  [DAGGER_SKILL]: 'Offense',
+  [WAND_BOLT_SKILL]: 'Offense',
+  [SECOND_ATTACK_SKILL]: 'Offense',
+  [THIRD_ATTACK_SKILL]: 'Offense',
+  [ENHANCED_DAMAGE_SKILL]: 'Offense',
+  [LACERATE_SKILL]: 'Offense',
+  [BONE_FINGER_STRIKE_SKILL]: 'Offense',
+  [GLARE_SKILL]: 'Offense',
+  [AUGUE_SKILL]: 'Offense',
+  [STUPEFACIUNT_SKILL]: 'Offense',
+  [EXARME_SKILL]: 'Offense',
+  [DODGE_SKILL]: 'Defense',
+  [PARRY_SKILL]: 'Defense',
+  [SHIELD_BLOCK_SKILL]: 'Defense',
+  [LESSER_NORMAL_MONSTER_RESISTANCE]: 'Defense',
+  [LESSER_UNDEAD_MONSTER_RESISTANCE]: 'Defense',
+  [LESSER_FIRE_RESISTANCE]: 'Defense',
+  [ENHANCED_DURABILITY_SKILL]: 'Defense',
+  [SCUTUM_SKILL]: 'Defense',
+  [LUCEM_SKILL]: 'Utility',
+  [CELERITAS_SKILL]: 'Utility',
+  [RESERA_SKILL]: 'Utility',
+  [DRINK_SKILL]: 'Utility',
+  [POUR_SKILL]: 'Utility',
+  [INFRAVISION_SKILL]: 'Utility',
+  [MIMIC_SKILL]: 'Utility',
+  [REVERT_SKILL]: 'Utility',
+  [EAT_BRAINS_SKILL]: 'Utility',
+  [MURUS_LAPIDEUS_SKILL]: 'Summoning',
+  [IRRIGO_SKILL]: 'Elemental',
+};
+
+// Falls back to Utility for anything not explicitly listed above (a
+// future skill added here without a category entry lands somewhere
+// visible rather than silently vanishing from the modal).
+export function skillCategory(skillName: string): SkillCategory {
+  return SKILL_CATEGORY_MAP[skillName] ?? 'Utility';
 }

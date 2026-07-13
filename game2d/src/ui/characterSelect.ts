@@ -11,6 +11,10 @@ import { showAuthScreen } from './authScreen.js';
 const screen = document.getElementById('character-select-screen') as HTMLDivElement;
 const errorEl = document.getElementById('character-select-error') as HTMLDivElement;
 const listEl = document.getElementById('character-list') as HTMLUListElement;
+const deleteConfirmEl = document.getElementById('character-delete-confirm') as HTMLDivElement;
+const deleteConfirmTextEl = document.getElementById('character-delete-confirm-text') as HTMLParagraphElement;
+const deleteConfirmYesBtn = document.getElementById('character-delete-confirm-yes') as HTMLButtonElement;
+const deleteConfirmNoBtn = document.getElementById('character-delete-confirm-no') as HTMLButtonElement;
 const createForm = document.getElementById('create-character-form') as HTMLFormElement;
 const nameInput = document.getElementById('new-character-name') as HTMLInputElement;
 const genderSelect = document.getElementById('new-character-gender') as HTMLSelectElement;
@@ -40,6 +44,41 @@ genderSelect.addEventListener('change', updatePreview);
 skinSelect.addEventListener('change', updatePreview);
 hairSelect.addEventListener('change', updatePreview);
 
+// A follow-up ask: "after they click to delete prompt them with an extra
+// 'Are you sure you would like to delete <name>, Lvl. #?'" — a small
+// inline confirm block on the select screen itself (this screen has no
+// in-game modal system to reuse), one pending name at a time.
+let pendingDeleteName: string | null = null;
+
+function promptDeleteCharacter(name: string, level: number): void {
+  pendingDeleteName = name;
+  deleteConfirmTextEl.textContent = `Are you sure you would like to delete ${name}, Lvl. ${level}?`;
+  deleteConfirmEl.hidden = false;
+}
+
+function hideDeleteConfirm(): void {
+  pendingDeleteName = null;
+  deleteConfirmEl.hidden = true;
+}
+
+deleteConfirmNoBtn.addEventListener('click', hideDeleteConfirm);
+
+deleteConfirmYesBtn.addEventListener('click', () => {
+  void (async () => {
+    if (!pendingDeleteName) return;
+    const name = pendingDeleteName;
+    hideDeleteConfirm();
+    errorEl.textContent = '';
+    try {
+      await network.deleteCharacter(name);
+    } catch (err) {
+      errorEl.textContent = err instanceof Error ? err.message : 'Could not delete that character.';
+      return;
+    }
+    await refreshCharacterList();
+  })();
+});
+
 async function refreshCharacterList(): Promise<void> {
   listEl.innerHTML = '<li class="character-list-loading">Loading...</li>';
   try {
@@ -55,9 +94,28 @@ async function refreshCharacterList(): Promise<void> {
     for (const c of characters) {
       const li = document.createElement('li');
       li.className = 'character-list-item';
+
+      const label = document.createElement('span');
       const appearance = c.gender ? `${c.gender}, ${c.skinTone} skin, ${c.hairColor} hair` : c.race;
-      li.textContent = `${c.name} — ${appearance}, level ${c.level} (${c.map})`;
-      li.addEventListener('click', () => void chooseCharacter(c.name));
+      label.textContent = `${c.name} — ${appearance}, level ${c.level} (${c.map})`;
+      label.className = 'character-list-label';
+      label.addEventListener('click', () => void chooseCharacter(c.name));
+      li.appendChild(label);
+
+      // A follow-up ask: "the ability for people to delete players from
+      // their character selection page" — stopPropagation so clicking
+      // Delete doesn't ALSO select/play the character underneath it.
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'character-delete-btn';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.title = `Delete ${c.name}`;
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        promptDeleteCharacter(c.name, c.level);
+      });
+      li.appendChild(deleteBtn);
+
       listEl.appendChild(li);
     }
   } catch (err) {
@@ -104,6 +162,7 @@ logoutBtn.addEventListener('click', () => {
 export function showCharacterSelectScreen(onChosen: () => void): void {
   onCharacterChosen = onChosen;
   errorEl.textContent = '';
+  hideDeleteConfirm();
   nameInput.value = '';
   genderSelect.value = 'male';
   skinSelect.value = 'white';

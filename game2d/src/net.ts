@@ -133,6 +133,20 @@ export class NetworkManager extends EventTarget {
     this.token = data.token;
   }
 
+  // A follow-up ask: "the ability for people to delete players from
+  // their character selection page" — permanent, same account-token
+  // ownership check server-side as select/create above.
+  async deleteCharacter(name: string): Promise<void> {
+    const res = await fetch(`${this.serverUrl}/characters/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${this.token}` },
+    });
+    const data = (await res.json().catch(() => null)) as AuthResponse | { ok: true } | null;
+    if (!res.ok || !data || !data.ok) {
+      throw new Error(data && !data.ok ? data.error : 'Request failed.');
+    }
+  }
+
   connectSocket(): void {
     const socket: GameClientSocket = io(this.serverUrl, {
       auth: { token: this.token },
@@ -156,6 +170,7 @@ export class NetworkManager extends EventTarget {
       this.dispatchEvent(new CustomEvent<CombatEventPayload>('combat', { detail: data }))
     );
     socket.on('chat', (data: ChatPayload) => this.dispatchEvent(new CustomEvent<ChatPayload>('chat', { detail: data })));
+    socket.on('combatNotice', (message: string) => this.dispatchEvent(new CustomEvent<string>('combatNotice', { detail: message })));
     socket.on('statTick', (data: StatTickPayload) =>
       this.dispatchEvent(new CustomEvent<StatTickPayload>('statTick', { detail: data }))
     );
@@ -238,6 +253,13 @@ export class NetworkManager extends EventTarget {
         else reject(new Error('No response from server.'));
       });
     });
+  }
+
+  // A later follow-up bug fix (a melee approach had no server round-trip
+  // at all until contact, so the monster never started chasing back) —
+  // no ack needed, same fire-and-forget shape as punch/chat.
+  engageMelee(target: AugueTargetPayload): void {
+    this.socket?.emit('engageMelee', target);
   }
 
   loot(corpseId: string): Promise<LootAck> {

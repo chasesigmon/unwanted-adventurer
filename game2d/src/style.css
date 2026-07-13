@@ -191,12 +191,78 @@ body {
   border-radius: 4px;
   padding: 10px;
   font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.character-list-label {
   cursor: pointer;
+  flex: 1;
 }
 
 .character-list-item:hover {
   background: #2c2c46;
   border-color: #f0c040;
+}
+
+/* A follow-up ask: delete a character right from the select screen. */
+.character-delete-btn {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  background: #4d2a2a;
+  border: 1px solid #7a3f3f;
+  color: #eee;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+.character-delete-btn:hover {
+  background: #6a3838;
+}
+
+#character-delete-confirm {
+  background: #24243a;
+  border: 1px solid #7a3f3f;
+  border-radius: 4px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+#character-delete-confirm-text {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: #eee;
+}
+
+#character-delete-confirm-yes,
+#character-delete-confirm-no {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid #7a3f3f;
+  color: #eee;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  border-radius: 4px;
+  background: #4d2a2a;
+}
+
+#character-delete-confirm-yes:hover,
+#character-delete-confirm-no:hover {
+  background: #6a3838;
+}
+
+#character-delete-confirm-no {
+  background: #2a4d3a;
+  border-color: #3f7a56;
+}
+
+#character-delete-confirm-no:hover {
+  background: #386a4c;
 }
 
 .character-list-empty,
@@ -734,6 +800,24 @@ body {
 .modal-stats .stat-value {
   color: #eee;
   text-align: right;
+}
+
+/* Skills modal category headers (a follow-up ask) — spans both grid
+   columns so it reads as a section break, not another skill row. */
+.skill-category-header {
+  grid-column: 1 / -1;
+  margin-top: 10px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid #444;
+  color: #d4af8c;
+  font-size: 11px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.skill-category-header:first-child {
+  margin-top: 0;
 }
 
 .spell-list {

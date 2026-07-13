@@ -97,4 +97,13 @@ export class PlayersService {
   async updateStats(username: string, updates: PlayerStatsUpdate): Promise<void> {
     await this.playersRepo.update({ username }, updates);
   }
+
+  // Permanent, unlike condemned (which just locks a character out while
+  // keeping the row around) — a follow-up ask: "the ability for people to
+  // delete players from their character selection page." Ownership is
+  // verified by the CALLER (see auth.service.ts's deleteCharacter) before
+  // this ever runs.
+  async deleteByUsername(username: string): Promise<void> {
+    await this.playersRepo.delete({ username });
+  }
 }

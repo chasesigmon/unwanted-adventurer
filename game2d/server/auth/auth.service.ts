@@ -244,4 +244,22 @@ export class AuthService {
     const token = await this.issueCharacterSession(character.username);
     return { token };
   }
+
+  // A follow-up ask: "the ability for people to delete players from
+  // their character selection page." Same ownership check as
+  // selectCharacter above; also kicks the character's own socket first
+  // (defensive — shouldn't normally be connected from the select screen,
+  // but a stale/duplicate session shouldn't survive its own deletion).
+  async deleteCharacter(accountToken: string, characterName: string): Promise<void> {
+    const { accountId } = await this.verifyAccountToken(accountToken);
+    const character = await this.playersService.findByUsernameCaseInsensitive(characterName);
+    if (!character) {
+      throw new NotFoundException('Character not found.');
+    }
+    if (character.accountId !== accountId) {
+      throw new ForbiddenException("That character doesn't belong to this account.");
+    }
+    this.activeConnections.disconnectIfConnected(character.username);
+    await this.playersService.deleteByUsername(character.username);
+  }
 }

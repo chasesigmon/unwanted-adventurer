@@ -286,6 +286,104 @@ export function isBedBlocked(mapName: MapName, row: number, col: number): boolea
   return bedPositionsFor(mapName).some((p) => p.row === row && p.col === col);
 }
 
+// The Great Hall's own long banquet table (a follow-up ask: "add a long
+// wooden table sprite in the center of the Great Hall that stretches
+// horizontally for about half of the room... wooden chairs on both
+// sides") — Great-Hall-only. A fixed 2-tiles-deep footprint centered on
+// the room's own mid row/col; width scales off the room's own column
+// count (half of it) rather than a literal, so it still reads as
+// "about half the room" if this room's size ever changes again.
+function greatHallTableBounds(mapName: MapName): { rowStart: number; rowEnd: number; colStart: number; colEnd: number } | null {
+  if (mapName !== 'Great Hall') return null;
+  const def = getMap(mapName);
+  const midRow = Math.floor(def.rows / 2);
+  const midCol = Math.floor(def.cols / 2);
+  const widthTiles = Math.round(def.cols * 0.5);
+  const colStart = midCol - Math.floor(widthTiles / 2);
+  const colEnd = colStart + widthTiles - 1;
+  return { rowStart: midRow - 1, rowEnd: midRow, colStart, colEnd };
+}
+
+export function greatHallTableFootprint(mapName: MapName): { rowStart: number; rowEnd: number; colStart: number; colEnd: number } | null {
+  return greatHallTableBounds(mapName);
+}
+
+// The faculty stage at the room's own east wall (a follow-up ask: "all
+// the way to the very right of the Great Hall make a wooden stage") — a
+// single rectangular platform, tall enough (in rows) to hold its own 7
+// seats (see greatHallChairPositionsFor) with room to spare, narrow (in
+// columns) since the seats sit in a single facing-west column near its
+// own front edge.
+function greatHallStageBounds(mapName: MapName): { rowStart: number; rowEnd: number; colStart: number; colEnd: number } | null {
+  if (mapName !== 'Great Hall') return null;
+  const def = getMap(mapName);
+  const midRow = Math.floor(def.rows / 2);
+  const widthTiles = Math.round(def.cols * 0.18);
+  const colEnd = def.cols - 3;
+  const colStart = colEnd - widthTiles + 1;
+  return { rowStart: midRow - 8, rowEnd: midRow + 8, colStart, colEnd };
+}
+
+export function greatHallStagePlatform(mapName: MapName): { rowStart: number; rowEnd: number; colStart: number; colEnd: number } | null {
+  return greatHallStageBounds(mapName);
+}
+
+// Every seat in the Great Hall: 6 dining chairs along each of the
+// table's own long (north/south) sides, plus the faculty stage's own 7
+// seats (3 north + 1 bigger head chair + 3 south, all facing west
+// toward the table/room — a follow-up ask: "3 normal wooden chairs on
+// one side of the stage facing the big table, 3 other... on the other
+// side, and one bigger chair in the middle"). Each chair's own `angle`
+// follows benchPositionsFor's same rotation convention (its top-down
+// texture's backrest defaults to its own north edge; angle 0 faces
+// south, 90 faces west, 180 faces north).
+export function greatHallChairPositionsFor(mapName: MapName): Array<{ row: number; col: number; angle: number; big: boolean }> {
+  const table = greatHallTableBounds(mapName);
+  if (!table) return [];
+  const def = getMap(mapName);
+  const positions: Array<{ row: number; col: number; angle: number; big: boolean }> = [];
+
+  // Dining chairs, 6 per side, evenly spaced with a margin from each end
+  // of the table (same margin+distribute shape as bedPositionsFor's 5
+  // beds).
+  const margin = 2;
+  const widthTiles = table.colEnd - table.colStart + 1;
+  const usableCols = widthTiles - margin * 2 - 1;
+  const seatCount = 6;
+  for (let i = 0; i < seatCount; i++) {
+    const col = table.colStart + margin + Math.round((i * usableCols) / (seatCount - 1));
+    positions.push({ row: table.rowStart - 1, col, angle: 0, big: false }); // north side, faces south
+    positions.push({ row: table.rowEnd + 1, col, angle: 180, big: false }); // south side, faces north
+  }
+
+  // The faculty stage's own 7 seats — a single column near its own front
+  // (west) edge, all facing west toward the dining table.
+  const stage = greatHallStageBounds(mapName);
+  if (stage) {
+    const chairCol = stage.colStart + 2;
+    const seatOffsets = [-6, -4, -2, 0, 2, 4, 6];
+    for (const offset of seatOffsets) {
+      positions.push({ row: Math.floor(def.rows / 2) + offset, col: chairCol, angle: 90, big: offset === 0 });
+    }
+  }
+
+  return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
+}
+
+// "Collision for the table all around" — the table's whole rectangular
+// footprint blocks movement (unlike a single-tile bench/chair), so
+// players walk AROUND it rather than through it.
+export function isGreatHallTableBlocked(mapName: MapName, row: number, col: number): boolean {
+  const table = greatHallTableBounds(mapName);
+  if (!table) return false;
+  return row >= table.rowStart && row <= table.rowEnd && col >= table.colStart && col <= table.colEnd;
+}
+
+// Each chair (dining or stage) blocks only its own tile, same as a bench.
+export function isGreatHallChairBlocked(mapName: MapName, row: number, col: number): boolean {
+  return greatHallChairPositionsFor(mapName).some((p) => p.row === row && p.col === col);
+}
+
 export function isWithinRadius(row: number, col: number, sourceRow: number, sourceCol: number, radiusTiles: number): boolean {
   return Math.abs(row - sourceRow) <= radiusTiles && Math.abs(col - sourceCol) <= radiusTiles;
 }
