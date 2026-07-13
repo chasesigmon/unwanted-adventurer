@@ -112,13 +112,6 @@ export class Player {
   @Column({ type: 'jsonb', default: () => "'{}'" })
   equipment!: Record<string, string>;
 
-  // A separate counter from `exp` — incremented by consuming body parts
-  // from the inventory (see combat/formulas.ts's CONSUME_EXP_PER_ITEM),
-  // mirroring the text game's own consumeExp field. Doesn't drive any
-  // further mechanic in this project yet (no evolution system here).
-  @Column({ name: 'consume_exp', type: 'int', default: 0 })
-  consumeExp!: number;
-
   @Column({ type: 'int', default: 20 })
   gold!: number;
 
@@ -141,6 +134,14 @@ export class Player {
   // flag on the character row, not a deletion.
   @Column({ name: 'death_count', type: 'int', default: 0 })
   deathCount!: number;
+
+  // A later follow-up ask replaced the old automatic per-level attribute
+  // bonus: leveling up now just grants stat points (stacking across
+  // multiple levels if unspent) here, spent one at a time via the
+  // character sheet's own +/- buttons (see game.gateway.ts's
+  // handleAllocateStatPoint).
+  @Column({ name: 'stat_points_available', type: 'int', default: 0 })
+  statPointsAvailable!: number;
 
   @Column({ type: 'boolean', default: false })
   condemned!: boolean;

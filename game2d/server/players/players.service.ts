@@ -45,11 +45,11 @@ export interface PlayerStatsUpdate {
   skills?: Record<string, number>;
   inventory?: string[];
   equipment?: Record<string, string>;
-  consumeExp?: number;
   gold?: number;
   mimicableRaces?: string[];
   mimicForm?: string | null;
   deathCount?: number;
+  statPointsAvailable?: number;
   condemned?: boolean;
   secretDoorUnlocked?: boolean;
   secretChestUnlocked?: boolean;

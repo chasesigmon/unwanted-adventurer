@@ -38,7 +38,6 @@ export interface PlayerSnapshot {
   skills: Record<string, number>;
   inventory: string[];
   equipment: Record<string, string>;
-  consumeExp: number;
   restState: RestState;
   // Whether this player is sleeping in a Dorms bed specifically (a later
   // follow-up ask), not just on the floor — grants an extra 15% on top of
@@ -110,6 +109,12 @@ export interface PlayerSnapshot {
   // Condeath tracking (item 23) — every death, from any cause, counts
   // toward CONDEATH_LIMIT (65); see game.gateway.ts's applyCondeathPenalty.
   deathCount: number;
+  // A later follow-up ask replaced the old automatic per-level attribute
+  // bonus: leveling up now grants this many stat points (stacking across
+  // multiple levels if unspent) for the player to allocate themselves via
+  // the character sheet's own +/- buttons (see the 'allocateStatPoint'
+  // event and game.gateway.ts's handleAllocateStatPoint).
+  statPointsAvailable: number;
   // Whether THIS player's own wand is currently lit (the lucem spell's
   // toggle — see game.gateway.ts's handleLucemCommand) — never persisted
   // (resets to unlit on reconnect, same tradeoff as restState/torchLitAt).
@@ -369,7 +374,6 @@ export interface UseItemAck {
   action?: 'consumed' | 'equipped' | 'unequipped';
   inventory?: string[];
   equipment?: Record<string, string>;
-  consumeExp?: number;
   skills?: Record<string, number>;
   message?: string;
 }
@@ -437,6 +441,17 @@ export interface CastSpellAck {
 export interface AugueTargetPayload {
   targetKind: 'player' | 'npc' | 'monster';
   targetId: string;
+}
+
+// The character sheet's own stat-point allocation (a later follow-up
+// ask, replacing the old automatic per-level attribute bonus) — see
+// PlayerSnapshot's statPointsAvailable and game.gateway.ts's
+// handleAllocateStatPoint.
+export type AllocatableStat = 'strength' | 'intelligence' | 'wisdom' | 'dexterity' | 'constitution' | 'luck';
+
+export interface AllocateStatPointAck {
+  ok: boolean;
+  message?: string;
 }
 
 // The Utility Classroom's third podium (a follow-up ask), teaching
@@ -672,6 +687,9 @@ export interface ClientToServerEvents {
   // as chat/punch; the player's own target SELECTION is untouched, only
   // the automatic every-tick attack loop stops.
   disengage: () => void;
+  // The character sheet's own stat-point allocation (a later follow-up
+  // ask) — see game.gateway.ts's handleAllocateStatPoint.
+  allocateStatPoint: (payload: { stat: AllocatableStat }, ack: (res: AllocateStatPointAck) => void) => void;
   // Resera (a later follow-up ask) — a targeted utility spell, not a
   // toggle or attack; see game.gateway.ts's handleCastResera.
   castResera: (payload: { target: LockTarget }, ack: (res: CastReseraAck) => void) => void;
@@ -748,7 +766,6 @@ export interface SocketData {
   skills: Record<string, number>;
   inventory: string[];
   equipment: Record<string, string>;
-  consumeExp: number;
   restState: RestState;
   // See PlayerSnapshot's own doc comment — never persisted, resets to
   // false on reconnect same as restState itself.
@@ -776,6 +793,10 @@ export interface SocketData {
   // on connect (see handleConnection), incremented on every death (see
   // applyCondeathPenalty).
   deathCount: number;
+  // See PlayerSnapshot's own doc comment — persisted; loaded from the
+  // player doc on connect, incremented on level-up, decremented on
+  // allocation.
+  statPointsAvailable: number;
   // The lucem spell's own toggle (see PlayerSnapshot's wandLit) — never
   // persisted, same tradeoff as restState/torchLitAt. wandLitUntil is the
   // epoch-ms it was last lit, or null while off — a follow-up ask gave

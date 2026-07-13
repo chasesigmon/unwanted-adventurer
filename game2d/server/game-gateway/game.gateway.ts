@@ -52,9 +52,12 @@ import {
   MAX_SKILL_PERCENT,
   RACE_INNATE_SKILLS,
   SKILL_GROWTH_CHANCE,
-  LEVEL_UP_ATTRIBUTE_BONUS,
-  LEVEL_UP_VITAL_BONUS,
+  STAT_POINTS_PER_LEVEL,
   HP_PER_CONSTITUTION,
+  MANA_PER_INTELLIGENCE,
+  intelligenceSpellBonus,
+  rollLuckSpellSuccessBonus,
+  rollLuckGrowthBonus,
   PLAYER_KILL_EXP_REWARD,
   punchDamage,
   expGainFor,
@@ -66,7 +69,6 @@ import {
   BASE_ARMOR_CLASS,
   armorClassFor,
   armorEquipmentBonus,
-  CONSUME_EXP_PER_ITEM,
   startingSkills,
   resistanceGrantForItem,
   RESISTANCE_SKILL_STARTING_PERCENT,
@@ -89,10 +91,6 @@ import {
   THIRD_ATTACK_SKILL,
   ENHANCED_DAMAGE_SKILL,
   LACERATE_SKILL,
-  HOBGOBLIN_EVOLUTION_SKILLS,
-  HOBGOBLIN_EVOLUTION_CXP,
-  HOBGOBLIN_ATTRIBUTE_BONUS,
-  HOBGOBLIN_STAT_BONUS,
 } from '../combat/formulas.js';
 import type { Monster } from '../monsters/monster.js';
 import type { AppConfig } from '../config/configuration.js';
@@ -123,6 +121,8 @@ import type {
   MapStatePayload,
   StoneBlockSnapshot,
   TileTargetPayload,
+  AllocatableStat,
+  AllocateStatPointAck,
 } from '../../shared/types.js';
 import { TOWN_MAPS } from '../../shared/constants.js';
 import {
@@ -475,6 +475,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.combatTickCount += 1;
       this.combatTick();
       this.monsterManager.wanderAll(this.combatTickCount);
+      this.resolveMonsterInitiatedAttack(this.combatTickCount);
       this.monsterManager.respawnBelowMax();
       const expiredCorpseMaps = this.corpseManager.removeExpired();
       const stoneBlockMaps = this.removeExpiredStoneBlocks();
@@ -646,7 +647,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       skills: client.data.skills,
       inventory: client.data.inventory,
       equipment: client.data.equipment,
-      consumeExp: client.data.consumeExp,
       restState: client.data.restState,
       sleepingInBed: client.data.sleepingInBed,
       dancing: client.data.dancing,
@@ -664,6 +664,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       skillCooldowns: client.data.skillCooldowns,
       armorClass: armorClassFor(client.data.dexterity, armorEquipmentBonus(client.data.equipment)),
       deathCount: client.data.deathCount,
+      statPointsAvailable: client.data.statPointsAvailable,
       mapUnlocked: client.data.mapUnlocked,
       secretDoorUnlocked: client.data.secretDoorUnlocked,
       secretChestUnlocked: client.data.secretChestUnlocked,
@@ -764,11 +765,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         skills: client.data.skills,
         inventory: client.data.inventory,
         equipment: client.data.equipment,
-        consumeExp: client.data.consumeExp,
         gold: client.data.gold,
         mimicableRaces: client.data.mimicableRaces,
         mimicForm: client.data.mimicForm,
         deathCount: client.data.deathCount,
+        statPointsAvailable: client.data.statPointsAvailable,
         condemned: client.data.deathCount >= GameGateway.CONDEATH_LIMIT,
         secretDoorUnlocked: client.data.secretDoorUnlocked,
         secretChestUnlocked: client.data.secretChestUnlocked,
@@ -811,14 +812,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.level = level;
     client.data.exp = exp;
 
+    // A later follow-up ask replaced the old automatic "+1 to every
+    // attribute" level-up bonus entirely: leveling up now just grants
+    // stat points (stacking if unspent) the player allocates themselves
+    // — see handleAllocateStatPoint. hp/mana still fully refill on a
+    // level-up itself as a bonus, same as before.
     if (levelsGained > 0) {
-      client.data.strength += LEVEL_UP_ATTRIBUTE_BONUS * levelsGained;
-      client.data.intelligence += LEVEL_UP_ATTRIBUTE_BONUS * levelsGained;
-      client.data.wisdom += LEVEL_UP_ATTRIBUTE_BONUS * levelsGained;
-      client.data.dexterity += LEVEL_UP_ATTRIBUTE_BONUS * levelsGained;
-      client.data.constitution += LEVEL_UP_ATTRIBUTE_BONUS * levelsGained;
-      client.data.maxHp += LEVEL_UP_VITAL_BONUS * levelsGained + HP_PER_CONSTITUTION * LEVEL_UP_ATTRIBUTE_BONUS * levelsGained;
-      client.data.maxMana += LEVEL_UP_VITAL_BONUS * levelsGained;
+      client.data.statPointsAvailable += STAT_POINTS_PER_LEVEL * levelsGained;
       client.data.hp = client.data.maxHp;
       client.data.mana = client.data.maxMana;
     }
@@ -830,11 +830,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxHp: client.data.maxHp,
       mana: client.data.mana,
       maxMana: client.data.maxMana,
-      strength: client.data.strength,
-      intelligence: client.data.intelligence,
-      wisdom: client.data.wisdom,
-      dexterity: client.data.dexterity,
-      constitution: client.data.constitution,
+      statPointsAvailable: client.data.statPointsAvailable,
     });
 
     // A level-up changes attributes/max-vitals beyond what the 'combat'
@@ -847,17 +843,80 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { leveledUp: levelsGained > 0, message: cappedMessage };
   }
 
+  // The character sheet's own stat-point allocation (a later follow-up
+  // ask, replacing the old automatic per-level attribute bonus) — spends
+  // ONE available point on whichever attribute the player picked.
+  // Constitution/intelligence also bump their own derived vital (max hp/
+  // mana) by the same fixed amount every other point-of-constitution/
+  // intelligence already grants elsewhere (see HP_PER_CONSTITUTION/
+  // MANA_PER_INTELLIGENCE) — current hp/mana shift by the same delta too,
+  // rather than a full heal, so this can't be used to sneak in free
+  // healing.
+  @SubscribeMessage('allocateStatPoint')
+  handleAllocateStatPoint(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): AllocateStatPointAck {
+    const parsed = z.object({ stat: z.enum(['strength', 'intelligence', 'wisdom', 'dexterity', 'constitution', 'luck']) }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid stat.' };
+    }
+    if (client.data.statPointsAvailable <= 0) {
+      return { ok: false, message: "You don't have any stat points to allocate." };
+    }
+
+    const stat: AllocatableStat = parsed.data.stat;
+    client.data.statPointsAvailable -= 1;
+    client.data[stat] += 1;
+    if (stat === 'constitution') {
+      client.data.maxHp += HP_PER_CONSTITUTION;
+      client.data.hp += HP_PER_CONSTITUTION;
+    } else if (stat === 'intelligence') {
+      client.data.maxMana += MANA_PER_INTELLIGENCE;
+      client.data.mana += MANA_PER_INTELLIGENCE;
+    }
+
+    this.worldManager.updateState(client.data.username, {
+      strength: client.data.strength,
+      intelligence: client.data.intelligence,
+      wisdom: client.data.wisdom,
+      dexterity: client.data.dexterity,
+      constitution: client.data.constitution,
+      luck: client.data.luck,
+      statPointsAvailable: client.data.statPointsAvailable,
+      hp: client.data.hp,
+      maxHp: client.data.maxHp,
+      mana: client.data.mana,
+      maxMana: client.data.maxMana,
+    });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    return { ok: true };
+  }
+
   // A small chance per attack/defense (hit or miss doesn't matter here,
   // there's no miss chance at all in this project) to grow the given
   // skill by 1 point, same shape as the text game's own skill growth.
   // Returns the notice message if it actually grew.
-  private maybeGrowSkill(client: GameSocket, skill: string): string | undefined {
+  // `extraChancePercent` (a later follow-up ask, spell casts only — see
+  // maybeGrowSpellSkill below) adds a luck-rolled percentage-point bonus
+  // on top of the ordinary SKILL_GROWTH_CHANCE roll.
+  private maybeGrowSkill(client: GameSocket, skill: string, extraChancePercent = 0): string | undefined {
     const current = client.data.skills[skill] ?? STARTING_SKILL_PERCENT;
-    if (current >= MAX_SKILL_PERCENT || Math.random() >= SKILL_GROWTH_CHANCE) return undefined;
+    if (current >= MAX_SKILL_PERCENT) return undefined;
+    const chance = SKILL_GROWTH_CHANCE + extraChancePercent / 100;
+    if (Math.random() >= chance) return undefined;
     const next = current + 1;
     client.data.skills = { ...client.data.skills, [skill]: next };
     this.worldManager.updateState(client.data.username, { skills: client.data.skills });
     return skillGrowthMessage(skill, next);
+  }
+
+  // Every spell handler calls this instead of the plain maybeGrowSkill
+  // (a later follow-up ask: "when casting a spell add between luck/2 and
+  // luck x5 chance to the player's chance of getting better at a spell/
+  // skill") — layers the luck-rolled bonus on top of the same base
+  // SKILL_GROWTH_CHANCE every other (non-spell) skill use still gets
+  // unmodified.
+  private maybeGrowSpellSkill(client: GameSocket, skill: string): string | undefined {
+    return this.maybeGrowSkill(client, skill, rollLuckGrowthBonus(client.data.luck));
   }
 
   // Which skill an attack's own weapon skill-growth chance targets:
@@ -1118,6 +1177,50 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       : `The ${attackerLabel} ${verb} you back for ${damage} damage.`;
   }
 
+  // A later follow-up ask: "when it finally got into range... it didn't
+  // attack the player ever" — the imp's own reactive counter-attack (see
+  // resolveMonsterCounterAttack above) only ever fires because the
+  // PLAYER'S own swing landed that same tick; an aggro'd monster just
+  // standing adjacent while the player ISN'T attacking (fled, or simply
+  // hasn't swung yet) never did anything back. This is the proactive
+  // half: every combat tick, any monster with an aggro'd player target
+  // AND a species-level attackDamage (only imps today — see monster.ts's
+  // own doc comment) that's adjacent to that exact player throws its own
+  // hit, independent of whether the player attacked this tick. Skips a
+  // monster that already resolved a reactive counter this same tick (see
+  // Monster.lastCounterAttackTick) so it can't hit the same player twice
+  // in one tick.
+  private resolveMonsterInitiatedAttack(currentTick: number): void {
+    for (const { monster, targetUsername } of this.monsterManager.getAggroedMonsters()) {
+      if (monster.attackDamage === undefined) continue;
+      if (monster.lastCounterAttackTick === currentTick) continue;
+      if (this.isParalyzed(`monster:${monster.id}`)) continue;
+
+      const socketId = this.activeConnections.getActiveSocketId(targetUsername);
+      const client = socketId ? (this.server.sockets.sockets.get(socketId) as GameSocket | undefined) : undefined;
+      if (!client || client.data.map !== monster.mapName) continue;
+      // Strict cardinal adjacency, same shape melee's own inRange check
+      // uses — a monster mid-chase (still closing distance) shouldn't
+      // throw a punch from range.
+      if (Math.abs(client.data.row - monster.row) + Math.abs(client.data.col - monster.col) !== 1) continue;
+
+      monster.lastCounterAttackTick = currentTick;
+      const growthMessages: string[] = [];
+      const message = this.resolveMonsterCounterAttack(client, monster, monster.kind, monster.monsterClass, growthMessages, monster);
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      // The private combatNotice channel (see its own first use, the
+      // stone-block-hit notifications) rather than the room-broadcast
+      // 'combat' event — that event's own `attacker` field is always a
+      // real PLAYER username elsewhere (used to look up a sprite/position
+      // for the fireball/counter-swing animations), which a monster's own
+      // kind string doesn't fit; this is simpler and correctly private to
+      // just the player being hit either way.
+      const growthSuffix = growthMessages.length > 0 ? ` ${growthMessages.join(' ')}` : '';
+      client.emit('combatNotice', `${message}${growthSuffix}`);
+    }
+  }
+
   // Condeath (item 23) — a permanent-death "lives" system, separate from
   // the ordinary respawn every death already triggers. Every death counts
   // (whether from a monster counter-attack or a PvP kill); every 5th
@@ -1245,11 +1348,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       client.data.inventory = [...client.data.inventory, CANTEEN_ITEM];
     }
     client.data.equipment = doc?.equipment ?? {};
-    client.data.consumeExp = doc?.consumeExp ?? 0;
     client.data.gold = doc?.gold ?? STARTING_GOLD;
     client.data.mimicableRaces = (doc?.mimicableRaces ?? []) as (Race | MonsterKind)[];
     client.data.mimicForm = (doc?.mimicForm ?? null) as (Race | MonsterKind) | null;
     client.data.deathCount = doc?.deathCount ?? 0;
+    // Stacks across levels if never spent (a later follow-up ask) — see
+    // handleAllocateStatPoint.
+    client.data.statPointsAvailable = doc?.statPointsAvailable ?? 0;
     // Never persisted — a fresh connection always starts awake, same as
     // the text game's own restState.
     client.data.restState = 'awake';
@@ -1320,7 +1425,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       skills: client.data.skills,
       inventory: client.data.inventory,
       equipment: client.data.equipment,
-      consumeExp: client.data.consumeExp,
       restState: client.data.restState,
       gold: client.data.gold,
       mimicableRaces: client.data.mimicableRaces,
@@ -1328,6 +1432,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       eatBrainsReadyAtTick: client.data.eatBrainsReadyAtTick,
       skillCooldowns: client.data.skillCooldowns,
       deathCount: client.data.deathCount,
+      statPointsAvailable: client.data.statPointsAvailable,
       wandLit: client.data.wandLit,
       celeritasActive: client.data.celeritasActive,
       scutumActive: client.data.scutumActive,
@@ -1565,7 +1670,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // instead of copy-pasting the same two lines a 5th-9th time.
   private rollSpellSuccess(client: GameSocket, skill: string): boolean {
     const skillPercent = client.data.skills[skill] ?? STARTING_SKILL_PERCENT;
-    const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS);
+    // Intelligence/luck (a later follow-up ask) both nudge every spell's
+    // own success chance: intelligence a flat +1% per point, luck a
+    // CHANCE (luck x 10%) of an extra +10% for this one cast — see each
+    // function's own doc comment in combat/formulas.ts.
+    const intelligenceBonus = intelligenceSpellBonus(client.data.intelligence);
+    const luckBonus = rollLuckSpellSuccessBonus(client.data.luck);
+    const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS + intelligenceBonus + luckBonus);
     return Math.random() * 100 < successChance;
   }
 
@@ -1915,6 +2026,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         counterMessage = `The ${monster.kind} is paralyzed by your glare and cannot counter-attack!`;
       } else {
         counterMessage = this.resolveMonsterCounterAttack(client, monster, monster.kind, monster.monsterClass, growthMessages, monster);
+        // So resolveMonsterInitiatedAttack's own tick doesn't ALSO hit
+        // this same monster's target again a moment later — this counter
+        // already covers this tick's exchange.
+        monster.lastCounterAttackTick = this.combatTickCount;
       }
       message += ` ${counterMessage}`;
     }
@@ -2804,7 +2919,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     // Resera grows with practice on every cast, success or fail (a later
     // follow-up ask, item 18 — applies to every spell, not just this one).
-    const growth = this.maybeGrowSkill(client, RESERA_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, RESERA_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     void this.persistStats(client);
@@ -2917,7 +3032,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const label = npc.label ?? 'training dummy';
 
       if (!this.rollSpellSuccess(client, AUGUE_SKILL)) {
-        const growth = this.maybeGrowSkill(client, AUGUE_SKILL);
+        const growth = this.maybeGrowSpellSkill(client, AUGUE_SKILL);
         const message = `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
         void this.persistStats(client);
         client.emit('sync', { player: this.snapshotFor(client) });
@@ -2938,7 +3053,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
 
       const growthMessages: string[] = [];
-      const growth = this.maybeGrowSkill(client, AUGUE_SKILL);
+      const growth = this.maybeGrowSpellSkill(client, AUGUE_SKILL);
       if (growth) growthMessages.push(growth);
 
       const message = died
@@ -2978,7 +3093,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.startAutoAttackAfterSpell(client, 'monster', monster.id);
 
     if (!this.rollSpellSuccess(client, AUGUE_SKILL)) {
-      const growth = this.maybeGrowSkill(client, AUGUE_SKILL);
+      const growth = this.maybeGrowSpellSkill(client, AUGUE_SKILL);
       const message = `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
@@ -2992,7 +3107,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     const growthMessages: string[] = [];
-    const growth = this.maybeGrowSkill(client, AUGUE_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, AUGUE_SKILL);
     if (growth) growthMessages.push(growth);
 
     let expGained: number | undefined;
@@ -3127,7 +3242,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
       const label = npc.label ?? 'training dummy';
       const succeeded = this.rollSpellSuccess(client, STUPEFACIUNT_SKILL);
-      const growth = this.maybeGrowSkill(client, STUPEFACIUNT_SKILL);
+      const growth = this.maybeGrowSpellSkill(client, STUPEFACIUNT_SKILL);
       const message = succeeded
         ? `${client.data.username} stuns the ${label} in place!${growth ? ` ${growth}` : ''}`
         : `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
@@ -3153,7 +3268,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.startAutoAttackAfterSpell(client, 'monster', monster.id);
     const stupefaciuntSucceeded = this.rollSpellSuccess(client, STUPEFACIUNT_SKILL);
     if (stupefaciuntSucceeded) this.monsterManager.stun(monster.id, this.combatTickCount + STUPEFACIUNT_STUN_TICKS);
-    const growth = this.maybeGrowSkill(client, STUPEFACIUNT_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, STUPEFACIUNT_SKILL);
     const message = stupefaciuntSucceeded
       ? `${client.data.username}'s stupefaciunt freezes the ${monster.kind} in place!${growth ? ` ${growth}` : ''}`
       : `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
@@ -3200,7 +3315,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.startSkillCooldown(client, EXARME_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
       const succeeded = this.rollSpellSuccess(client, EXARME_SKILL);
-      const growth = this.maybeGrowSkill(client, EXARME_SKILL);
+      const growth = this.maybeGrowSpellSkill(client, EXARME_SKILL);
       const label = npc.label ?? 'training dummy';
       const message = succeeded
         ? `The ${label} isn't wielding a weapon.${growth ? ` ${growth}` : ''}`
@@ -3240,7 +3355,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         message = `${client.data.username}'s exarme knocks the ${weapon} from the ${monster.kind}'s grip!`;
       }
     }
-    const growth = this.maybeGrowSkill(client, EXARME_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, EXARME_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
@@ -3310,10 +3425,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     client.data.mana -= SPELL_ATTACK_MANA_COST;
-    this.startSkillCooldown(client, SCUTUM_SKILL);
+    // A later follow-up ask: scutum's own 2-minute cooldown only starts
+    // on an actual SUCCESSFUL cast — unlike every other spell here, a
+    // 2-minute lockout on top of a fumble would be brutal, so a fumbled
+    // scutum can just be retried immediately (still costs the mana,
+    // same "swinging and missing still counts as the swing" reasoning,
+    // just not the cooldown on top of it).
     const succeeded = this.rollSpellSuccess(client, SCUTUM_SKILL);
     let message: string;
     if (succeeded) {
+      this.startSkillCooldown(client, SCUTUM_SKILL);
       client.data.scutumActive = true;
       client.data.scutumActiveUntil = Date.now() + SCUTUM_DURATION_MS;
       message = 'A shimmering shield surrounds you.';
@@ -3321,7 +3442,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message = 'You fumble the incantation and nothing happens.';
     }
 
-    const growth = this.maybeGrowSkill(client, SCUTUM_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, SCUTUM_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills, scutumActive: client.data.scutumActive });
@@ -3427,7 +3548,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message = 'A block of stone rises from the ground, eyes blinking open.';
     }
 
-    const growth = this.maybeGrowSkill(client, MURUS_LAPIDEUS_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, MURUS_LAPIDEUS_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
@@ -3530,7 +3651,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message = `You fill your ${resolved.item} with water!`;
     }
 
-    const growth = this.maybeGrowSkill(client, IRRIGO_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, IRRIGO_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, canteenDrinks: client.data.canteenDrinks, skills: client.data.skills });
@@ -3724,7 +3845,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message = 'Your wand goes dark.';
     }
 
-    const growth = this.maybeGrowSkill(client, LUCEM_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, LUCEM_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, { wandLit: client.data.wandLit, mana: client.data.mana, skills: client.data.skills });
@@ -3776,7 +3897,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message = 'The spring leaves your step.';
     }
 
-    const growth = this.maybeGrowSkill(client, CELERITAS_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, CELERITAS_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, {
@@ -3939,78 +4060,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { player: this.snapshotFor(client) };
   }
 
-  // One-way, one-time — reaching HOBGOBLIN_EVOLUTION_CXP consumed body
-  // parts as a goblin transforms them into a Hobgoblin: level/exp reset
-  // to a fresh level 1, attributes/vitals boosted (and fully healed),
-  // consumeExp reset to 0, and any of the Hobgoblin-exclusive skills
-  // (second attack/third attack/enhanced damage) they don't already have
-  // granted at STARTING_SKILL_PERCENT. Existing skills are left alone.
-  private maybeEvolveToHobgoblin(client: GameSocket): string[] {
-    if (client.data.race !== 'goblin' || client.data.consumeExp < HOBGOBLIN_EVOLUTION_CXP) return [];
-
-    client.data.race = 'hobgoblin';
-    client.data.level = STARTING_LEVEL;
-    client.data.exp = STARTING_EXP;
-    client.data.consumeExp = 0;
-
-    client.data.strength += HOBGOBLIN_ATTRIBUTE_BONUS;
-    client.data.intelligence += HOBGOBLIN_ATTRIBUTE_BONUS;
-    client.data.wisdom += HOBGOBLIN_ATTRIBUTE_BONUS;
-    client.data.dexterity += HOBGOBLIN_ATTRIBUTE_BONUS;
-    client.data.constitution += HOBGOBLIN_ATTRIBUTE_BONUS;
-
-    client.data.maxHp += HOBGOBLIN_STAT_BONUS;
-    client.data.maxMana += HOBGOBLIN_STAT_BONUS;
-    client.data.hp = client.data.maxHp;
-    client.data.mana = client.data.maxMana;
-
-    const newSkills: string[] = [];
-    for (const skill of HOBGOBLIN_EVOLUTION_SKILLS) {
-      if (client.data.skills[skill] === undefined) {
-        client.data.skills = { ...client.data.skills, [skill]: STARTING_SKILL_PERCENT };
-        newSkills.push(skill);
-      }
-    }
-
-    this.worldManager.updateState(client.data.username, {
-      race: client.data.race,
-      level: client.data.level,
-      exp: client.data.exp,
-      consumeExp: client.data.consumeExp,
-      strength: client.data.strength,
-      intelligence: client.data.intelligence,
-      wisdom: client.data.wisdom,
-      dexterity: client.data.dexterity,
-      constitution: client.data.constitution,
-      maxHp: client.data.maxHp,
-      maxMana: client.data.maxMana,
-      hp: client.data.hp,
-      mana: client.data.mana,
-      skills: client.data.skills,
-    });
-    void this.persistStats(client);
-    client.emit('sync', { player: this.snapshotFor(client) });
-
-    const messages = [
-      '**Your body twists and swells with dark power — you have evolved into a Hobgoblin!**',
-      'Your level has reset to 1.',
-      `Your attributes have increased by ${HOBGOBLIN_ATTRIBUTE_BONUS}.`,
-      `Your hp and mana have increased by ${HOBGOBLIN_STAT_BONUS} and been fully restored.`,
-      'Your consumed exp has reset to 0.',
-    ];
-    if (newSkills.length > 0) {
-      messages.push(`You have also learned: ${newSkills.join(', ')} (starting at ${STARTING_SKILL_PERCENT}%).`);
-    }
-    return messages;
-  }
-
   // Shared by both useItem's "consume" path and the forced consumeItem
-  // RPC: grants consumeExp, rolls a resistance skill if this item's name
-  // maps to one (see resistanceGrantForItem), and checks for a Hobgoblin
-  // evolution. Returns the flavor message lines to show, if any.
+  // RPC: rolls a resistance skill if this item's name maps to one (see
+  // resistanceGrantForItem). Returns the flavor message lines to show, if
+  // any. (A later follow-up ask removed the old consumeExp counter and
+  // its Hobgoblin-evolution-by-consuming mechanic entirely — "there is no
+  // evolution through consuming in the wizard world.")
   private applyConsume(client: GameSocket, item: string): string[] {
-    client.data.consumeExp += CONSUME_EXP_PER_ITEM;
-
     const messages: string[] = [];
     const grant = resistanceGrantForItem(item);
     if (grant) {
@@ -4021,9 +4077,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         }
       } else {
         // Item 1: consuming this kind of item again once the skill is
-        // already known used to just silently do nothing (besides the
-        // flat consumeExp) — no feedback at all that nothing new could
-        // come of it.
+        // already known used to just silently do nothing — no feedback at
+        // all that nothing new could come of it.
         messages.push(`You have already learned ${grant.skill} from this kind of item!`);
       }
     }
@@ -4037,10 +4092,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         messages.push(`You have already learned ${BONE_FINGER_STRIKE_SKILL} from bone daggers!`);
       }
     }
-    // Checked after the resistance roll above so a body part that both
-    // grants a resistance AND crosses the evolution threshold in the same
-    // consume shows both messages, in that order.
-    messages.push(...this.maybeEvolveToHobgoblin(client));
 
     // Slime-only: consuming a body part it's never eaten before teaches
     // it to mimic that race/monster-kind's appearance (see /mimic and
@@ -4068,7 +4119,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.worldManager.updateState(client.data.username, {
       inventory: client.data.inventory,
       equipment: client.data.equipment,
-      consumeExp: client.data.consumeExp,
       skills: client.data.skills,
       mimicableRaces: client.data.mimicableRaces,
     });
@@ -4080,7 +4130,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       action,
       inventory: client.data.inventory,
       equipment: client.data.equipment,
-      consumeExp: client.data.consumeExp,
       skills: client.data.skills,
       message: messages.length > 0 ? messages.join('\n') : undefined,
     };
@@ -4090,9 +4139,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // equippable (see combat/formulas.ts's EQUIPMENT_SLOT_FOR_ITEM) or just
   // a consumable body part. Equipping swaps out whatever was already in
   // that slot (returning it to inventory, mirroring the text game's own
-  // "unequip the old one first" behavior); consuming removes it for good
-  // and grants a flat CONSUME_EXP_PER_ITEM toward the separate
-  // consumeExp counter.
+  // "unequip the old one first" behavior); consuming removes it for good.
   @SubscribeMessage('useItem')
   handleUseItem(@ConnectedSocket() client: GameSocket, @MessageBody() itemIndex: unknown): UseItemAck {
     if (typeof itemIndex !== 'number' || !Number.isInteger(itemIndex)) {

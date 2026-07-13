@@ -82,6 +82,11 @@ CREATE TABLE IF NOT EXISTS players (
   -- can never log in again, but the row (and its account) is never
   -- deleted outright.
   death_count INTEGER NOT NULL DEFAULT 0,
+  -- Leveling up grants stat points here (stacking if unspent) instead of
+  -- an automatic per-level attribute bonus — spent one at a time via the
+  -- character sheet (see game2d/server/game-gateway/game.gateway.ts's
+  -- handleAllocateStatPoint).
+  stat_points_available INTEGER NOT NULL DEFAULT 0,
   condemned BOOLEAN NOT NULL DEFAULT false,
   -- The secret room system (a follow-up ask) — each per-player, persisted
   -- forever once true, never re-locked. secret_door_unlocked/

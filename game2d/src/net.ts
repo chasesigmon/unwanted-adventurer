@@ -31,6 +31,8 @@ import type {
   WhoAck,
   StatTickPayload,
   WorldTimePayload,
+  AllocatableStat,
+  AllocateStatPointAck,
 } from '../shared/types.js';
 import type { Direction, Gender, HairColor, SkinTone } from '../shared/constants.js';
 import type { EquipmentSlot } from '../shared/equipment.js';
@@ -559,6 +561,21 @@ export class NetworkManager extends EventTarget {
   // fire-and-forget shape as chat/punch.
   disengage(): void {
     this.socket?.emit('disengage');
+  }
+
+  // The character sheet's own stat-point allocation (a later follow-up
+  // ask) — see game.gateway.ts's handleAllocateStatPoint.
+  allocateStatPoint(stat: AllocatableStat): Promise<AllocateStatPointAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('allocateStatPoint', { stat }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
   }
 
   readStupefaciuntBook(): Promise<ReadSpellBookAck> {

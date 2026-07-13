@@ -1,16 +1,16 @@
 // Skill-name constants shared between the server (combat/formulas.ts,
 // which owns the actual growth/chance mechanics) and the client (the
-// Skills modal's "Show All" preview of not-yet-acquired skills) — pure
-// data, no server-only logic, so it lives here rather than being
-// duplicated.
+// Skills/Spells modals) — pure data, no server-only logic, so it lives
+// here rather than being duplicated.
 import type { Race } from './constants.js';
 
 // A follow-up ask: "once a skill is learned, start it out at 10% instead
 // of 1%" — applies uniformly to every skill grant in the game (starting
 // kit, race-innate exceptions aside, evolution skills, podium-taught
 // spells, the bone-finger-strike bonus, ...) since they all funnel
-// through this one constant.
-export const STARTING_SKILL_PERCENT = 10;
+// through this one constant. Raised again to 15% by a later follow-up
+// ask.
+export const STARTING_SKILL_PERCENT = 15;
 export const MAX_SKILL_PERCENT = 100;
 
 // Shared by every ranged targeted-attack spell (augue, the wand's own
@@ -39,9 +39,6 @@ export const WAND_BOLT_SKILL = 'wand bolt';
 export const SECOND_ATTACK_SKILL = 'second attack';
 export const THIRD_ATTACK_SKILL = 'third attack';
 export const ENHANCED_DAMAGE_SKILL = 'enhanced damage';
-// Granted only on evolving to Hobgoblin — see game.gateway.ts's
-// maybeEvolveToHobgoblin.
-export const HOBGOBLIN_EVOLUTION_SKILLS = [SECOND_ATTACK_SKILL, THIRD_ATTACK_SKILL, ENHANCED_DAMAGE_SKILL];
 
 export const LESSER_NORMAL_MONSTER_RESISTANCE = 'lesser normal monster resistance';
 export const LESSER_UNDEAD_MONSTER_RESISTANCE = 'lesser undead monster resistance';
@@ -173,8 +170,7 @@ export const RACE_INNATE_SKILLS: Record<Race, string[]> = {
   zombie: [EAT_BRAINS_SKILL],
   dragonborn: [LACERATE_SKILL],
   slime: [MIMIC_SKILL, REVERT_SKILL],
-  // Hobgoblin is evolution-only (never a starting race) — its own extra
-  // skills are granted separately, see HOBGOBLIN_EVOLUTION_SKILLS.
+  // Hobgoblin is evolution-only (never a starting race).
   hobgoblin: [],
   // Drink/pour are basic actions everyone can do from day one (item 7) —
   // spellcasting skills (lucem, irrigo, ...) are still learned separately

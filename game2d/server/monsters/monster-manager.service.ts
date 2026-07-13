@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
-import { getMap, isCastleExteriorBlocked, isMoatBlocked, isWithinMoatFootprint } from '../../shared/maps.js';
+import { getMap, isCastleExteriorBlocked, isMoatBlocked, isWithinMoatFootprint, isGateTile } from '../../shared/maps.js';
 import { isTreeTile } from '../../shared/trees.js';
 import {
   isFireplaceBlocked,
@@ -66,6 +66,12 @@ export class MonsterManagerService {
   // logs off/changes map, or the monster dies.
   private aggro = new Map<string, { targetUsername: string; lastContactTick: number }>();
   private static readonly AGGRO_TIMEOUT_TICKS = 10;
+  // "Aggro'd monsters should move a little faster... the default
+  // movement is a little too slow" (a later follow-up ask) — how many
+  // tile-steps a player-aggro chase takes per combat tick, vs. the
+  // ordinary 1 a free wander/patrol step (or the stone-block chase)
+  // takes.
+  private static readonly AGGRO_CHASE_STEPS_PER_TICK = 2;
 
   setAggro(monsterId: string, targetUsername: string, tick: number): void {
     this.aggro.set(monsterId, { targetUsername, lastContactTick: tick });
@@ -162,6 +168,10 @@ export class MonsterManagerService {
     if (isTreeTile(mapName, row, col)) return false;
     if (isCastleExteriorBlocked(mapName, row, col)) return false;
     if (isMoatBlocked(mapName, row, col)) return false;
+    // "It should not work for imps" — the castle gate never opens for a
+    // monster, full stop, unlike WorldManagerService.isOccupied's own
+    // proximity-aware check for players.
+    if (isGateTile(mapName, row, col)) return false;
     if (isFireplaceBlocked(mapName, row, col)) return false;
     if (isBenchBlocked(mapName, row, col)) return false;
     if (isBedBlocked(mapName, row, col)) return false;
@@ -400,7 +410,18 @@ export class MonsterManagerService {
       return true;
     }
 
-    this.stepToward(monster, target.row, target.col, changedMaps);
+    // "Aggro'd monsters should move a little faster in getting to the
+    // player — the default movement is a little too slow" (a later
+    // follow-up ask) — a player-aggro chase takes up to
+    // AGGRO_CHASE_STEPS_PER_TICK steps this same tick instead of the
+    // ordinary 1, stopping early the instant it's adjacent rather than
+    // overshooting past the player. Patrol/free wander and the
+    // stone-block chase above are unaffected — only closing in on an
+    // aggro'd PLAYER gets the speed boost.
+    for (let i = 0; i < MonsterManagerService.AGGRO_CHASE_STEPS_PER_TICK; i++) {
+      this.stepToward(monster, target.row, target.col, changedMaps);
+      if (Math.abs(target.row - monster.row) <= 1 && Math.abs(target.col - monster.col) <= 1) break;
+    }
     return true;
   }
 

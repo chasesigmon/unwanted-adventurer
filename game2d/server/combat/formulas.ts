@@ -18,7 +18,6 @@ import {
   SECOND_ATTACK_SKILL,
   THIRD_ATTACK_SKILL,
   ENHANCED_DAMAGE_SKILL,
-  HOBGOBLIN_EVOLUTION_SKILLS,
   LESSER_NORMAL_MONSTER_RESISTANCE,
   LESSER_UNDEAD_MONSTER_RESISTANCE,
   LESSER_FIRE_RESISTANCE,
@@ -37,7 +36,6 @@ export {
   SECOND_ATTACK_SKILL,
   THIRD_ATTACK_SKILL,
   ENHANCED_DAMAGE_SKILL,
-  HOBGOBLIN_EVOLUTION_SKILLS,
   LESSER_NORMAL_MONSTER_RESISTANCE,
   LESSER_UNDEAD_MONSTER_RESISTANCE,
   RACE_INNATE_SKILLS,
@@ -177,8 +175,7 @@ export function punchDamage(
 }
 
 // Which equipment slot an item goes into, if any — items not listed here
-// aren't equippable at all, just consumable body parts (see
-// CONSUME_EXP_PER_ITEM below).
+// aren't equippable at all, just consumable body parts.
 export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
   'bone dagger': 'weapon',
   'bone shield': 'shield',
@@ -316,18 +313,6 @@ export function computeLacerateChance(skillPercent: number): number {
   return Math.min(LACERATE_MAX_CHANCE, LACERATE_BASE_CHANCE + bonus);
 }
 
-// --- Goblin -> Hobgoblin evolution (one-way, one-time) ---
-
-export const HOBGOBLIN_EVOLUTION_CXP = 300;
-export const HOBGOBLIN_ATTRIBUTE_BONUS = 10;
-export const HOBGOBLIN_STAT_BONUS = 100;
-
-// --- Consuming body parts (mirrors the text game's separate
-// consumeExp counter — tracked here but, unlike the text game's Hobgoblin
-// evolution, doesn't drive any further mechanic yet in this project) ---
-
-export const CONSUME_EXP_PER_ITEM = 5;
-
 // --- Resistance skills, gained by chance on consuming a body part ---
 // (mirrors the text game's BODY_PART_SKILL reward/chance baked into each
 // dropped item by its source: a wild goblin's parts teach "lesser normal
@@ -414,14 +399,59 @@ export function applyExpGain(state: LevelState, gained: number): LevelState {
   return { level, exp };
 }
 
-export const LEVEL_UP_ATTRIBUTE_BONUS = 1;
-export const LEVEL_UP_VITAL_BONUS = 10;
-// Constitution's own contribution to max hp (item 22) — applied
-// incrementally alongside LEVEL_UP_VITAL_BONUS whenever constitution
-// itself changes (level-up gains it, condeath's CON penalty — see
-// item 23 — removes it), so max hp always reflects current constitution
+// A later follow-up ask replaced the old "every level automatically
+// grants +1 to every attribute" system entirely: leveling up now just
+// grants STAT_POINTS_PER_LEVEL stat point(s) (stacking if unspent) the
+// player allocates themselves, one at a time, to whichever attribute(s)
+// they choose (see game.gateway.ts's handleAllocateStatPoint). hp/mana
+// still fully refill on a level-up itself as a bonus, same as before —
+// only the automatic attribute/vital GROWTH is gone.
+export const STAT_POINTS_PER_LEVEL = 1;
+// Constitution's own contribution to max hp (a later follow-up ask: "con
+// x 20") — applied incrementally, +HP_PER_CONSTITUTION every time a stat
+// point actually goes into constitution (or subtracted by condeath's own
+// CON penalty, item 23), so max hp always reflects points actually spent
 // rather than being baked in once.
-export const HP_PER_CONSTITUTION = 5;
+export const HP_PER_CONSTITUTION = 20;
+// Intelligence's own contribution to max mana (a later follow-up ask:
+// "increase mana by int x 10") — same incremental-on-allocation shape as
+// HP_PER_CONSTITUTION above.
+export const MANA_PER_INTELLIGENCE = 10;
+
+// --- Spellcasting: intelligence/luck bonuses (a later follow-up ask) ---
+
+// "Every point of intelligence should be considered an extra learned
+// percent when casting any spell — 10 intelligence would grant +10%
+// chance." A flat 1 percentage point per point, added directly to the
+// caster's own successChance before the roll (see game.gateway.ts's
+// rollSpellSuccess).
+export function intelligenceSpellBonus(intelligence: number): number {
+  return intelligence;
+}
+
+// "Luck should give a player extra chance to succeed at casting. Luck x
+// 10 is the chance that any spell being cast has an extra 10% chance to
+// succeed." A nested roll, not a flat bonus: luck*10 is itself a percent
+// chance (0-100) that, when it hits, adds LUCK_BONUS_SUCCESS_PERCENT to
+// the spell's own success chance for this one cast — so low luck only
+// occasionally helps at all, while high luck (10+) triggers it every time.
+export const LUCK_BONUS_TRIGGER_PERCENT_PER_POINT = 10;
+export const LUCK_BONUS_SUCCESS_PERCENT = 10;
+export function rollLuckSpellSuccessBonus(luck: number): number {
+  const triggerChance = Math.min(100, luck * LUCK_BONUS_TRIGGER_PERCENT_PER_POINT);
+  return Math.random() * 100 < triggerChance ? LUCK_BONUS_SUCCESS_PERCENT : 0;
+}
+
+// "When casting a spell add between luck / 2 and luck x 5 chance to the
+// player's chance of getting better at a spell/skill" — a random bonus
+// (percentage points), uniformly between these two bounds, layered on
+// top of the ordinary SKILL_GROWTH_CHANCE roll — spell casts only (see
+// game.gateway.ts's maybeGrowSpellSkill), not every skill use.
+export function rollLuckGrowthBonus(luck: number): number {
+  const min = luck / 2;
+  const max = luck * 5;
+  return min + Math.random() * (max - min);
+}
 
 // --- Experience rewards ---
 

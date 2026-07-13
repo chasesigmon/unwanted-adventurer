@@ -99,7 +99,6 @@ function applyUseItemAck(ack: UseItemAck): void {
       ...myProfile,
       inventory: ack.inventory ?? myProfile.inventory,
       equipment: ack.equipment ?? myProfile.equipment,
-      consumeExp: ack.consumeExp ?? myProfile.consumeExp,
       skills: ack.skills ?? myProfile.skills,
     });
     refreshOpenModals();

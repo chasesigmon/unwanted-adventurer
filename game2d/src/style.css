@@ -736,6 +736,14 @@ body {
   overflow-y: auto;
 }
 
+/* The Map modal's own World Map tab (a later follow-up ask: an actual
+   ASCII sketch of Grimoak Academy, not a narrow indented tree list) needs
+   real room to breathe — every other modal stays at the compact default
+   above. */
+#map-modal .modal-box {
+  width: min(760px, 92vw);
+}
+
 .modal-box h2 {
   margin: 0 0 14px 0;
   color: #f0c040;
@@ -772,6 +780,34 @@ body {
 .modal-stats .stat-value {
   color: #eee;
   text-align: right;
+}
+
+/* The character sheet's own stat-point allocation (a later follow-up
+   ask) — a small "+" appended right after an allocatable stat's own
+   value, only rendered at all while stat points are available. */
+.stat-allocate-btn {
+  margin-left: 8px;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid #f0c040;
+  background: #2a2410;
+  color: #f0c040;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.stat-allocate-btn:hover {
+  background: #f0c040;
+  color: #16161f;
+}
+
+.stat-allocate-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* Skills modal category headers (a follow-up ask) — spans both grid
@@ -818,6 +854,16 @@ body {
 
 .spell-description {
   color: #ccc;
+}
+
+/* A follow-up ask: darken not-yet-learned spells so it's visually clear
+   at a glance which ones this character actually knows. */
+.spell-row.spell-not-learned .spell-name {
+  color: #6b5a2a;
+}
+
+.spell-row.spell-not-learned .spell-description {
+  color: #555;
 }
 
 .equipment-value {
@@ -967,25 +1013,14 @@ body {
   color: #ccc;
 }
 
-.world-map-select {
-  background: #0d0d13;
-  border: 1px solid #555;
-  color: #eee;
-  padding: 6px 8px;
-  font-family: inherit;
-  font-size: 13px;
-  border-radius: 4px;
-  margin-bottom: 12px;
-  width: 100%;
-}
-
-/* item 1: a plain text/line tree stands in for a real visual map "for
-   now" — box-drawing characters over a monospace face read cleanly
-   enough without any graphics library. */
+/* A hand-drawn ASCII sketch of Grimoak Academy (a later follow-up ask,
+   replacing the old dropdown-grouped tree view) — box-drawing/slash
+   characters over a monospace face read cleanly enough without any
+   graphics library. */
 .world-map-tree {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.5;
   color: #ccc;
   background: #1e1e2a;
   border: 1px solid #333;

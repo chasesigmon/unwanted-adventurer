@@ -50,8 +50,7 @@ export function manaCrystalForLevel(level: number): ManaCrystalLabel {
 // away from mana crystals (same "not touchable through the generic path"
 // treatment isFillableItem's own canteen guard already gets) — with no
 // mechanical use defined yet, letting a stray click quietly consume one
-// for the flat CONSUME_EXP_PER_ITEM bonus would burn it before that
-// future use exists.
+// would burn it before that future use exists.
 export function isManaCrystal(item: string): boolean {
   return (MANA_CRYSTAL_LABELS as readonly string[]).includes(item);
 }

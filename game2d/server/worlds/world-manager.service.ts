@@ -16,7 +16,7 @@ import {
   isGreatHallTableBlocked,
   isGreatHallChairBlocked,
 } from '../../shared/lighting.js';
-import { isCastleExteriorBlocked, isMoatBlocked } from '../../shared/maps.js';
+import { isCastleExteriorBlocked, isMoatBlocked, isGateTile, GATE_ROW, GATE_COL_LEFT, GATE_COL_RIGHT, GATE_REACH_TILES } from '../../shared/maps.js';
 import { vendorsForMap } from './vendors.js';
 import { teachersForMap, teacherDeskFootprintFor } from './teachers.js';
 import { isPodiumBlocked, isChestBlocked } from '../../shared/spells.js';
@@ -80,6 +80,29 @@ export class WorldManagerService {
     return false;
   }
 
+  // "It should open magically with each gate parting to allow the player
+  // through, both coming in or going out" — a pure function of who's
+  // currently standing nearby (recomputed fresh on every occupancy check,
+  // not a stored toggle-and-tick state), so it opens for whoever's
+  // actually approaching from either side and closes again the instant
+  // everyone's moved away. Monsters never factor in here at all — see
+  // MonsterManagerService.isFree's own unconditional gate check, which
+  // never consults this.
+  isGateOpen(mapName: MapName): boolean {
+    if (mapName !== 'Grimoak Grounds') return true;
+    for (const state of this.playerLocation.values()) {
+      if (state.mapName !== mapName) continue;
+      if (
+        Math.abs(state.row - GATE_ROW) <= GATE_REACH_TILES &&
+        state.col >= GATE_COL_LEFT - GATE_REACH_TILES &&
+        state.col <= GATE_COL_RIGHT + GATE_REACH_TILES
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // True if a player (other than excludeUsername), an NPC, a monster, or a
   // vendor's own stall already occupies this tile — the basis of
   // "players and NPCs/monsters/vendors can't walk through each other".
@@ -89,6 +112,7 @@ export class WorldManagerService {
     if (isTreeTile(mapName, row, col)) return true;
     if (isCastleExteriorBlocked(mapName, row, col)) return true;
     if (isMoatBlocked(mapName, row, col)) return true;
+    if (isGateTile(mapName, row, col) && !this.isGateOpen(mapName)) return true;
     if (isFireplaceBlocked(mapName, row, col)) return true;
     if (isBenchBlocked(mapName, row, col)) return true;
     if (isBedBlocked(mapName, row, col)) return true;
@@ -187,7 +211,6 @@ export class WorldManagerService {
         skills: state.skills,
         inventory: state.inventory,
         equipment: state.equipment,
-        consumeExp: state.consumeExp,
         restState: state.restState,
         // Whether OTHER players standing next to this one benefit from
         // their light — a carried torch only, not infravision (see
@@ -204,6 +227,7 @@ export class WorldManagerService {
         skillCooldowns: state.skillCooldowns,
         armorClass: armorClassFor(state.dexterity, armorEquipmentBonus(state.equipment)),
         deathCount: state.deathCount,
+        statPointsAvailable: state.statPointsAvailable,
       });
     }
 

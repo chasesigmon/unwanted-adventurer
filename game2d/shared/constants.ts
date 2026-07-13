@@ -9,9 +9,12 @@
 // this is a pivot in what NEW characters are, not a rewrite of the
 // existing goblin-game mechanics those races still drive.
 export const RACES = ['goblin', 'skeleton', 'zombie', 'dragonborn', 'slime', 'human'] as const;
-// Reached only by evolving (see game.gateway.ts's maybeEvolveToHobgoblin)
-// — never selectable at registration, same one-way/one-time convention
-// as the text game's own EVOLVED_RACES.
+// Never selectable at registration — the goblin-game's own
+// consume-your-way-to-evolving mechanic that used to be the only way
+// here was removed entirely (a later follow-up ask: "there is no
+// evolution through consuming in the wizard world"). Kept only so any
+// pre-existing character already on this race still types/renders
+// correctly; no new character can ever become one.
 export const EVOLVED_RACES = ['hobgoblin'] as const;
 export type Race = (typeof RACES)[number] | (typeof EVOLVED_RACES)[number];
 

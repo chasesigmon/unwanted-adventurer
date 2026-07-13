@@ -133,16 +133,24 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
   [ENHANCED_DURABILITY_SKILL]: 'Skeleton-only: passively tougher armor (future work — no armor system yet).',
   [BONE_FINGER_STRIKE_SKILL]:
     'A separate active attack, earnable by chance from consuming bone daggers. Deals 1.5x your normal hit damage, scaling further with skill percent.',
-  [LUCEM_SKILL]: "No target needed — lights or extinguishes your equipped wand's tip, granting a light source like a torch would.",
-  [IRRIGO_SKILL]: 'Fills a targeted container (a canteen) with water. Select it in your inventory first, then click this. Costs mana; requires a wand equipped.',
-  [CELERITAS_SKILL]: 'No target needed — quickens your own footsteps by about 10% for a time. Costs mana; lasts longer the higher your skill.',
-  [AUGUE_SKILL]: 'Hurls a bolt of flame at your selected target (a monster) from up to 7 tiles away. Deals 10 damage; has its own cooldown.',
-  [RESERA_SKILL]: 'Unlocks a targeted door or chest. Left-click the door/chest first, then use this. Costs mana; chance of success scales with skill percent.',
-  [STUPEFACIUNT_SKILL]: 'Stuns your selected target (a monster) in place for 2 combat ticks, from up to 7 tiles away. Costs 10 mana; has its own cooldown.',
-  [EXARME_SKILL]: "Disarms your selected target's weapon (a monster) into your own inventory, from up to 7 tiles away. Costs 10 mana; has its own cooldown.",
-  [SCUTUM_SKILL]: 'No target needed — surrounds you with a protective shield for 1 minute. Costs 10 mana; has its own cooldown.',
+  [LUCEM_SKILL]:
+    "No target needed — lights or extinguishes your equipped wand's tip, granting a light source like a torch would. Success chance scales with skill percent, intelligence, and luck.",
+  [IRRIGO_SKILL]:
+    'Fills a targeted container (a canteen) with water. Select it in your inventory first, then click this. Costs mana; requires a wand equipped. Success chance scales with skill percent, intelligence, and luck.',
+  [CELERITAS_SKILL]:
+    'No target needed — quickens your own footsteps by about 10% for a time, plus a little more for every point of dexterity. Costs mana; lasts longer the higher your skill. Success chance scales with skill percent, intelligence, and luck.',
+  [AUGUE_SKILL]:
+    'Hurls a bolt of flame at your selected target (a monster) from up to 7 tiles away. Deals 10 damage; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.',
+  [RESERA_SKILL]:
+    'Unlocks a targeted door or chest. Left-click the door/chest first, then use this. Costs mana; success chance scales with skill percent, intelligence, and luck.',
+  [STUPEFACIUNT_SKILL]:
+    'Stuns your selected target (a monster) in place for 2 combat ticks, from up to 7 tiles away. Costs 10 mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.',
+  [EXARME_SKILL]:
+    "Disarms your selected target's weapon (a monster) into your own inventory, from up to 7 tiles away. Costs 10 mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.",
+  [SCUTUM_SKILL]:
+    'No target needed — surrounds you with a protective shield that reduces all damage by 3 for 1 minute. Costs 10 mana; success chance scales with skill percent, intelligence, and luck — its own 2-minute cooldown only starts on a successful cast.',
   [MURUS_LAPIDEUS_SKILL]:
-    'Click this, then click a spot on the map within 10 feet — summons a stone block ally there that draws monster aggro and absorbs hits. Costs 10 mana; has its own cooldown.',
+    'Click this, then click a spot on the map within 10 feet — summons a stone block ally there for 30 seconds (or until destroyed) that draws monster aggro and absorbs hits. Costs 10 mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.',
   [DRINK_SKILL]: 'Takes a drink from a targeted container (a canteen). Select it in your inventory first, then click this.',
   [POUR_SKILL]: 'Empties out a targeted container (a canteen). Select it in your inventory first, then click this.',
 };

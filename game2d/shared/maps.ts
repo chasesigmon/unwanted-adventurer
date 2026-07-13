@@ -208,6 +208,28 @@ export function isWithinMoatFootprint(mapName: MapName, row: number, col: number
 // rather than spawning right next to it.
 export const GRIMOAK_GROUNDS_SPAWN = { row: MOAT_OUTER_BOTTOM + 1, col: CASTLE_DOOR_ON_GROUNDS.col };
 
+// ---------- The castle gate (a follow-up ask: "add a large double metal
+// gate/fence on the other side of the bridge... it should open magically
+// with each gate parting to allow the player through") — sits right at
+// the bridge's own OUTER end (the side away from the castle, where the
+// spawn point is), spanning its exact width. Blocks every tile of its own
+// row across that width; whether it's currently passable for a PLAYER
+// depends on live player proximity (see WorldManagerService.isGateOpen,
+// which needs the actual connected-player positions this file has no
+// access to) — it never opens for a monster at all (see
+// MonsterManagerService.isFree's own unconditional gate check). ----------
+export const GATE_ROW = MOAT_OUTER_BOTTOM;
+export const GATE_COL_LEFT = BRIDGE_COL_LEFT;
+export const GATE_COL_RIGHT = BRIDGE_COL_RIGHT;
+// "When a player gets within a couple of feet of it" — same ~2.5ft/tile
+// convention SHOP_REACH_TILES/BED_REACH_TILES already use elsewhere.
+export const GATE_REACH_TILES = 2;
+
+export function isGateTile(mapName: MapName, row: number, col: number): boolean {
+  if (mapName !== 'Grimoak Grounds') return false;
+  return row === GATE_ROW && col >= GATE_COL_LEFT && col <= GATE_COL_RIGHT;
+}
+
 // Where a brand new (or respawning) character appears on a given map —
 // only Grimoak Grounds has an explicit spawn point (its door is no longer
 // centered); everything else still falls back to the map's own center.

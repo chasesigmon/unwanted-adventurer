@@ -119,6 +119,14 @@ export const BED_TEXTURE_KEY = 'bed';
 // The Great Hall's own long banquet table, dining/stage chairs, and
 // faculty stage (a follow-up ask) — see shared/lighting.ts's
 // greatHallTableFootprint/greatHallChairPositionsFor/greatHallStagePlatform.
+// The Grimoak Grounds' own castle gate (a follow-up ask) — a single leaf
+// texture, the right-hand leaf just being the same texture flipped (see
+// WorldScene's own rendering) — see shared/maps.ts's isGateTile/GATE_ROW.
+export const CASTLE_GATE_LEAF_TEXTURE_KEY = 'castle-gate-leaf';
+// Matches gen-castle-gate.mjs's own COLS(20) * CELL(4) exactly — half the
+// gate's own 5-tile-wide span, so the two leaves meet edge-to-edge with
+// no gap when closed.
+export const CASTLE_GATE_LEAF_WIDTH_PX = 80;
 export const LONG_TABLE_TEXTURE_KEY = 'long-table';
 export const HALL_CHAIR_TEXTURE_KEY = 'hall-chair';
 export const HEAD_CHAIR_TEXTURE_KEY = 'head-chair';

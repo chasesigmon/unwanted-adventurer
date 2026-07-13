@@ -27,6 +27,10 @@ import {
   MOAT_INNER_RIGHT,
   BRIDGE_COL_LEFT,
   BRIDGE_COL_RIGHT,
+  GATE_ROW,
+  GATE_COL_LEFT,
+  GATE_COL_RIGHT,
+  GATE_REACH_TILES,
   CAVERNA_SECRET_DOOR_POSITION,
   CAVERNA_CHEST_POSITION,
 } from '../../shared/maps.js';
@@ -136,6 +140,8 @@ import {
   STONE_BLOCK_TEXTURE_KEY,
   BED_TEXTURE_KEY,
   LONG_TABLE_TEXTURE_KEY,
+  CASTLE_GATE_LEAF_TEXTURE_KEY,
+  CASTLE_GATE_LEAF_WIDTH_PX,
   HALL_CHAIR_TEXTURE_KEY,
   HEAD_CHAIR_TEXTURE_KEY,
   GREAT_HALL_STAGE_TEXTURE_KEY,
@@ -253,6 +259,15 @@ export class WorldScene extends Phaser.Scene {
   // hp-bar overlays already use).
   private moatGraphics: Phaser.GameObjects.Graphics | null = null;
   private bridgeGraphics: Phaser.GameObjects.Graphics | null = null;
+  // The castle gate at the bridge's own outer end (a later follow-up
+  // ask) — two leaf sprites (the right one just the same texture
+  // flipped) that slide apart when open, only populated on 'Grimoak
+  // Grounds'. `gateOpen` tracks the last-applied state purely so
+  // updateGateState doesn't restart the slide tween every single
+  // map:state tick when nothing's actually changed.
+  private gateLeftSprite: Phaser.GameObjects.Sprite | null = null;
+  private gateRightSprite: Phaser.GameObjects.Sprite | null = null;
+  private gateOpen = false;
   private fireplaceSprites: Phaser.GameObjects.Sprite[] = [];
   // 4 student desks per classroom (a follow-up ask) — reuses the same
   // desk texture the teacher's own desk uses (see teacherDeskSprites),
@@ -430,6 +445,7 @@ export class WorldScene extends Phaser.Scene {
     this.load.image(CHEST_UNLOCKED_TEXTURE_KEY, '/chest-unlocked.png');
     this.load.image(STONE_BLOCK_TEXTURE_KEY, '/stone-block.png');
     this.load.image(LONG_TABLE_TEXTURE_KEY, '/long-table.png');
+    this.load.image(CASTLE_GATE_LEAF_TEXTURE_KEY, '/castle-gate-leaf.png');
     this.load.image(HALL_CHAIR_TEXTURE_KEY, '/hall-chair.png');
     this.load.image(HEAD_CHAIR_TEXTURE_KEY, '/head-chair.png');
     this.load.image(GREAT_HALL_STAGE_TEXTURE_KEY, '/great-hall-stage.png');
@@ -1460,6 +1476,11 @@ export class WorldScene extends Phaser.Scene {
     this.moatGraphics = null;
     this.bridgeGraphics?.destroy();
     this.bridgeGraphics = null;
+    this.gateLeftSprite?.destroy();
+    this.gateLeftSprite = null;
+    this.gateRightSprite?.destroy();
+    this.gateRightSprite = null;
+    this.gateOpen = false;
     if (mapName === 'Grimoak Grounds') {
       const WATER = 0x2f6fa8;
       const fillTileBand = (
@@ -1492,6 +1513,27 @@ export class WorldScene extends Phaser.Scene {
         fillTileBand(bridge, row, row, BRIDGE_COL_RIGHT, BRIDGE_COL_RIGHT, PLANK_DARK);
       }
       this.bridgeGraphics = bridge;
+
+      // The castle gate (a later follow-up ask) — sits at the bridge's
+      // own outer end (GATE_ROW === MOAT_OUTER_BOTTOM), spanning its
+      // exact width. Each leaf's own art is exactly half that width
+      // (80px, see tools/gen-castle-gate.mjs), so closed they meet with
+      // no gap; the right leaf is the identical texture horizontally
+      // flipped rather than separate mirrored art. Starts CLOSED — the
+      // very next map:state (which fires immediately on join, see
+      // handleConnection) calls updateGateState and opens it right away
+      // if a player's already standing nearby.
+      const gateLeafWidth = CASTLE_GATE_LEAF_WIDTH_PX;
+      const gateBottomY = (GATE_ROW + 1) * TILE_SIZE;
+      this.gateLeftSprite = this.add
+        .sprite(GATE_COL_LEFT * TILE_SIZE, gateBottomY, CASTLE_GATE_LEAF_TEXTURE_KEY)
+        .setOrigin(0, 1)
+        .setDepth(-0.85);
+      this.gateRightSprite = this.add
+        .sprite((GATE_COL_RIGHT + 1) * TILE_SIZE, gateBottomY, CASTLE_GATE_LEAF_TEXTURE_KEY)
+        .setOrigin(1, 1)
+        .setFlipX(true)
+        .setDepth(-0.85);
     }
 
     // Grimoak Castle's exterior + flying crows (item 4) — only on the
@@ -2021,6 +2063,33 @@ export class WorldScene extends Phaser.Scene {
     this.applyPose(this.player, player.dancing ? 'dancing' : player.restState, CHAR_SCALE);
   }
 
+  // The castle gate's own open/closed visual (a later follow-up ask) —
+  // purely a rendering decision derived from the same player positions
+  // map:state already carries (mine plus everyone else's own p.row/
+  // p.col), matching the exact same reach check the SERVER enforces for
+  // collision (see shared/maps.ts's GATE_REACH_TILES/world-manager's
+  // isGateOpen) — no separate payload field needed. Only re-tweens when
+  // the open/closed state actually flips, same idempotency guard every
+  // other pose/tween helper here uses.
+  private updateGateState(state: MapStatePayload): void {
+    if (state.mapName !== 'Grimoak Grounds' || !this.gateLeftSprite || !this.gateRightSprite) return;
+
+    const withinGateReach = (row: number, col: number): boolean =>
+      Math.abs(row - GATE_ROW) <= GATE_REACH_TILES && col >= GATE_COL_LEFT - GATE_REACH_TILES && col <= GATE_COL_RIGHT + GATE_REACH_TILES;
+
+    const open = withinGateReach(this.row, this.col) || state.players.some((p) => withinGateReach(p.row, p.col));
+    if (open === this.gateOpen) return;
+    this.gateOpen = open;
+
+    this.tweens.killTweensOf([this.gateLeftSprite, this.gateRightSprite]);
+    const leftClosedX = GATE_COL_LEFT * TILE_SIZE;
+    const rightClosedX = (GATE_COL_RIGHT + 1) * TILE_SIZE;
+    const targetLeftX = open ? leftClosedX - CASTLE_GATE_LEAF_WIDTH_PX : leftClosedX;
+    const targetRightX = open ? rightClosedX + CASTLE_GATE_LEAF_WIDTH_PX : rightClosedX;
+    this.tweens.add({ targets: this.gateLeftSprite, x: targetLeftX, duration: 900, ease: 'Sine.easeInOut' });
+    this.tweens.add({ targets: this.gateRightSprite, x: targetRightX, duration: 900, ease: 'Sine.easeInOut' });
+  }
+
   private applyMapState(state: MapStatePayload): void {
     // We don't know our own (server-canonical, exact-case) username until
     // the 'sync' event sets it — without this guard, a map:state that
@@ -2037,6 +2106,8 @@ export class WorldScene extends Phaser.Scene {
     // with entries for the wrong map. Only apply a snapshot for the map
     // we're actually currently rendering.
     if (state.mapName !== this.currentMap) return;
+
+    this.updateGateState(state);
 
     const seenPlayers = new Set<string>();
     for (const p of state.players) {
@@ -2733,8 +2804,21 @@ export class WorldScene extends Phaser.Scene {
   // shortens the client-side key-repeat throttle/slide-tween duration
   // that already governs how fast movement FEELS, same value used for
   // both (see the constant's own MOVE_COOLDOWN_MS doc comment).
+  //
+  // Dexterity (a later follow-up ask: "every point increase should be a
+  // slightly noticeable movement speed increase") stacks its own
+  // percentage reduction on top of celeritas's, floored so a very high
+  // dexterity can never make movement literally instant.
+  private static readonly DEX_MOVE_SPEED_PERCENT_PER_POINT = 0.015;
+  private static readonly MIN_MOVE_COOLDOWN_FACTOR = 0.4;
+
   private effectiveMoveCooldownMs(): number {
-    return myProfile?.celeritasActive ? Math.round(MOVE_COOLDOWN_MS * 0.9) : MOVE_COOLDOWN_MS;
+    const base = myProfile?.celeritasActive ? Math.round(MOVE_COOLDOWN_MS * 0.9) : MOVE_COOLDOWN_MS;
+    // Every character starts at 1 dexterity (server/combat/formulas.ts's
+    // STARTING_ATTRIBUTE) — only points ABOVE that baseline speed you up.
+    const dexterity = myProfile?.dexterity ?? 1;
+    const dexReduction = Math.max(0, dexterity - 1) * WorldScene.DEX_MOVE_SPEED_PERCENT_PER_POINT;
+    return Math.round(base * Math.max(WorldScene.MIN_MOVE_COOLDOWN_FACTOR, 1 - dexReduction));
   }
 
   // Lucem/celeritas's own ack-based cast (a later follow-up ask,
@@ -3075,6 +3159,14 @@ export class WorldScene extends Phaser.Scene {
     if (involvesMe) logCombatMessage(event.message, logKind);
     if (event.leveledUp && event.attacker === this.myUsername) {
       logCombatMessage(`${this.myUsername} reaches level ${event.attackerLevel}!`, 'level-up');
+      // A later follow-up ask replaced the old automatic per-level
+      // attribute bonus with player-chosen stat points — the level-up's
+      // own 'sync' (see game.gateway.ts's grantExp) already landed by now
+      // (combat ticks resolve synchronously), so myProfile.statPointsAvailable
+      // reflects the fresh total.
+      if (myProfile?.statPointsAvailable) {
+        showCenterToast(`Level up! You have ${myProfile.statPointsAvailable} stat point${myProfile.statPointsAvailable === 1 ? '' : 's'} to spend — check your character sheet.`);
+      }
     }
     if (involvesMe) {
       for (const growthMessage of event.growthMessages ?? []) {

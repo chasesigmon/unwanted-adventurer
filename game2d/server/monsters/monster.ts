@@ -61,6 +61,13 @@ export interface Monster extends CombatantStats {
   // species has no proactive attack at all, only its existing reactive
   // counter-attack when hit.
   attackDamage?: number;
+  // The combat tick resolveMonsterInitiatedAttack (or the ordinary
+  // reactive counter-attack in resolveHitOnMonster) last actually landed
+  // a hit for this monster — lets resolveMonsterInitiatedAttack skip a
+  // monster that already counter-attacked reactively THIS SAME tick
+  // (because the player happened to also be attacking it), so it never
+  // gets hit twice in one tick.
+  lastCounterAttackTick?: number;
 }
 
 export interface CarriedItemRoll {
