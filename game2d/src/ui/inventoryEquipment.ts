@@ -9,6 +9,7 @@ import { attachTooltip } from './tooltip.js';
 import { itemTooltip } from './skillMeta.js';
 import { logCombatMessage } from './log.js';
 import { showCenterToastLines } from './toast.js';
+import { updateStatusBar } from './statusBar.js';
 import { equipmentBody, equipmentModal, inventoryList, inventoryModal, refreshOpenModals, registerModalOpenHandler, registerModalRefreshHandler } from './modalCore.js';
 
 // ---------- Inventory ----------
@@ -105,6 +106,12 @@ function applyUseItemAck(ack: UseItemAck): void {
     });
     refreshOpenModals();
     activeScene?.refreshEquipmentSprites();
+    // A follow-up bug fix: "hunger & thirst... didn't update until a
+    // system tick went by" — setMyProfile just updates the in-memory
+    // snapshot, it doesn't itself re-render anything; the top-left status
+    // label was only ever refreshed by the next periodic statTick
+    // broadcast (see WorldScene's own applyOwnStats) until now.
+    updateStatusBar();
   }
   const actionMessage = ack.action === 'equipped' ? 'You equip it.' : ack.action === 'unequipped' ? 'You remove it.' : 'You consume it.';
   logCombatMessage(actionMessage);
@@ -144,6 +151,7 @@ function drinkInventoryItem(index: number): void {
       if (ack.ok && myProfile) {
         setMyProfile({ ...myProfile, canteenDrinks: ack.canteenDrinks ?? myProfile.canteenDrinks, thirst: ack.thirst ?? myProfile.thirst });
         refreshOpenModals();
+        updateStatusBar();
       }
     })
     .catch(() => {

@@ -56,6 +56,16 @@ export const SHOP_BUILDING_FRAME_HEIGHT = 112;
 export const SHOP_BUILDING_FACING_RIGHT_FRAME = 0;
 export const SHOP_BUILDING_FACING_LEFT_FRAME = 1;
 
+// Bramwick's own 4 shop cottages (a later follow-up ask: "create cottage
+// buildings... a sign over each building for the name of it") — one
+// frame per shop with its own baked-in name plaque, in BRAMWICK_SHOP_MAPS
+// order. Every Bramwick shop door faces the same way (`direction:
+// 'north'`, see shared/maps.ts's bramwickShopDoorExits), so unlike
+// Floro's mirrored pair this only ever needs the one orientation.
+export const BRAMWICK_COTTAGE_TEXTURE_KEY = 'bramwick-cottage';
+export const BRAMWICK_COTTAGE_FRAME_WIDTH = 96;
+export const BRAMWICK_COTTAGE_FRAME_HEIGHT = 128;
+
 // A single fancy double door (a follow-up ask) used for EVERY map exit
 // now — shop doors and every other transition alike — replacing both the
 // old plain 'door' SVG and the shop-only wooden-door spritesheet (which
@@ -154,6 +164,20 @@ export const PORTAL_TEXTURE_KEY = 'portal';
 // Bramwick's own clickable name sign (a later follow-up ask) — see
 // shared/lighting.ts's BRAMWICK_SIGN_POSITION.
 export const SIGN_TEXTURE_KEY = 'sign';
+// Grimoak Grounds' own dirt-road patch leading up to Bramwick's entrance
+// (a later follow-up ask) — a distinct tile from Bramwick's own 'dirt'
+// street texture above (see shared/maps.ts's GRIMOAK_GROUNDS_ROAD_ROWS/
+// GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES), drawn as a TileSprite overlay
+// on top of the Grounds' base grass, same technique as the moat/bridge.
+export const DIRT_ROAD_TEXTURE_KEY = 'dirt-road';
+// Bramwick's own 9 freestanding street torches (a later follow-up ask) —
+// 2 frames (0: unlit by day, 1: lit at night, see WorldScene's own
+// handleWorldTime), see shared/lighting.ts's standingTorchPositionsFor.
+export const STANDING_TORCH_TEXTURE_KEY = 'standing-torch';
+export const STANDING_TORCH_FRAME_WIDTH = 16;
+export const STANDING_TORCH_FRAME_HEIGHT = 32;
+export const STANDING_TORCH_UNLIT_FRAME = 0;
+export const STANDING_TORCH_LIT_FRAME = 1;
 
 export const CHAR_SCALE = 0.275;
 export const CORPSE_SCALE = 0.35;

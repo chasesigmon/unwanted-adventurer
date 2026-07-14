@@ -1,5 +1,13 @@
 import type { MapName } from './constants.js';
-import { GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS, COMMON_ROOM_MAPS, DORM_MAPS, CASTLE_UPPER_FLOOR_MAPS, SPECIALIZATION_CHAMBER_MAPS } from './constants.js';
+import {
+  GRIMOAK_CASTLE_MAPS,
+  CLASSROOM_MAPS,
+  COMMON_ROOM_MAPS,
+  DORM_MAPS,
+  CASTLE_UPPER_FLOOR_MAPS,
+  SPECIALIZATION_CHAMBER_MAPS,
+  BRAMWICK_SHOP_MAPS,
+} from './constants.js';
 import { INFRAVISION_SKILL } from './skills.js';
 import {
   getMap,
@@ -107,6 +115,17 @@ const CASTLE_LIGHT_MID_ROW = Math.round((MOAT_INNER_TOP + MOAT_INNER_BOTTOM) / 2
 export const STATIC_LIGHT_SOURCES: Partial<Record<MapName, Array<{ row: number; col: number; radiusTiles?: number; falloffTiles?: number }>>> = {
   Floro: [{ row: 25, col: 25 }],
   Kortho: [{ row: 25, col: 25 }],
+  // Bramwick's own 9 standing torches (a later follow-up ask: "provide
+  // light within their own radius similar to the spell lucem for a
+  // player") — same LUCEM_LIGHT_RADIUS_TILES a wand-lit player gets, with
+  // a short taper for a softer glow edge rather than a lamp's hard cutoff.
+  // No separate "only at night" flag needed here — the dark-fog system
+  // that actually consults this (see WorldScene's updateDarkFog) never
+  // darkens anything at all outside isDarkHour to begin with, so these
+  // are already functionally night-only; only the SPRITE's own lit/unlit
+  // frame (see standingTorchPositionsFor/handleWorldTime) needs the
+  // explicit hour check.
+  Bramwick: standingTorchPositionsFor('Bramwick').map((pos) => ({ ...pos, radiusTiles: LUCEM_LIGHT_RADIUS_TILES, falloffTiles: 2 })),
   'Grimoak Grounds': [
     { row: CASTLE_DOOR_ON_GROUNDS.row, col: CASTLE_DOOR_ON_GROUNDS.col, ...CASTLE_LIGHT_SOURCE }, // front (the door)
     { row: MOAT_INNER_TOP, col: CASTLE_DOOR_ON_GROUNDS.col, ...CASTLE_LIGHT_SOURCE }, // back
@@ -125,7 +144,10 @@ export const STATIC_LIGHT_SOURCES: Partial<Record<MapName, Array<{ row: number; 
 // inside Grimoak Castle is included (item 1) — the day/night system
 // shouldn't apply indoors at all; "Grimoak Grounds" itself (outside) is
 // deliberately NOT included, it still has a normal day/night cycle.
-export const ALWAYS_LIT_MAPS: MapName[] = ['Labyrinth', ...GRIMOAK_CASTLE_MAPS];
+// Bramwick's own 4 shop interiors (a later follow-up ask: "it shouldn't
+// be dark in the shops ever") join the castle's own torch-lit rooms —
+// same always-lit treatment, not a separate mechanism.
+export const ALWAYS_LIT_MAPS: MapName[] = ['Labyrinth', ...GRIMOAK_CASTLE_MAPS, ...BRAMWICK_SHOP_MAPS];
 
 export function isAlwaysLit(mapName: MapName): boolean {
   return ALWAYS_LIT_MAPS.includes(mapName);
@@ -173,6 +195,22 @@ export function torchWallPositionsFor(mapName: MapName): Array<{ row: number; co
     return positions.filter(
       (p) => !isTooCloseToAnExit(def, p.row, p.col) && !portalPositionsFor(mapName).some((port) => port.row === p.row && port.col === p.col)
     );
+  }
+  // Bramwick's own 4 shop interiors (a later follow-up ask) — hand-placed
+  // too, since they're far smaller (10x10, see shared/maps.ts's
+  // SHOP_INTERIOR_SIZE) than the generic spacing loop below can handle at
+  // all: WALL_TORCH_SPACING(6) needs a wall at least 2*6=12 tiles long to
+  // ever place a single torch on it, so the loop would silently produce
+  // zero torches here. One torch in each back corner instead, clear of
+  // both the door (bottom-center) and the shopkeeper (top-center).
+  if ((BRAMWICK_SHOP_MAPS as readonly string[]).includes(mapName)) {
+    const positions = [
+      { row: 2, col: 2 },
+      { row: 2, col: def.cols - 3 },
+      { row: def.rows - 3, col: 2 },
+      { row: def.rows - 3, col: def.cols - 3 },
+    ];
+    return positions.filter((p) => !isTooCloseToAnExit(def, p.row, p.col));
   }
   const positions: Array<{ row: number; col: number }> = [];
   for (let col = WALL_TORCH_SPACING; col < def.cols - WALL_TORCH_SPACING; col += WALL_TORCH_SPACING) {
@@ -556,12 +594,34 @@ export function isPortalBlocked(mapName: MapName, row: number, col: number): boo
   return portalPositionsFor(mapName).some((p) => p.row === row && p.col === col);
 }
 
-// Bramwick's own clickable name sign (a later follow-up ask) — just
-// inside the village's south entrance (the dirt road up from Grimoak
-// Grounds), off to the side so it doesn't block the entrance tile
-// itself.
+// Bramwick's own 9 freestanding street torches (a later follow-up ask) —
+// 3 clusters of 3 (left/middle/right) down the village, clear of every
+// shop cottage's own footprint (each centered on its door column, see
+// BRAMWICK_SHOP_DOORS — cols 10/30 — this file doesn't import that
+// private constant, hence the plain literals here instead) and the
+// entrance road/sign. Purely decorative positions for the CLIENT's own
+// unlit/lit sprite swap (see WorldScene's handleWorldTime) — see
+// STATIC_LIGHT_SOURCES below for the matching light-radius entries that
+// actually push back the dark-fog at night.
+export function standingTorchPositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
+  if (mapName !== 'Bramwick') return [];
+  const rows = [14, 20, 26];
+  const cols = [5, BRAMWICK_MID_COL, 35];
+  return cols.flatMap((col) => rows.map((row) => ({ row, col })));
+}
+
+// Two clickable name signs, one per side of Bramwick's own dirt-road
+// entrance (a later follow-up ask: "the sign for Bramwick should be in
+// Grimoak Grounds... update the sign in Bramwick to say Grimoak
+// Grounds") — each sign names the destination the road leads TO, not
+// wherever the player is currently standing, same as a real road sign.
+// Both sit a couple tiles in from their own map's edge of the shared
+// entrance, off to the side so neither blocks the road tile itself.
 export const BRAMWICK_SIGN_POSITION = { row: BRAMWICK_ENTRANCE_ROW - 2, col: BRAMWICK_MID_COL + 4 };
+export const GRIMOAK_GROUNDS_SIGN_POSITION = { row: 2, col: CASTLE_DOOR_ON_GROUNDS.col + 4 };
 
 export function isBramwickSignBlocked(mapName: MapName, row: number, col: number): boolean {
-  return mapName === 'Bramwick' && row === BRAMWICK_SIGN_POSITION.row && col === BRAMWICK_SIGN_POSITION.col;
+  if (mapName === 'Bramwick') return row === BRAMWICK_SIGN_POSITION.row && col === BRAMWICK_SIGN_POSITION.col;
+  if (mapName === 'Grimoak Grounds') return row === GRIMOAK_GROUNDS_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_SIGN_POSITION.col;
+  return false;
 }

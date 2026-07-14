@@ -16,8 +16,11 @@ export interface MapExit {
   toCol: number;
   // Absent (a plain door) unless set — 'stairs' picks the stairs texture
   // client-side instead of a door (item 6) and is purely cosmetic; the
-  // transition mechanics are identical either way.
-  kind?: 'stairs';
+  // transition mechanics are identical either way. 'open' (a later
+  // follow-up ask, "remove the door... walk straight through") renders
+  // NO sprite at all client-side (see WorldScene's renderDoorsAndChest) —
+  // also purely cosmetic, transition mechanics are still identical.
+  kind?: 'stairs' | 'open';
 }
 
 // Purely flavor/classification (what the ground looks/sounds like) — the
@@ -189,7 +192,14 @@ export const BRIDGE_COL_RIGHT = CASTLE_DOOR_ON_GROUNDS.col + BRIDGE_HALF_WIDTH_T
 
 export function isBridgeTile(mapName: MapName, row: number, col: number): boolean {
   if (mapName !== 'Grimoak Grounds') return false;
-  return row >= MOAT_INNER_BOTTOM && row <= MOAT_OUTER_BOTTOM && col >= BRIDGE_COL_LEFT && col <= BRIDGE_COL_RIGHT;
+  const onSouthBridge = row >= MOAT_INNER_BOTTOM && row <= MOAT_OUTER_BOTTOM && col >= BRIDGE_COL_LEFT && col <= BRIDGE_COL_RIGHT;
+  // A later follow-up ask: "the same bridge and gate mechanism going
+  // north" — a second crossing, mirrored top-to-bottom off the exact same
+  // column span, so a player can reach Bramwick (straight north, see
+  // BRAMWICK_ENTRANCE_ROW below) without detouring all the way around the
+  // moat's east or west side.
+  const onNorthBridge = row >= MOAT_OUTER_TOP && row <= MOAT_INNER_TOP && col >= BRIDGE_COL_LEFT && col <= BRIDGE_COL_RIGHT;
+  return onSouthBridge || onNorthBridge;
 }
 
 export function isMoatBlocked(mapName: MapName, row: number, col: number): boolean {
@@ -231,6 +241,12 @@ export const GRIMOAK_GROUNDS_SPAWN = { row: MOAT_OUTER_BOTTOM + 1, col: CASTLE_D
 // access to) — it never opens for a monster at all (see
 // MonsterManagerService.isFree's own unconditional gate check). ----------
 export const GATE_ROW = MOAT_OUTER_BOTTOM;
+// The north bridge's own gate (a later follow-up ask, "the same bridge
+// and gate mechanism going north") — sits at the north bridge's outer
+// end, same width, same open/closed mechanics (see
+// WorldManagerService.isGateOpen, now parameterized by which gate row is
+// being checked instead of assuming the south one).
+export const NORTH_GATE_ROW = MOAT_OUTER_TOP;
 export const GATE_COL_LEFT = BRIDGE_COL_LEFT;
 export const GATE_COL_RIGHT = BRIDGE_COL_RIGHT;
 // "When a player gets within a couple of feet of it" — same ~2.5ft/tile
@@ -239,7 +255,7 @@ export const GATE_REACH_TILES = 2;
 
 export function isGateTile(mapName: MapName, row: number, col: number): boolean {
   if (mapName !== 'Grimoak Grounds') return false;
-  return row === GATE_ROW && col >= GATE_COL_LEFT && col <= GATE_COL_RIGHT;
+  return (row === GATE_ROW || row === NORTH_GATE_ROW) && col >= GATE_COL_LEFT && col <= GATE_COL_RIGHT;
 }
 
 // Where a brand new (or respawning) character appears on a given map —
@@ -812,8 +828,18 @@ function bramwickShopDoorExits(): MapExit[] {
 // Bramwick's own south entrance — a dirt road leading north from Grimoak
 // Grounds (see the new north-wall exit added to Grimoak Grounds' own
 // MAPS entry below), with a clickable name sign just inside (see
-// shared/lighting.ts's BRAMWICK_SIGN_POSITION).
+// shared/lighting.ts's BRAMWICK_SIGN_POSITION). A later follow-up ask
+// removed the door there entirely ("the players should just walk
+// straight through") — see this exit's own `kind: 'open'` below — and
+// added a visibly different-colored dirt patch on the GROUNDS side (see
+// WorldScene's own renderMap), "about 10 feet" (the ~2.5ft/tile
+// convention SHOP_REACH_TILES/BED_REACH_TILES already use elsewhere
+// puts that at 4 tiles) leading south from the shared entrance tile,
+// same width as the castle's own bridge for a visually consistent
+// "road" feel.
 const BRAMWICK_ENTRANCE_ROW = BRAMWICK_SIZE - 1;
+export const GRIMOAK_GROUNDS_ROAD_ROWS = 4;
+export const GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES = 2;
 
 export { BRAMWICK_MID_COL, BRAMWICK_ENTRANCE_ROW };
 
@@ -928,6 +954,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toMap: 'Grimoak Grounds',
         toRow: 0,
         toCol: CASTLE_DOOR_ON_GROUNDS.col,
+        kind: 'open',
       },
       ...bramwickShopDoorExits(),
     ],
@@ -960,6 +987,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toMap: 'Bramwick',
         toRow: BRAMWICK_ENTRANCE_ROW,
         toCol: BRAMWICK_MID_COL,
+        kind: 'open',
       },
     ],
   },

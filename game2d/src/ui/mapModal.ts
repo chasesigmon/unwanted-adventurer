@@ -29,9 +29,13 @@ mapTabWorldBtn.addEventListener('click', () => switchMapTab('world'));
 mapTabWhoBtn.addEventListener('click', () => switchMapTab('who'));
 mapTabWhereBtn.addEventListener('click', () => switchMapTab('where'));
 
-// Opening the modal always resets back to the "current world" tab.
+// Opening the modal always resets back to the "current world" tab (and,
+// if the World Map tab gets picked again later, its own area dropdown
+// back to the ground floor — a deliberate, manually-picked view each
+// time, same reasoning as the tab reset itself).
 export function openMapModal(): void {
   activeMapTab = 'current';
+  selectedWorldArea = 'Grimoak Castle';
   updateMapTabButtons();
   renderMapTab();
 }
@@ -121,11 +125,144 @@ const GRIMOAK_ASCII_MAP = `
                                                -- not for monsters)
 `.trim();
 
+// The castle's 3 upper floors, the Grounds, and Bramwick (a later
+// follow-up ask: "create a dropdown... that shows when the respective
+// dropdown option is chosen") — same hand-drawn ASCII sketch treatment
+// as the ground floor above, one sketch per area, picked via the new
+// <select> renderWorldMapTab now renders above the sketch itself.
+const FLOOR2_ASCII_MAP = `
+                    ___________________________________________________________
+                   /  NECROMANCER   ENHANCER   ELEMENTALIST   SUMMONER ILLUSIONIST\\
+                  /    CHAMBER      CHAMBER      CHAMBER      CHAMBER    CHAMBER   \\
+                  |       ^             ^            ^            ^         ^     |
+                  |_______|_____________|____________|____________|_________|_____|
+                  |                                                               |
+                  |                    (2 fireplaces, center)                     |
+                  |                                                               |
+                  |_______________________________________________________________|
+                          v                                               v
+                  stairs down to                                 stairs up to
+                  Entrance Hall (1st Floor)                       3rd Floor
+`.trim();
+
+const FLOOR3_ASCII_MAP = `
+                    ___________________________________________________________
+                   /   BATTLEMAGE     CLERIC       DRUID      DIABOLIST HEMOMANCER\\
+                  /     CHAMBER      CHAMBER      CHAMBER      CHAMBER   CHAMBER   \\
+                  |       ^             ^            ^            ^         ^     |
+                  |_______|_____________|____________|____________|_________|_____|
+                  |                                                               |
+                  |                    (2 fireplaces, center)                     |
+                  |                                                               |
+                  |_______________________________________________________________|
+                          v                                               v
+                  stairs down to                                 stairs up to
+                  2nd Floor                                       4th Floor
+`.trim();
+
+const FLOOR4_ASCII_MAP = `
+                                     ^  NORTH PORTAL
+                                        (swirling, decorative)
+                    ___________________________________________________________
+                   /                                                            \\
+                  |                                                              |
+      < WEST      |                 (2 fireplaces, center)                      |   EAST >
+      PORTAL      |                                                              |   PORTAL
+    (swirling)    |                                                              | (swirling)
+                  |______________________________________________________________|
+                          v
+                  stairs down to
+                  3rd Floor
+                                     v  SOUTH PORTAL
+                                        (swirling, decorative)
+`.trim();
+
+const GRIMOAK_GROUNDS_ASCII_MAP = `
+                                          ^  dirt road to Bramwick
+                                          |
+                                   [ NORTH BRIDGE + GATE ]
+                                          ^
+                    _____________________________________________________
+                   /   ~~~~~~~~~~~~~~~~~~~ MOAT ~~~~~~~~~~~~~~~~~~~~~~~  \\
+                  /    ~~                                            ~~  \\
+                 |     ~~                                            ~~   |
+                 |     ~~          G R I M O A K   C A S T L E        ~~   |
+                 |     ~~         (imps patrol around the moat)       ~~   |
+                 |     ~~                                            ~~   |
+                  \\    ~~                                            ~~  /
+                   \\   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ /
+                    \\_________________________|_______________________/
+                                          v
+                                   [ SOUTH BRIDGE + GATE ]
+                                          |
+                                          v
+                                    (spawn point)
+`.trim();
+
+const BRAMWICK_ASCII_MAP = `
+                _________________________________________________
+               /                                                  \\
+              |     [GENERAL SHOP]              [WANDS]            |
+              |           ^                         ^               |
+              |                                                     |
+              |     *          *          *          *         *    |
+              |         (9 standing torches — unlit by day,          |
+              |          lit with their own glow at night)          |
+              |     *          *          *          *         *    |
+              |                                                     |
+              |     [ARMOR]                     [POTIONS]           |
+              |           ^                         ^               |
+              |                                                     |
+              |                sign: "Grimoak Grounds"              |
+               \\___________________________|_____________________ /
+                                            v
+                                   dirt road south
+                                (a different, cooler shade
+                                 than Bramwick's own streets)
+                                            |
+                                            v
+                                    Grimoak Grounds
+`.trim();
+
+type WorldMapArea = 'Grimoak Castle' | 'Grimoak Castle 2nd Floor' | 'Grimoak Castle 3rd Floor' | 'Grimoak Castle 4th Floor' | 'Grimoak Grounds' | 'Bramwick';
+
+const WORLD_MAP_ASCII: Record<WorldMapArea, string> = {
+  'Grimoak Castle': GRIMOAK_ASCII_MAP,
+  'Grimoak Castle 2nd Floor': FLOOR2_ASCII_MAP,
+  'Grimoak Castle 3rd Floor': FLOOR3_ASCII_MAP,
+  'Grimoak Castle 4th Floor': FLOOR4_ASCII_MAP,
+  'Grimoak Grounds': GRIMOAK_GROUNDS_ASCII_MAP,
+  Bramwick: BRAMWICK_ASCII_MAP,
+};
+
+const WORLD_MAP_AREAS = Object.keys(WORLD_MAP_ASCII) as WorldMapArea[];
+
+// Resets to the ground floor every time the modal is freshly opened (see
+// openMapModal below) — a deliberate, manually-picked view, same as the
+// tab itself.
+let selectedWorldArea: WorldMapArea = 'Grimoak Castle';
+
 function renderWorldMapTab(): void {
   mapBody.innerHTML = '';
+
+  const select = document.createElement('select');
+  select.className = 'world-map-area-select';
+  for (const area of WORLD_MAP_AREAS) {
+    const option = document.createElement('option');
+    option.value = area;
+    option.textContent = area;
+    option.selected = area === selectedWorldArea;
+    select.appendChild(option);
+  }
+  select.addEventListener('change', () => {
+    selectedWorldArea = select.value as WorldMapArea;
+    pre.textContent = WORLD_MAP_ASCII[selectedWorldArea];
+  });
+  mapBody.appendChild(select);
+
   const pre = document.createElement('pre');
   pre.className = 'world-map-tree';
-  pre.textContent = GRIMOAK_ASCII_MAP;
+  pre.textContent = WORLD_MAP_ASCII[selectedWorldArea];
   mapBody.appendChild(pre);
 }
 

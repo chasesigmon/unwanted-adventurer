@@ -28,9 +28,13 @@ import {
   BRIDGE_COL_LEFT,
   BRIDGE_COL_RIGHT,
   GATE_ROW,
+  NORTH_GATE_ROW,
   GATE_COL_LEFT,
   GATE_COL_RIGHT,
   GATE_REACH_TILES,
+  CASTLE_DOOR_ON_GROUNDS,
+  GRIMOAK_GROUNDS_ROAD_ROWS,
+  GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES,
   CAVERNA_SECRET_DOOR_POSITION,
   CAVERNA_CHEST_POSITION,
 } from '../../shared/maps.js';
@@ -77,10 +81,13 @@ import {
   greatHallStagePlatform,
   portalPositionsFor,
   BRAMWICK_SIGN_POSITION,
+  GRIMOAK_GROUNDS_SIGN_POSITION,
+  standingTorchPositionsFor,
 } from '../../shared/lighting.js';
 import {
   MONSTER_KINDS,
   FLORO_SHOP_MAPS,
+  BRAMWICK_SHOP_MAPS,
   GRIMOAK_CASTLE_MAPS,
   CLASSROOM_MAPS,
   COMMON_ROOM_MAPS,
@@ -160,6 +167,12 @@ import {
   GREAT_HALL_STAGE_TEXTURE_KEY,
   PORTAL_TEXTURE_KEY,
   SIGN_TEXTURE_KEY,
+  DIRT_ROAD_TEXTURE_KEY,
+  STANDING_TORCH_TEXTURE_KEY,
+  STANDING_TORCH_FRAME_WIDTH,
+  STANDING_TORCH_FRAME_HEIGHT,
+  STANDING_TORCH_UNLIT_FRAME,
+  STANDING_TORCH_LIT_FRAME,
   CLASSROOM_ZOOM,
   COMMON_ROOM_ZOOM,
   DORM_ZOOM,
@@ -180,6 +193,9 @@ import {
   SHOP_BUILDING_FRAME_HEIGHT,
   SHOP_BUILDING_FRAME_WIDTH,
   SHOP_BUILDING_TEXTURE_KEY,
+  BRAMWICK_COTTAGE_TEXTURE_KEY,
+  BRAMWICK_COTTAGE_FRAME_WIDTH,
+  BRAMWICK_COTTAGE_FRAME_HEIGHT,
   SWORD_CURSOR,
   FEATHER_CURSOR,
   KEY_CURSOR,
@@ -269,6 +285,15 @@ export class WorldScene extends Phaser.Scene {
   // doors (item 13) — only populated while rendering the 'Floro' map
   // itself (the shop interiors don't need their own exterior rendered).
   private shopBuildingSprites: Phaser.GameObjects.Sprite[] = [];
+  // Bramwick's own 4 shop cottages (a later follow-up ask) — same "one
+  // building sprite behind each shop door" idea as Floro's above, only
+  // populated while rendering 'Bramwick' itself.
+  private cottageSprites: Phaser.GameObjects.Sprite[] = [];
+  // Bramwick's own 9 standing torches (a later follow-up ask) — frame
+  // toggled between unlit/lit on every 'worldTime' broadcast (see
+  // handleWorldTime), not per-frame in update(), since the hour only
+  // ever changes once per world-clock tick.
+  private standingTorchSprites: Phaser.GameObjects.Sprite[] = [];
   // Grimoak Castle's exterior + its flying crows (item 4) — only
   // populated on 'Grimoak Grounds'; the fireplaces (item 6) below are
   // only populated inside the castle's own interior rooms.
@@ -280,6 +305,11 @@ export class WorldScene extends Phaser.Scene {
   // hp-bar overlays already use).
   private moatGraphics: Phaser.GameObjects.Graphics | null = null;
   private bridgeGraphics: Phaser.GameObjects.Graphics | null = null;
+  // The Grounds' own stretch of road up to Bramwick's entrance (a later
+  // follow-up ask) — a TileSprite overlay, same "on top of the base
+  // floor" technique as the moat/bridge above, only populated on
+  // 'Grimoak Grounds'.
+  private roadTile: Phaser.GameObjects.TileSprite | null = null;
   // The castle gate at the bridge's own outer end (a later follow-up
   // ask) — two leaf sprites (the right one just the same texture
   // flipped) that slide apart when open, only populated on 'Grimoak
@@ -289,6 +319,14 @@ export class WorldScene extends Phaser.Scene {
   private gateLeftSprite: Phaser.GameObjects.Sprite | null = null;
   private gateRightSprite: Phaser.GameObjects.Sprite | null = null;
   private gateOpen = false;
+  // The moat's own second, NORTH crossing (a later follow-up ask: "the
+  // same bridge and gate mechanism going north") — a straight shot up to
+  // Bramwick's entrance instead of detouring around the moat's east/west
+  // side. Same shape as the south gate's own 3 fields above, just its own
+  // independent open/closed state (see updateGateState).
+  private northGateLeftSprite: Phaser.GameObjects.Sprite | null = null;
+  private northGateRightSprite: Phaser.GameObjects.Sprite | null = null;
+  private northGateOpen = false;
   private fireplaceSprites: Phaser.GameObjects.Sprite[] = [];
   // 4 student desks per classroom (a follow-up ask) — reuses the same
   // desk texture the teacher's own desk uses (see teacherDeskSprites),
@@ -313,9 +351,12 @@ export class WorldScene extends Phaser.Scene {
   // ask) — furniture only, no click handler yet ("mechanics... come
   // later"), collision is server-side (see isPortalBlocked).
   private portalSprites: Phaser.GameObjects.Sprite[] = [];
-  // Bramwick's own clickable name sign (a later follow-up ask) — see
-  // BRAMWICK_SIGN_POSITION.
-  private bramwickSignSprite: Phaser.GameObjects.Sprite | null = null;
+  // The two road signs flanking Bramwick's own dirt-road entrance (a
+  // later follow-up ask put one on each side, see BRAMWICK_SIGN_POSITION/
+  // GRIMOAK_GROUNDS_SIGN_POSITION) — array now instead of a single
+  // sprite, since up to one can exist per map and both need destroying/
+  // recreating together on every renderMap.
+  private signSprites: Phaser.GameObjects.Sprite[] = [];
   private greatHallChairSprites: Phaser.GameObjects.Sprite[] = [];
   // The Utilization classroom's clickable spellbook podium (item 8) —
   // only ever populated while rendering that one map.
@@ -440,6 +481,19 @@ export class WorldScene extends Phaser.Scene {
     this.load.svg('concrete', '/concrete-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     // Bramwick's own dirt-road street (a later follow-up ask).
     this.load.svg('dirt', '/dirt-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    // Grimoak Grounds' own stretch of road leading up to it (a later
+    // follow-up ask: "clearly have a different colored dirt road from
+    // the dirt in Bramwick") — a cooler, grayer worn-path tone, its own
+    // asset rather than a tint, so it reads as visibly distinct even
+    // side by side at the shared entrance tile.
+    this.load.svg(DIRT_ROAD_TEXTURE_KEY, '/dirt-road-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    // Bramwick's own 9 freestanding street torches (a later follow-up
+    // ask) — 2 frames (unlit by day / lit at night), generated via
+    // Python/PIL same as the cottage spritesheet above.
+    this.load.spritesheet(STANDING_TORCH_TEXTURE_KEY, '/standing-torch-spritesheet.png', {
+      frameWidth: STANDING_TORCH_FRAME_WIDTH,
+      frameHeight: STANDING_TORCH_FRAME_HEIGHT,
+    });
     this.load.svg(TREE_TEXTURE_KEY, '/tree.svg', { width: 48, height: 64 });
     this.load.svg(DAGGER_TEXTURE_KEY, '/dagger.svg', { width: 16, height: 16 });
     this.load.svg(CLUB_TEXTURE_KEY, '/club.svg', { width: 16, height: 16 });
@@ -455,6 +509,14 @@ export class WorldScene extends Phaser.Scene {
     this.load.spritesheet(SHOP_BUILDING_TEXTURE_KEY, '/shop-building-spritesheet.png', {
       frameWidth: SHOP_BUILDING_FRAME_WIDTH,
       frameHeight: SHOP_BUILDING_FRAME_HEIGHT,
+    });
+    // Bramwick's own 4 shop cottages (a later follow-up ask) — one frame
+    // per shop, each with its own baked-in name sign, in BRAMWICK_SHOP_MAPS
+    // order (see tools' own generator, run via Python/PIL — no Aseprite/
+    // pixel-mcp available in this environment either).
+    this.load.spritesheet(BRAMWICK_COTTAGE_TEXTURE_KEY, '/bramwick-cottage-spritesheet.png', {
+      frameWidth: BRAMWICK_COTTAGE_FRAME_WIDTH,
+      frameHeight: BRAMWICK_COTTAGE_FRAME_HEIGHT,
     });
     // A single fancy double door (a follow-up ask), used for every map
     // exit now — shop doors and every other transition alike.
@@ -592,6 +654,14 @@ export class WorldScene extends Phaser.Scene {
         this.doorSprites.some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY)) ||
         Boolean(this.chestSprite?.getBounds().contains(pointer.worldX, pointer.worldY));
       const overBed = this.bedSprites.some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
+      // A follow-up ask: "the portals... should have a pointer" on hover
+      // — same reasoning as teachers/vendors above, this handler
+      // overwrites Phaser's own `useHandCursor`/pointerover cursor on
+      // every mouse move, so it has to be taught about portals directly
+      // rather than relying on setInteractive's own cursor option.
+      const overPortal =
+        this.portalSprites.some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY)) ||
+        this.signSprites.some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
       // A follow-up bug fix: "when the cursor hovers over the Great Hall
       // shopkeeper, make it a pointer" — vendors and corpses use
       // `useHandCursor` on their own sprites, but that never actually
@@ -618,7 +688,7 @@ export class WorldScene extends Phaser.Scene {
                 ? 'pointer'
                 : overTeacher
                   ? 'help'
-                  : overVendor || overCorpse || overBench
+                  : overVendor || overCorpse || overBench || overPortal
                     ? 'pointer'
                     : '';
     });
@@ -675,6 +745,12 @@ export class WorldScene extends Phaser.Scene {
     updateDaynightOverlay(hour);
     updateEatBrainsButton();
     updateWorldTimeLabel(hour);
+    // Bramwick's own standing torches (a later follow-up ask: "not lit
+    // during the day but become lit at night") — the hour only changes
+    // once per world-clock tick, so this is cheaper than checking every
+    // update() frame; a no-op array on every map but Bramwick.
+    const frame = isDarkHour(hour) ? STANDING_TORCH_LIT_FRAME : STANDING_TORCH_UNLIT_FRAME;
+    for (const sprite of this.standingTorchSprites) sprite.setFrame(frame);
   }
 
   update(): void {
@@ -1142,15 +1218,21 @@ export class WorldScene extends Phaser.Scene {
 
   // A fixed offset per facing direction — not aligned to individual
   // animation frames, just a reasonable "held near the hand" position.
-  // Positive x is always the character's screen-right side (matching
-  // 'right' below) — a later follow-up bug fix: 'up' used to be x: -10
-  // (screen-left), the one case that didn't follow that convention, which
-  // is why the wand/weapon rendered on the wrong side specifically while
-  // facing/walking north.
+  // The item is always in the character's own RIGHT hand — which is why
+  // 'up' and 'down' can't share the same sign: facing 'down' looks at the
+  // camera (mirrored, so their right hand renders on screen-LEFT),
+  // facing 'up' shows their back (not mirrored, so their right hand
+  // renders on screen-RIGHT), same as a person turning 180° in place. A
+  // follow-up bug fix previously made 'up' match 'down's sign for a
+  // simpler "positive x always screen-right" rule, which fixed 'up' but
+  // was wrong for the opposite reason 'down' is being fixed now ("the
+  // wand should be in the right hand while facing south... it appears in
+  // the left hand" — screen-right while facing the camera IS the
+  // character's left hand).
   private weaponOffsetFor(facing: Facing): { x: number; y: number } {
     switch (facing) {
       case 'down':
-        return { x: 10, y: 6 };
+        return { x: -10, y: 6 };
       case 'up':
         return { x: 10, y: -8 };
       case 'left':
@@ -1479,6 +1561,38 @@ export class WorldScene extends Phaser.Scene {
             })
         : [];
 
+    // Bramwick's own 4 shop cottages (a later follow-up ask) — same
+    // "one building behind each door" idea as Floro's above. Every
+    // Bramwick shop door faces north (see shared/maps.ts's
+    // bramwickShopDoorExits), so there's no left/right mirroring to pick
+    // — just the one frame per shop, keyed off BRAMWICK_SHOP_MAPS' own
+    // order to match tools' generator.
+    for (const sprite of this.cottageSprites) sprite.destroy();
+    this.cottageSprites =
+      mapName === 'Bramwick'
+        ? def.exits
+            .filter((exit) => (BRAMWICK_SHOP_MAPS as readonly string[]).includes(exit.toMap))
+            .map((exit) => {
+              const pos = this.tilePosition(exit.row - 1, exit.col);
+              const frame = (BRAMWICK_SHOP_MAPS as readonly string[]).indexOf(exit.toMap);
+              return this.add
+                .sprite(pos.x, pos.y, BRAMWICK_COTTAGE_TEXTURE_KEY, frame)
+                .setOrigin(0.5, 1)
+                .setDepth(-0.75);
+            })
+        : [];
+
+    // Bramwick's own 9 standing street torches (a later follow-up ask) —
+    // starts on whichever frame the current hour already calls for (not
+    // always unlit) so a transition into Bramwick at night doesn't show
+    // every torch unlit for a moment until the next 'worldTime' tick.
+    for (const sprite of this.standingTorchSprites) sprite.destroy();
+    this.standingTorchSprites = standingTorchPositionsFor(mapName).map(({ row, col }) => {
+      const pos = this.tilePosition(row, col);
+      const frame = worldTimeKnown && isDarkHour(currentWorldHour) ? STANDING_TORCH_LIT_FRAME : STANDING_TORCH_UNLIT_FRAME;
+      return this.add.sprite(pos.x, pos.y, STANDING_TORCH_TEXTURE_KEY, frame).setOrigin(0.5, 1).setDepth(-0.5);
+    });
+
     // Other entities belong to whichever map we just left — clear them
     // out immediately rather than waiting for the next map:state.
     for (const sprite of this.otherPlayers.values()) this.destroyEntitySprite(sprite);
@@ -1576,7 +1690,32 @@ export class WorldScene extends Phaser.Scene {
     this.gateRightSprite?.destroy();
     this.gateRightSprite = null;
     this.gateOpen = false;
+    this.northGateLeftSprite?.destroy();
+    this.northGateLeftSprite = null;
+    this.northGateRightSprite?.destroy();
+    this.northGateRightSprite = null;
+    this.northGateOpen = false;
+    this.roadTile?.destroy();
+    this.roadTile = null;
     if (mapName === 'Grimoak Grounds') {
+      // The dirt-road patch leading south from Bramwick's own entrance
+      // (a later follow-up ask: "about 10 feet" — GRIMOAK_GROUNDS_ROAD_ROWS
+      // is the ~2.5ft/tile conversion of that, see its own doc comment),
+      // same width as the castle's bridge for a visually consistent
+      // "road" feel. Sits just above the base grass (-1) but below the
+      // moat/bridge graphics below, which don't overlap it anyway.
+      const roadWidthTiles = GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES * 2 + 1;
+      this.roadTile = this.add
+        .tileSprite(
+          (CASTLE_DOOR_ON_GROUNDS.col - GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES) * TILE_SIZE,
+          0,
+          roadWidthTiles * TILE_SIZE,
+          GRIMOAK_GROUNDS_ROAD_ROWS * TILE_SIZE,
+          DIRT_ROAD_TEXTURE_KEY
+        )
+        .setOrigin(0, 0)
+        .setDepth(-0.99);
+
       const WATER = 0x2f6fa8;
       const fillTileBand = (
         graphics: Phaser.GameObjects.Graphics,
@@ -1592,7 +1731,11 @@ export class WorldScene extends Phaser.Scene {
       };
 
       const moat = this.add.graphics().setDepth(-0.95);
-      fillTileBand(moat, MOAT_OUTER_TOP, MOAT_INNER_TOP - 1, MOAT_OUTER_LEFT, MOAT_OUTER_RIGHT, WATER);
+      // North band now leaves the same bridge-width gap the south band
+      // already did (a later follow-up ask: "the same bridge and gate
+      // mechanism going north") — previously drawn as one unbroken span.
+      fillTileBand(moat, MOAT_OUTER_TOP, MOAT_INNER_TOP - 1, MOAT_OUTER_LEFT, BRIDGE_COL_LEFT - 1, WATER);
+      fillTileBand(moat, MOAT_OUTER_TOP, MOAT_INNER_TOP - 1, BRIDGE_COL_RIGHT + 1, MOAT_OUTER_RIGHT, WATER);
       fillTileBand(moat, MOAT_INNER_TOP, MOAT_INNER_BOTTOM, MOAT_OUTER_LEFT, MOAT_INNER_LEFT - 1, WATER);
       fillTileBand(moat, MOAT_INNER_TOP, MOAT_INNER_BOTTOM, MOAT_INNER_RIGHT + 1, MOAT_OUTER_RIGHT, WATER);
       fillTileBand(moat, MOAT_INNER_BOTTOM + 1, MOAT_OUTER_BOTTOM, MOAT_OUTER_LEFT, BRIDGE_COL_LEFT - 1, WATER);
@@ -1602,11 +1745,15 @@ export class WorldScene extends Phaser.Scene {
       const bridge = this.add.graphics().setDepth(-0.9);
       const PLANK = 0x8a6238;
       const PLANK_DARK = 0x5a3d24;
-      fillTileBand(bridge, MOAT_INNER_BOTTOM, MOAT_OUTER_BOTTOM, BRIDGE_COL_LEFT, BRIDGE_COL_RIGHT, PLANK);
-      for (let row = MOAT_INNER_BOTTOM; row <= MOAT_OUTER_BOTTOM; row++) {
-        fillTileBand(bridge, row, row, BRIDGE_COL_LEFT, BRIDGE_COL_LEFT, PLANK_DARK);
-        fillTileBand(bridge, row, row, BRIDGE_COL_RIGHT, BRIDGE_COL_RIGHT, PLANK_DARK);
-      }
+      const drawBridgeSpan = (rowStart: number, rowEnd: number) => {
+        fillTileBand(bridge, rowStart, rowEnd, BRIDGE_COL_LEFT, BRIDGE_COL_RIGHT, PLANK);
+        for (let row = rowStart; row <= rowEnd; row++) {
+          fillTileBand(bridge, row, row, BRIDGE_COL_LEFT, BRIDGE_COL_LEFT, PLANK_DARK);
+          fillTileBand(bridge, row, row, BRIDGE_COL_RIGHT, BRIDGE_COL_RIGHT, PLANK_DARK);
+        }
+      };
+      drawBridgeSpan(MOAT_INNER_BOTTOM, MOAT_OUTER_BOTTOM);
+      drawBridgeSpan(MOAT_OUTER_TOP, MOAT_INNER_TOP);
       this.bridgeGraphics = bridge;
 
       // The castle gate (a later follow-up ask) — sits at the bridge's
@@ -1627,6 +1774,22 @@ export class WorldScene extends Phaser.Scene {
       this.gateRightSprite = this.add
         .sprite((GATE_COL_RIGHT + 1) * TILE_SIZE, gateBottomY, CASTLE_GATE_LEAF_TEXTURE_KEY)
         .setOrigin(1, 1)
+        .setFlipX(true)
+        .setDepth(-0.85);
+
+      // The north gate (a later follow-up ask) — identical shape, sitting
+      // at the NORTH bridge's own outer end (NORTH_GATE_ROW ===
+      // MOAT_OUTER_TOP) instead, its leaf art anchored by the TOP of the
+      // sprite (origin y:0) rather than the bottom, since it hangs from
+      // the row ABOVE it rather than sitting on the row below.
+      const northGateTopY = NORTH_GATE_ROW * TILE_SIZE;
+      this.northGateLeftSprite = this.add
+        .sprite(GATE_COL_LEFT * TILE_SIZE, northGateTopY, CASTLE_GATE_LEAF_TEXTURE_KEY)
+        .setOrigin(0, 0)
+        .setDepth(-0.85);
+      this.northGateRightSprite = this.add
+        .sprite((GATE_COL_RIGHT + 1) * TILE_SIZE, northGateTopY, CASTLE_GATE_LEAF_TEXTURE_KEY)
+        .setOrigin(1, 0)
         .setFlipX(true)
         .setDepth(-0.85);
     }
@@ -1885,20 +2048,29 @@ export class WorldScene extends Phaser.Scene {
       return sprite;
     });
 
-    // Bramwick's own clickable name sign (a later follow-up ask) — just
-    // shows the town's name in the top-left target panel, same
-    // setLockTarget shape every door already uses.
-    this.bramwickSignSprite?.destroy();
-    this.bramwickSignSprite = null;
-    if (mapName === 'Bramwick') {
-      const pos = this.tilePosition(BRAMWICK_SIGN_POSITION.row, BRAMWICK_SIGN_POSITION.col);
-      const sign = this.add.sprite(pos.x, pos.y, SIGN_TEXTURE_KEY).setOrigin(0.5, 0.9).setDepth(-0.5).setInteractive();
-      sign.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-        if (isInputCaptured() || !pointer.leftButtonDown()) return;
-        this.setLockTarget({ kind: 'door', map: mapName, row: BRAMWICK_SIGN_POSITION.row, col: BRAMWICK_SIGN_POSITION.col }, 'Bramwick');
+    // The road signs flanking Bramwick's own dirt-road entrance (a later
+    // follow-up ask moved the original single "Bramwick" sign OUT to
+    // Grimoak Grounds and put a new "Grimoak Grounds" one in Bramwick
+    // instead) — each names the destination the road leads TO, not
+    // wherever the player already is, same as a real road sign. Just
+    // shows that name in the top-left target panel, same setLockTarget
+    // shape every door already uses.
+    for (const sprite of this.signSprites) sprite.destroy();
+    const signDefs: Array<{ map: MapName; position: { row: number; col: number }; label: string }> = [
+      { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_SIGN_POSITION, label: 'Bramwick' },
+      { map: 'Bramwick', position: BRAMWICK_SIGN_POSITION, label: 'Grimoak Grounds' },
+    ];
+    this.signSprites = signDefs
+      .filter((def) => def.map === mapName)
+      .map(({ position, label }) => {
+        const pos = this.tilePosition(position.row, position.col);
+        const sign = this.add.sprite(pos.x, pos.y, SIGN_TEXTURE_KEY).setOrigin(0.5, 0.9).setDepth(-0.5).setInteractive();
+        sign.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+          if (isInputCaptured() || !pointer.leftButtonDown()) return;
+          this.setLockTarget({ kind: 'door', map: mapName, row: position.row, col: position.col }, label);
+        });
+        return sign;
       });
-      this.bramwickSignSprite = sign;
-    }
 
     // The classroom spellbook podiums (item 8, item 9's follow-up ask) —
     // clickable, roll a 10% chance of learning their own spell server-side;
@@ -2027,7 +2199,13 @@ export class WorldScene extends Phaser.Scene {
     // show the first. Every exit uses the same fancy double door now (a
     // follow-up ask) — the old shop-vs-generic texture split is gone.
     for (const sprite of this.doorSprites) sprite.destroy();
-    this.doorSprites = def.exits.map((exit) => {
+    // 'open' exits (a later follow-up ask: "remove the door... walk
+    // straight through") get no sprite at all — Bramwick's own north/
+    // south entrance is a plain dirt road, not a door, in either
+    // direction.
+    this.doorSprites = def.exits
+      .filter((exit) => exit.kind !== 'open')
+      .map((exit) => {
       const pos = this.tilePosition(exit.row, exit.col);
       // Every reciprocal door pair lands you exactly on the tile that
       // triggers the return exit (see shared/maps.ts), so the player
@@ -2251,22 +2429,60 @@ export class WorldScene extends Phaser.Scene {
   // the open/closed state actually flips, same idempotency guard every
   // other pose/tween helper here uses.
   private updateGateState(state: MapStatePayload): void {
-    if (state.mapName !== 'Grimoak Grounds' || !this.gateLeftSprite || !this.gateRightSprite) return;
+    if (state.mapName !== 'Grimoak Grounds') return;
 
-    const withinGateReach = (row: number, col: number): boolean =>
-      Math.abs(row - GATE_ROW) <= GATE_REACH_TILES && col >= GATE_COL_LEFT - GATE_REACH_TILES && col <= GATE_COL_RIGHT + GATE_REACH_TILES;
+    const withinReachOfRow = (gateRow: number, row: number, col: number): boolean =>
+      Math.abs(row - gateRow) <= GATE_REACH_TILES && col >= GATE_COL_LEFT - GATE_REACH_TILES && col <= GATE_COL_RIGHT + GATE_REACH_TILES;
 
-    const open = withinGateReach(this.row, this.col) || state.players.some((p) => withinGateReach(p.row, p.col));
-    if (open === this.gateOpen) return;
-    this.gateOpen = open;
+    if (this.gateLeftSprite && this.gateRightSprite) {
+      const open =
+        withinReachOfRow(GATE_ROW, this.row, this.col) || state.players.some((p) => withinReachOfRow(GATE_ROW, p.row, p.col));
+      if (open !== this.gateOpen) {
+        this.gateOpen = open;
+        this.tweens.killTweensOf([this.gateLeftSprite, this.gateRightSprite]);
+        const leftClosedX = GATE_COL_LEFT * TILE_SIZE;
+        const rightClosedX = (GATE_COL_RIGHT + 1) * TILE_SIZE;
+        this.tweens.add({
+          targets: this.gateLeftSprite,
+          x: open ? leftClosedX - CASTLE_GATE_LEAF_WIDTH_PX : leftClosedX,
+          duration: 900,
+          ease: 'Sine.easeInOut',
+        });
+        this.tweens.add({
+          targets: this.gateRightSprite,
+          x: open ? rightClosedX + CASTLE_GATE_LEAF_WIDTH_PX : rightClosedX,
+          duration: 900,
+          ease: 'Sine.easeInOut',
+        });
+      }
+    }
 
-    this.tweens.killTweensOf([this.gateLeftSprite, this.gateRightSprite]);
-    const leftClosedX = GATE_COL_LEFT * TILE_SIZE;
-    const rightClosedX = (GATE_COL_RIGHT + 1) * TILE_SIZE;
-    const targetLeftX = open ? leftClosedX - CASTLE_GATE_LEAF_WIDTH_PX : leftClosedX;
-    const targetRightX = open ? rightClosedX + CASTLE_GATE_LEAF_WIDTH_PX : rightClosedX;
-    this.tweens.add({ targets: this.gateLeftSprite, x: targetLeftX, duration: 900, ease: 'Sine.easeInOut' });
-    this.tweens.add({ targets: this.gateRightSprite, x: targetRightX, duration: 900, ease: 'Sine.easeInOut' });
+    // The north gate (a later follow-up ask) — same open/closed logic,
+    // its own independent state so standing at one gate doesn't swing the
+    // other one open too (see world-manager's own isGateOpen, now
+    // parameterized by gate row for the exact same reason).
+    if (this.northGateLeftSprite && this.northGateRightSprite) {
+      const open =
+        withinReachOfRow(NORTH_GATE_ROW, this.row, this.col) || state.players.some((p) => withinReachOfRow(NORTH_GATE_ROW, p.row, p.col));
+      if (open !== this.northGateOpen) {
+        this.northGateOpen = open;
+        this.tweens.killTweensOf([this.northGateLeftSprite, this.northGateRightSprite]);
+        const leftClosedX = GATE_COL_LEFT * TILE_SIZE;
+        const rightClosedX = (GATE_COL_RIGHT + 1) * TILE_SIZE;
+        this.tweens.add({
+          targets: this.northGateLeftSprite,
+          x: open ? leftClosedX - CASTLE_GATE_LEAF_WIDTH_PX : leftClosedX,
+          duration: 900,
+          ease: 'Sine.easeInOut',
+        });
+        this.tweens.add({
+          targets: this.northGateRightSprite,
+          x: open ? rightClosedX + CASTLE_GATE_LEAF_WIDTH_PX : rightClosedX,
+          duration: 900,
+          ease: 'Sine.easeInOut',
+        });
+      }
+    }
   }
 
   private applyMapState(state: MapStatePayload): void {
@@ -2963,9 +3179,19 @@ export class WorldScene extends Phaser.Scene {
       // renderDoorsAndChest), so skip clearing it right back out on the
       // SAME click; any other click here (corpse, vendor, empty ground)
       // does count as "elsewhere" and drops it.
-      const hitLockable = [...this.doorSprites, ...(this.chestSprite ? [this.chestSprite] : [])].some((s) =>
-        s.getBounds().contains(pointer.worldX, pointer.worldY)
-      );
+      // A follow-up bug fix: portals/the Bramwick sign use this same
+      // setLockTarget shape as doors/the chest (see their own
+      // pointerdown handlers above), but were missing from this list —
+      // meaning the SAME click that just selected one of them via its
+      // own handler was immediately undone right here, since `lockTarget`
+      // was set but `hitLockable` came back false ("selectable... doesn't
+      // seem to be working").
+      const hitLockable = [
+        ...this.doorSprites,
+        ...(this.chestSprite ? [this.chestSprite] : []),
+        ...this.portalSprites,
+        ...this.signSprites,
+      ].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
       if (!hitLockable && this.lockTarget) this.clearLockTarget();
       // Same "already handled by its own pointerdown handler, don't
       // immediately undo it" reasoning for a Blockman selection.

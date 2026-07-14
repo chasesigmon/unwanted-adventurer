@@ -22,7 +22,6 @@ import {
   isCastleExteriorBlocked,
   isMoatBlocked,
   isGateTile,
-  GATE_ROW,
   GATE_COL_LEFT,
   GATE_COL_RIGHT,
   GATE_REACH_TILES,
@@ -99,12 +98,17 @@ export class WorldManagerService {
   // everyone's moved away. Monsters never factor in here at all — see
   // MonsterManagerService.isFree's own unconditional gate check, which
   // never consults this.
-  isGateOpen(mapName: MapName): boolean {
+  // `gateRow` (a later follow-up ask: "the same bridge and gate
+  // mechanism going north") lets this same check serve either gate
+  // independently — a player standing at the south gate no longer also
+  // swings the north one open, since isGateTile passes through whichever
+  // specific gate row it just matched (GATE_ROW or NORTH_GATE_ROW).
+  isGateOpen(mapName: MapName, gateRow: number): boolean {
     if (mapName !== 'Grimoak Grounds') return true;
     for (const state of this.playerLocation.values()) {
       if (state.mapName !== mapName) continue;
       if (
-        Math.abs(state.row - GATE_ROW) <= GATE_REACH_TILES &&
+        Math.abs(state.row - gateRow) <= GATE_REACH_TILES &&
         state.col >= GATE_COL_LEFT - GATE_REACH_TILES &&
         state.col <= GATE_COL_RIGHT + GATE_REACH_TILES
       ) {
@@ -123,7 +127,7 @@ export class WorldManagerService {
     if (isTreeTile(mapName, row, col)) return true;
     if (isCastleExteriorBlocked(mapName, row, col)) return true;
     if (isMoatBlocked(mapName, row, col)) return true;
-    if (isGateTile(mapName, row, col) && !this.isGateOpen(mapName)) return true;
+    if (isGateTile(mapName, row, col) && !this.isGateOpen(mapName, row)) return true;
     if (isFireplaceBlocked(mapName, row, col)) return true;
     if (isBenchBlocked(mapName, row, col)) return true;
     if (isBedBlocked(mapName, row, col)) return true;

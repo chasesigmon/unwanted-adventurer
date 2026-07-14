@@ -138,6 +138,7 @@ import {
   BED_REACH_TILES,
   isNearBench,
   isBenchBlocked,
+  isPortalBlocked,
 } from '../../shared/lighting.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
 import {
@@ -1777,8 +1778,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // actual move uses (no side effects), so an ungated player is turned
     // away at the gate without ever mutating their cached position.
     const loc = this.worldManager.getLocation(username);
+    let preview: ReturnType<typeof resolveMove> | undefined;
     if (loc) {
-      const preview = resolveMove(loc, parsed.data);
+      preview = resolveMove(loc, parsed.data);
       if (preview.ok && preview.transitioned && TOWN_MAPS.includes(preview.mapName) && !this.canEnterTown(client)) {
         return {
           ok: false,
@@ -1811,7 +1813,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     if (!result.ok) {
-      return { ok: false, player: this.snapshotFor(client), message: "You can't go that way." };
+      // A follow-up ask: "remove the 'You can't go that way' message for
+      // the portals" — walking into one is still blocked (see
+      // isPortalBlocked/isOccupied), but silently, since it's a
+      // deliberately-solid piece of scenery rather than a mistake worth
+      // narrating. `preview` (computed above for the town-gate check) is
+      // the same in-bounds, pre-occupancy candidate tile the player was
+      // trying to step onto, before isOccupied vetoed it.
+      const blockedByPortal = preview?.ok && isPortalBlocked(preview.mapName, preview.row, preview.col);
+      return blockedByPortal
+        ? { ok: false, player: this.snapshotFor(client) }
+        : { ok: false, player: this.snapshotFor(client), message: "You can't go that way." };
     }
 
     const previousMap = client.data.map;
