@@ -70,3 +70,17 @@ export const JERKY_ITEM = 'some jerky';
 export const THIRST_RESTORE_PERCENT = 20;
 export const HUNGER_RESTORE_PERCENT = 20;
 export const MAX_HUNGER_THIRST = 100;
+
+// A later follow-up ask's Bramwick General Shop item — same "single-use,
+// gone the instant it's consumed" shape as jerky above, but its own
+// bigger restore amount ("should help the player to recover 30 hunger").
+export const SALMON_ITEM = 'salmon';
+export const SALMON_HUNGER_RESTORE_PERCENT = 30;
+
+// A later follow-up ask's Bramwick Potions shop items — flat hp/mana
+// amounts (not a percent of max, unlike hunger/thirst above, since
+// max hp/mana both grow with level/attributes while hunger/thirst stay a
+// fixed 0-100 scale).
+export const HP_POTION_ITEM = 'hp potion';
+export const MP_POTION_ITEM = 'mp potion';
+export const POTION_RESTORE_AMOUNT = 20;

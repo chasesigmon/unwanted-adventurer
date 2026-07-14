@@ -42,6 +42,9 @@ export type StoneBlockDamager = (id: string, amount: number, attackerLabel: stri
 @Injectable()
 export class MonsterManagerService {
   private monsters = new Map<string, Monster>();
+  // A rare monster's own respawn cooldown (a later follow-up ask) — see
+  // applyDamage's own doc comment on when this gets set.
+  private nextRespawnAllowedAt = new Map<string, number>();
 
   // Set once by GameGateway (which has both this and WorldManagerService
   // injected) so wandering/spawning also avoids tiles a player is
@@ -265,6 +268,9 @@ export class MonsterManagerService {
       hp: species.startingHp,
       maxHp: species.startingHp,
       expReward: species.expReward,
+      goldReward: species.goldReward ?? 0,
+      isRare: species.isRare,
+      respawnDelayMs: species.respawnDelayMs,
       level: species.level ?? MONSTER_LEVEL,
       strength: MONSTER_BASE_ATTRIBUTE,
       intelligence: MONSTER_BASE_ATTRIBUTE,
@@ -292,10 +298,15 @@ export class MonsterManagerService {
   // as the text game's own respawner) — called on GameGateway's own timer.
   respawnBelowMax(): void {
     for (const species of MONSTER_SPECIES) {
-      if (this.countOf(species.id ?? species.kind) < species.maxCount) {
-        this.spawnOne(species);
-        return;
-      }
+      const id = species.id ?? species.kind;
+      if (this.countOf(id) >= species.maxCount) continue;
+      // A rare monster's own respawn cooldown (see applyDamage) — skip
+      // this species (not the whole call — an ordinary species further
+      // down the list should still get its turn) until it's up.
+      const gate = this.nextRespawnAllowedAt.get(id);
+      if (gate && Date.now() < gate) continue;
+      this.spawnOne(species);
+      return;
     }
   }
 
@@ -567,6 +578,12 @@ export class MonsterManagerService {
     if (died) {
       this.monsters.delete(id);
       this.aggro.delete(id);
+      // A "rare" monster's own slow respawn (a later follow-up ask:
+      // "once killed take a minute to re-spawn") — gates respawnBelowMax
+      // below from topping this species back up again until the delay's
+      // up, instead of the usual "respawn as soon as the timer gets to
+      // it" cadence every ordinary species uses.
+      if (monster.respawnDelayMs) this.nextRespawnAllowedAt.set(monster.speciesId, Date.now() + monster.respawnDelayMs);
     }
     return { monster, died };
   }
@@ -586,6 +603,7 @@ export class MonsterManagerService {
         hp: m.hp,
         maxHp: m.maxHp,
         carriedItems: m.carriedItems,
+        isRare: m.isRare,
       });
     }
     return snapshots;

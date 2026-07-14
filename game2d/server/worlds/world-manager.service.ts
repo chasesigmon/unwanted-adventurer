@@ -254,10 +254,10 @@ export class WorldManagerService {
     const corpses = this.corpseManager.getSnapshotsForMap(mapName);
     const vendors = vendorsForMap(mapName);
     const teachers = teachersForMap(mapName);
-    // Murus lapideus's own stone blocks (a later follow-up ask) live
-    // entirely in GameGateway, not here — always empty at this layer;
-    // GameGateway's mapStateFor wraps every call site to fill in the
-    // real values afterward.
-    return { mapName, players, npcs, monsters, corpses, vendors, teachers, stoneBlocks: [] };
+    // Murus lapideus's own stone blocks and player pets (both later
+    // follow-up asks) live entirely in GameGateway, not here — always
+    // empty at this layer; GameGateway's mapStateFor wraps every call
+    // site to fill in the real values afterward.
+    return { mapName, players, npcs, monsters, corpses, vendors, teachers, stoneBlocks: [], pets: [], animatedMonsters: [] };
   }
 }

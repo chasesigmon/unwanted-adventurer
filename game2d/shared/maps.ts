@@ -748,14 +748,90 @@ const FLOOR3_LANDING = floorLandingDefinition(
   { toMap: 'Grimoak Castle 4th Floor', toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW, toCol: FLOOR_LANDING_DOWN_STAIRS_COL }
 );
 // Floor 4 has no chambers of its own (no north-wall doors) and nothing
-// above it — just the down-stairs back to floor 3, plus 4 decorative
-// portals (see shared/lighting.ts's portalPositionsFor; NOT MapExits, so
-// they render but can never actually transition anywhere yet).
+// above it — just the down-stairs back to floor 3, plus 4 portals (a
+// later follow-up ask made these real exits — see the block below that
+// pushes them on, same "define the room, then push an additional exit
+// once the target's own info is known" shape the Entrance Hall's own
+// up-stairs already uses).
 const FLOOR4_LANDING = floorLandingDefinition('Grimoak Castle 4th Floor', [], {
   toMap: 'Grimoak Castle 3rd Floor',
   toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW,
   toCol: FLOOR_LANDING_UP_STAIRS_COL,
 });
+
+// ---------- The 4th floor's 4 portals, each a real exit now (a later
+// follow-up ask: "add some places the portals will take the player,
+// like level 10-15 monsters, 15-20, 20-30, 30-40") — one small dungeon
+// each, roughly scaled to that level range. Positions duplicated from
+// shared/lighting.ts's own portalPositionsFor (maps.ts can't import that
+// file — lighting.ts already imports FROM maps.ts, so the reverse would
+// be circular) rather than shared, but computed from the exact same
+// constants so the two can never actually drift apart. Portal 1-4 order
+// (see WorldScene's own portalPositionsFor().map/index) is north, south,
+// east, west. ----------
+const PORTAL_DUNGEON_SIZE_ROWS = 40;
+const PORTAL_DUNGEON_SIZE_COLS = 50;
+const PORTAL_DUNGEON_MID_COL = Math.floor(PORTAL_DUNGEON_SIZE_COLS / 2);
+
+function portalDungeonDefinition(name: MapName): MapDefinition {
+  return {
+    name,
+    rows: PORTAL_DUNGEON_SIZE_ROWS,
+    cols: PORTAL_DUNGEON_SIZE_COLS,
+    terrain: 'stone',
+    exits: [
+      {
+        row: PORTAL_DUNGEON_SIZE_ROWS - 1,
+        col: PORTAL_DUNGEON_MID_COL,
+        direction: 'south',
+        toMap: 'Grimoak Castle 4th Floor',
+        toRow: FLOOR_LANDING_MID_ROW,
+        toCol: Math.floor(FLOOR_LANDING_COLS / 2),
+        kind: 'open',
+      },
+    ],
+  };
+}
+
+const FLOOR4_PORTAL_MID_COL = Math.floor(FLOOR_LANDING_COLS / 2);
+FLOOR4_LANDING.exits.push(
+  {
+    row: 0,
+    col: FLOOR4_PORTAL_MID_COL,
+    direction: 'north',
+    toMap: 'Sunken Crypt',
+    toRow: PORTAL_DUNGEON_SIZE_ROWS - 2,
+    toCol: PORTAL_DUNGEON_MID_COL,
+    kind: 'open',
+  },
+  {
+    row: FLOOR_LANDING_ROWS - 1,
+    col: FLOOR4_PORTAL_MID_COL,
+    direction: 'south',
+    toMap: 'Goblin Warcamp',
+    toRow: PORTAL_DUNGEON_SIZE_ROWS - 2,
+    toCol: PORTAL_DUNGEON_MID_COL,
+    kind: 'open',
+  },
+  {
+    row: FLOOR_LANDING_MID_ROW,
+    col: FLOOR_LANDING_COLS - 1,
+    direction: 'east',
+    toMap: 'Imp Hollow',
+    toRow: PORTAL_DUNGEON_SIZE_ROWS - 2,
+    toCol: PORTAL_DUNGEON_MID_COL,
+    kind: 'open',
+  },
+  {
+    row: FLOOR_LANDING_MID_ROW,
+    col: 0,
+    direction: 'west',
+    toMap: 'Ashen Wastes',
+    toRow: PORTAL_DUNGEON_SIZE_ROWS - 2,
+    toCol: PORTAL_DUNGEON_MID_COL,
+    kind: 'open',
+  }
+);
 
 // The Entrance Hall's own reciprocal half of its up-stairs to floor 2 —
 // pushed on afterward (same "define the room, then push an additional
@@ -792,7 +868,7 @@ const BRAMWICK_MID_COL = Math.floor(BRAMWICK_SIZE / 2);
 
 const BRAMWICK_SHOP_DOORS: Record<(typeof BRAMWICK_SHOP_MAPS)[number], { row: number; col: number }> = {
   'Bramwick General Shop': { row: 10, col: 10 },
-  'Bramwick Wands': { row: 10, col: 30 },
+  'Bramwick Weapons': { row: 10, col: 30 },
   'Bramwick Armor': { row: 28, col: 10 },
   'Bramwick Potions': { row: 28, col: 30 },
 };
@@ -853,6 +929,42 @@ function bramwickShopDoorExits(): MapExit[] {
 const BRAMWICK_ENTRANCE_ROW = BRAMWICK_SIZE - 1;
 export const GRIMOAK_GROUNDS_ROAD_ROWS = 4;
 export const GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES = 2;
+
+// A later follow-up ask: "make the entire dirt road width also the width
+// of the space the player can walk through" — a single-tile exit choke
+// point (the original shape) let the road LOOK several tiles wide while
+// only its exact center column actually transitioned; one exit per
+// column across the same width the road is drawn (see WorldScene's own
+// roadTile), each preserving its own column on both sides so walking
+// north/south anywhere across the road's width lands you at the
+// matching lateral position on the other side, not funneled to center.
+function bramwickGroundsEntranceExits(direction: 'north' | 'south'): MapExit[] {
+  const exits: MapExit[] = [];
+  for (let dCol = -GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES; dCol <= GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES; dCol++) {
+    exits.push(
+      direction === 'north'
+        ? {
+            row: 0,
+            col: CASTLE_DOOR_ON_GROUNDS.col + dCol,
+            direction: 'north',
+            toMap: 'Bramwick',
+            toRow: BRAMWICK_ENTRANCE_ROW,
+            toCol: BRAMWICK_MID_COL + dCol,
+            kind: 'open',
+          }
+        : {
+            row: BRAMWICK_ENTRANCE_ROW,
+            col: BRAMWICK_MID_COL + dCol,
+            direction: 'south',
+            toMap: 'Grimoak Grounds',
+            toRow: 0,
+            toCol: CASTLE_DOOR_ON_GROUNDS.col + dCol,
+            kind: 'open',
+          }
+    );
+  }
+  return exits;
+}
 
 export { BRAMWICK_MID_COL, BRAMWICK_ENTRANCE_ROW };
 
@@ -959,21 +1071,10 @@ export const MAPS: Record<MapName, MapDefinition> = {
     // this `terrain` field is unused metadata, see MapTerrain's own doc
     // comment), not this field.
     terrain: 'grass',
-    exits: [
-      {
-        row: BRAMWICK_ENTRANCE_ROW,
-        col: BRAMWICK_MID_COL,
-        direction: 'south',
-        toMap: 'Grimoak Grounds',
-        toRow: 0,
-        toCol: CASTLE_DOOR_ON_GROUNDS.col,
-        kind: 'open',
-      },
-      ...bramwickShopDoorExits(),
-    ],
+    exits: [...bramwickGroundsEntranceExits('south'), ...bramwickShopDoorExits()],
   },
   'Bramwick General Shop': bramwickShopInteriorDefinition('Bramwick General Shop'),
-  'Bramwick Wands': bramwickShopInteriorDefinition('Bramwick Wands'),
+  'Bramwick Weapons': bramwickShopInteriorDefinition('Bramwick Weapons'),
   'Bramwick Armor': bramwickShopInteriorDefinition('Bramwick Armor'),
   'Bramwick Potions': bramwickShopInteriorDefinition('Bramwick Potions'),
   'Grimoak Grounds': {
@@ -1003,15 +1104,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
       // Bramwick's own south entrance sits directly north of the castle
       // door, straight up the open ground north of the moat (a later
       // follow-up ask: "a dirt road leading north").
-      {
-        row: 0,
-        col: CASTLE_DOOR_ON_GROUNDS.col,
-        direction: 'north',
-        toMap: 'Bramwick',
-        toRow: BRAMWICK_ENTRANCE_ROW,
-        toCol: BRAMWICK_MID_COL,
-        kind: 'open',
-      },
+      ...bramwickGroundsEntranceExits('north'),
     ],
   },
   'Grimoak Entrance Hall': ENTRANCE_HALL,
@@ -1043,6 +1136,10 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Druid Chamber': DRUID_CHAMBER,
   'Diabolist Chamber': DIABOLIST_CHAMBER,
   'Hemomancer Chamber': HEMOMANCER_CHAMBER,
+  'Sunken Crypt': portalDungeonDefinition('Sunken Crypt'),
+  'Goblin Warcamp': portalDungeonDefinition('Goblin Warcamp'),
+  'Imp Hollow': portalDungeonDefinition('Imp Hollow'),
+  'Ashen Wastes': portalDungeonDefinition('Ashen Wastes'),
 };
 
 export function getMap(name: MapName): MapDefinition {

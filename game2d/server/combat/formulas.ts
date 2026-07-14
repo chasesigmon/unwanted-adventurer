@@ -182,7 +182,11 @@ export function punchDamage(
 }
 
 // Which equipment slot an item goes into, if any — items not listed here
-// aren't equippable at all, just consumable body parts.
+// aren't equippable at all, just consumable body parts. Rings are a
+// special case (see EquipRingSlot below) — both ring items still need an
+// entry here so handleUseItem's "is this even equippable" check passes,
+// but the actual slot (left vs right) is resolved dynamically at equip
+// time, not read from this fixed map.
 export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
   'bone dagger': 'weapon',
   'bone shield': 'shield',
@@ -192,6 +196,38 @@ export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
   // Same slot a bone dagger would use — a wand and a dagger are mutually
   // exclusive, matching a wizard's actual hand.
   [WAND_ITEM]: 'weapon',
+  // Monster-dropped armor (a later follow-up ask: imp/wild
+  // skeleton/goblin loot tables — see server/monsters/monster.ts).
+  'cloth armor': 'torso',
+  'cloth helmet': 'head',
+  'cloth boots': 'boots',
+  'cloth vambraces': 'vambraces',
+  'cloth greaves': 'greaves',
+  'studded armor': 'torso',
+  'studded helmet': 'head',
+  'boots of quickness': 'boots',
+  'opal earrings': 'earrings',
+  'opal necklace': 'necklace',
+  // Placeholder slot only — see isRingItem/resolveRingSlot below, which
+  // actually decides left vs right at equip time.
+  'opal ring': 'leftRing',
+  'bone ring': 'leftRing',
+  // Weapon-slot wands sold by Bramwick's own Weapons shop (a later
+  // follow-up ask) — same slot an ordinary wand/dagger would use.
+  'wand of intelligence': 'weapon',
+  'wand of quickness': 'weapon',
+  // The 4th floor's own 4 portal dungeons (a later follow-up ask) —
+  // "rare wands not available in the shop" plus a matching armor piece,
+  // one tier per dungeon (see server/monsters/monster.ts's own
+  // PORTAL_DUNGEON_MAPS species entries).
+  'wand of frost': 'weapon',
+  'chainmail vambraces': 'vambraces',
+  'wand of embers': 'weapon',
+  "warlord's greaves": 'greaves',
+  'wand of shadows': 'weapon',
+  'obsidian helm': 'head',
+  'wand of the ashen king': 'weapon',
+  'dragon scale armor': 'torso',
 };
 
 // Flat damage bonus while a given item is equipped in its slot — matches
@@ -217,8 +253,108 @@ export function weaponBonusFor(equipment: Record<string, string>, skills: Record
 // counts" carve-out computeShieldBlockChance already makes below.
 export const BONE_SHIELD_ARMOR_CLASS_BONUS = 5;
 
+// Flat AC bonus per equipped armor piece (a later follow-up ask: "cloth
+// armor should reduce damage by 1 each"/"studded armor & helmet should
+// reduce damage by 2 each") — armorDamageReduction floors AC/4 to a flat
+// damage-reduction number, so +4 AC -> 1 less damage, +8 AC -> 2 less.
+export const ARMOR_ITEM_AC_BONUS: Record<string, number> = {
+  'cloth armor': 4,
+  'cloth helmet': 4,
+  'cloth boots': 4,
+  'cloth vambraces': 4,
+  'cloth greaves': 4,
+  'studded armor': 8,
+  'studded helmet': 8,
+  // The 4 portal dungeons' own armor pieces (a later follow-up ask) —
+  // one per tier, each noticeably stronger than the last.
+  'chainmail vambraces': 6,
+  "warlord's greaves": 10,
+  'obsidian helm': 12,
+  'dragon scale armor': 16,
+};
+
+// Summed across EVERY equipped slot now (a later follow-up ask added
+// several more armor pieces beyond the shield) — order-independent, one
+// lookup per equipped item, 0 for anything not in ARMOR_ITEM_AC_BONUS
+// (a weapon, a torch, jewelry, ...).
 export function armorEquipmentBonus(equipment: Record<string, string>): number {
-  return equipment.shield === 'bone shield' ? BONE_SHIELD_ARMOR_CLASS_BONUS : 0;
+  let bonus = equipment.shield === 'bone shield' ? BONE_SHIELD_ARMOR_CLASS_BONUS : 0;
+  for (const item of Object.values(equipment)) {
+    bonus += ARMOR_ITEM_AC_BONUS[item] ?? 0;
+  }
+  return bonus;
+}
+
+// +1 dexterity per opal piece (a later follow-up ask: "opal earrings,
+// necklace, and ring should grant +1 dexterity for each") — summed
+// across every equipped slot the same way armorEquipmentBonus is, since
+// up to 3 opal pieces (earrings, necklace, one ring) could be worn at
+// once, each contributing independently. "Wand of quickness" (a later
+// follow-up ask's Bramwick Weapons item, +2 dexterity) shares this same
+// table/lookup — it's a weapon-slot item, not jewelry, but the bonus
+// math is identical either way.
+const JEWELRY_DEXTERITY_BONUS: Record<string, number> = {
+  'opal earrings': 1,
+  'opal ring': 1,
+  'opal necklace': 1,
+  'wand of quickness': 2,
+  // The 4th floor's own portal-dungeon wands (a later follow-up ask) —
+  // "wand of frost" (tier 1) grants dexterity; "wand of the ashen king"
+  // (tier 4, the toughest dungeon) grants both dexterity AND
+  // intelligence (see JEWELRY_INTELLIGENCE_BONUS below too).
+  'wand of frost': 2,
+  'wand of the ashen king': 2,
+};
+
+export function dexterityEquipmentBonus(equipment: Record<string, string>): number {
+  let bonus = 0;
+  for (const item of Object.values(equipment)) {
+    bonus += JEWELRY_DEXTERITY_BONUS[item] ?? 0;
+  }
+  return bonus;
+}
+
+// +1 intelligence per bone ring (a later follow-up ask) — a player can
+// only ever wear one (see isRingItem/resolveRingSlot's own 2-ring cap),
+// but this stays a sum (not a boolean check) for the same "shape matches
+// dexterityEquipmentBonus" consistency, in case a future ring stacks.
+// "Wand of intelligence" (a later follow-up ask's Bramwick Weapons item,
+// +1 intelligence) shares this same table — a weapon-slot item, not
+// jewelry, same reasoning as wand of quickness above.
+const JEWELRY_INTELLIGENCE_BONUS: Record<string, number> = {
+  'bone ring': 1,
+  'wand of intelligence': 1,
+  // The 4th floor's own portal-dungeon wands (a later follow-up ask) —
+  // "wand of embers" (tier 2) and "wand of shadows" (tier 3) grant
+  // intelligence; "wand of the ashen king" (tier 4) grants the most.
+  'wand of embers': 2,
+  'wand of shadows': 3,
+  'wand of the ashen king': 4,
+};
+
+export function intelligenceEquipmentBonus(equipment: Record<string, string>): number {
+  let bonus = 0;
+  for (const item of Object.values(equipment)) {
+    bonus += JEWELRY_INTELLIGENCE_BONUS[item] ?? 0;
+  }
+  return bonus;
+}
+
+// A later follow-up ask: "if a player is wearing a ring on one hand then
+// tries to wear another ring, put it on the other hand; if the player is
+// wearing two rings already... replace the leftRing; put the first ring
+// if no rings are equipped onto the rightRing." Any item name ending in
+// "ring" (not "earrings" — see the .endsWith check, not .includes) is a
+// ring for this purpose.
+export function isRingItem(item: string): boolean {
+  return item.toLowerCase().endsWith('ring');
+}
+
+export function resolveRingSlot(equipment: Record<string, string>): 'leftRing' | 'rightRing' {
+  if (!equipment.leftRing && !equipment.rightRing) return 'rightRing';
+  if (!equipment.leftRing) return 'leftRing';
+  if (!equipment.rightRing) return 'rightRing';
+  return 'leftRing';
 }
 
 // --- Dodge / parry / shield block (mirrors the text game's own
@@ -389,6 +525,14 @@ export function maxTnlForLevel(level: number): number {
   return level * 100;
 }
 
+// A later follow-up ask: "the max player level right now should be 40" —
+// a hard overall cap (on top of, not instead of, a goblin's own separate
+// GOBLIN_MAX_LEVEL(10) — a goblin still has to evolve into a Hobgoblin to
+// keep growing at all, same as before, it just now has this same ceiling
+// too once it does). No level ever exceeds this regardless of exp
+// gained; exp is discarded rather than banked once maxed.
+export const MAX_PLAYER_LEVEL = 40;
+
 export interface LevelState {
   level: number;
   exp: number;
@@ -396,11 +540,17 @@ export interface LevelState {
 
 export function applyExpGain(state: LevelState, gained: number): LevelState {
   let { level, exp } = state;
+  if (level >= MAX_PLAYER_LEVEL) return { level: MAX_PLAYER_LEVEL, exp: 0 };
   exp += gained;
   let maxTnl = maxTnlForLevel(level);
   while (exp >= maxTnl) {
     exp -= maxTnl;
     level += 1;
+    if (level >= MAX_PLAYER_LEVEL) {
+      level = MAX_PLAYER_LEVEL;
+      exp = 0;
+      break;
+    }
     maxTnl = maxTnlForLevel(level);
   }
   return { level, exp };

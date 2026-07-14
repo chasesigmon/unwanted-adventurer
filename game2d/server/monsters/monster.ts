@@ -17,6 +17,15 @@ export interface Monster extends CombatantStats {
   hp: number;
   maxHp: number;
   expReward: number;
+  // A flat coin drop (a later follow-up ask) — see MonsterSpecies.goldReward.
+  goldReward: number;
+  // A "rare" variant (a later follow-up ask) — bigger (see
+  // WorldScene's own monster sprite scale), tougher, better loot, only
+  // one ever roaming at once (see MonsterSpecies.maxCount), and slow to
+  // come back once killed (see respawnDelayMs/MonsterManagerService's own
+  // nextRespawnAllowedAt).
+  isRare?: boolean;
+  respawnDelayMs?: number;
   // Rolled independently per entry at spawn time (see
   // MonsterSpecies.carriedItemRolls) — extra items its corpse drops
   // alongside the usual body part, and (while alive) what the
@@ -93,6 +102,12 @@ export interface MonsterSpecies {
   maxCount: number;
   startingHp: number;
   expReward: number;
+  // A flat coin drop, every kill, no roll (a later follow-up ask: "the
+  // imps should drop 3 coins every time on death... skeletons 5...
+  // goblins 7") — added to the corpse alongside its own items (see
+  // CorpseSnapshot.gold), not itself an inventory item. Absent/0 for any
+  // species that shouldn't drop coins at all.
+  goldReward?: number;
   carriedItemRolls?: CarriedItemRoll[];
   // Present only for a species that paces back and forth near its own
   // spawn point instead of roaming its whole home map at random (a
@@ -116,6 +131,16 @@ export interface MonsterSpecies {
   // of Grimoak Grounds, not the whole map) — see
   // shared/maps.ts's GRIMOAK_GROUNDS_EXTENSION_MIN_COL.
   minSpawnCol?: number;
+  // A "rare" variant (a later follow-up ask: "create a rare imp, rare
+  // wild skeleton, rare wild goblin... slightly bigger... once killed
+  // take a minute to re-spawn") — see Monster.isRare's own doc comment.
+  isRare?: boolean;
+  // How long after this species' own last death before respawnBelowMax
+  // will spawn another (see MonsterManagerService's own
+  // nextRespawnAllowedAt) — absent means "respawn as soon as
+  // respawnBelowMax gets to it," the existing behavior for every
+  // ordinary species.
+  respawnDelayMs?: number;
 }
 
 // Every wild monster starts at level 1 with every attribute at 1 — so a
@@ -154,6 +179,17 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     // an early fight out to a real handful of combat ticks.
     startingHp: 24,
     expReward: WILD_GOBLIN_EXP_REWARD,
+    // A later follow-up ask: "7 coins on death" + "30% chance for any
+    // wild goblin to drop studded armor, studded helmet, boots of
+    // quickness" — each item rolled independently, same shape
+    // carriedItemRolls already uses for wild skeleton's own daggers below
+    // (so a single kill could drop none, one, two, or all three).
+    goldReward: 7,
+    carriedItemRolls: [
+      { label: 'studded armor', chance: 0.3 },
+      { label: 'studded helmet', chance: 0.3 },
+      { label: 'boots of quickness', chance: 0.3 },
+    ],
   },
   {
     kind: 'wild skeleton',
@@ -163,9 +199,18 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     // Same reasoning as wild goblin above — bumped from 20.
     startingHp: 32,
     expReward: WILD_SKELETON_EXP_REWARD,
+    // A later follow-up ask: "5 coins on death" + "35% chance for any
+    // wild skeleton to drop opal earrings, opal ring, bone ring, opal
+    // necklace" — each item rolled independently, same as the existing
+    // bone dagger/bone shield rolls below.
+    goldReward: 5,
     carriedItemRolls: [
       { label: 'bone dagger', chance: 0.3 },
       { label: 'bone shield', chance: 0.2 },
+      { label: 'opal earrings', chance: 0.35 },
+      { label: 'opal ring', chance: 0.35 },
+      { label: 'bone ring', chance: 0.35 },
+      { label: 'opal necklace', chance: 0.35 },
     ],
   },
   {
@@ -189,6 +234,17 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     // way every other monster's own expReward already does at every
     // OTHER level pairing — see expGainFor's own doc comment).
     expReward: 30,
+    // A later follow-up ask: "3 coins on death" + "35% chance for any
+    // imp to drop cloth armor, cloth helmet, cloth boots, cloth
+    // vambraces, cloth greaves" — each piece rolled independently.
+    goldReward: 3,
+    carriedItemRolls: [
+      { label: 'cloth armor', chance: 0.35 },
+      { label: 'cloth helmet', chance: 0.35 },
+      { label: 'cloth boots', chance: 0.35 },
+      { label: 'cloth vambraces', chance: 0.35 },
+      { label: 'cloth greaves', chance: 0.35 },
+    ],
     // Paces back and forth within 3 tiles of wherever it spawned (a
     // follow-up ask), rather than roaming the whole map the way a wild
     // goblin/skeleton does — see MonsterManagerService.stepPatrol.
@@ -219,6 +275,17 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     startingHp: 100,
     expReward: WILD_SKELETON_EXP_REWARD,
     attackDamage: 10,
+    // Same coin/jewelry drop table as the original Labyrinth population
+    // above — "the wild skeletons" covers both.
+    goldReward: 5,
+    carriedItemRolls: [
+      { label: 'bone dagger', chance: 0.3 },
+      { label: 'bone shield', chance: 0.2 },
+      { label: 'opal earrings', chance: 0.35 },
+      { label: 'opal ring', chance: 0.35 },
+      { label: 'bone ring', chance: 0.35 },
+      { label: 'opal necklace', chance: 0.35 },
+    ],
   },
   {
     id: 'wild-goblin-grounds',
@@ -231,5 +298,145 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     startingHp: 130,
     expReward: WILD_GOBLIN_EXP_REWARD,
     attackDamage: 15,
+    // Same coin/armor drop table as the original Great Plains population
+    // above — "the wild goblins" covers both.
+    goldReward: 7,
+    carriedItemRolls: [
+      { label: 'studded armor', chance: 0.3 },
+      { label: 'studded helmet', chance: 0.3 },
+      { label: 'boots of quickness', chance: 0.3 },
+    ],
+  },
+  // 3 rare variants (a later follow-up ask) — one of each kind at once
+  // (maxCount: 1), a bigger sprite scale (see WorldScene's own monster
+  // rendering keying off isRare), more hp/damage than an ordinary one of
+  // its kind, a much richer guaranteed haul (fixed-count mana crystals +
+  // gold + a real shot at real equipment, not just a percentage roll on
+  // ordinary drops), and slow to come back once killed
+  // (respawnDelayMs — see MonsterManagerService's own nextRespawnAllowedAt).
+  {
+    id: 'rare-imp',
+    kind: 'imp',
+    monsterClass: 'normal',
+    homeMap: 'Grimoak Grounds',
+    maxCount: 1,
+    isRare: true,
+    respawnDelayMs: 60_000,
+    startingHp: 60,
+    expReward: 90,
+    attackDamage: 9,
+    goldReward: 10,
+    carriedItemRolls: [
+      ...Array.from({ length: 10 }, () => ({ label: 'lesser mana crystal', chance: 1 })),
+      { label: 'cloth armor', chance: 0.5 },
+    ],
+    patrolRangeTiles: 3,
+  },
+  {
+    id: 'rare-wild-skeleton',
+    kind: 'wild skeleton',
+    monsterClass: 'undead',
+    homeMap: 'Labyrinth',
+    maxCount: 1,
+    isRare: true,
+    respawnDelayMs: 60_000,
+    startingHp: 70,
+    expReward: 130,
+    attackDamage: 12,
+    goldReward: 15,
+    carriedItemRolls: [
+      ...Array.from({ length: 10 }, () => ({ label: 'superior mana crystal', chance: 1 })),
+      { label: 'opal ring', chance: 0.5 },
+      { label: 'opal necklace', chance: 0.5 },
+    ],
+  },
+  {
+    id: 'rare-wild-goblin',
+    kind: 'wild goblin',
+    monsterClass: 'normal',
+    homeMap: 'Great Plains',
+    maxCount: 1,
+    isRare: true,
+    respawnDelayMs: 60_000,
+    startingHp: 55,
+    expReward: 110,
+    attackDamage: 10,
+    goldReward: 20,
+    carriedItemRolls: [
+      ...Array.from({ length: 20 }, () => ({ label: 'superior mana crystal', chance: 1 })),
+      { label: 'studded armor', chance: 0.5 },
+      { label: 'boots of quickness', chance: 0.5 },
+    ],
+  },
+  // The 4th floor's own 4 portal dungeons (a later follow-up ask) — "add
+  // some places the portals will take the player, like level 10-15
+  // monsters, 15-20, 20-30, 30-40. The monsters should give better
+  // pieces of equipment and rare wands not available in the shop."
+  // Reuses the 3 existing monster kinds at escalating stats/loot rather
+  // than standing up brand new creature types/sprites — "it can be
+  // refined later."
+  {
+    id: 'sunken-crypt-skeleton',
+    kind: 'wild skeleton',
+    monsterClass: 'undead',
+    homeMap: 'Sunken Crypt',
+    maxCount: 8,
+    level: 12,
+    startingHp: 180,
+    expReward: 150,
+    attackDamage: 20,
+    goldReward: 10,
+    carriedItemRolls: [
+      { label: 'wand of frost', chance: 0.15 },
+      { label: 'chainmail vambraces', chance: 0.2 },
+    ],
+  },
+  {
+    id: 'goblin-warcamp-goblin',
+    kind: 'wild goblin',
+    monsterClass: 'normal',
+    homeMap: 'Goblin Warcamp',
+    maxCount: 8,
+    level: 17,
+    startingHp: 250,
+    expReward: 220,
+    attackDamage: 28,
+    goldReward: 15,
+    carriedItemRolls: [
+      { label: 'wand of embers', chance: 0.15 },
+      { label: "warlord's greaves", chance: 0.2 },
+    ],
+  },
+  {
+    id: 'imp-hollow-imp',
+    kind: 'imp',
+    monsterClass: 'normal',
+    homeMap: 'Imp Hollow',
+    maxCount: 8,
+    level: 25,
+    startingHp: 350,
+    expReward: 320,
+    attackDamage: 38,
+    goldReward: 20,
+    carriedItemRolls: [
+      { label: 'wand of shadows', chance: 0.12 },
+      { label: 'obsidian helm', chance: 0.18 },
+    ],
+  },
+  {
+    id: 'ashen-wastes-goblin',
+    kind: 'wild goblin',
+    monsterClass: 'normal',
+    homeMap: 'Ashen Wastes',
+    maxCount: 8,
+    level: 35,
+    startingHp: 500,
+    expReward: 450,
+    attackDamage: 50,
+    goldReward: 30,
+    carriedItemRolls: [
+      { label: 'wand of the ashen king', chance: 0.1 },
+      { label: 'dragon scale armor', chance: 0.15 },
+    ],
   },
 ];

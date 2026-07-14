@@ -1,6 +1,6 @@
 import type { MapName } from '../../shared/constants.js';
 import type { VendorSnapshot } from '../../shared/types.js';
-import { CUP_OF_WATER_ITEM, JERKY_ITEM } from '../../shared/items.js';
+import { CUP_OF_WATER_ITEM, JERKY_ITEM, CANTEEN_ITEM, SALMON_ITEM, HP_POTION_ITEM, MP_POTION_ITEM } from '../../shared/items.js';
 
 // Deterministic (not Math.random) so a vendor's appearance/name stays
 // the same across server restarts — same reasoning as shared/trees.ts's
@@ -170,17 +170,29 @@ const VENDOR_SEEDS: VendorSeed[] = [
     map: 'Bramwick General Shop',
     row: 2,
     col: 5,
-    items: [],
-    greeting: "A bit of everything, though the shelves are still filling in — come back soon.",
+    // A later follow-up ask stocked the shelves for real.
+    items: [
+      { label: CANTEEN_ITEM, price: 6 },
+      { label: SALMON_ITEM, price: 5 },
+    ],
+    greeting: 'A bit of everything — a fresh canteen, a salmon for the road, whatever you need.',
   },
   {
     id: 'bramwick-wands',
-    name: 'Wandmaker',
-    map: 'Bramwick Wands',
+    // A later follow-up ask renamed the shop itself to "Weapons" (wands
+    // sold alongside other weapon-slot gear now, not the whole identity)
+    // — the vendor id stays the same (just an internal key), only the
+    // display name/map/greeting change.
+    name: 'Weaponsmith',
+    map: 'Bramwick Weapons',
     row: 2,
     col: 5,
-    items: [],
-    greeting: "Every wand finds its own wizard eventually — I'm still carving this season's stock.",
+    // A later follow-up ask stocked the shelves for real.
+    items: [
+      { label: 'wand of intelligence', price: 10 },
+      { label: 'wand of quickness', price: 7 },
+    ],
+    greeting: "Wands, blades, whatever suits your hand — take a look at what's carved and ready.",
   },
   {
     id: 'bramwick-armor',
@@ -188,8 +200,15 @@ const VENDOR_SEEDS: VendorSeed[] = [
     map: 'Bramwick Armor',
     row: 2,
     col: 5,
-    items: [],
-    greeting: "Sturdy work, all of it — just not quite ready for coin yet.",
+    // A later follow-up ask stocked the shelves for real.
+    items: [
+      { label: 'cloth armor', price: 5 },
+      { label: 'cloth helmet', price: 5 },
+      { label: 'cloth boots', price: 5 },
+      { label: 'cloth vambraces', price: 5 },
+      { label: 'cloth greaves', price: 5 },
+    ],
+    greeting: 'Sturdy cloth work, every piece — ready for coin whenever you are.',
   },
   {
     id: 'bramwick-potions',
@@ -197,8 +216,31 @@ const VENDOR_SEEDS: VendorSeed[] = [
     map: 'Bramwick Potions',
     row: 2,
     col: 5,
-    items: [],
-    greeting: "The cauldron's always brewing something — nothing bottled for sale just yet.",
+    // A later follow-up ask stocked the shelves for real.
+    items: [
+      { label: HP_POTION_ITEM, price: 3 },
+      { label: MP_POTION_ITEM, price: 3 },
+    ],
+    greeting: "The cauldron's always brewing something — fresh hp and mp potions, bottled and ready.",
+  },
+  // A later follow-up ask — standing right on Bramwick's own street
+  // (not its own shop interior, unlike the 4 above) at the exact spot
+  // the town's own middle standing torch used to sit before being
+  // removed (see shared/lighting.ts's standingTorchPositionsFor).
+  // Buying one is special-cased in handleBuyItem (creates a real Pet,
+  // not an inventory item) — these labels double as PetKind values.
+  {
+    id: 'bramwick-pet-shop',
+    name: 'Pet Shop',
+    map: 'Bramwick',
+    row: 20,
+    col: 20,
+    items: [
+      { label: 'puppy', price: 15 },
+      { label: 'kitten', price: 15 },
+      { label: 'piglet', price: 15 },
+    ],
+    greeting: 'Every one of these is looking for a companion — pick whichever one suits you.',
   },
 ];
 

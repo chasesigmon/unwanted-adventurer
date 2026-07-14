@@ -195,6 +195,20 @@ export const QUEST_ICON_NOT_STARTED_FRAME = 0;
 export const QUEST_ICON_READY_FRAME = 1;
 export const QUEST_ICON_IN_PROGRESS_FRAME = 2;
 
+// A player's own companion pet (a later follow-up ask) — one small
+// 2-frame (idle bob) spritesheet per kind, generated via Python/PIL same
+// as every other new sprite this session, rather than the full
+// multi-direction walk-cycle sheet a real character/monster uses (see
+// characterSprites.ts) — a much lighter-weight "creature", not a whole
+// new playable race.
+export const PET_TEXTURE_KEYS: Record<'puppy' | 'kitten' | 'piglet', string> = {
+  puppy: 'pet-puppy',
+  kitten: 'pet-kitten',
+  piglet: 'pet-piglet',
+};
+export const PET_FRAME_WIDTH = 24;
+export const PET_FRAME_HEIGHT = 24;
+
 export const CHAR_SCALE = 0.275;
 export const CORPSE_SCALE = 0.35;
 // One server round trip per tile-step, throttled the same way holding a

@@ -112,6 +112,10 @@
           <button type="button" id="status-toggle" class="corner-btn" title="Collapse">&minus;</button>
         </div>
 
+        <div id="group-panel" class="panel" hidden>
+          <div id="group-members" class="panel-body"></div>
+        </div>
+
         <div id="target-panel" class="panel" hidden>
           <div class="panel-body">
             <span id="target-name"></span>
@@ -318,6 +322,11 @@
         <div id="action-bar-wrapper">
           <button id="action-bar-toggle" type="button" title="Collapse action bar">&#9662;</button>
           <div id="action-bar"></div>
+          <div id="action-bar-dock-controls">
+            <button id="action-bar-dock-left" type="button" title="Dock left">&#9664;</button>
+            <button id="action-bar-dock-down" type="button" title="Dock bottom" hidden>&#9660;</button>
+            <button id="action-bar-dock-right" type="button" title="Dock right">&#9654;</button>
+          </div>
         </div>
 
         <div id="sleep-overlay" hidden>

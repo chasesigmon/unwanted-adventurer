@@ -140,6 +140,26 @@ export const SCUTUM_SKILL = 'scutum';
 // game.gateway.ts's handleCastMurusLapideus.
 export const MURUS_LAPIDEUS_SKILL = 'murus lapideus';
 
+// The Necromancer Chamber's own teacher (a later follow-up ask) — a
+// one-time, gold-bought skill rather than a podium book chance, and a
+// click-a-corpse targeted spell rather than a click-a-tile one (see
+// game.gateway.ts's handleCastAnimateDead) — same "learn at
+// STARTING_SKILL_PERCENT" shape as every other skill though.
+export const ANIMATE_DEAD_SKILL = 'animate dead';
+export const ANIMATE_DEAD_PRICE = 10;
+export const ANIMATE_DEAD_MANA_COST = 15;
+export const ANIMATE_DEAD_COOLDOWN_MS = 3 * 60 * 1000;
+// "Only have 1 animated monster until they reach level 20, then they can
+// have 2."
+export const ANIMATE_DEAD_LEVEL_20_THRESHOLD = 20;
+export const ANIMATE_DEAD_CAP_BEFORE_LEVEL_20 = 1;
+export const ANIMATE_DEAD_CAP_AT_LEVEL_20 = 2;
+export function animatedMonsterCapFor(level: number): number {
+  return level >= ANIMATE_DEAD_LEVEL_20_THRESHOLD ? ANIMATE_DEAD_CAP_AT_LEVEL_20 : ANIMATE_DEAD_CAP_BEFORE_LEVEL_20;
+}
+// "The animated monster should have 2x the hp of the original monster."
+export const ANIMATE_DEAD_HP_MULTIPLIER = 2;
+
 // A skill with an entry here can't be re-queued until this long (wall-
 // clock ms) after it was last used — checked server-side (see
 // game.gateway.ts's engageInDirection) and rendered client-side as a
@@ -167,6 +187,8 @@ export const SKILL_COOLDOWN_MS: Partial<Record<string, number>> = {
   // game.gateway.ts's handleLucemCommand/handleCeleritasCommand).
   [LUCEM_SKILL]: 5 * 60 * 1000,
   [CELERITAS_SKILL]: 5 * 60 * 1000,
+  // "A 3 minute cooldown" (a later follow-up ask, for animate dead).
+  [ANIMATE_DEAD_SKILL]: ANIMATE_DEAD_COOLDOWN_MS,
 };
 
 export const RACE_INNATE_SKILLS: Record<Race, string[]> = {

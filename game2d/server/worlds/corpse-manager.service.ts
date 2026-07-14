@@ -63,17 +63,23 @@ export class CorpseManagerService {
     mapName: MapName,
     row: number,
     col: number,
-    killedBy?: string
+    killedBy?: string,
+    gold?: number,
+    sourceMaxHp?: number,
+    sourceAttackDamage?: number
   ): CorpseSnapshot {
     const corpse: CorpseSnapshot = {
       id: randomUUID(),
       kind,
       level,
       items,
+      gold,
       map: mapName,
       row,
       col,
       killedBy,
+      sourceMaxHp,
+      sourceAttackDamage,
     };
     this.corpses.set(corpse.id, corpse);
     this.expiresAt.set(corpse.id, Date.now() + CORPSE_TTL_MS);
@@ -94,7 +100,13 @@ export class CorpseManagerService {
   // monster corpse, sacrificing it) does that now.
   clearItems(id: string): void {
     const corpse = this.corpses.get(id);
-    if (corpse) corpse.items = [];
+    if (!corpse) return;
+    corpse.items = [];
+    // A follow-up bug fix: a corpse's own flat coin drop (see
+    // CorpseSnapshot.gold) was never cleared here, so clicking "grab all"
+    // more than once on the same corpse re-granted its gold every time
+    // until it expired.
+    corpse.gold = 0;
   }
 
   // Removes and returns a single item from a corpse (for "click one item

@@ -16,6 +16,9 @@ import { PlayersService } from '../players/players.service.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
 import { MonsterManagerService } from '../monsters/monster-manager.service.js';
 import { CorpseManagerService, bodyPartLabelFor, raceForBodyPart } from '../worlds/corpse-manager.service.js';
+import { PetManagerService } from '../pets/pet-manager.service.js';
+import { AnimatedMonsterManagerService } from '../pets/animated-monster-manager.service.js';
+import { PET_KINDS, PET_COMMANDS, type PetKind, type PetCommand } from '../../shared/pets.js';
 import { WorldClockService } from '../worlds/world-clock.service.js';
 import { findVendor } from '../worlds/vendors.js';
 import { MONSTER_SPECIES } from '../monsters/monster.js';
@@ -34,7 +37,7 @@ import {
 } from '../../shared/maps.js';
 import { resolveMove } from '../worlds/resolveMove.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
-import { STARTING_MAP, DIRECTIONS, MAP_NAMES, HOUSE_NAMES, SPECIALIZATION_PATHS, SPECIALIZATION_LEVEL_REQUIREMENT, houseForMap } from '../../shared/constants.js';
+import { STARTING_MAP, DIRECTIONS, MAP_NAMES, HOUSE_NAMES, SPECIALIZATION_PATHS, SPECIALIZATION_LEVEL_REQUIREMENT, houseForMap, specializationForMap } from '../../shared/constants.js';
 import {
   type CombatantStats,
   PUNCH_SKILL,
@@ -71,6 +74,10 @@ import {
   BASE_ARMOR_CLASS,
   armorClassFor,
   armorEquipmentBonus,
+  dexterityEquipmentBonus,
+  intelligenceEquipmentBonus,
+  isRingItem,
+  resolveRingSlot,
   startingSkills,
   resistanceGrantForItem,
   RESISTANCE_SKILL_STARTING_PERCENT,
@@ -105,6 +112,8 @@ import type {
   UseItemAck,
   RestState,
   BuyAck,
+  PetCommandAck,
+  AnimatedMonsterCommandAck,
   EatBrainsAck,
   SacrificeAck,
   MoveAck,
@@ -140,7 +149,7 @@ import {
   isBenchBlocked,
   isPortalBlocked,
 } from '../../shared/lighting.js';
-import { WAND_ITEM } from '../../shared/equipment.js';
+import { WAND_ITEM, isWandItem } from '../../shared/equipment.js';
 import {
   LUCEM_SKILL,
   IRRIGO_SKILL,
@@ -153,6 +162,11 @@ import {
   EXARME_SKILL,
   SCUTUM_SKILL,
   MURUS_LAPIDEUS_SKILL,
+  ANIMATE_DEAD_SKILL,
+  ANIMATE_DEAD_PRICE,
+  ANIMATE_DEAD_MANA_COST,
+  ANIMATE_DEAD_HP_MULTIPLIER,
+  animatedMonsterCapFor,
 } from '../../shared/skills.js';
 import {
   LUCEM_BOOK_MAP,
@@ -185,6 +199,11 @@ import {
   THIRST_RESTORE_PERCENT,
   HUNGER_RESTORE_PERCENT,
   MAX_HUNGER_THIRST,
+  SALMON_ITEM,
+  SALMON_HUNGER_RESTORE_PERCENT,
+  HP_POTION_ITEM,
+  MP_POTION_ITEM,
+  POTION_RESTORE_AMOUNT,
 } from '../../shared/items.js';
 import { questDefinition, QUESTS, LEARN_SPELLS_QUEST_ID, allObjectivesDone } from '../../shared/quests.js';
 import { MONSTER_KINDS } from '../../shared/constants.js';
@@ -407,6 +426,11 @@ const HEAL_PERCENT_RANGE: Record<RestState, [number, number]> = {
   resting: [9, 12],
   sleeping: [10, 15],
 };
+// A later follow-up ask: "increasing intelligence points will also help
+// increase the amount of mana gained on rest" — +2% extra mana regen
+// percent per intelligence point (see applyStatTick's own manaPercent),
+// on top of whichever restState percent above; hp is unaffected.
+const INTELLIGENCE_MANA_REGEN_BONUS_PER_POINT = 0.02;
 const STAT_TICK_FLAVOR: Record<RestState, string> = {
   awake: 'You catch your breath',
   resting: 'You rest quietly',
@@ -469,6 +493,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     private readonly worldManager: WorldManagerService,
     private readonly monsterManager: MonsterManagerService,
     private readonly corpseManager: CorpseManagerService,
+    private readonly petManager: PetManagerService,
+    private readonly animatedMonsterManager: AnimatedMonsterManagerService,
     private readonly worldClock: WorldClockService,
     private readonly authService: AuthService,
     private readonly sessionStore: SessionStoreService,
@@ -539,9 +565,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.monsterManager.wanderAll(this.combatTickCount);
       this.resolveMonsterInitiatedAttack(this.combatTickCount);
       this.monsterManager.respawnBelowMax();
+      // A simple first pass (a later follow-up ask) — 'follow' actually
+      // moves the pet toward its owner every tick; 'attack' is accepted
+      // and stored (see handlePetCommand) but doesn't deal damage of its
+      // own yet, same "stated future mechanic" scope as resurrection
+      // (see PetManagerService's own doc comment) — full pet-vs-monster
+      // combat (and the monster hitting back) is still to come.
+      const petMaps = this.petManager.tickAll();
+      // Same "follow works, attack is stored but not wired to real
+      // damage yet" first-pass scope as pets above.
+      const animatedMonsterMaps = this.animatedMonsterManager.tickAll();
       const expiredCorpseMaps = this.corpseManager.removeExpired();
       const stoneBlockMaps = this.removeExpiredStoneBlocks();
-      const mapsToBroadcast = new Set<MapName>([...ACTIVE_MONSTER_MAPS, ...expiredCorpseMaps, ...stoneBlockMaps]);
+      const mapsToBroadcast = new Set<MapName>([...ACTIVE_MONSTER_MAPS, ...expiredCorpseMaps, ...stoneBlockMaps, ...petMaps, ...animatedMonsterMaps]);
       for (const mapName of mapsToBroadcast) {
         this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
       }
@@ -654,7 +690,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       Math.min(statMax, current + Math.round((healPercent / 100) * statMax));
 
     const hp = healed(client.data.hp, client.data.maxHp, percent);
-    let mana = healed(client.data.mana, client.data.maxMana, percent);
+    // A later follow-up ask: "increasing intelligence points will also
+    // help increase the amount of mana gained on rest" — mana regen
+    // specifically (not hp) gets an extra multiplicative bonus per
+    // intelligence point, on top of whichever restState percent above.
+    const manaPercent = percent * (1 + client.data.intelligence * INTELLIGENCE_MANA_REGEN_BONUS_PER_POINT);
+    let mana = healed(client.data.mana, client.data.maxMana, manaPercent);
 
     // Lucem's ongoing upkeep (item 3's follow-up ask) — drains a little
     // mana every tick while lit, applied after this tick's own regen so
@@ -752,7 +793,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       mimicForm: client.data.mimicForm,
       eatBrainsReadyAtTick: client.data.eatBrainsReadyAtTick,
       skillCooldowns: client.data.skillCooldowns,
-      armorClass: armorClassFor(client.data.dexterity, armorEquipmentBonus(client.data.equipment)),
+      armorClass: armorClassFor(client.data.dexterity + dexterityEquipmentBonus(client.data.equipment), armorEquipmentBonus(client.data.equipment)),
       deathCount: client.data.deathCount,
       statPointsAvailable: client.data.statPointsAvailable,
       mapUnlocked: client.data.mapUnlocked,
@@ -791,6 +832,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   private mapStateFor(mapName: MapName): MapStatePayload {
     const state = this.worldManager.getMapState(mapName);
     state.stoneBlocks = this.stoneBlockSnapshotsForMap(mapName);
+    state.pets = this.petManager.getSnapshotsForMap(mapName);
+    state.animatedMonsters = this.animatedMonsterManager.getSnapshotsForMap(mapName);
     return state;
   }
 
@@ -1132,6 +1175,30 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, message };
   }
 
+  // The Necromancer Chamber's own teacher (a later follow-up ask) — a
+  // one-time, gold-bought skill purchase, same "permanent once done"
+  // shape as chooseHouse/chooseSpecialization above, just spending gold
+  // instead of a level check. Only the necromancer path may buy it.
+  @SubscribeMessage('buyAnimateDead')
+  handleBuyAnimateDead(@ConnectedSocket() client: GameSocket): { ok: boolean; message?: string } {
+    if (client.data.specialization !== 'necromancer') {
+      return { ok: false, message: 'Only necromancers may learn this.' };
+    }
+    if (client.data.skills[ANIMATE_DEAD_SKILL] !== undefined) {
+      return { ok: false, message: 'You have already learned animate dead.' };
+    }
+    if (client.data.gold < ANIMATE_DEAD_PRICE) {
+      return { ok: false, message: `You need ${ANIMATE_DEAD_PRICE} coins to learn animate dead.` };
+    }
+    client.data.gold -= ANIMATE_DEAD_PRICE;
+    client.data.skills[ANIMATE_DEAD_SKILL] = STARTING_SKILL_PERCENT;
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    const message = 'You have learned animate dead.';
+    this.systemMessage(client, message);
+    return { ok: true, message };
+  }
+
   // A small chance per attack/defense (hit or miss doesn't matter here,
   // there's no miss chance at all in this project) to grow the given
   // skill by 1 point, same shape as the text game's own skill growth.
@@ -1436,7 +1503,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const hasWeapon = attacker?.carriedItems.some((item) => item.toLowerCase().includes('dagger')) ?? false;
     const skillPercent = attacker ? (attacker.skills[hasWeapon ? DAGGER_SKILL : PUNCH_SKILL] ?? 0) : 0;
     const weaponBonus = hasWeapon ? (WEAPON_DAMAGE_BONUS['bone dagger'] ?? 0) : 0;
-    const defenderAC = armorClassFor(client.data.dexterity, armorEquipmentBonus(client.data.equipment));
+    const defenderAC = armorClassFor(client.data.dexterity + dexterityEquipmentBonus(client.data.equipment), armorEquipmentBonus(client.data.equipment));
     // A species with its own flat attackDamage (a later follow-up ask:
     // "the imps have a physical attack/punch that should do 5 damage per
     // hit") counter-attacks for exactly that instead of the shared
@@ -1757,6 +1824,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       await this.persistPosition(client);
     }
     this.worldManager.removePlayer(username);
+    // "Lasts the entire time the player is logged in" — unlike a pet
+    // (which persists across sessions), an animated monster is removed
+    // the moment its owner disconnects.
+    this.animatedMonsterManager.removeAllForOwner(username);
 
     if (map) {
       this.server.to(map).emit('map:state', this.mapStateFor(map));
@@ -1813,6 +1884,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         const requiredHouse = houseForMap(preview.mapName);
         if (requiredHouse && client.data.house !== requiredHouse) {
           return { ok: false, player: this.snapshotFor(client), message: `Only ${requiredHouse} students may enter here.` };
+        }
+      }
+      // Specialization chamber gate (a later follow-up ask: "players can
+      // only enter the specialization room of what specialization they
+      // have chosen") — same shape as the house gate above.
+      if (preview.ok && preview.transitioned) {
+        const requiredSpecialization = specializationForMap(preview.mapName);
+        if (requiredSpecialization && client.data.specialization !== requiredSpecialization) {
+          return { ok: false, player: this.snapshotFor(client), message: 'Only students of this specialization may enter here.' };
         }
       }
     }
@@ -1950,7 +2030,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleEngageRangedAttack(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     const limiter = this.commandLimiters.get(client.id);
     if (limiter && !limiter.tryConsume()) return { ok: false };
-    if (client.data.equipment.weapon !== WAND_ITEM) {
+    if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to auto-attack at range.' };
     }
     if (this.isParalyzed(`player:${client.data.username}`)) {
@@ -2029,7 +2109,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // own success chance: intelligence a flat +1% per point, luck a
     // CHANCE (luck x 10%) of an extra +10% for this one cast — see each
     // function's own doc comment in combat/formulas.ts.
-    const intelligenceBonus = intelligenceSpellBonus(client.data.intelligence);
+    const intelligenceBonus = intelligenceSpellBonus(client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment));
     const luckBonus = rollLuckSpellSuccessBonus(client.data.luck);
     // A new-player handicap (a later follow-up ask) — an extra flat 20%
     // while under level 15, gone entirely at 15 and above (a cliff, not
@@ -2169,7 +2249,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // through resolveHitOnMonster/Npc/Player, which are tuned for
       // melee's own formula/avoidance/counter-attack rules.
       if (session.skill === WAND_BOLT_SKILL) {
-        if (client.data.equipment.weapon !== WAND_ITEM) {
+        if (!isWandItem(client.data.equipment.weapon)) {
           this.playerCombat.delete(username);
           continue;
         }
@@ -2233,7 +2313,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
             this.recordMonsterKillForQuests(casterSocket, monster.kind);
           }
           const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
-          this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, burn.casterUsername);
+          this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, burn.casterUsername, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
         }
       } else {
         const npc = NPCS.find((n) => n.id === burn.targetId && n.map === burn.mapName);
@@ -2278,7 +2358,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // A follow-up ask: "every point into intelligence also increases
     // ranged damage with a wand" — a flat +1 damage per point on top of
     // the base WAND_BOLT_DAMAGE.
-    const wandBoltDamage = WAND_BOLT_DAMAGE + client.data.intelligence;
+    const wandBoltDamage = WAND_BOLT_DAMAGE + client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment);
     if (session.targetKind === 'monster') {
       const monster = this.monsterManager.getMonster(session.targetId);
       if (!monster) {
@@ -2297,7 +2377,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         leveledUp = grantResult.leveledUp;
         expGained = grantResult.message ? undefined : rawExpGained;
         const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
-        this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username);
+        this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
         this.recordMonsterKillForQuests(client, monster.kind);
         this.playerCombat.delete(client.data.username);
       }
@@ -2337,7 +2417,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           const tile = this.randomFreeTileFor(npc.map);
           npc.row = tile.row;
           npc.col = tile.col;
-          this.playerCombat.delete(client.data.username);
         } else if (npc.carriedItems) {
           // A follow-up bug fix: this wand-bolt kill path (unlike
           // resolveHitOnNpc's own melee path) never re-armed the
@@ -2347,6 +2426,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           npc.carriedItems = ['wooden club'];
         }
         npc.hp = npc.maxHp;
+        // A follow-up bug fix: "killed the training skeleton, [it] reset
+        // its hp back to full, but the player was still auto attacking"
+        // — this delete used to live ONLY inside the `!npc.immortal`
+        // branch above, so a wand-bolt kill of an IMMORTAL npc (the
+        // training skeleton always is) never actually stopped the
+        // session, unlike resolveHitOnNpc's own melee path (already
+        // fixed the same way). Unconditional now, covering both cases.
+        this.playerCombat.delete(client.data.username);
       }
       const message = died
         ? npc.immortal
@@ -2438,7 +2525,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // scaled to the monster's own level (see manaCrystalForLevel);
       // lootable, no mechanical use yet.
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
-      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username);
+      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
       this.recordMonsterKillForQuests(client, monster.kind);
       this.playerCombat.delete(client.data.username);
     }
@@ -2704,7 +2791,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
     const growthMessages: string[] = [];
-    const defenderAC = armorClassFor(targetClient.data.dexterity, armorEquipmentBonus(targetClient.data.equipment));
+    const defenderAC = armorClassFor(targetClient.data.dexterity + dexterityEquipmentBonus(targetClient.data.equipment), armorEquipmentBonus(targetClient.data.equipment));
 
     let damage = 0;
     let avoidedVerb: string | undefined;
@@ -2885,7 +2972,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const items = [...corpse.items];
     this.corpseManager.clearItems(corpseId);
     client.data.inventory = [...client.data.inventory, ...items];
-    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    // A flat coin drop (a later follow-up ask) — added straight to gold,
+    // not another inventory item string.
+    if (corpse.gold) client.data.gold += corpse.gold;
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory, gold: client.data.gold });
     void this.persistStats(client);
 
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
@@ -3008,9 +3098,36 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: `You don't have enough gold (${item.price} needed).` };
     }
 
+    // The Pet Shop's own 3 items (a later follow-up ask) are special —
+    // buying one creates a real Pet, not an inventory item string, and
+    // "a player should only be allowed to have 1 pet at a time".
+    if (vendorId === 'bramwick-pet-shop' && (PET_KINDS as readonly string[]).includes(item.label)) {
+      if (this.petManager.hasPet(client.data.username)) {
+        return { ok: false, message: 'You already have a pet.' };
+      }
+      const pet = this.petManager.buy(client.data.username, item.label as PetKind, client.data.map, vendor.row, vendor.col);
+      if (!pet) {
+        return { ok: false, message: 'You already have a pet.' };
+      }
+      client.data.gold -= item.price;
+      this.worldManager.updateState(client.data.username, { gold: client.data.gold });
+      void this.persistStats(client);
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      return { ok: true, gold: client.data.gold, message: `You buy a ${item.label} for ${item.price} gold. It's yours now!` };
+    }
+
     client.data.gold -= item.price;
     client.data.inventory = [...client.data.inventory, item.label];
-    this.worldManager.updateState(client.data.username, { gold: client.data.gold, inventory: client.data.inventory });
+    // A later follow-up ask: "should sell a canteen... that comes fully
+    // filled at 6/6" — canteenDrinks is a single player-level counter
+    // (not per-item charge, see CANTEEN_CAPACITY's own doc comment), so
+    // buying one tops it straight back up to full.
+    if (item.label === CANTEEN_ITEM) client.data.canteenDrinks = CANTEEN_CAPACITY;
+    this.worldManager.updateState(client.data.username, {
+      gold: client.data.gold,
+      inventory: client.data.inventory,
+      canteenDrinks: client.data.canteenDrinks,
+    });
     void this.persistStats(client);
 
     // Every item label sold before this batch (torch, bone dagger, ...) is
@@ -3019,7 +3136,30 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // carry their own article/quantifier, so prepending another one would
     // read as "You buy a a cup of water..."
     const article = /^(a|an|some)\s/i.test(item.label) ? '' : 'a ';
-    return { ok: true, inventory: client.data.inventory, gold: client.data.gold, message: `You buy ${article}${item.label} for ${item.price} gold.` };
+    return {
+      ok: true,
+      inventory: client.data.inventory,
+      gold: client.data.gold,
+      canteenDrinks: item.label === CANTEEN_ITEM ? client.data.canteenDrinks : undefined,
+      message: `You buy ${article}${item.label} for ${item.price} gold.`,
+    };
+  }
+
+  // Commanding your own pet (a later follow-up ask) — "stay by side,
+  // attack, sleep" — no reach check, an owner can redirect their pet
+  // from anywhere, same as a real trained animal responding to its own
+  // owner's voice regardless of distance.
+  @SubscribeMessage('petCommand')
+  handlePetCommand(@ConnectedSocket() client: GameSocket, @MessageBody() command: unknown): PetCommandAck {
+    if (typeof command !== 'string' || !(PET_COMMANDS as readonly string[]).includes(command)) {
+      return { ok: false, message: 'Invalid command.' };
+    }
+    const pet = this.petManager.setCommand(client.data.username, command as PetCommand);
+    if (!pet) {
+      return { ok: false, message: "You don't have a pet (or it needs to be resurrected first)." };
+    }
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    return { ok: true, pet };
   }
 
   // Zombie-only: heals 20% hp/mana and starts a 4-world-tick
@@ -3323,7 +3463,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[RESERA_SKILL] === undefined) {
       return { ok: false, message: "You don't know the resera spell yet." };
     }
-    if (client.data.equipment.weapon !== WAND_ITEM) {
+    if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const parsed = z
@@ -3456,7 +3596,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (targetKind === 'monster') {
       this.monsterManager.setAggro(targetId, client.data.username, this.combatTickCount);
     }
-    if (client.data.equipment.weapon === WAND_ITEM) {
+    if (isWandItem(client.data.equipment.weapon)) {
       this.playerCombat.set(client.data.username, {
         targetKind,
         targetId,
@@ -3474,7 +3614,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[AUGUE_SKILL] === undefined) {
       return { ok: false, message: "You don't know the augue spell yet." };
     }
-    if (client.data.equipment.weapon !== WAND_ITEM) {
+    if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const cooldownUntil = client.data.skillCooldowns[AUGUE_SKILL];
@@ -3636,7 +3776,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       expGained = grantResult.message ? undefined : rawExpGained;
       if (grantResult.message) growthMessages.push(grantResult.message);
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
-      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username);
+      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
       this.recordMonsterKillForQuests(client, monster.kind);
       this.playerCombat.delete(client.data.username);
     }
@@ -3748,7 +3888,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[STUPEFACIUNT_SKILL] === undefined) {
       return { ok: false, message: "You don't know the stupefaciunt spell yet." };
     }
-    if (client.data.equipment.weapon !== WAND_ITEM) {
+    if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const cooldownUntil = client.data.skillCooldowns[STUPEFACIUNT_SKILL];
@@ -3826,7 +3966,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[EXARME_SKILL] === undefined) {
       return { ok: false, message: "You don't know the exarme spell yet." };
     }
-    if (client.data.equipment.weapon !== WAND_ITEM) {
+    if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const cooldownUntil = client.data.skillCooldowns[EXARME_SKILL];
@@ -3973,7 +4113,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, message);
       return { ok: false, message };
     }
-    if (client.data.equipment.weapon !== WAND_ITEM) {
+    if (!isWandItem(client.data.equipment.weapon)) {
       const message = 'You need a wand equipped to cast spells.';
       this.systemMessage(client, message);
       return { ok: false, message };
@@ -4065,7 +4205,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[MURUS_LAPIDEUS_SKILL] === undefined) {
       return { ok: false, message: "You don't know the murus lapideus spell yet." };
     }
-    if (client.data.equipment.weapon !== WAND_ITEM) {
+    if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const cooldownUntil = client.data.skillCooldowns[MURUS_LAPIDEUS_SKILL];
@@ -4137,6 +4277,97 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
   }
 
+  // Animate dead (a later follow-up ask) — "click the spell, then click a
+  // monster corpse" (see WorldScene's own animateDeadTargeting flow),
+  // same two-step shape as murus lapideus just targeting a corpse instead
+  // of a tile. Turns the corpse into a controllable AnimatedMonster with
+  // 2x the original monster's max hp and its same attack damage (see
+  // CorpseSnapshot.sourceMaxHp/sourceAttackDamage, captured at the
+  // monster's own moment of death), capped per animatedMonsterCapFor.
+  @SubscribeMessage('castAnimateDead')
+  handleCastAnimateDead(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    if (client.data.skills[ANIMATE_DEAD_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the animate dead spell yet." };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    const cooldownUntil = client.data.skillCooldowns[ANIMATE_DEAD_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Animate dead is still recharging (${secondsLeft}s left).` };
+    }
+    const parsed = z.object({ corpseId: z.string() }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid target.' };
+    }
+    const corpse = this.corpseManager.get(parsed.data.corpseId);
+    if (!corpse || corpse.map !== client.data.map) {
+      return { ok: false, message: "That corpse isn't here anymore." };
+    }
+    if (!(MONSTER_KINDS as readonly string[]).includes(corpse.kind) || corpse.sourceMaxHp === undefined) {
+      return { ok: false, message: 'Only a monster corpse can be animated.' };
+    }
+    if (!this.isWithinLootReach(client, corpse.row, corpse.col)) {
+      return { ok: false, message: "You're too far away to reach the corpse." };
+    }
+    if (this.animatedMonsterManager.countFor(client.data.username) >= animatedMonsterCapFor(client.data.level)) {
+      return { ok: false, message: 'You cannot control any more animated monsters.' };
+    }
+    if (client.data.mana < ANIMATE_DEAD_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast animate dead (${ANIMATE_DEAD_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= ANIMATE_DEAD_MANA_COST;
+
+    let message: string;
+    if (!this.rollSpellSuccess(client, ANIMATE_DEAD_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else {
+      this.startSkillCooldown(client, ANIMATE_DEAD_SKILL);
+      this.animatedMonsterManager.animate(
+        client.data.username,
+        client.data.level,
+        corpse.kind as MonsterKind,
+        `Animated ${corpse.kind}`,
+        corpse.sourceMaxHp * ANIMATE_DEAD_HP_MULTIPLIER,
+        corpse.sourceAttackDamage ?? 0,
+        client.data.map,
+        corpse.row,
+        corpse.col
+      );
+      this.corpseManager.remove(corpse.id);
+      message = `The ${corpse.kind}'s corpse shudders and rises, bound to your will.`;
+    }
+
+    const growth = this.maybeGrowSpellSkill(client, ANIMATE_DEAD_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    this.systemMessage(client, message);
+    return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+  }
+
+  // Commanding your own animated monster (a later follow-up ask) — same
+  // "no reach check, an owner can redirect from anywhere" shape as
+  // handlePetCommand.
+  @SubscribeMessage('animatedMonsterCommand')
+  handleAnimatedMonsterCommand(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): AnimatedMonsterCommandAck {
+    const parsed = z.object({ id: z.string(), command: z.enum(PET_COMMANDS) }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid command.' };
+    }
+    const animatedMonster = this.animatedMonsterManager.setCommand(client.data.username, parsed.data.id, parsed.data.command);
+    if (!animatedMonster) {
+      return { ok: false, message: "You don't have that animated monster." };
+    }
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    return { ok: true, animatedMonster };
+  }
+
   // Drink/pour/irrigo (items 7 & 8's follow-up asks) all act on a single
   // targeted inventory item — this validates the index/item once for all
   // three rather than repeating it, returning the item string on success
@@ -4206,7 +4437,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[IRRIGO_SKILL] === undefined) {
       return { ok: false, message: "You don't know the irrigo spell yet." };
     }
-    if (client.data.equipment.weapon !== WAND_ITEM) {
+    if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast irrigo.' };
     }
     const resolved = this.resolveCanteenTarget(client, itemIndex);
@@ -4395,7 +4626,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, message);
       return { ok: false, message };
     }
-    if (client.data.equipment.weapon !== WAND_ITEM) {
+    if (!isWandItem(client.data.equipment.weapon)) {
       const message = 'You need a wand equipped to cast lucem.';
       this.systemMessage(client, message);
       return { ok: false, message };
@@ -4466,7 +4697,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, message);
       return { ok: false, message };
     }
-    if (client.data.equipment.weapon !== WAND_ITEM) {
+    if (!isWandItem(client.data.equipment.weapon)) {
       const message = 'You need a wand equipped to cast spells.';
       this.systemMessage(client, message);
       return { ok: false, message };
@@ -4740,6 +4971,26 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       messages.push('You eat the jerky, easing your hunger a little.');
       return messages;
     }
+    // Bramwick General Shop's own salmon (a later follow-up ask) — same
+    // shape as jerky above, its own bigger restore amount.
+    if (item === SALMON_ITEM) {
+      client.data.hunger = Math.min(MAX_HUNGER_THIRST, client.data.hunger + SALMON_HUNGER_RESTORE_PERCENT);
+      messages.push('You eat the salmon, filling your belly nicely.');
+      return messages;
+    }
+    // Bramwick Potions' own hp/mp potions (a later follow-up ask) — flat
+    // restore, capped at the player's own current max (which can be
+    // above 100, unlike hunger/thirst's fixed 0-100 scale).
+    if (item === HP_POTION_ITEM) {
+      client.data.hp = Math.min(client.data.maxHp, client.data.hp + POTION_RESTORE_AMOUNT);
+      messages.push('You drink the hp potion, recovering some health.');
+      return messages;
+    }
+    if (item === MP_POTION_ITEM) {
+      client.data.mana = Math.min(client.data.maxMana, client.data.mana + POTION_RESTORE_AMOUNT);
+      messages.push('You drink the mp potion, recovering some mana.');
+      return messages;
+    }
     const grant = resistanceGrantForItem(item);
     if (grant) {
       if (client.data.skills[grant.skill] === undefined) {
@@ -4838,7 +5089,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const inventory = [...client.data.inventory];
     inventory.splice(itemIndex, 1);
 
-    const slot = EQUIPMENT_SLOT_FOR_ITEM[item];
+    // A ring's own slot isn't fixed (a later follow-up ask) — resolved
+    // fresh against whichever hands are already occupied every time one
+    // gets equipped, instead of EQUIPMENT_SLOT_FOR_ITEM's ordinary static
+    // per-item slot.
+    const slot = isRingItem(item) ? resolveRingSlot(client.data.equipment) : EQUIPMENT_SLOT_FOR_ITEM[item];
     if (slot) {
       const previous = client.data.equipment[slot];
       if (previous) inventory.push(previous);

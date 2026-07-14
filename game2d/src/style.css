@@ -471,7 +471,12 @@ body {
   top: 12px;
   left: 12px;
   display: flex;
-  align-items: center;
+  /* A follow-up ask: "make the collapse button... the same height as the
+     player status label" — stretch (not center) makes the toggle button
+     naturally match #status-bar's own height instead of the toggle's own
+     fixed 40px .corner-btn size towering over the label's much shorter
+     single-line height. */
+  align-items: stretch;
   gap: 8px;
   /* Stays visible/usable above the sleep overlay (z-index 50) — sleeping
      only blacks out the world view, not the player's own vitals. */
@@ -485,6 +490,12 @@ body {
 #status-bar {
   position: static;
   padding: 6px 10px;
+}
+
+/* Overrides .corner-btn's own fixed height so the stretch alignment
+   above actually takes effect. */
+#status-toggle {
+  height: auto;
 }
 
 /* Collapsing now hides the whole box outright (same shape as
@@ -503,8 +514,83 @@ body {
 
 /* ---------- Target panel (left-click a player/npc/monster to select — item 11) ---------- */
 
-#target-panel {
+/* ---------- Group panel (a player's own pet — a follow-up ask) ---------- */
+
+#group-panel {
   top: 50px;
+  left: 12px;
+  padding: 6px 10px;
+  z-index: 60;
+  min-width: 140px;
+}
+
+/* A member card (a later follow-up ask's animate dead spell added a 2nd
+   kind of group member alongside a pet, so the panel now renders a LIST
+   of cards, one per companion, instead of one fixed pet-only block). */
+.group-member + .group-member {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #333;
+}
+
+.group-member-name {
+  color: #ddd;
+  margin-bottom: 4px;
+}
+
+.group-member-hp-bar {
+  width: 100%;
+  height: 6px;
+  background: #14301a;
+  border: 1px solid #225a2a;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.group-member-hp-fill {
+  height: 100%;
+  background: #3ecf5e;
+  transition: width 0.15s linear;
+}
+
+.group-member-exp {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #999;
+}
+
+.group-member-commands {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.group-member-commands button {
+  flex: 1;
+  background: #1e1e2a;
+  border: 1px solid #444;
+  color: #ccc;
+  font-size: 10px;
+  padding: 3px 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.group-member-commands button:hover {
+  background: #2a2a3a;
+}
+
+.group-member-commands button.active {
+  border-color: #f0c040;
+  color: #f0c040;
+}
+
+/* A follow-up ask: "selected targets/enemies should appear below any
+   other open labels" — pushed down to make room for the group panel
+   above it (a fixed offset, not a dynamic reflow — the group panel is
+   only ever shown/hidden as a whole, never resized). */
+#target-panel {
+  top: 100px;
   left: 12px;
   padding: 6px 10px;
   z-index: 60;
@@ -1445,6 +1531,61 @@ body {
 
 #action-bar.collapsed {
   display: none;
+}
+
+/* Docking (a follow-up ask) — left/right dock reshapes the same 20
+   slots into a 2-wide x 10-tall grid instead of 10-wide x 2-tall; each
+   slot's own grid-row/grid-column is set directly in JS (see
+   actionBar.ts's applyDockLayout) rather than relying on the grid's own
+   auto-flow, since which of the two original rows lands in which of the
+   two new columns flips between left- and right-docked. */
+#action-bar.dock-vertical {
+  grid-template-columns: repeat(2, 36px);
+  grid-template-rows: repeat(10, 36px);
+}
+
+#action-bar-wrapper.dock-left {
+  left: 12px;
+  bottom: auto;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+#action-bar-wrapper.dock-right {
+  left: auto;
+  right: 12px;
+  bottom: auto;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* The dock-switch arrows sit below the bar always (same place the down
+   arrow needs to be "at the bottom of the action bar" once docked to a
+   side) — only the relevant 1-2 buttons for the CURRENT dock are ever
+   shown (see actionBar.ts's updateDockControlVisibility), the others
+   just `hidden`. */
+#action-bar-dock-controls {
+  display: flex;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+#action-bar-dock-controls button {
+  width: 28px;
+  height: 14px;
+  padding: 0;
+  background: rgba(20, 20, 28, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  color: #f0e8d0;
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#action-bar-dock-controls button:hover {
+  background: rgba(40, 40, 54, 0.85);
 }
 
 .action-slot {

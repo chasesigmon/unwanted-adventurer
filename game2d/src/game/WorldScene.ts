@@ -55,6 +55,7 @@ import {
   EXARME_SKILL,
   SCUTUM_SKILL,
   MURUS_LAPIDEUS_SKILL,
+  ANIMATE_DEAD_SKILL,
   SPELL_ATTACK_RANGE_TILES,
   DRINK_SKILL,
   POUR_SKILL,
@@ -95,7 +96,7 @@ import {
   SPECIALIZATION_CHAMBER_MAPS,
 } from '../../shared/constants.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
-import { WAND_ITEM } from '../../shared/equipment.js';
+import { WAND_ITEM, isWandItem } from '../../shared/equipment.js';
 import { questIconStateFor } from '../../shared/quests.js';
 import {
   LUCEM_BOOK_MAP,
@@ -180,6 +181,9 @@ import {
   QUEST_ICON_NOT_STARTED_FRAME,
   QUEST_ICON_READY_FRAME,
   QUEST_ICON_IN_PROGRESS_FRAME,
+  PET_TEXTURE_KEYS,
+  PET_FRAME_WIDTH,
+  PET_FRAME_HEIGHT,
   CLASSROOM_ZOOM,
   COMMON_ROOM_ZOOM,
   DORM_ZOOM,
@@ -243,8 +247,9 @@ import { openBenchModal } from '../ui/benchModal.js';
 import { openShopModal } from '../ui/shopModal.js';
 import { openTargetInfoModal } from '../ui/targetInfoModal.js';
 import { notifyMapChanged } from '../ui/mapModal.js';
-import { openNpcDialogueModal, openSpecializationDialogue, openHouseChoiceDialogue } from '../ui/npcDialogueModal.js';
+import { openNpcDialogueModal, openSpecializationDialogue, openHouseChoiceDialogue, openAnimateDeadPurchaseDialogue } from '../ui/npcDialogueModal.js';
 import { hideTargetPanel, updateTargetPanel, updateLockTargetPanel } from '../ui/targetPanel.js';
+import { updateGroupPanel } from '../ui/groupPanel.js';
 
 const autopilotStatusEl = document.getElementById('autopilot-status') as HTMLDivElement;
 
@@ -284,6 +289,15 @@ export class WorldScene extends Phaser.Scene {
   // is clicked in the action bar, consumed by the very next left-click
   // anywhere on the map (see handleLeftClick).
   private murusLapideusTargeting = false;
+  // Animate dead (a later follow-up ask: "first activating... and then
+  // clicking on the corpse of a dead monster") — same arm-then-click
+  // shape as murus lapideus above, just consumed by a CORPSE sprite's own
+  // pointerdown handler (see applyMapState) instead of handleLeftClick's
+  // generic tile lookup, since Phaser fires an interactive object's own
+  // listener before the scene-wide one below — the corpse handler always
+  // gets first refusal at this flag, so it never also opens the loot
+  // modal on the same click that casts the spell.
+  private animateDeadTargeting = false;
   // A selected stone block (a later follow-up ask: "so the player can see
   // the health and name 'Blockman'") — same "not a real combat target"
   // reasoning as lockTarget above, purely for the top-left display panel.
@@ -433,6 +447,10 @@ export class WorldScene extends Phaser.Scene {
   private otherPlayers = new Map<string, Phaser.GameObjects.Sprite>();
   private npcSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private monsterSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  // A player's own companion pet (a later follow-up ask) — keyed by pet
+  // id, same lifetime/cleanup shape as monsterSprites above.
+  private petSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  private animatedMonsterSprites = new Map<string, Phaser.GameObjects.Sprite>();
   // Murus lapideus's own summoned stone blocks (a later follow-up ask) —
   // rendered with an hp bar like an NPC/monster, but not player-clickable
   // (not asked for).
@@ -522,6 +540,14 @@ export class WorldScene extends Phaser.Scene {
       frameWidth: QUEST_ICON_FRAME_WIDTH,
       frameHeight: QUEST_ICON_FRAME_HEIGHT,
     });
+    // Companion pets (a later follow-up ask) — one small 2-frame
+    // spritesheet per kind.
+    for (const [kind, key] of Object.entries(PET_TEXTURE_KEYS)) {
+      this.load.spritesheet(key, `/pet-${kind}-spritesheet.png`, {
+        frameWidth: PET_FRAME_WIDTH,
+        frameHeight: PET_FRAME_HEIGHT,
+      });
+    }
     this.load.svg(TREE_TEXTURE_KEY, '/tree.svg', { width: 48, height: 64 });
     this.load.svg(DAGGER_TEXTURE_KEY, '/dagger.svg', { width: 16, height: 16 });
     this.load.svg(CLUB_TEXTURE_KEY, '/club.svg', { width: 16, height: 16 });
@@ -674,7 +700,8 @@ export class WorldScene extends Phaser.Scene {
       const overQuestGiverTeacher =
         Boolean(hoveredTeacher?.getData('questId')) ||
         Boolean(hoveredTeacher?.getData('specializationGate')) ||
-        Boolean(hoveredTeacher?.getData('houseChoiceGate'));
+        Boolean(hoveredTeacher?.getData('houseChoiceGate')) ||
+        Boolean(hoveredTeacher?.getData('skillPurchaseGate'));
       // A key cursor over any door or the treasure chest (a follow-up
       // ask) — every door is resera-targetable now, not just the secret
       // one (see the doorSprites click handler below).
@@ -846,7 +873,7 @@ export class WorldScene extends Phaser.Scene {
   refreshEquipmentSprites(): void {
     if (!myProfile) return;
     this.updateOwnWeaponSprite(myProfile.equipment.weapon === 'bone dagger');
-    this.updateOwnWandSprite(myProfile.equipment.weapon === WAND_ITEM);
+    this.updateOwnWandSprite(isWandItem(myProfile.equipment.weapon));
     this.updateOwnShieldSprite(myProfile.equipment.shield === 'bone shield');
     this.updateOwnTorchSprite(myProfile.equipment.shield === TORCH_ITEM);
   }
@@ -895,7 +922,7 @@ export class WorldScene extends Phaser.Scene {
   // halo) standing in for a real blur, positioned a bit further out than
   // the wand's own held position to approximate its tip.
   private updateOwnWandGlow(): void {
-    const showGlow = Boolean(myProfile && myProfile.equipment.weapon === WAND_ITEM && myProfile.wandLit);
+    const showGlow = Boolean(myProfile && isWandItem(myProfile.equipment.weapon) && myProfile.wandLit);
     this.playerWandGlow.setVisible(showGlow);
     if (!showGlow) return;
     const offset = this.weaponOffsetFor(this.facing);
@@ -1650,7 +1677,10 @@ export class WorldScene extends Phaser.Scene {
     for (const sprite of this.standingTorchSprites) sprite.destroy();
     for (const glow of this.standingTorchGlows) glow.destroy();
     const standingTorchLit = worldTimeKnown && isDarkHour(currentWorldHour);
-    const standingTorchGlowRadiusPx = LUCEM_LIGHT_RADIUS_TILES * TILE_SIZE;
+    // Matches the actual functional radius (see shared/lighting.ts's own
+    // STATIC_LIGHT_SOURCES entry for Bramwick, LUCEM_LIGHT_RADIUS_TILES + 3
+    // now — "expand the distance of the light radius offered").
+    const standingTorchGlowRadiusPx = (LUCEM_LIGHT_RADIUS_TILES + 3) * TILE_SIZE;
     this.standingTorchSprites = [];
     this.standingTorchGlows = [];
     for (const { row, col } of standingTorchPositionsFor(mapName)) {
@@ -1676,6 +1706,10 @@ export class WorldScene extends Phaser.Scene {
     this.npcSprites.clear();
     for (const sprite of this.monsterSprites.values()) this.destroyEntitySprite(sprite);
     this.monsterSprites.clear();
+    for (const sprite of this.petSprites.values()) this.destroyEntitySprite(sprite);
+    this.petSprites.clear();
+    for (const sprite of this.animatedMonsterSprites.values()) this.destroyEntitySprite(sprite);
+    this.animatedMonsterSprites.clear();
     for (const sprite of this.stoneBlockSprites.values()) this.destroyEntitySprite(sprite);
     this.stoneBlockSprites.clear();
     for (const sprite of this.corpseSprites.values()) sprite.destroy();
@@ -2485,7 +2519,7 @@ export class WorldScene extends Phaser.Scene {
     this.setIdle();
     this.updateOwnBars();
     this.updateOwnWeaponSprite(player.equipment.weapon === 'bone dagger');
-    this.updateOwnWandSprite(player.equipment.weapon === WAND_ITEM);
+    this.updateOwnWandSprite(isWandItem(player.equipment.weapon));
     this.updateOwnShieldSprite(player.equipment.shield === 'bone shield');
     // A torch burning out clears equipment.shield server-side and emits
     // exactly this 'sync' — without this, the held-torch overlay would
@@ -2620,7 +2654,7 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('scutumActive', p.scutumActive);
       this.ensureHpBar(sprite, p.hp, p.maxHp);
       this.ensureWeaponSprite(sprite, p.equipment.weapon === 'bone dagger', (sprite.getData('facing') as Facing) ?? 'down');
-      this.ensureWandSprite(sprite, p.equipment.weapon === WAND_ITEM, (sprite.getData('facing') as Facing) ?? 'down');
+      this.ensureWandSprite(sprite, isWandItem(p.equipment.weapon), (sprite.getData('facing') as Facing) ?? 'down');
       this.ensureShieldSprite(sprite, p.equipment.shield === 'bone shield', (sprite.getData('facing') as Facing) ?? 'down');
       this.ensureTorchSprite(sprite, p.equipment.shield === TORCH_ITEM, (sprite.getData('facing') as Facing) ?? 'down');
       this.applyPose(sprite, p.dancing ? 'dancing' : p.restState, CHAR_SCALE);
@@ -2676,7 +2710,12 @@ export class WorldScene extends Phaser.Scene {
       let sprite = this.monsterSprites.get(m.id);
       if (!sprite) {
         const pos = this.tilePosition(m.row, m.col);
-        sprite = this.add.sprite(pos.x, pos.y, textureKeyFor(m.kind), idleFrameFor(m.kind, 'down')).setScale(CHAR_SCALE);
+        // A rare variant (a later follow-up ask: "slightly bigger than
+        // the other monsters of its kind") — a modest scale bump, not a
+        // whole different sprite.
+        sprite = this.add
+          .sprite(pos.x, pos.y, textureKeyFor(m.kind), idleFrameFor(m.kind, 'down'))
+          .setScale(m.isRare ? CHAR_SCALE * 1.35 : CHAR_SCALE);
         sprite.setData('row', m.row);
         sprite.setData('col', m.col);
         this.monsterSprites.set(m.id, sprite);
@@ -2703,6 +2742,90 @@ export class WorldScene extends Phaser.Scene {
         if (this.targetKind === 'monster' && this.targetId === id) this.clearTarget();
       }
     }
+
+    // Companion pets (a later follow-up ask) — same create-or-update +
+    // seen-set cleanup shape as monsters above, just a single static
+    // frame (no directional walk cycle — see mapRender.ts's own
+    // PET_TEXTURE_KEYS doc comment) and a tween instead of an instant
+    // snap when it actually moves.
+    const seenPets = new Set<string>();
+    for (const pet of state.pets) {
+      seenPets.add(pet.id);
+      let sprite = this.petSprites.get(pet.id);
+      if (!sprite) {
+        const pos = this.tilePosition(pet.row, pet.col);
+        sprite = this.add.sprite(pos.x, pos.y, PET_TEXTURE_KEYS[pet.kind]).setOrigin(0.5, 0.9).setDepth(-0.4);
+        sprite.setData('row', pet.row);
+        sprite.setData('col', pet.col);
+        this.petSprites.set(pet.id, sprite);
+      } else {
+        const prevRow = sprite.getData('row') as number;
+        const prevCol = sprite.getData('col') as number;
+        if (prevRow !== pet.row || prevCol !== pet.col) {
+          sprite.setData('row', pet.row);
+          sprite.setData('col', pet.col);
+          const pos = this.tilePosition(pet.row, pet.col);
+          this.tweens.add({ targets: sprite, x: pos.x, y: pos.y, duration: REMOTE_STEP_TWEEN_MS, ease: 'Linear' });
+        }
+      }
+      sprite.setData('label', `${pet.name} (Lv ${pet.level})`);
+      sprite.setData('hp', pet.hp);
+      sprite.setData('maxHp', pet.maxHp);
+      sprite.setAlpha(pet.alive ? 1 : 0.4);
+    }
+    for (const [id, sprite] of this.petSprites) {
+      if (!seenPets.has(id)) {
+        this.destroyEntitySprite(sprite);
+        this.petSprites.delete(id);
+      }
+    }
+    // Animated monsters (a later follow-up ask's necromancer spell) —
+    // same create-or-update + seen-set cleanup shape as pets above,
+    // reusing the ordinary monster spritesheet/idle frame for its kind
+    // (see textureKeyFor/idleFrameFor above) with a violet tint so a
+    // raised corpse still reads as distinct from a live monster.
+    const seenAnimatedMonsters = new Set<string>();
+    for (const am of state.animatedMonsters) {
+      seenAnimatedMonsters.add(am.id);
+      let sprite = this.animatedMonsterSprites.get(am.id);
+      if (!sprite) {
+        const pos = this.tilePosition(am.row, am.col);
+        sprite = this.add
+          .sprite(pos.x, pos.y, textureKeyFor(am.monsterKind), idleFrameFor(am.monsterKind, 'down'))
+          .setScale(CHAR_SCALE)
+          .setTint(0x9a7bd6);
+        sprite.setData('row', am.row);
+        sprite.setData('col', am.col);
+        this.animatedMonsterSprites.set(am.id, sprite);
+      } else {
+        const prevRow = sprite.getData('row') as number;
+        const prevCol = sprite.getData('col') as number;
+        if (prevRow !== am.row || prevCol !== am.col) {
+          sprite.setData('row', am.row);
+          sprite.setData('col', am.col);
+          const pos = this.tilePosition(am.row, am.col);
+          this.tweens.add({ targets: sprite, x: pos.x, y: pos.y, duration: REMOTE_STEP_TWEEN_MS, ease: 'Linear' });
+        }
+      }
+      sprite.setData('label', am.name);
+      sprite.setData('hp', am.hp);
+      sprite.setData('maxHp', am.maxHp);
+      sprite.setAlpha(am.alive ? 1 : 0.4);
+    }
+    for (const [id, sprite] of this.animatedMonsterSprites) {
+      if (!seenAnimatedMonsters.has(id)) {
+        this.destroyEntitySprite(sprite);
+        this.animatedMonsterSprites.delete(id);
+      }
+    }
+    // The group panel shows both at once now (a later follow-up ask's
+    // animate dead spell added a 2nd kind of group member) — a single
+    // render call covers "no companions at all" through "a pet plus up
+    // to 2 animated monsters".
+    updateGroupPanel(
+      state.pets.find((p) => p.ownerUsername === this.myUsername) ?? null,
+      state.animatedMonsters.filter((m) => m.ownerUsername === this.myUsername)
+    );
 
     // Murus lapideus's own stone blocks (a later follow-up ask) — same
     // create-or-update + seen-set cleanup shape as monsters above, since
@@ -2748,6 +2871,24 @@ export class WorldScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
+        // Animate dead's own second click (a later follow-up ask) — takes
+        // priority over the ordinary loot modal, same "consume the flag,
+        // don't fall through" shape murusLapideusTargeting uses in
+        // handleLeftClick.
+        if (this.animateDeadTargeting) {
+          this.animateDeadTargeting = false;
+          if (!this.isWithinLootReach(c.row, c.col)) {
+            logCombatMessage("You're too far away to reach the corpse.");
+            return;
+          }
+          void this.network.castAnimateDead(c.id).then((ack) => {
+            if (ack.message) {
+              showCenterToast(ack.message);
+              logCombatMessage(ack.message);
+            }
+          });
+          return;
+        }
         // A follow-up ask: don't even open the modal if the player is
         // too far away — just say so, same reach as actually looting.
         if (!this.isWithinLootReach(c.row, c.col)) {
@@ -2858,6 +2999,7 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('questId', t.questId);
       sprite.setData('specializationGate', t.specializationGate);
       sprite.setData('houseChoiceGate', t.houseChoiceGate);
+      sprite.setData('skillPurchaseGate', t.skillPurchaseGate);
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
         // A follow-up ask: the Headmistress opens a dialogue modal (with
@@ -2892,6 +3034,16 @@ export class WorldScene extends Phaser.Scene {
             return;
           }
           openHouseChoiceDialogue(teacherDisplayName);
+          return;
+        }
+        // The Necromancer Chamber's own teacher (a later follow-up ask)
+        // — offers a one-time skill purchase, same reach concept.
+        if (t.skillPurchaseGate) {
+          if (!isWithinRadius(this.row, this.col, t.row, t.col, SHOP_REACH_TILES)) {
+            logCombatMessage(`You're too far away to talk to ${teacherDisplayName}.`);
+            return;
+          }
+          openAnimateDeadPurchaseDialogue(teacherDisplayName);
           return;
         }
         // A fixed, generic line (a later follow-up ask dropped the
@@ -3185,7 +3337,7 @@ export class WorldScene extends Phaser.Scene {
     // same "right-click initiates, then it's automatic" shape, just no
     // walking-closer step, since a ranged weapon staying at range is the
     // whole point.
-    if (myProfile?.equipment.weapon === WAND_ITEM) {
+    if (isWandItem(myProfile?.equipment.weapon)) {
       this.tryRangedEngage(found.kind, found.id);
       return;
     }
@@ -3257,6 +3409,16 @@ export class WorldScene extends Phaser.Scene {
           logCombatMessage(ack.message);
         }
       });
+      return;
+    }
+    // Animate dead (a later follow-up ask) — if a corpse's own
+    // pointerdown handler above already consumed this click, the flag is
+    // false by the time we get here (object-specific listeners fire
+    // before this scene-wide one); still true means the player clicked
+    // something other than a corpse, which isn't a valid target.
+    if (this.animateDeadTargeting) {
+      this.animateDeadTargeting = false;
+      logCombatMessage('You must click a monster corpse to animate it.');
       return;
     }
     // Clicking anywhere in the game world deselects whatever inventory
@@ -3444,7 +3606,12 @@ export class WorldScene extends Phaser.Scene {
   private static readonly MIN_MOVE_COOLDOWN_FACTOR = 0.4;
 
   private effectiveMoveCooldownMs(): number {
-    const base = myProfile?.celeritasActive ? Math.round(MOVE_COOLDOWN_MS * 0.9) : MOVE_COOLDOWN_MS;
+    let base = myProfile?.celeritasActive ? Math.round(MOVE_COOLDOWN_MS * 0.9) : MOVE_COOLDOWN_MS;
+    // A later follow-up ask's wild-goblin drop, "boots of quickness...
+    // should increase the speed at which the player moves some" — same
+    // 10% cut celeritas gets, stacking multiplicatively with it if both
+    // are active at once.
+    if (myProfile?.equipment.boots === 'boots of quickness') base = Math.round(base * 0.9);
     // Every character starts at 1 dexterity (server/combat/formulas.ts's
     // STARTING_ATTRIBUTE) — only points ABOVE that baseline speed you up.
     const dexterity = myProfile?.dexterity ?? 1;
@@ -3524,6 +3691,16 @@ export class WorldScene extends Phaser.Scene {
     if (skillName === MURUS_LAPIDEUS_SKILL) {
       this.murusLapideusTargeting = true;
       logCombatMessage('Click a spot on the map to summon the stone block.');
+      return;
+    }
+    // Animate dead (a later follow-up ask) targets a monster CORPSE, not
+    // a tile or a live player/npc/monster — same arm-then-click shape as
+    // murus lapideus above, just consumed by a corpse sprite's own
+    // pointerdown handler instead of the generic tile lookup (see
+    // animateDeadTargeting's own doc comment).
+    if (skillName === ANIMATE_DEAD_SKILL) {
+      this.animateDeadTargeting = true;
+      logCombatMessage('Click a monster corpse to animate it.');
       return;
     }
     // Drink/pour/irrigo (items 7, 8 & 11's follow-up asks) act on a

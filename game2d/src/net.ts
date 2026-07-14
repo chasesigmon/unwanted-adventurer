@@ -10,6 +10,8 @@ import type {
   CombatEventPayload,
   LootAck,
   BuyAck,
+  PetCommandAck,
+  AnimatedMonsterCommandAck,
   EatBrainsAck,
   SacrificeAck,
   ReadLucemBookAck,
@@ -36,6 +38,7 @@ import type {
 } from '../shared/types.js';
 import type { Direction, Gender, HairColor, SkinTone, HouseName, SpecializationPath } from '../shared/constants.js';
 import type { EquipmentSlot } from '../shared/equipment.js';
+import type { PetCommand } from '../shared/pets.js';
 
 type GameClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 type AuthResponse = { ok: true; token: string } | { ok: false; error: string };
@@ -424,6 +427,19 @@ export class NetworkManager extends EventTarget {
     });
   }
 
+  petCommand(command: PetCommand): Promise<PetCommandAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('petCommand', command, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
   eatBrains(corpseId: string): Promise<EatBrainsAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
@@ -720,6 +736,21 @@ export class NetworkManager extends EventTarget {
     });
   }
 
+  // The Necromancer Chamber's own teacher (a later follow-up ask) — see
+  // game.gateway.ts's handleBuyAnimateDead.
+  buyAnimateDead(): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('buyAnimateDead', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
   readStupefaciuntBook(): Promise<ReadSpellBookAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
@@ -818,6 +849,32 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('castMurusLapideus', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castAnimateDead(corpseId: string): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castAnimateDead', { corpseId }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  animatedMonsterCommand(id: string, command: PetCommand): Promise<AnimatedMonsterCommandAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('animatedMonsterCommand', { id, command }, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

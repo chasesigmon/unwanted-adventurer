@@ -112,14 +112,21 @@ export function initGlobalKeyboardShortcuts(): void {
       e.preventDefault();
       activeScene?.stopAutoAttack();
     } else {
-      // The action bar's own top row (a follow-up ask) — 1-9 then 0 map
-      // onto slots 0-9 in order, triggering whatever's slotted there the
-      // exact same way clicking it would (see actionBar.ts's
-      // triggerActionSlot, shared with the slot's own click handler).
-      const digitIndex = '1234567890'.indexOf(e.key);
+      // The action bar's own two groups of 10 slots (a follow-up ask) —
+      // 1-9 then 0 map onto slots 0-9 in order, Shift+(1-9,0) onto slots
+      // 10-19, triggering whatever's slotted there the exact same way
+      // clicking it would (see actionBar.ts's triggerActionSlot, shared
+      // with the slot's own click handler). Same mapping regardless of
+      // which side the bar is currently docked to — docking only changes
+      // where each slot is drawn on screen, not which hotkey reaches it.
+      // `e.code` (the physical key), not `e.key` — Shift+1 changes `e.key`
+      // entirely on a US layout ('!'), but `e.code` stays 'Digit1' either
+      // way.
+      const digitCodes = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0'];
+      const digitIndex = digitCodes.indexOf(e.code);
       if (digitIndex !== -1) {
         e.preventDefault();
-        triggerActionSlot(digitIndex);
+        triggerActionSlot(e.shiftKey ? digitIndex + 10 : digitIndex);
       }
     }
   });

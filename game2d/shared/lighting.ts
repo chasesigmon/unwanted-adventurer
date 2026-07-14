@@ -90,8 +90,14 @@ export const CASTLE_LIGHT_RADIUS_TILES = 12;
 // Beyond the core radius above, the light doesn't just cut off — it
 // tapers smoothly over this many additional tiles (see
 // staticLightRadiusAt) so walking away from the castle reads as fading
-// into the dark, not stepping through an invisible wall.
-export const CASTLE_LIGHT_FALLOFF_TILES = 10;
+// into the dark, not stepping through an invisible wall. Widened further
+// (a later follow-up ask: "the player should be able to see the light at
+// a distance, right now if you step 1 small step outside the light
+// radius then it goes completely dark") — a short taper meant the
+// effective radius was already down near NO_LIGHT_RADIUS_TILES well
+// before the player actually noticed they'd left the lit area, so the
+// LAST step across that boundary read as a hard cliff into pitch black.
+export const CASTLE_LIGHT_FALLOFF_TILES = 16;
 
 // Fixed-position light sources ("like a lamp in town") — every tile
 // within a source's own radiusTiles (LIGHT_RADIUS_TILES if unset) is lit
@@ -115,17 +121,19 @@ const CASTLE_LIGHT_MID_ROW = Math.round((MOAT_INNER_TOP + MOAT_INNER_BOTTOM) / 2
 export const STATIC_LIGHT_SOURCES: Partial<Record<MapName, Array<{ row: number; col: number; radiusTiles?: number; falloffTiles?: number }>>> = {
   Floro: [{ row: 25, col: 25 }],
   Kortho: [{ row: 25, col: 25 }],
-  // Bramwick's own 9 standing torches (a later follow-up ask: "provide
+  // Bramwick's own standing torches (a later follow-up ask: "provide
   // light within their own radius similar to the spell lucem for a
-  // player") — same LUCEM_LIGHT_RADIUS_TILES a wand-lit player gets, with
-  // a short taper for a softer glow edge rather than a lamp's hard cutoff.
-  // No separate "only at night" flag needed here — the dark-fog system
-  // that actually consults this (see WorldScene's updateDarkFog) never
-  // darkens anything at all outside isDarkHour to begin with, so these
-  // are already functionally night-only; only the SPRITE's own lit/unlit
-  // frame (see standingTorchPositionsFor/handleWorldTime) needs the
-  // explicit hour check.
-  Bramwick: standingTorchPositionsFor('Bramwick').map((pos) => ({ ...pos, radiusTiles: LUCEM_LIGHT_RADIUS_TILES, falloffTiles: 2 })),
+  // player") — bigger than a wand-lit player's own LUCEM_LIGHT_RADIUS_TILES
+  // now ("expand the distance of the light radius") with a much longer
+  // taper (same "no sudden cliff into pitch black" fix as the castle's
+  // own CASTLE_LIGHT_FALLOFF_TILES above — 2 tiles was over almost as
+  // soon as it started). No separate "only at night" flag needed here —
+  // the dark-fog system that actually consults this (see WorldScene's
+  // updateDarkFog) never darkens anything at all outside isDarkHour to
+  // begin with, so these are already functionally night-only; only the
+  // SPRITE's own lit/unlit frame (see standingTorchPositionsFor/
+  // handleWorldTime) needs the explicit hour check.
+  Bramwick: standingTorchPositionsFor('Bramwick').map((pos) => ({ ...pos, radiusTiles: LUCEM_LIGHT_RADIUS_TILES + 3, falloffTiles: 6 })),
   'Grimoak Grounds': [
     { row: CASTLE_DOOR_ON_GROUNDS.row, col: CASTLE_DOOR_ON_GROUNDS.col, ...CASTLE_LIGHT_SOURCE }, // front (the door)
     { row: MOAT_INNER_TOP, col: CASTLE_DOOR_ON_GROUNDS.col, ...CASTLE_LIGHT_SOURCE }, // back
@@ -605,9 +613,25 @@ export function isPortalBlocked(mapName: MapName, row: number, col: number): boo
 // actually push back the dark-fog at night.
 export function standingTorchPositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
   if (mapName !== 'Bramwick') return [];
-  const rows = [14, 20, 26];
-  const cols = [5, BRAMWICK_MID_COL, 35];
-  return cols.flatMap((col) => rows.map((row) => ({ row, col })));
+  // A later follow-up ask reworked the original 3x3 grid: the middle
+  // COLUMN's own middle torch (row 20, dead center of town) is gone
+  // entirely, its north/south neighbors pushed further out to row
+  // 9/31 — and 4 more torches fill in the top/bottom edges at those same
+  // rows, so the left column (col 5), right column (col 35), and these
+  // two new edges together read as one rectangle "encompassing the
+  // town" instead of 3 bare vertical lines.
+  const sideRows = [14, 20, 26];
+  const sideCols = [5, 35];
+  const edgeRow = { top: 9, bottom: 31 };
+  // Clear of both cottages' own ~7-13/27-33 column footprints (see
+  // WorldScene's cottageSprites) — 3 and 37 sit just past each building,
+  // 20 (BRAMWICK_MID_COL) is the open gap between them.
+  const edgeCols = [3, BRAMWICK_MID_COL, 37];
+  return [
+    ...sideCols.flatMap((col) => sideRows.map((row) => ({ row, col }))),
+    ...edgeCols.map((col) => ({ row: edgeRow.top, col })),
+    ...edgeCols.map((col) => ({ row: edgeRow.bottom, col })),
+  ];
 }
 
 // Two clickable name signs, one per side of Bramwick's own dirt-road

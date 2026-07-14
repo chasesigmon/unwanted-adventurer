@@ -1,0 +1,71 @@
+// A player's own companion pet (a later follow-up ask: "add another
+// shopkeeper 'Pet Shop'... a player should only be allowed to have 1 pet
+// at a time"). A pet is owned by exactly one player, follows/obeys a
+// simple command, and levels up from its own exp — same leveling shape
+// a player uses (see server/combat/formulas.ts's applyExpGain), just a
+// much smaller starting hp pool. Persistence/resurrection ("killed and
+// then have to be resurrected by someone in the school") is a stated
+// future mechanic, not built yet — a dead pet today just stays dead
+// until the player buys a new one is NOT possible (only one at a time),
+// so for now a killed pet simply stops acting until a future
+// resurrection feature exists.
+import type { MapName, MonsterKind } from './constants.js';
+
+export const PET_KINDS = ['puppy', 'kitten', 'piglet'] as const;
+export type PetKind = (typeof PET_KINDS)[number];
+
+export const PET_KIND_LABELS: Record<PetKind, string> = {
+  puppy: 'Puppy',
+  kitten: 'Kitten',
+  piglet: 'Piglet',
+};
+
+// "Commandable like stay by side or attack or sleep" — 'follow' is the
+// default the moment a pet is purchased ("should follow the player").
+export const PET_COMMANDS = ['follow', 'stay', 'sleep', 'attack'] as const;
+export type PetCommand = (typeof PET_COMMANDS)[number];
+
+export const PET_STARTING_HP = 50;
+export const PET_PRICE = 15;
+
+export interface PetSnapshot {
+  id: string;
+  ownerUsername: string;
+  kind: PetKind;
+  name: string;
+  level: number;
+  exp: number;
+  hp: number;
+  maxHp: number;
+  map: MapName;
+  row: number;
+  col: number;
+  command: PetCommand;
+  // False once its hp hits 0 — see this file's own doc comment on
+  // resurrection being a future mechanic.
+  alive: boolean;
+}
+
+// The Necromancer's own animate dead spell (a later follow-up ask) —
+// a raised monster corpse, controllable the same PET_COMMANDS way a
+// purchased pet is. Deliberately its own type/manager rather than a
+// PetSnapshot variant — a player can own a real pet AND one or two
+// animated monsters at once (see shared/skills.ts's
+// animatedMonsterCapFor), so the strict "one pet per owner" keying
+// PetManagerService relies on doesn't fit here.
+export interface AnimatedMonsterSnapshot {
+  id: string;
+  ownerUsername: string;
+  monsterKind: MonsterKind;
+  name: string;
+  hp: number;
+  maxHp: number;
+  attackDamage: number;
+  map: MapName;
+  row: number;
+  col: number;
+  command: PetCommand;
+  // "Lasts... until it is killed" — an animated monster has no hp
+  // regeneration and no resurrection path at all, unlike a pet.
+  alive: boolean;
+}

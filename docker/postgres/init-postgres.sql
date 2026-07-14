@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS players (
     'Great Plains', 'Labyrinth', 'Floro', 'Kortho',
     'Floro Blacksmith', 'Floro General Store', 'Floro Inn', 'Floro Bank',
     'Floro Armorer', 'Floro Pet Salesman', 'Floro Jobs Office',
-    'Bramwick', 'Bramwick General Shop', 'Bramwick Wands', 'Bramwick Armor', 'Bramwick Potions',
+    'Bramwick', 'Bramwick General Shop', 'Bramwick Weapons', 'Bramwick Armor', 'Bramwick Potions',
     'Grimoak Grounds', 'Grimoak Entrance Hall', 'Great Hall',
     'Thistledown Common Room', 'Duskwing Common Room', 'Emberclaw Common Room',
     'Starfall Common Room', 'Specialization', 'Defense Classroom', 'Summoning Classroom',

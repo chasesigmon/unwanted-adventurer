@@ -9,10 +9,72 @@ import { skillIconGlyphUrl } from './skillIcons.js';
 import { attachTooltip } from './tooltip.js';
 
 export const ACTION_BAR_SLOT_COUNT = 20;
+const actionBarWrapper = document.getElementById('action-bar-wrapper') as HTMLDivElement;
 const actionBar = document.getElementById('action-bar') as HTMLDivElement;
 const actionBarToggle = document.getElementById('action-bar-toggle') as HTMLButtonElement;
+const dockLeftBtn = document.getElementById('action-bar-dock-left') as HTMLButtonElement;
+const dockRightBtn = document.getElementById('action-bar-dock-right') as HTMLButtonElement;
+const dockDownBtn = document.getElementById('action-bar-dock-down') as HTMLButtonElement;
 const actionSlots: HTMLDivElement[] = [];
 export const actionBarSkills: Array<string | null> = new Array(ACTION_BAR_SLOT_COUNT).fill(null);
+
+// Docking (a follow-up ask) — left/right reshapes the same 20 slots into
+// a 2-wide x 10-tall grid instead of the default 10-wide x 2-tall one,
+// docked to the middle of that side of the screen instead of
+// bottom-center. The hotkey mapping (1-0 -> slots 0-9, Shift+(1-0) ->
+// slots 10-19, see keyboard.ts) is the SAME in every dock — only where
+// each slot is actually drawn changes.
+type ActionBarDock = 'bottom' | 'left' | 'right';
+
+// "The first/top row before is now the right/outermost section... going
+// down" (left dock) / "the left/outermost section... going down" (right
+// dock) — "outermost" here means facing INTO the screen, away from
+// whichever edge the bar is docked against (so it reads as the bar's own
+// leading edge, not tucked behind it) — the original top row (slots
+// 0-9) is always that leading column, whichever side that ends up being.
+function slotGridPosition(index: number, dock: ActionBarDock): { row: number; col: number } {
+  if (dock === 'bottom') return { row: Math.floor(index / 10) + 1, col: (index % 10) + 1 };
+  const isTopRow = index < 10;
+  const rowInColumn = (isTopRow ? index : index - 10) + 1;
+  const leadingCol = dock === 'left' ? 2 : 1;
+  const trailingCol = dock === 'left' ? 1 : 2;
+  return { row: rowInColumn, col: isTopRow ? leadingCol : trailingCol };
+}
+
+function actionBarDockStorageKey(username: string): string {
+  return `game2d:actionBarDock:${username}`;
+}
+
+function applyDock(dock: ActionBarDock): void {
+  actionBar.classList.toggle('dock-vertical', dock !== 'bottom');
+  actionBarWrapper.classList.toggle('dock-left', dock === 'left');
+  actionBarWrapper.classList.toggle('dock-right', dock === 'right');
+  for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
+    const { row, col } = slotGridPosition(i, dock);
+    const slot = actionSlots[i];
+    if (!slot) continue;
+    slot.style.gridRow = String(row);
+    slot.style.gridColumn = String(col);
+  }
+  dockLeftBtn.hidden = dock !== 'bottom';
+  dockRightBtn.hidden = dock !== 'bottom';
+  dockDownBtn.hidden = dock === 'bottom';
+}
+
+function setActionBarDock(dock: ActionBarDock): void {
+  applyDock(dock);
+  if (myProfile) {
+    try {
+      localStorage.setItem(actionBarDockStorageKey(myProfile.username), dock);
+    } catch {
+      /* localStorage unavailable — not worth surfacing */
+    }
+  }
+}
+
+dockLeftBtn.addEventListener('click', () => setActionBarDock('left'));
+dockRightBtn.addEventListener('click', () => setActionBarDock('right'));
+dockDownBtn.addEventListener('click', () => setActionBarDock('bottom'));
 
 // Collapsible (a follow-up ask) — persisted per-username in localStorage,
 // same convention as the loadout itself.
@@ -89,6 +151,13 @@ export function loadActionBarOnce(username: string): void {
     setActionBarCollapsed(localStorage.getItem(actionBarCollapsedStorageKey(username)) === 'true');
   } catch {
     /* localStorage unavailable — leave it expanded */
+  }
+  try {
+    const savedDock = localStorage.getItem(actionBarDockStorageKey(username));
+    applyDock(savedDock === 'left' || savedDock === 'right' ? savedDock : 'bottom');
+  } catch {
+    /* localStorage unavailable — default to bottom-docked */
+    applyDock('bottom');
   }
   try {
     const raw = localStorage.getItem(actionBarStorageKey(username));

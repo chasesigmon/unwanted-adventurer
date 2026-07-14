@@ -1,24 +1,26 @@
-// The text game's full 16-slot equipment list — this project only has
-// real items for 'weapon' so far (same as the text game itself, which
-// only maps items to 3 of its own 16), but both the server (combat/
-// formulas.ts) and the client (the Equipment modal) need the same slot
-// list/labels, hence living here rather than duplicated in each.
+// A later follow-up ask trimmed the text game's original 16-slot list
+// down to 12: 'mask' dropped entirely (nothing ever filled it), and the
+// 3 paired left/right slots that only ever held identical gear anyway
+// (arms, legs, ears) collapsed into one slot each — 'vambraces',
+// 'greaves', 'earrings' — matching the new cloth/studded armor pieces
+// (see combat/formulas.ts's ARMOR_ITEM_AC_BONUS) that actually fill
+// them. Rings stay a true left/right pair (see game.gateway.ts's own
+// ring-equip "which hand" logic) since a player can meaningfully wear
+// two DIFFERENT rings at once. Both the server (combat/formulas.ts) and
+// the client (the Equipment modal) need the same slot list/labels, hence
+// living here rather than duplicated in each.
 export const EQUIPMENT_SLOTS = [
   'head',
-  'mask',
-  'leftEar',
-  'rightEar',
+  'earrings',
   'torso',
-  'leftArm',
-  'rightArm',
+  'vambraces',
   'gauntlets',
   'shield',
   'weapon',
   'leftRing',
   'rightRing',
   'necklace',
-  'leftLeg',
-  'rightLeg',
+  'greaves',
   'boots',
 ] as const;
 export type EquipmentSlot = (typeof EQUIPMENT_SLOTS)[number];
@@ -29,21 +31,28 @@ export type EquipmentSlot = (typeof EQUIPMENT_SLOTS)[number];
 // starts with one (see auth.service.ts's createCharacter).
 export const WAND_ITEM = 'wand';
 
+// A later follow-up ask's Bramwick Weapons shop sells named variant
+// wands ("wand of intelligence", "wand of quickness") — every
+// spellcasting gate in the game checks "is a wand equipped" via this
+// helper now instead of an exact WAND_ITEM match, so a variant wand
+// still lets its owner cast (on top of its own stat bonus — see
+// combat/formulas.ts's JEWELRY_DEXTERITY_BONUS/JEWELRY_INTELLIGENCE_BONUS),
+// not just the plain starter one.
+export function isWandItem(item: string | undefined): boolean {
+  return item === WAND_ITEM || (item?.startsWith('wand of') ?? false);
+}
+
 export const EQUIPMENT_SLOT_LABELS: Record<EquipmentSlot, string> = {
   head: 'Head',
-  mask: 'Mask',
-  leftEar: 'Left Ear',
-  rightEar: 'Right Ear',
+  earrings: 'Earrings',
   torso: 'Torso',
-  leftArm: 'Left Arm',
-  rightArm: 'Right Arm',
+  vambraces: 'Vambraces',
   gauntlets: 'Gauntlets',
   shield: 'Shield',
   weapon: 'Weapon',
   leftRing: 'Left Ring',
   rightRing: 'Right Ring',
   necklace: 'Necklace',
-  leftLeg: 'Left Leg',
-  rightLeg: 'Right Leg',
+  greaves: 'Greaves',
   boots: 'Boots',
 };

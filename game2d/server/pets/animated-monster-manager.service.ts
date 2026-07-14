@@ -1,0 +1,125 @@
+import { randomUUID } from 'crypto';
+import { Injectable } from '@nestjs/common';
+import type { MapName, MonsterKind } from '../../shared/constants.js';
+import type { PetCommand, AnimatedMonsterSnapshot } from '../../shared/pets.js';
+import { animatedMonsterCapFor } from '../../shared/skills.js';
+import { WorldManagerService } from '../worlds/world-manager.service.js';
+
+interface AnimatedMonster extends AnimatedMonsterSnapshot {}
+
+// The Necromancer's own animate dead spell (a later follow-up ask) — up
+// to 1 or 2 animated monsters per owner (see animatedMonsterCapFor),
+// entirely in-memory like every other in-world manager here. Keyed by
+// owner username -> an ARRAY (unlike PetManagerService's strict 1:1 map),
+// since a player can hold more than one animated monster at once.
+@Injectable()
+export class AnimatedMonsterManagerService {
+  private monsters = new Map<string, AnimatedMonster[]>();
+
+  constructor(private readonly worldManager: WorldManagerService) {}
+
+  countFor(ownerUsername: string): number {
+    return this.monsters.get(ownerUsername)?.length ?? 0;
+  }
+
+  animate(
+    ownerUsername: string,
+    ownerLevel: number,
+    monsterKind: MonsterKind,
+    name: string,
+    maxHp: number,
+    attackDamage: number,
+    map: MapName,
+    row: number,
+    col: number
+  ): AnimatedMonster | undefined {
+    const owned = this.monsters.get(ownerUsername) ?? [];
+    if (owned.length >= animatedMonsterCapFor(ownerLevel)) return undefined;
+    const monster: AnimatedMonster = {
+      id: randomUUID(),
+      ownerUsername,
+      monsterKind,
+      name,
+      hp: maxHp,
+      maxHp,
+      attackDamage,
+      map,
+      row,
+      col,
+      command: 'follow',
+      alive: true,
+    };
+    owned.push(monster);
+    this.monsters.set(ownerUsername, owned);
+    return monster;
+  }
+
+  setCommand(ownerUsername: string, id: string, command: PetCommand): AnimatedMonster | undefined {
+    const monster = this.monsters.get(ownerUsername)?.find((m) => m.id === id);
+    if (!monster || !monster.alive) return undefined;
+    monster.command = command;
+    return monster;
+  }
+
+  // Same simplified "just subtract hp" contact-damage shape
+  // PetManagerService.applyDamage already uses.
+  applyDamage(ownerUsername: string, id: string, amount: number): { monster: AnimatedMonster; died: boolean } | undefined {
+    const monster = this.monsters.get(ownerUsername)?.find((m) => m.id === id);
+    if (!monster || !monster.alive) return undefined;
+    monster.hp = Math.max(0, monster.hp - amount);
+    const died = monster.hp <= 0;
+    if (died) monster.alive = false;
+    return { monster, died };
+  }
+
+  // Same follow-toward-owner stepping logic as PetManagerService.tickAll,
+  // just iterating every owner's whole array instead of a single pet.
+  tickAll(): Set<MapName> {
+    const changedMaps = new Set<MapName>();
+    for (const owned of this.monsters.values()) {
+      for (const monster of owned) {
+        if (!monster.alive || monster.command !== 'follow') continue;
+        const owner = this.worldManager.getLocation(monster.ownerUsername);
+        if (!owner) continue;
+        if (monster.map !== owner.mapName) {
+          changedMaps.add(monster.map);
+          monster.map = owner.mapName;
+          monster.row = owner.row;
+          monster.col = owner.col;
+          changedMaps.add(monster.map);
+          continue;
+        }
+        const dRow = owner.row - monster.row;
+        const dCol = owner.col - monster.col;
+        if (Math.abs(dRow) + Math.abs(dCol) <= 1) continue;
+        if (Math.abs(dRow) >= Math.abs(dCol)) {
+          monster.row += Math.sign(dRow);
+        } else {
+          monster.col += Math.sign(dCol);
+        }
+        changedMaps.add(monster.map);
+      }
+    }
+    return changedMaps;
+  }
+
+  // "Lasts the entire time the player is logged in" — called on
+  // disconnect (see game.gateway.ts's handleDisconnect).
+  removeAllForOwner(ownerUsername: string): void {
+    this.monsters.delete(ownerUsername);
+  }
+
+  getSnapshotsForMap(mapName: MapName): AnimatedMonsterSnapshot[] {
+    const snapshots: AnimatedMonsterSnapshot[] = [];
+    for (const owned of this.monsters.values()) {
+      for (const monster of owned) {
+        if (monster.map === mapName) snapshots.push({ ...monster });
+      }
+    }
+    return snapshots;
+  }
+
+  getSnapshotsForOwner(ownerUsername: string): AnimatedMonsterSnapshot[] {
+    return (this.monsters.get(ownerUsername) ?? []).map((m) => ({ ...m }));
+  }
+}

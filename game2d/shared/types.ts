@@ -2,6 +2,7 @@ import type { Server, Socket } from 'socket.io';
 import type { Gender, HairColor, MapName, Race, SkinTone, Direction, MonsterKind, MonsterClass, HouseName, SpecializationPath } from './constants.js';
 import type { EquipmentSlot } from './equipment.js';
 import type { QuestProgress } from './quests.js';
+import type { PetSnapshot, PetCommand, AnimatedMonsterSnapshot } from './pets.js';
 
 // Never persisted across sessions (a fresh connection always starts
 // 'awake') — matches the text game's own restState, which the same
@@ -219,6 +220,10 @@ export interface MonsterSnapshot {
   // any) shows as a held-weapon overlay, same as a player's equipped
   // weapon; the rest just ride along until it drops everything on death.
   carriedItems: string[];
+  // A "rare" variant (a later follow-up ask) — drives a bigger sprite
+  // scale client-side (see WorldScene's own monster rendering); absent
+  // for every ordinary monster.
+  isRare?: boolean;
 }
 
 // Left behind when a monster, the training dummy, or a real player dies.
@@ -235,6 +240,12 @@ export interface CorpseSnapshot {
   // reward is based on this (see game.gateway.ts's handleSacrificeCorpse).
   level: number;
   items: string[];
+  // A flat coin drop (a later follow-up ask: "the imps should drop 3
+  // coins every time on death... skeletons 5... goblins 7") — added
+  // straight to the looter's own gold on handleLoot, not an inventory
+  // item (gold was never a stackable item string to begin with). Absent/0
+  // for anything that doesn't drop coins (player/training-dummy corpses).
+  gold?: number;
   map: MapName;
   row: number;
   col: number;
@@ -243,6 +254,13 @@ export interface CorpseSnapshot {
   // "Eat Brains" option in the loot modal (see main.ts), only offered to
   // the player who actually earned it.
   killedBy?: string;
+  // The monster's own max hp/attack damage at the moment it died (a later
+  // follow-up ask's animate dead spell needs these to build an animated
+  // monster with "2x the hp of the original monster... and the same
+  // attack" — see game.gateway.ts's handleCastAnimateDead). Absent for a
+  // player/training-dummy corpse, which animate dead can't target anyway.
+  sourceMaxHp?: number;
+  sourceAttackDamage?: number;
 }
 
 export interface SyncPayload {
@@ -326,6 +344,14 @@ export interface TeacherSnapshot {
   // buttons if they have. No quest, permanent once chosen (see
   // game.gateway.ts's handleChooseHouse).
   houseChoiceGate?: boolean;
+  // The Necromancer Chamber's own teacher (a later follow-up ask: "the
+  // Necromancer specialist should offer 1 skill for purchase") — opens a
+  // dialogue offering a single one-time skill purchase for gold, instead
+  // of the plain classroom tooltip every other specialization-chamber
+  // teacher still gets. The skill name itself (currently always
+  // ANIMATE_DEAD_SKILL) lives here rather than being hardcoded client-side
+  // so a future 2nd chamber-taught skill just needs its own gate value.
+  skillPurchaseGate?: string;
   // A distinct robe color per teacher (a follow-up ask) — absent means
   // the spritesheet's own base navy. See src/characterSprites.ts's
   // teacher-${TeacherRobeColor} variant textures (one full recolored
@@ -364,6 +390,26 @@ export interface MapStatePayload {
   vendors: VendorSnapshot[];
   teachers: TeacherSnapshot[];
   stoneBlocks: StoneBlockSnapshot[];
+  // Every pet currently on this map (a later follow-up ask) — usually
+  // just the local player's own, but another player's pet shows too
+  // (purely cosmetic to a bystander, only its OWNER can command it).
+  pets: PetSnapshot[];
+  // Every animated monster currently on this map (a later follow-up
+  // ask's animate dead spell) — same "usually just your own, another
+  // player's shows too but only they can command it" shape as pets above.
+  animatedMonsters: AnimatedMonsterSnapshot[];
+}
+
+export interface PetCommandAck {
+  ok: boolean;
+  pet?: PetSnapshot;
+  message?: string;
+}
+
+export interface AnimatedMonsterCommandAck {
+  ok: boolean;
+  animatedMonster?: AnimatedMonsterSnapshot;
+  message?: string;
 }
 
 // Broadcast to a map's room whenever a punch actually lands on a target
@@ -446,6 +492,9 @@ export interface BuyAck {
   ok: boolean;
   inventory?: string[];
   gold?: number;
+  // Set only when buying a canteen (a later follow-up ask: "comes fully
+  // filled at 6/6") — see game.gateway.ts's handleBuyItem.
+  canteenDrinks?: number;
   message?: string;
 }
 
@@ -734,6 +783,9 @@ export interface ClientToServerEvents {
   // itself is removed once its last item is taken.
   lootItem: (payload: { corpseId: string; itemIndex: number }, ack: (res: LootAck) => void) => void;
   buyItem: (payload: { vendorId: string; itemLabel: string }, ack: (res: BuyAck) => void) => void;
+  // Commanding your own pet (a later follow-up ask) — "stay by side,
+  // attack, sleep" (plus 'follow', the default the moment it's bought).
+  petCommand: (command: PetCommand, ack: (res: PetCommandAck) => void) => void;
   // Zombie-only: heals 20% hp/mana, see game.gateway.ts's
   // EAT_BRAINS_COOLDOWN_TICKS for the cooldown this starts.
   eatBrains: (corpseId: string, ack: (res: EatBrainsAck) => void) => void;
@@ -865,6 +917,9 @@ export interface ClientToServerEvents {
   // level-10-gated, permanent once chosen (see game.gateway.ts's
   // handleChooseSpecialization).
   chooseSpecialization: (payload: { path: SpecializationPath }, ack: (res: { ok: boolean; message?: string }) => void) => void;
+  buyAnimateDead: (ack: (res: { ok: boolean; message?: string }) => void) => void;
+  castAnimateDead: (payload: { corpseId: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
+  animatedMonsterCommand: (payload: { id: string; command: PetCommand }, ack: (res: AnimatedMonsterCommandAck) => void) => void;
   // ===== TESTING OVERRIDE — REMOVE AFTER TESTING ===== "add a 'cheat'
   // hotkey... pressing it should recover my mana to 100%. This will go
   // away after testing." Bound to the '~' key client-side (see

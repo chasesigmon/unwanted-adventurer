@@ -1,6 +1,7 @@
 import type { MapName } from '../../shared/constants.js';
 import type { TeacherSnapshot } from '../../shared/types.js';
 import { LEARN_SPELLS_QUEST_ID, KILL_IMPS_QUEST_ID, GATHER_MANA_CRYSTALS_QUEST_ID, FIND_THE_MAP_QUEST_ID } from '../../shared/quests.js';
+import { ANIMATE_DEAD_SKILL } from '../../shared/skills.js';
 
 // Static, permanent classroom occupants (a follow-up ask: "Add teacher
 // NPCs to each classroom and they are behind a desk with collision for
@@ -112,7 +113,11 @@ export const TEACHERS: TeacherSnapshot[] = [
   // "mechanics for the specialization teachers will come later," so they
   // fall back to the same plain generic-tooltip click every classroom
   // teacher without one of those already gets.
-  { id: 'necromancer-teacher', name: 'Professor Voss', map: 'Necromancer Chamber', row: 2, col: 9, robeColorKey: 'slate' },
+  // A later follow-up ask gave the Necromancer specialist an actual
+  // click behavior: offering "animate dead" for one-time purchase (see
+  // ANIMATE_DEAD_SKILL) — the other 9 chamber teachers are still plain
+  // tooltip-only for now.
+  { id: 'necromancer-teacher', name: 'Professor Voss', map: 'Necromancer Chamber', row: 2, col: 9, skillPurchaseGate: ANIMATE_DEAD_SKILL, robeColorKey: 'slate' },
   { id: 'enhancer-teacher', name: 'Professor Brann', map: 'Enhancer Chamber', row: 2, col: 9, robeColorKey: 'olive' },
   { id: 'elementalist-teacher', name: 'Professor Tempest', map: 'Elementalist Chamber', row: 2, col: 9, robeColorKey: 'teal' },
   { id: 'summoner-teacher', name: 'Professor Corvin', map: 'Summoner Chamber', row: 2, col: 9, robeColorKey: 'plum' },

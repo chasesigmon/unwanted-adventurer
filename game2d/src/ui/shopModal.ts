@@ -51,6 +51,7 @@ function buyVendorItem(itemLabel: string): void {
           ...myProfile,
           inventory: ack.inventory ?? myProfile.inventory,
           gold: ack.gold ?? myProfile.gold,
+          canteenDrinks: ack.canteenDrinks ?? myProfile.canteenDrinks,
         });
         refreshOpenModals();
       }

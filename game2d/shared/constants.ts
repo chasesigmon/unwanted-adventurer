@@ -52,7 +52,10 @@ export const FLORO_SHOP_MAPS = [
 // own shops — see shared/maps.ts). Mechanics for what's actually sold
 // come later; these are greeting-only shopkeepers for now (see
 // server/worlds/vendors.ts).
-export const BRAMWICK_SHOP_MAPS = ['Bramwick General Shop', 'Bramwick Wands', 'Bramwick Armor', 'Bramwick Potions'] as const;
+// A later follow-up ask renamed the wand shop to "Weapons" — wands are
+// still sold there (see server/worlds/items.ts), just alongside other
+// weapon-slot gear now, not the shop's whole identity.
+export const BRAMWICK_SHOP_MAPS = ['Bramwick General Shop', 'Bramwick Weapons', 'Bramwick Armor', 'Bramwick Potions'] as const;
 
 // The 3 upper-floor landings (a later follow-up ask) — each a small hub
 // room reached by stairs, hanging 5 specialization chambers off its own
@@ -213,6 +216,27 @@ export type SpecializationPath = (typeof SPECIALIZATION_PATHS)[number];
 // two can never drift apart.
 export const SPECIALIZATION_LEVEL_REQUIREMENT = 10;
 
+// Which specialization path (if any) a given chamber map belongs to — the
+// inverse of the SPECIALIZATION_CHAMBER_MAPS/SPECIALIZATION_PATHS pairing
+// above (same index in both arrays), used to gate entry (a later follow-up
+// ask: "players can only enter the specialization room of what
+// specialization they have chosen") the same way houseForMap already
+// gates house common rooms/dorms — undefined for every map that isn't one
+// of the 10 chambers (nothing to gate).
+export function specializationForMap(map: MapName): SpecializationPath | undefined {
+  const index = SPECIALIZATION_CHAMBER_MAPS.findIndex((chamber) => chamber === map);
+  return index === -1 ? undefined : SPECIALIZATION_PATHS[index];
+}
+
+// The 4th floor's own 4 decorative portals actually lead somewhere now
+// (a later follow-up ask) — one dungeon per portal, roughly scaled to
+// the level range given: "level 10-15... 15-20... 20-30... 30-40." Real
+// new maps (see shared/maps.ts), not just a flavor string — "it can be
+// refined later," so this first pass reuses the 3 existing monster kinds
+// (imp/wild skeleton/wild goblin) at escalating stats rather than
+// standing up brand new creature types/sprites from scratch.
+export const PORTAL_DUNGEON_MAPS = ['Sunken Crypt', 'Goblin Warcamp', 'Imp Hollow', 'Ashen Wastes'] as const;
+
 export const MAP_NAMES = [
   'Great Plains',
   'Labyrinth',
@@ -223,6 +247,7 @@ export const MAP_NAMES = [
   ...BRAMWICK_SHOP_MAPS,
   'Grimoak Grounds',
   ...GRIMOAK_CASTLE_MAPS,
+  ...PORTAL_DUNGEON_MAPS,
 ] as const;
 export type MapName = (typeof MAP_NAMES)[number];
 

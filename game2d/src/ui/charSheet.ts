@@ -19,7 +19,7 @@ const CHAR_SHEET_STAT_DESCRIPTIONS: Record<string, string> = {
   // this description (a follow-up ask).
   Strength: 'Increases your base melee damage.',
   Intelligence:
-    'Each point increases your max mana by 10, adds +1% success chance to every spell you cast, and adds ranged damage when attacking with a wand equipped.',
+    'Each point increases your max mana by 10, adds +1% success chance to every spell you cast, adds ranged damage when attacking with a wand equipped, and increases how much mana you regain from resting/sleeping.',
   Wisdom: 'No mechanical effect yet — reserved for future use.',
   // Dodge isn't implemented yet (may be added later) — dropped from
   // this description (a follow-up ask).
