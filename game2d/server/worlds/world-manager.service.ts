@@ -18,7 +18,16 @@ import {
   isPortalBlocked,
   isBramwickSignBlocked,
 } from '../../shared/lighting.js';
-import { isCastleExteriorBlocked, isMoatBlocked, isGateTile, GATE_ROW, GATE_COL_LEFT, GATE_COL_RIGHT, GATE_REACH_TILES } from '../../shared/maps.js';
+import {
+  isCastleExteriorBlocked,
+  isMoatBlocked,
+  isGateTile,
+  GATE_ROW,
+  GATE_COL_LEFT,
+  GATE_COL_RIGHT,
+  GATE_REACH_TILES,
+  isStairsSideBlocked,
+} from '../../shared/maps.js';
 import { vendorsForMap } from './vendors.js';
 import { teachersForMap, teacherDeskFootprintFor } from './teachers.js';
 import { isPodiumBlocked, isChestBlocked } from '../../shared/spells.js';
@@ -123,6 +132,7 @@ export class WorldManagerService {
     if (isGreatHallChairBlocked(mapName, row, col)) return true;
     if (isPortalBlocked(mapName, row, col)) return true;
     if (isBramwickSignBlocked(mapName, row, col)) return true;
+    if (isStairsSideBlocked(mapName, row, col)) return true;
 
     const npcHit = NPCS.some((npc) => npc.map === mapName && npc.row === row && npc.col === col);
     if (npcHit) return true;

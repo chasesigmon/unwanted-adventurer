@@ -999,3 +999,15 @@ export function getMap(name: MapName): MapDefinition {
   if (!map) throw new Error(`Unknown map: ${name}`);
   return map;
 }
+
+// A later follow-up ask: "give the stairs collision on the left or right
+// of them so that the player has to walk into the stairs from north to
+// south" — every 'stairs'-kind exit in this project sits on a south-
+// facing wall (walked onto, then further south, to trigger it), so
+// blocking the tiles immediately east/west of it (same row) forces
+// approach along the stairs' own column instead of sidling in diagonally
+// or from the side.
+export function isStairsSideBlocked(mapName: MapName, row: number, col: number): boolean {
+  const def = getMap(mapName);
+  return def.exits.some((e) => e.kind === 'stairs' && e.row === row && Math.abs(e.col - col) === 1);
+}

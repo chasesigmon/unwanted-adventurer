@@ -1,7 +1,15 @@
 // The character sheet modal — race/level/vitals/attributes/AC/deaths.
 import { myProfile, network } from '../state.js';
 import { logCombatMessage } from './log.js';
-import { appendStatRow, charSheetBody, charSheetModal, charSheetUsername, registerModalOpenHandler, registerModalRefreshHandler } from './modalCore.js';
+import {
+  appendStatRow,
+  charSheetBody,
+  charSheetModal,
+  charSheetUsername,
+  registerModalOpenHandler,
+  registerModalRefreshHandler,
+  wholeNumber,
+} from './modalCore.js';
 import { attachTooltip } from './tooltip.js';
 import type { AllocatableStat } from '../../shared/types.js';
 
@@ -106,8 +114,8 @@ export function renderCharSheet(): void {
   appendStatRow(charSheetBody, 'Exp', myProfile.exp, CHAR_SHEET_STAT_DESCRIPTIONS.Exp);
   appendStatRow(charSheetBody, 'HP', `${myProfile.hp}/${myProfile.maxHp}`);
   appendStatRow(charSheetBody, 'Mana', `${myProfile.mana}/${myProfile.maxMana}`);
-  appendStatRow(charSheetBody, 'Hunger', `${myProfile.hunger}/100`, CHAR_SHEET_STAT_DESCRIPTIONS.Hunger);
-  appendStatRow(charSheetBody, 'Thirst', `${myProfile.thirst}/100`, CHAR_SHEET_STAT_DESCRIPTIONS.Thirst);
+  appendStatRow(charSheetBody, 'Hunger', `${wholeNumber(myProfile.hunger ?? 100)}/100`, CHAR_SHEET_STAT_DESCRIPTIONS.Hunger);
+  appendStatRow(charSheetBody, 'Thirst', `${wholeNumber(myProfile.thirst ?? 100)}/100`, CHAR_SHEET_STAT_DESCRIPTIONS.Thirst);
   if (hasPoints) {
     appendStatRow(
       charSheetBody,

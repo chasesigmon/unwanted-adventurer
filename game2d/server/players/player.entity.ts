@@ -169,10 +169,13 @@ export class Player {
 
   // Eating & drinking (a follow-up ask) — see the equivalent columns' own
   // comment in docker/postgres/init-postgres.sql for what these mean.
-  @Column({ type: 'int', default: 100 })
+  // 'real' (not 'int') since a later follow-up ask slowed decay to
+  // 0.4/tick — the fractional value is real and persisted; only ever
+  // rounded down for DISPLAY (see src/ui/modalCore.ts's wholeNumber).
+  @Column({ type: 'real', default: 100 })
   hunger!: number;
 
-  @Column({ type: 'int', default: 100 })
+  @Column({ type: 'real', default: 100 })
   thirst!: number;
 
   // Quest id -> progress (see shared/quests.ts's own QuestProgress).

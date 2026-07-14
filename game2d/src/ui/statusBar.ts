@@ -5,6 +5,7 @@ import { myProfile, network } from '../state.js';
 import type { MapName } from '../../shared/constants.js';
 import { timeOfDayLabel } from '../../shared/lighting.js';
 import { setupCollapsible } from './collapsible.js';
+import { wholeNumber } from './modalCore.js';
 
 const statusBarPanel = document.getElementById('status-bar') as HTMLDivElement;
 const statusToggle = document.getElementById('status-toggle') as HTMLButtonElement;
@@ -65,8 +66,8 @@ export function updateStatusBar(): void {
   statusLevel.textContent = `Lv ${myProfile.level}`;
   statusHp.textContent = `HP ${myProfile.hp}/${myProfile.maxHp}`;
   statusMana.textContent = `MP ${myProfile.mana}/${myProfile.maxMana}`;
-  statusHunger.textContent = `Hunger ${myProfile.hunger ?? 100}/100`;
-  statusThirst.textContent = `Thirst ${myProfile.thirst ?? 100}/100`;
+  statusHunger.textContent = `Hunger ${wholeNumber(myProfile.hunger ?? 100)}/100`;
+  statusThirst.textContent = `Thirst ${wholeNumber(myProfile.thirst ?? 100)}/100`;
   statusExp.textContent = `EXP ${myProfile.exp}`;
   statusGold.textContent = `Gold ${myProfile.gold}`;
   updateSleepOverlay();

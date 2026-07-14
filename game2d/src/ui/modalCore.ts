@@ -231,6 +231,17 @@ for (const btn of document.querySelectorAll<HTMLButtonElement>('.modal-close')) 
 // does above.
 registerChatFocusListener(updateInputCaptured);
 
+// A follow-up ask: "only show whole numbers in the player stats, hide
+// decimals for any stat" — hunger/thirst now decay by fractional amounts
+// per tick (0.4, see game.gateway.ts's applyStatTick) so the underlying
+// value needs that precision, but nothing should ever DISPLAY it. Floor
+// (not round) so the displayed number never reads higher than what's
+// actually left — a stat that's dropped to 99.6 shows 99, not a
+// still-100 that only "catches up" a tick later.
+export function wholeNumber(value: number): number {
+  return Math.floor(value);
+}
+
 // Shared stat-row renderer (char sheet + target info) — a label/value
 // pair, with an optional hover tooltip on the label.
 export function appendStatRow(container: HTMLDivElement, label: string, value: string | number, description?: string): void {

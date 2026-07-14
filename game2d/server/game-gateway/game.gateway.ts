@@ -372,6 +372,9 @@ const TORCH_LIFETIME_MS = 15 * 60 * 1000;
 // percent range depending on restState.
 const HOURS_PER_DAY = 24;
 const STAT_TICK_MS = 30_000;
+// "Update the hunger & thirst to lose .4 per stat tick instead" (a later
+// follow-up ask, slowed from a flat 1/tick) — see applyStatTick.
+const HUNGER_THIRST_DECAY_PER_TICK = 0.4;
 // The Learn Spells quest's own completion reward (a follow-up ask) — see
 // handleCompleteQuest/maybeGrowSpellSkill's own enhancedLearningBonusFor.
 // 20 game hours (a later follow-up ask, up from 12) — 20 stat ticks at
@@ -659,13 +662,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
     }
 
-    // Eating & drinking (a follow-up ask) — 1 point (of 100) lost per
-    // world-clock hour; this tick IS one hour (see globalStatTick's own
-    // worldHour advance just above), floored at 0 rather than going
-    // negative. Restored 20 points at a time by drinking/eating (see
-    // applyConsume/handleDrinkItem).
-    const hunger = Math.max(0, client.data.hunger - 1);
-    const thirst = Math.max(0, client.data.thirst - 1);
+    // Eating & drinking (a follow-up ask) — originally 1 point (of 100)
+    // lost per world-clock hour, slowed to 0.4/tick by a later follow-up
+    // ask; this tick IS one hour (see globalStatTick's own worldHour
+    // advance just above), floored at 0 rather than going negative.
+    // Restored 20 points at a time by drinking/eating (see applyConsume/
+    // handleDrinkItem). Stays fractional in memory/the DB now (see
+    // player.entity.ts's own 'real' column type) — only ever rounded
+    // down for DISPLAY (see src/ui/modalCore.ts's wholeNumber), never
+    // here, or the 0.4 decrements would never actually accumulate.
+    const hunger = Math.max(0, client.data.hunger - HUNGER_THIRST_DECAY_PER_TICK);
+    const thirst = Math.max(0, client.data.thirst - HUNGER_THIRST_DECAY_PER_TICK);
 
     if (hp === client.data.hp && mana === client.data.mana && hunger === client.data.hunger && thirst === client.data.thirst && !wandJustWentOut) {
       return;

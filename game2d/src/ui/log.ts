@@ -25,19 +25,41 @@ setupCollapsible(logPanel, logToggle);
 // `#log-panel.collapsed`'s own width/height/min-width/min-height reset —
 // collapsing only ever hid the tabs/log-view/chat-input *inside* the
 // still full-size box, not the box itself ("just makes the bottom of the
-// box come up some"). Explicitly clearing/restoring BOTH inline
+// box come up some"). Explicitly clearing/restoring the inline
 // dimensions alongside the class toggle is what actually lets it
 // collapse down to just the toggle button, matching #status-bar's own
 // collapsed size in the opposite corner.
-let sizeBeforeCollapse: { width: string; height: string } | null = null;
+//
+// A later follow-up bug fix: dragging the panel ALSO sets inline top/
+// left (and bottom: 'auto' — see applyLogPanelRect below), switching it
+// from the CSS default's bottom-left anchor to an arbitrary dragged
+// position. Collapsing used to leave those alone too, so a panel that
+// had ever been dragged collapsed wherever it was last left, not the
+// bottom-left corner ("make the re-collapse button be in the bottom
+// left"). Clearing ALL FIVE inline properties on collapse snaps it back
+// to the CSS default position/size; expanding restores whatever was
+// saved, so the panel returns to wherever the player actually put it.
+let rectBeforeCollapse: { top: string; left: string; bottom: string; width: string; height: string } | null = null;
 logToggle.addEventListener('click', () => {
   if (logPanel.classList.contains('collapsed')) {
-    sizeBeforeCollapse = { width: logPanel.style.width, height: logPanel.style.height };
+    rectBeforeCollapse = {
+      top: logPanel.style.top,
+      left: logPanel.style.left,
+      bottom: logPanel.style.bottom,
+      width: logPanel.style.width,
+      height: logPanel.style.height,
+    };
+    logPanel.style.top = '';
+    logPanel.style.left = '';
+    logPanel.style.bottom = '';
     logPanel.style.width = '';
     logPanel.style.height = '';
-  } else if (sizeBeforeCollapse) {
-    logPanel.style.width = sizeBeforeCollapse.width;
-    logPanel.style.height = sizeBeforeCollapse.height;
+  } else if (rectBeforeCollapse) {
+    logPanel.style.top = rectBeforeCollapse.top;
+    logPanel.style.left = rectBeforeCollapse.left;
+    logPanel.style.bottom = rectBeforeCollapse.bottom;
+    logPanel.style.width = rectBeforeCollapse.width;
+    logPanel.style.height = rectBeforeCollapse.height;
   }
 });
 

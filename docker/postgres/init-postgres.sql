@@ -103,12 +103,15 @@ CREATE TABLE IF NOT EXISTS players (
   secret_chest_unlocked BOOLEAN NOT NULL DEFAULT false,
   map_unlocked BOOLEAN NOT NULL DEFAULT false,
   -- Eating & drinking (a follow-up ask) — both start at 100 (a brand new
-  -- character has just eaten/drunk their fill) and drop by 1 point per
-  -- world-clock hour (see game2d/server/game-gateway/game.gateway.ts's
+  -- character has just eaten/drunk their fill) and drop by 0.4 points per
+  -- world-clock hour (originally a flat 1, slowed by a later follow-up
+  -- ask — see game2d/server/game-gateway/game.gateway.ts's
   -- globalStatTick/applyStatTick); recovered 20 points at a time by
-  -- drinking (canteen or a cup of water) or eating jerky.
-  hunger INTEGER NOT NULL DEFAULT 100,
-  thirst INTEGER NOT NULL DEFAULT 100,
+  -- drinking (canteen or a cup of water) or eating jerky. REAL (not
+  -- INTEGER) so the 0.4 decrements actually accumulate — only ever
+  -- rounded down for display client-side.
+  hunger REAL NOT NULL DEFAULT 100,
+  thirst REAL NOT NULL DEFAULT 100,
   -- Quest progress (a follow-up ask) — quest id -> array of completed
   -- objective ids; a quest id present as a key (even with an empty array)
   -- means it's been started. See game2d/shared/quests.ts for the quest/

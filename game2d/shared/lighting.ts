@@ -1,5 +1,5 @@
 import type { MapName } from './constants.js';
-import { GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS, COMMON_ROOM_MAPS, DORM_MAPS } from './constants.js';
+import { GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS, COMMON_ROOM_MAPS, DORM_MAPS, CASTLE_UPPER_FLOOR_MAPS, SPECIALIZATION_CHAMBER_MAPS } from './constants.js';
 import { INFRAVISION_SKILL } from './skills.js';
 import {
   getMap,
@@ -11,7 +11,6 @@ import {
   FLOOR_LANDING_ROWS,
   FLOOR_LANDING_COLS,
   FLOOR_LANDING_MID_ROW,
-  FLOOR_LANDING_UP_STAIRS_COL,
   BRAMWICK_MID_COL,
   BRAMWICK_ENTRANCE_ROW,
 } from './maps.js';
@@ -139,9 +138,42 @@ export function isAlwaysLit(mapName: MapName): boolean {
 // it's computed once from the map's own size rather than hand-placed.
 const WALL_TORCH_SPACING = 6;
 
+// No torch may sit ON or immediately NEXT TO a door/stairs tile (a later
+// follow-up ask: "no torches touching any doors or stairs across the
+// entire castle") — checked against whichever axis the torch and the
+// exit actually share (same row -> compare columns, same col -> compare
+// rows), so this only ever suppresses a torch genuinely sharing that
+// exit's own wall, not an unrelated one elsewhere in the room.
+function isTooCloseToAnExit(def: { exits: Array<{ row: number; col: number }> }, row: number, col: number): boolean {
+  return def.exits.some((e) => (e.row === row && Math.abs(e.col - col) <= 1) || (e.col === col && Math.abs(e.row - row) <= 1));
+}
+
 export function torchWallPositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
   if (!isAlwaysLit(mapName)) return [];
   const def = getMap(mapName);
+  // Floor 4's own torches (a later follow-up ask) — hand-placed instead
+  // of the generic spacing loop below, since its 4 decorative portals
+  // (see portalPositionsFor) need dedicated clearance the generic loop
+  // can't account for (portals aren't MapExits, so the generic exit-
+  // avoidance filter never sees them at all): the north/south walls'
+  // own would-be center torch (the generic spacing's col 12, exactly
+  // where both portals now sit) is split into two, nudged apart to
+  // col 9/15; the east/west walls' own single torch (row 6, close to
+  // the portals' own row FLOOR_LANDING_MID_ROW=8) moves further north
+  // to row 3.
+  if (mapName === 'Grimoak Castle 4th Floor') {
+    const positions = [
+      { row: 0, col: 9 },
+      { row: 0, col: 15 },
+      { row: FLOOR_LANDING_ROWS - 1, col: 9 },
+      { row: FLOOR_LANDING_ROWS - 1, col: 15 },
+      { row: 3, col: 0 },
+      { row: 3, col: FLOOR_LANDING_COLS - 1 },
+    ];
+    return positions.filter(
+      (p) => !isTooCloseToAnExit(def, p.row, p.col) && !portalPositionsFor(mapName).some((port) => port.row === p.row && port.col === p.col)
+    );
+  }
   const positions: Array<{ row: number; col: number }> = [];
   for (let col = WALL_TORCH_SPACING; col < def.cols - WALL_TORCH_SPACING; col += WALL_TORCH_SPACING) {
     positions.push({ row: 0, col });
@@ -151,9 +183,9 @@ export function torchWallPositionsFor(mapName: MapName): Array<{ row: number; co
     positions.push({ row, col: 0 });
     positions.push({ row, col: def.cols - 1 });
   }
-  // Skip any tile that's actually a door/exit — a torch shouldn't sit on
-  // top of the one way in or out.
-  return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
+  // Skip any tile that's ON or immediately next to a door/stairs — a
+  // torch shouldn't crowd the one way in or out.
+  return positions.filter((p) => !isTooCloseToAnExit(def, p.row, p.col));
 }
 
 // 4 fireplaces per castle room — 2 near the top wall and 2 near the
@@ -179,6 +211,20 @@ export function fireplacePositionsFor(mapName: MapName): Array<{ row: number; co
   if ((DORM_MAPS as readonly string[]).includes(mapName)) return [];
   if (!(GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return [];
   const def = getMap(mapName);
+  // The castle's 3 upper floors and their 10 specialization chambers (a
+  // later follow-up ask: "only 2 fireplaces... in center middle") — a
+  // tight side-by-side pair straddling the room's own center, instead of
+  // the generic 4-corners layout below.
+  if ((CASTLE_UPPER_FLOOR_MAPS as readonly string[]).includes(mapName) || (SPECIALIZATION_CHAMBER_MAPS as readonly string[]).includes(mapName)) {
+    const midRow = Math.floor(def.rows / 2);
+    const midCol = Math.floor(def.cols / 2);
+    const offset = (SPECIALIZATION_CHAMBER_MAPS as readonly string[]).includes(mapName) ? 3 : 4;
+    const positions = [
+      { row: midRow, col: midCol - offset },
+      { row: midRow, col: midCol + offset },
+    ];
+    return positions.filter((p) => !def.exits.some((e) => e.row === p.row && e.col === p.col));
+  }
   const isClassroom = (CLASSROOM_MAPS as readonly string[]).includes(mapName);
   const isCommonRoom = (COMMON_ROOM_MAPS as readonly string[]).includes(mapName);
   // The Entrance Hall specifically has 8 doors spread across its own
@@ -492,9 +538,15 @@ export function emitsLight(equipment: Record<string, string>): boolean {
 // a wall, not a bug, until their real mechanics arrive later.
 export function portalPositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
   if (mapName !== 'Grimoak Castle 4th Floor') return [];
+  const midCol = Math.floor(FLOOR_LANDING_COLS / 2);
   return [
-    { row: 0, col: FLOOR_LANDING_MID_ROW + 4 }, // north wall
-    { row: FLOOR_LANDING_ROWS - 1, col: FLOOR_LANDING_UP_STAIRS_COL }, // south wall (the up-stairs slot, unused — floor 4 has nothing above it)
+    { row: 0, col: midCol }, // north wall
+    // A later follow-up ask moved this off the (unused) up-stairs slot
+    // and onto the wall's own center, clear of the real down-stairs
+    // (FLOOR_LANDING_DOWN_STAIRS_COL) — see torchWallPositionsFor's own
+    // floor-4-specific torch layout, nudged apart to make room for both
+    // this and the north portal sharing the same center column.
+    { row: FLOOR_LANDING_ROWS - 1, col: midCol }, // south wall
     { row: FLOOR_LANDING_MID_ROW, col: FLOOR_LANDING_COLS - 1 }, // east wall
     { row: FLOOR_LANDING_MID_ROW, col: 0 }, // west wall
   ];

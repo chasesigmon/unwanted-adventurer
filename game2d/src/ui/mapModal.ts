@@ -97,6 +97,9 @@ const GRIMOAK_ASCII_MAP = `
   EMBERCLAW ---------------------------------- +--- ENTRANCE HALL ---- + ---------------- DUSKWING
   COMMON ROOM                                  |            |          |                COMMON ROOM
                                                |            |          |
+                                                          ^
+                                               stairs up to 2nd Floor
+                                              (Specialization Chambers)
   STARFALL                                     /            |           \\
     DORMS                                     |             |            |
       ^                                       |             |            |

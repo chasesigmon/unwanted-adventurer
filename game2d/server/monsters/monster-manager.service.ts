@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
-import { getMap, isCastleExteriorBlocked, isMoatBlocked, isWithinMoatFootprint, isGateTile } from '../../shared/maps.js';
+import { getMap, isCastleExteriorBlocked, isMoatBlocked, isWithinMoatFootprint, isGateTile, isStairsSideBlocked } from '../../shared/maps.js';
 import { isTreeTile } from '../../shared/trees.js';
 import {
   isFireplaceBlocked,
@@ -198,6 +198,7 @@ export class MonsterManagerService {
     if (isChestBlocked(mapName, row, col)) return false;
     if (isPortalBlocked(mapName, row, col)) return false;
     if (isBramwickSignBlocked(mapName, row, col)) return false;
+    if (isStairsSideBlocked(mapName, row, col)) return false;
     for (const m of this.monsters.values()) {
       if (m.mapName === mapName && m.row === row && m.col === col) return false;
     }

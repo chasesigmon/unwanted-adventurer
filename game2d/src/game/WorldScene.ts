@@ -1865,12 +1865,24 @@ export class WorldScene extends Phaser.Scene {
     }
 
     // The castle's 4th floor own 4 decorative portals (a later follow-up
-    // ask) — furniture only, no click handler ("mechanics... come
-    // later"), collision is server-side (see isPortalBlocked).
+    // ask) — selectable (numbered "Portal 1"-4 for now, same setLockTarget
+    // shape every door already uses; real mechanics come later) and
+    // continuously spinning in place for a "swirling" look. Centered
+    // (origin 0.5, 0.5) rather than floor-anchored like other props —
+    // rotating around a bottom-anchored origin would swing the top
+    // wildly instead of spinning cleanly in place. Collision is
+    // server-side (see isPortalBlocked).
     for (const sprite of this.portalSprites) sprite.destroy();
-    this.portalSprites = portalPositionsFor(mapName).map(({ row, col }) => {
+    this.portalSprites = portalPositionsFor(mapName).map(({ row, col }, index) => {
       const pos = this.tilePosition(row, col);
-      return this.add.sprite(pos.x, pos.y, PORTAL_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
+      const sprite = this.add.sprite(pos.x, pos.y, PORTAL_TEXTURE_KEY).setOrigin(0.5, 0.5).setDepth(-0.5).setInteractive();
+      this.tweens.add({ targets: sprite, angle: 360, duration: 5000, repeat: -1, ease: 'Linear' });
+      const label = `Portal ${index + 1}`;
+      sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (isInputCaptured() || !pointer.leftButtonDown()) return;
+        this.setLockTarget({ kind: 'door', map: mapName, row, col }, label);
+      });
+      return sprite;
     });
 
     // Bramwick's own clickable name sign (a later follow-up ask) — just
