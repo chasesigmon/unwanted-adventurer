@@ -75,8 +75,18 @@ import {
   greatHallTableFootprint,
   greatHallChairPositionsFor,
   greatHallStagePlatform,
+  portalPositionsFor,
+  BRAMWICK_SIGN_POSITION,
 } from '../../shared/lighting.js';
-import { MONSTER_KINDS, FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS, COMMON_ROOM_MAPS, DORM_MAPS } from '../../shared/constants.js';
+import {
+  MONSTER_KINDS,
+  FLORO_SHOP_MAPS,
+  GRIMOAK_CASTLE_MAPS,
+  CLASSROOM_MAPS,
+  COMMON_ROOM_MAPS,
+  DORM_MAPS,
+  SPECIALIZATION_CHAMBER_MAPS,
+} from '../../shared/constants.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
 import {
@@ -148,6 +158,8 @@ import {
   HALL_CHAIR_TEXTURE_KEY,
   HEAD_CHAIR_TEXTURE_KEY,
   GREAT_HALL_STAGE_TEXTURE_KEY,
+  PORTAL_TEXTURE_KEY,
+  SIGN_TEXTURE_KEY,
   CLASSROOM_ZOOM,
   COMMON_ROOM_ZOOM,
   DORM_ZOOM,
@@ -297,6 +309,13 @@ export class WorldScene extends Phaser.Scene {
   // and rotated per greatHallChairPositionsFor's own `angle`.
   private greatHallTableSprite: Phaser.GameObjects.Sprite | null = null;
   private greatHallStageSprite: Phaser.GameObjects.Sprite | null = null;
+  // The castle's 4th floor own 4 decorative portals (a later follow-up
+  // ask) — furniture only, no click handler yet ("mechanics... come
+  // later"), collision is server-side (see isPortalBlocked).
+  private portalSprites: Phaser.GameObjects.Sprite[] = [];
+  // Bramwick's own clickable name sign (a later follow-up ask) — see
+  // BRAMWICK_SIGN_POSITION.
+  private bramwickSignSprite: Phaser.GameObjects.Sprite | null = null;
   private greatHallChairSprites: Phaser.GameObjects.Sprite[] = [];
   // The Utilization classroom's clickable spellbook podium (item 8) —
   // only ever populated while rendering that one map.
@@ -419,6 +438,8 @@ export class WorldScene extends Phaser.Scene {
     this.load.svg('grass', '/grass-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     this.load.svg('stone', '/stone-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     this.load.svg('concrete', '/concrete-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    // Bramwick's own dirt-road street (a later follow-up ask).
+    this.load.svg('dirt', '/dirt-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     this.load.svg(TREE_TEXTURE_KEY, '/tree.svg', { width: 48, height: 64 });
     this.load.svg(DAGGER_TEXTURE_KEY, '/dagger.svg', { width: 16, height: 16 });
     this.load.svg(CLUB_TEXTURE_KEY, '/club.svg', { width: 16, height: 16 });
@@ -466,6 +487,8 @@ export class WorldScene extends Phaser.Scene {
     this.load.image(HEAD_CHAIR_TEXTURE_KEY, '/head-chair.png');
     this.load.image(GREAT_HALL_STAGE_TEXTURE_KEY, '/great-hall-stage.png');
     this.load.image(BED_TEXTURE_KEY, '/bed.png');
+    this.load.image(PORTAL_TEXTURE_KEY, '/portal.png');
+    this.load.image(SIGN_TEXTURE_KEY, '/sign.png');
     createWallTorchTexture(this);
     preloadCharacterSprites(this);
   }
@@ -1381,7 +1404,11 @@ export class WorldScene extends Phaser.Scene {
     const isClassroomSized =
       (CLASSROOM_MAPS as readonly string[]).includes(this.currentMap) ||
       this.currentMap === 'Caverna Secretissima' ||
-      this.currentMap === 'Specialization';
+      this.currentMap === 'Specialization' ||
+      // The 10 specialization chambers (a later follow-up ask) — same
+      // classroom footprint (CLASSROOM_ROWS/COLS), same "not a
+      // CLASSROOM_MAPS entry so it gets no student desks" carve-out.
+      (SPECIALIZATION_CHAMBER_MAPS as readonly string[]).includes(this.currentMap);
     const isCommonRoomSized = (COMMON_ROOM_MAPS as readonly string[]).includes(this.currentMap) || this.currentMap === 'Great Hall';
     const isDormSized = (DORM_MAPS as readonly string[]).includes(this.currentMap);
     const zoom = isClassroomSized ? CLASSROOM_ZOOM : isCommonRoomSized ? COMMON_ROOM_ZOOM : isDormSized ? DORM_ZOOM : 1;
@@ -1665,7 +1692,12 @@ export class WorldScene extends Phaser.Scene {
     // 'Specialization' gets the same half-size treatment for the same
     // "still classroom-sized, just not a CLASSROOM_MAPS entry anymore"
     // reason as isClassroomSized above.
-    const fireplaceScale = (CLASSROOM_MAPS as readonly string[]).includes(mapName) || mapName === 'Specialization' ? 0.5 : 1;
+    const fireplaceScale =
+      (CLASSROOM_MAPS as readonly string[]).includes(mapName) ||
+      mapName === 'Specialization' ||
+      (SPECIALIZATION_CHAMBER_MAPS as readonly string[]).includes(mapName)
+        ? 0.5
+        : 1;
     for (const { row, col } of fireplacePositionsFor(mapName)) {
       const pos = this.tilePosition(row, col);
       const mantle = this.add.sprite(pos.x, pos.y, FIREPLACE_MANTLE_TEXTURE_KEY).setOrigin(0.5, 0.85).setScale(fireplaceScale).setDepth(-0.5);
@@ -1830,6 +1862,30 @@ export class WorldScene extends Phaser.Scene {
         .setAngle(angle)
         .setDepth(-0.5);
       this.greatHallChairSprites.push(chair);
+    }
+
+    // The castle's 4th floor own 4 decorative portals (a later follow-up
+    // ask) — furniture only, no click handler ("mechanics... come
+    // later"), collision is server-side (see isPortalBlocked).
+    for (const sprite of this.portalSprites) sprite.destroy();
+    this.portalSprites = portalPositionsFor(mapName).map(({ row, col }) => {
+      const pos = this.tilePosition(row, col);
+      return this.add.sprite(pos.x, pos.y, PORTAL_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
+    });
+
+    // Bramwick's own clickable name sign (a later follow-up ask) — just
+    // shows the town's name in the top-left target panel, same
+    // setLockTarget shape every door already uses.
+    this.bramwickSignSprite?.destroy();
+    this.bramwickSignSprite = null;
+    if (mapName === 'Bramwick') {
+      const pos = this.tilePosition(BRAMWICK_SIGN_POSITION.row, BRAMWICK_SIGN_POSITION.col);
+      const sign = this.add.sprite(pos.x, pos.y, SIGN_TEXTURE_KEY).setOrigin(0.5, 0.9).setDepth(-0.5).setInteractive();
+      sign.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (isInputCaptured() || !pointer.leftButtonDown()) return;
+        this.setLockTarget({ kind: 'door', map: mapName, row: BRAMWICK_SIGN_POSITION.row, col: BRAMWICK_SIGN_POSITION.col }, 'Bramwick');
+      });
+      this.bramwickSignSprite = sign;
     }
 
     // The classroom spellbook podiums (item 8, item 9's follow-up ask) —

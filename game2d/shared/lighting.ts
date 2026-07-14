@@ -1,7 +1,20 @@
 import type { MapName } from './constants.js';
 import { GRIMOAK_CASTLE_MAPS, CLASSROOM_MAPS, COMMON_ROOM_MAPS, DORM_MAPS } from './constants.js';
 import { INFRAVISION_SKILL } from './skills.js';
-import { getMap, CASTLE_DOOR_ON_GROUNDS, MOAT_INNER_LEFT, MOAT_INNER_RIGHT, MOAT_INNER_TOP, MOAT_INNER_BOTTOM } from './maps.js';
+import {
+  getMap,
+  CASTLE_DOOR_ON_GROUNDS,
+  MOAT_INNER_LEFT,
+  MOAT_INNER_RIGHT,
+  MOAT_INNER_TOP,
+  MOAT_INNER_BOTTOM,
+  FLOOR_LANDING_ROWS,
+  FLOOR_LANDING_COLS,
+  FLOOR_LANDING_MID_ROW,
+  FLOOR_LANDING_UP_STAIRS_COL,
+  BRAMWICK_MID_COL,
+  BRAMWICK_ENTRANCE_ROW,
+} from './maps.js';
 
 // "Late hours of night and early hours of morning" — a narrower, darker
 // window nested inside the broader 18:00-6:00 "night" range the cosmetic
@@ -467,4 +480,36 @@ export function hasFullVision(skills: Record<string, number>): boolean {
 // see any better.
 export function emitsLight(equipment: Record<string, string>): boolean {
   return equipment.shield === TORCH_ITEM;
+}
+
+// The castle's 4th floor — 4 decorative "swirling light blue" portals,
+// one per wall (a later follow-up ask), positioned clear of the floor's
+// own real down-stairs (see shared/maps.ts's floorLandingDefinition —
+// the down-stairs sits at col FLOOR_LANDING_DOWN_STAIRS_COL, this file
+// doesn't need that one). Deliberately NOT a MapExit (see maps.ts's own
+// comment on why) — these are pure client-side props, solid (see
+// isPortalBlocked below) so walking "into" one that goes nowhere reads as
+// a wall, not a bug, until their real mechanics arrive later.
+export function portalPositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
+  if (mapName !== 'Grimoak Castle 4th Floor') return [];
+  return [
+    { row: 0, col: FLOOR_LANDING_MID_ROW + 4 }, // north wall
+    { row: FLOOR_LANDING_ROWS - 1, col: FLOOR_LANDING_UP_STAIRS_COL }, // south wall (the up-stairs slot, unused — floor 4 has nothing above it)
+    { row: FLOOR_LANDING_MID_ROW, col: FLOOR_LANDING_COLS - 1 }, // east wall
+    { row: FLOOR_LANDING_MID_ROW, col: 0 }, // west wall
+  ];
+}
+
+export function isPortalBlocked(mapName: MapName, row: number, col: number): boolean {
+  return portalPositionsFor(mapName).some((p) => p.row === row && p.col === col);
+}
+
+// Bramwick's own clickable name sign (a later follow-up ask) — just
+// inside the village's south entrance (the dirt road up from Grimoak
+// Grounds), off to the side so it doesn't block the entrance tile
+// itself.
+export const BRAMWICK_SIGN_POSITION = { row: BRAMWICK_ENTRANCE_ROW - 2, col: BRAMWICK_MID_COL + 4 };
+
+export function isBramwickSignBlocked(mapName: MapName, row: number, col: number): boolean {
+  return mapName === 'Bramwick' && row === BRAMWICK_SIGN_POSITION.row && col === BRAMWICK_SIGN_POSITION.col;
 }

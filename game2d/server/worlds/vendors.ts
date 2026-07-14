@@ -159,6 +159,47 @@ const VENDOR_SEEDS: VendorSeed[] = [
     items: [],
     greeting: 'No postings on the board today — check back another time.',
   },
+  // --- Bramwick, the small village north of Grimoak Grounds (a later
+  // follow-up ask) — same "one shopkeeper just inside the door" shape as
+  // Floro's own shops above. Greeting-only for now ("mechanics for the
+  // shops will come later"), same as Floro's own Inn/Bank/Pet Salesman/
+  // Jobs Office. ---
+  {
+    id: 'bramwick-general-shop',
+    name: 'General Shop',
+    map: 'Bramwick General Shop',
+    row: 2,
+    col: 5,
+    items: [],
+    greeting: "A bit of everything, though the shelves are still filling in — come back soon.",
+  },
+  {
+    id: 'bramwick-wands',
+    name: 'Wandmaker',
+    map: 'Bramwick Wands',
+    row: 2,
+    col: 5,
+    items: [],
+    greeting: "Every wand finds its own wizard eventually — I'm still carving this season's stock.",
+  },
+  {
+    id: 'bramwick-armor',
+    name: 'Armorer',
+    map: 'Bramwick Armor',
+    row: 2,
+    col: 5,
+    items: [],
+    greeting: "Sturdy work, all of it — just not quite ready for coin yet.",
+  },
+  {
+    id: 'bramwick-potions',
+    name: 'Potioneer',
+    map: 'Bramwick Potions',
+    row: 2,
+    col: 5,
+    items: [],
+    greeting: "The cauldron's always brewing something — nothing bottled for sale just yet.",
+  },
 ];
 
 export const VENDORS: VendorSnapshot[] = VENDOR_SEEDS.map((seed) => {

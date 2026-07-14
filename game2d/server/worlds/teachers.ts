@@ -100,6 +100,23 @@ export const TEACHERS: TeacherSnapshot[] = [
   { id: 'summoning-teacher', name: 'Professor Nyx', map: 'Summoning Classroom', row: 2, col: 9, robeColorKey: 'plum' },
   { id: 'utilization-teacher', name: 'Professor Wren', map: 'Utility Classroom', row: 2, col: 9, robeColorKey: 'olive' },
   { id: 'offense-teacher', name: 'Professor Kastellan', map: 'Offense Classroom', row: 2, col: 9, robeColorKey: 'maroon' },
+  // The 10 specialization chambers (a later follow-up ask) — one teacher
+  // each, same row/col as every other classroom teacher (their own
+  // desk sits one tile south, per deskPositionFor's default). No special
+  // click behavior yet (no questId/specializationGate/houseChoiceGate) —
+  // "mechanics for the specialization teachers will come later," so they
+  // fall back to the same plain generic-tooltip click every classroom
+  // teacher without one of those already gets.
+  { id: 'necromancer-teacher', name: 'Professor Voss', map: 'Necromancer Chamber', row: 2, col: 9, robeColorKey: 'slate' },
+  { id: 'enhancer-teacher', name: 'Professor Brann', map: 'Enhancer Chamber', row: 2, col: 9, robeColorKey: 'olive' },
+  { id: 'elementalist-teacher', name: 'Professor Tempest', map: 'Elementalist Chamber', row: 2, col: 9, robeColorKey: 'teal' },
+  { id: 'summoner-teacher', name: 'Professor Corvin', map: 'Summoner Chamber', row: 2, col: 9, robeColorKey: 'plum' },
+  { id: 'illusionist-teacher', name: 'Professor Mirelle', map: 'Illusionist Chamber', row: 2, col: 9, robeColorKey: 'violet' },
+  { id: 'battlemage-teacher', name: 'Professor Draven', map: 'Battlemage Chamber', row: 2, col: 9, robeColorKey: 'steel' },
+  { id: 'cleric-teacher', name: 'Professor Seraphine', map: 'Cleric Chamber', row: 2, col: 9, robeColorKey: 'amber' },
+  { id: 'druid-teacher', name: 'Professor Thornwood', map: 'Druid Chamber', row: 2, col: 9, robeColorKey: 'forest' },
+  { id: 'diabolist-teacher', name: 'Professor Malphas', map: 'Diabolist Chamber', row: 2, col: 9, robeColorKey: 'maroon' },
+  { id: 'hemomancer-teacher', name: 'Professor Vex', map: 'Hemomancer Chamber', row: 2, col: 9, robeColorKey: 'crimson' },
 ];
 
 export function teachersForMap(mapName: MapName): TeacherSnapshot[] {

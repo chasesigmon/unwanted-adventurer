@@ -1,5 +1,5 @@
 import type { MapName, Direction } from './constants.js';
-import { FLORO_SHOP_MAPS } from './constants.js';
+import { FLORO_SHOP_MAPS, BRAMWICK_SHOP_MAPS } from './constants.js';
 
 // A single source of truth for both the server (movement resolution) and
 // the client (rendering the floor/door) — no need to duplicate these
@@ -594,6 +594,229 @@ UTILIZATION.exits.push({
 // state, since it's a solid object either way.
 export const CAVERNA_CHEST_POSITION = { row: Math.floor(CLASSROOM_ROWS / 2), col: CLASSROOM_MID_COL };
 
+// ---------- The castle's 3 upper floors (a later follow-up ask) — each a
+// small landing reached by stairs, half the Entrance Hall's own size.
+// Floors 2 and 3 each hang 5 classroom-sized specialization chambers off
+// their own north wall (same classroomOffEntranceHall shape, just off a
+// floor landing instead of the Entrance Hall); floor 4 has no chambers at
+// all, just 4 decorative portals (see shared/lighting.ts's
+// portalPositionsFor — these are NOT MapExits, purely client-side props,
+// so they can never accidentally function as a real transition).
+// Every landing uses the SAME south-wall convention for its own stairs:
+// the down-stairs (back to the floor below) at DOWN_STAIRS_COL, the
+// up-stairs/floor-4-portal-slot (further up, or repurposed as a portal on
+// floor 4, which has nothing above it) at UP_STAIRS_COL — both plain
+// literals (not read from any other floor's own definition) so each
+// floor's exits can be built independently and still reciprocate exactly,
+// same "precompute both sides' fixed coordinates first" approach the
+// Entrance Hall's own up-stairs (below) already needs. ----------
+// Exported — shared/lighting.ts's portalPositionsFor needs these same
+// numbers to place floor 4's own 4 decorative portals without
+// duplicating (and risking drift from) this geometry.
+export const FLOOR_LANDING_ROWS = Math.round(ENTRANCE_ROWS / 2); // half the Entrance Hall's own size
+export const FLOOR_LANDING_COLS = Math.round(ENTRANCE_COLS / 2);
+export const FLOOR_LANDING_MID_ROW = Math.floor(FLOOR_LANDING_ROWS / 2);
+const FLOOR_LANDING_DOWN_STAIRS_COL = 6;
+export const FLOOR_LANDING_UP_STAIRS_COL = 19;
+
+// "About 7 feet equivalent left of the entrance to the entrance hall" —
+// the Entrance Hall's own main south door sits at (ENTRANCE_ROWS-1,
+// ENTRANCE_MID_COL); 7 tiles west of that, same row (same south wall).
+const ENTRANCE_HALL_UP_STAIRS = { row: ENTRANCE_ROWS - 1, col: ENTRANCE_MID_COL - 7 };
+
+// The 5 specialization chambers each floor's own landing hangs off its
+// north wall — same door-column spread as ENTRANCE_NORTH_DOORS, just
+// across the landing's own (smaller) width. The first 5 specialization
+// paths live on floor 2, the other 5 on floor 3 (see
+// shared/constants.ts's SPECIALIZATION_PATHS/SPECIALIZATION_CHAMBER_MAPS).
+const FLOOR2_CHAMBER_DOORS: Array<{ col: number; name: MapName }> = [
+  { col: 4, name: 'Necromancer Chamber' },
+  { col: 8, name: 'Enhancer Chamber' },
+  { col: 12, name: 'Elementalist Chamber' },
+  { col: 16, name: 'Summoner Chamber' },
+  { col: 20, name: 'Illusionist Chamber' },
+];
+const FLOOR3_CHAMBER_DOORS: Array<{ col: number; name: MapName }> = [
+  { col: 4, name: 'Battlemage Chamber' },
+  { col: 8, name: 'Cleric Chamber' },
+  { col: 12, name: 'Druid Chamber' },
+  { col: 16, name: 'Diabolist Chamber' },
+  { col: 20, name: 'Hemomancer Chamber' },
+];
+
+// A specialization chamber — same shape as classroomOffEntranceHall
+// (13x19, a single south exit back to its own floor's landing), just
+// hung off a floor landing's own north-wall door list instead of the
+// Entrance Hall's. Deliberately NOT added to CLASSROOM_MAPS (see
+// shared/constants.ts) so it gets zero generic student desks — "similar
+// to the existing classrooms... but no desks in these rooms."
+function chamberOffFloorLanding(name: MapName, landingName: MapName, landingDoors: Array<{ col: number; name: MapName }>): MapDefinition {
+  const landingDoor = landingDoors.find((d) => d.name === name)!;
+  return {
+    name,
+    rows: CLASSROOM_ROWS,
+    cols: CLASSROOM_COLS,
+    terrain: 'stone',
+    exits: [
+      {
+        row: CLASSROOM_ROWS - 1,
+        col: CLASSROOM_MID_COL,
+        direction: 'south',
+        toMap: landingName,
+        toRow: 0,
+        toCol: landingDoor.col,
+      },
+    ],
+  };
+}
+
+// A floor landing itself — the 5 chamber doors on its north wall (if
+// any; floor 4 has none), a down-stairs on its south wall back to
+// whichever floor is below, and (for floors 2/3 only) an up-stairs
+// further along that same south wall to the floor above.
+function floorLandingDefinition(
+  name: MapName,
+  chamberDoors: Array<{ col: number; name: MapName }>,
+  downStairs: { toMap: MapName; toRow: number; toCol: number },
+  upStairs?: { toMap: MapName; toRow: number; toCol: number }
+): MapDefinition {
+  const exits: MapExit[] = [
+    ...chamberDoors.map(({ col, name: chamberName }) => ({
+      row: 0,
+      col,
+      direction: 'north' as const,
+      toMap: chamberName,
+      toRow: CLASSROOM_ROWS - 1,
+      toCol: CLASSROOM_MID_COL,
+    })),
+    {
+      row: FLOOR_LANDING_ROWS - 1,
+      col: FLOOR_LANDING_DOWN_STAIRS_COL,
+      direction: 'south',
+      kind: 'stairs',
+      toMap: downStairs.toMap,
+      toRow: downStairs.toRow,
+      toCol: downStairs.toCol,
+    },
+  ];
+  if (upStairs) {
+    exits.push({
+      row: FLOOR_LANDING_ROWS - 1,
+      col: FLOOR_LANDING_UP_STAIRS_COL,
+      direction: 'south',
+      kind: 'stairs',
+      toMap: upStairs.toMap,
+      toRow: upStairs.toRow,
+      toCol: upStairs.toCol,
+    });
+  }
+  return { name, rows: FLOOR_LANDING_ROWS, cols: FLOOR_LANDING_COLS, terrain: 'stone', exits };
+}
+
+const FLOOR2_LANDING = floorLandingDefinition(
+  'Grimoak Castle 2nd Floor',
+  FLOOR2_CHAMBER_DOORS,
+  { toMap: 'Grimoak Entrance Hall', toRow: ENTRANCE_HALL_UP_STAIRS.row, toCol: ENTRANCE_HALL_UP_STAIRS.col },
+  { toMap: 'Grimoak Castle 3rd Floor', toRow: FLOOR_LANDING_ROWS - 1, toCol: FLOOR_LANDING_DOWN_STAIRS_COL }
+);
+const FLOOR3_LANDING = floorLandingDefinition(
+  'Grimoak Castle 3rd Floor',
+  FLOOR3_CHAMBER_DOORS,
+  { toMap: 'Grimoak Castle 2nd Floor', toRow: FLOOR_LANDING_ROWS - 1, toCol: FLOOR_LANDING_UP_STAIRS_COL },
+  { toMap: 'Grimoak Castle 4th Floor', toRow: FLOOR_LANDING_ROWS - 1, toCol: FLOOR_LANDING_DOWN_STAIRS_COL }
+);
+// Floor 4 has no chambers of its own (no north-wall doors) and nothing
+// above it — just the down-stairs back to floor 3, plus 4 decorative
+// portals (see shared/lighting.ts's portalPositionsFor; NOT MapExits, so
+// they render but can never actually transition anywhere yet).
+const FLOOR4_LANDING = floorLandingDefinition('Grimoak Castle 4th Floor', [], {
+  toMap: 'Grimoak Castle 3rd Floor',
+  toRow: FLOOR_LANDING_ROWS - 1,
+  toCol: FLOOR_LANDING_UP_STAIRS_COL,
+});
+
+// The Entrance Hall's own reciprocal half of its up-stairs to floor 2 —
+// pushed on afterward (same "define the room, then push an additional
+// exit once the target's own info is known" shape the secret door below
+// already uses for Utility Classroom).
+ENTRANCE_HALL.exits.push({
+  row: ENTRANCE_HALL_UP_STAIRS.row,
+  col: ENTRANCE_HALL_UP_STAIRS.col,
+  direction: 'south',
+  kind: 'stairs',
+  toMap: 'Grimoak Castle 2nd Floor',
+  toRow: FLOOR_LANDING_ROWS - 1,
+  toCol: FLOOR_LANDING_DOWN_STAIRS_COL,
+});
+
+const NECROMANCER_CHAMBER = chamberOffFloorLanding('Necromancer Chamber', 'Grimoak Castle 2nd Floor', FLOOR2_CHAMBER_DOORS);
+const ENHANCER_CHAMBER = chamberOffFloorLanding('Enhancer Chamber', 'Grimoak Castle 2nd Floor', FLOOR2_CHAMBER_DOORS);
+const ELEMENTALIST_CHAMBER = chamberOffFloorLanding('Elementalist Chamber', 'Grimoak Castle 2nd Floor', FLOOR2_CHAMBER_DOORS);
+const SUMMONER_CHAMBER = chamberOffFloorLanding('Summoner Chamber', 'Grimoak Castle 2nd Floor', FLOOR2_CHAMBER_DOORS);
+const ILLUSIONIST_CHAMBER = chamberOffFloorLanding('Illusionist Chamber', 'Grimoak Castle 2nd Floor', FLOOR2_CHAMBER_DOORS);
+const BATTLEMAGE_CHAMBER = chamberOffFloorLanding('Battlemage Chamber', 'Grimoak Castle 3rd Floor', FLOOR3_CHAMBER_DOORS);
+const CLERIC_CHAMBER = chamberOffFloorLanding('Cleric Chamber', 'Grimoak Castle 3rd Floor', FLOOR3_CHAMBER_DOORS);
+const DRUID_CHAMBER = chamberOffFloorLanding('Druid Chamber', 'Grimoak Castle 3rd Floor', FLOOR3_CHAMBER_DOORS);
+const DIABOLIST_CHAMBER = chamberOffFloorLanding('Diabolist Chamber', 'Grimoak Castle 3rd Floor', FLOOR3_CHAMBER_DOORS);
+const HEMOMANCER_CHAMBER = chamberOffFloorLanding('Hemomancer Chamber', 'Grimoak Castle 3rd Floor', FLOOR3_CHAMBER_DOORS);
+
+// ---------- Bramwick (a later follow-up ask) — a small village just
+// north of Grimoak Grounds, dirt-road street with 4 shop cottages. Same
+// hub-and-spoke shape as Floro's own shops (see shopInteriorDefinition/
+// floroShopDoorExits above), just parameterized to Bramwick's own name/
+// door list instead. ----------
+const BRAMWICK_SIZE = 40;
+const BRAMWICK_MID_COL = Math.floor(BRAMWICK_SIZE / 2);
+
+const BRAMWICK_SHOP_DOORS: Record<(typeof BRAMWICK_SHOP_MAPS)[number], { row: number; col: number }> = {
+  'Bramwick General Shop': { row: 10, col: 10 },
+  'Bramwick Wands': { row: 10, col: 30 },
+  'Bramwick Armor': { row: 28, col: 10 },
+  'Bramwick Potions': { row: 28, col: 30 },
+};
+
+function bramwickShopInteriorDefinition(name: (typeof BRAMWICK_SHOP_MAPS)[number]): MapDefinition {
+  const door = BRAMWICK_SHOP_DOORS[name];
+  return {
+    name,
+    rows: SHOP_INTERIOR_SIZE,
+    cols: SHOP_INTERIOR_SIZE,
+    terrain: 'stone',
+    exits: [
+      {
+        row: SHOP_INTERIOR_DOOR_ROW,
+        col: SHOP_INTERIOR_MID_COL,
+        direction: 'south',
+        toMap: 'Bramwick',
+        toRow: door.row,
+        toCol: door.col,
+      },
+    ],
+  };
+}
+
+function bramwickShopDoorExits(): MapExit[] {
+  return BRAMWICK_SHOP_MAPS.map((name) => {
+    const door = BRAMWICK_SHOP_DOORS[name];
+    return {
+      row: door.row,
+      col: door.col,
+      direction: 'north',
+      toMap: name,
+      toRow: SHOP_INTERIOR_DOOR_ROW,
+      toCol: SHOP_INTERIOR_MID_COL,
+    };
+  });
+}
+
+// Bramwick's own south entrance — a dirt road leading north from Grimoak
+// Grounds (see the new north-wall exit added to Grimoak Grounds' own
+// MAPS entry below), with a clickable name sign just inside (see
+// shared/lighting.ts's BRAMWICK_SIGN_POSITION).
+const BRAMWICK_ENTRANCE_ROW = BRAMWICK_SIZE - 1;
+
+export { BRAMWICK_MID_COL, BRAMWICK_ENTRANCE_ROW };
+
 export const MAPS: Record<MapName, MapDefinition> = {
   'Great Plains': {
     name: 'Great Plains',
@@ -688,6 +911,31 @@ export const MAPS: Record<MapName, MapDefinition> = {
       },
     ],
   },
+  Bramwick: {
+    name: 'Bramwick',
+    rows: BRAMWICK_SIZE,
+    cols: BRAMWICK_SIZE,
+    // The actual dirt-road look comes from mapRender.ts's own
+    // floorTextureFor (keyed on map name, same as every other map here —
+    // this `terrain` field is unused metadata, see MapTerrain's own doc
+    // comment), not this field.
+    terrain: 'grass',
+    exits: [
+      {
+        row: BRAMWICK_ENTRANCE_ROW,
+        col: BRAMWICK_MID_COL,
+        direction: 'south',
+        toMap: 'Grimoak Grounds',
+        toRow: 0,
+        toCol: CASTLE_DOOR_ON_GROUNDS.col,
+      },
+      ...bramwickShopDoorExits(),
+    ],
+  },
+  'Bramwick General Shop': bramwickShopInteriorDefinition('Bramwick General Shop'),
+  'Bramwick Wands': bramwickShopInteriorDefinition('Bramwick Wands'),
+  'Bramwick Armor': bramwickShopInteriorDefinition('Bramwick Armor'),
+  'Bramwick Potions': bramwickShopInteriorDefinition('Bramwick Potions'),
   'Grimoak Grounds': {
     name: 'Grimoak Grounds',
     rows: GRIMOAK_GROUNDS_SIZE,
@@ -701,6 +949,17 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toMap: 'Grimoak Entrance Hall',
         toRow: ENTRANCE_ROWS - 1,
         toCol: ENTRANCE_MID_COL,
+      },
+      // Bramwick's own south entrance sits directly north of the castle
+      // door, straight up the open ground north of the moat (a later
+      // follow-up ask: "a dirt road leading north").
+      {
+        row: 0,
+        col: CASTLE_DOOR_ON_GROUNDS.col,
+        direction: 'north',
+        toMap: 'Bramwick',
+        toRow: BRAMWICK_ENTRANCE_ROW,
+        toCol: BRAMWICK_MID_COL,
       },
     ],
   },
@@ -720,6 +979,19 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Utility Classroom': UTILIZATION,
   'Offense Classroom': OFFENSE,
   'Caverna Secretissima': CAVERNA_SECRETISSIMA,
+  'Grimoak Castle 2nd Floor': FLOOR2_LANDING,
+  'Grimoak Castle 3rd Floor': FLOOR3_LANDING,
+  'Grimoak Castle 4th Floor': FLOOR4_LANDING,
+  'Necromancer Chamber': NECROMANCER_CHAMBER,
+  'Enhancer Chamber': ENHANCER_CHAMBER,
+  'Elementalist Chamber': ELEMENTALIST_CHAMBER,
+  'Summoner Chamber': SUMMONER_CHAMBER,
+  'Illusionist Chamber': ILLUSIONIST_CHAMBER,
+  'Battlemage Chamber': BATTLEMAGE_CHAMBER,
+  'Cleric Chamber': CLERIC_CHAMBER,
+  'Druid Chamber': DRUID_CHAMBER,
+  'Diabolist Chamber': DIABOLIST_CHAMBER,
+  'Hemomancer Chamber': HEMOMANCER_CHAMBER,
 };
 
 export function getMap(name: MapName): MapDefinition {

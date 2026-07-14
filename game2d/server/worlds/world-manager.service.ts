@@ -15,6 +15,8 @@ import {
   studentDeskPositionsFor,
   isGreatHallTableBlocked,
   isGreatHallChairBlocked,
+  isPortalBlocked,
+  isBramwickSignBlocked,
 } from '../../shared/lighting.js';
 import { isCastleExteriorBlocked, isMoatBlocked, isGateTile, GATE_ROW, GATE_COL_LEFT, GATE_COL_RIGHT, GATE_REACH_TILES } from '../../shared/maps.js';
 import { vendorsForMap } from './vendors.js';
@@ -119,6 +121,8 @@ export class WorldManagerService {
     if (studentDeskPositionsFor(mapName).some((p) => p.row === row && p.col === col)) return true;
     if (isGreatHallTableBlocked(mapName, row, col)) return true;
     if (isGreatHallChairBlocked(mapName, row, col)) return true;
+    if (isPortalBlocked(mapName, row, col)) return true;
+    if (isBramwickSignBlocked(mapName, row, col)) return true;
 
     const npcHit = NPCS.some((npc) => npc.map === mapName && npc.row === row && npc.col === col);
     if (npcHit) return true;

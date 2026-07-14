@@ -2,7 +2,7 @@
 // mutable module state, just math and small Phaser Graphics drawing.
 import Phaser from 'phaser';
 import type { MapName, Direction } from '../../shared/constants.js';
-import { FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS } from '../../shared/constants.js';
+import { FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS, BRAMWICK_SHOP_MAPS } from '../../shared/constants.js';
 import type { FacingGroup } from '../characterSprites.js';
 
 export const TILE_SIZE = 32;
@@ -148,6 +148,12 @@ export const LONG_TABLE_TEXTURE_KEY = 'long-table';
 export const HALL_CHAIR_TEXTURE_KEY = 'hall-chair';
 export const HEAD_CHAIR_TEXTURE_KEY = 'head-chair';
 export const GREAT_HALL_STAGE_TEXTURE_KEY = 'great-hall-stage';
+// The castle's 4th floor own 4 decorative "swirling light blue" portals
+// (a later follow-up ask) — see shared/lighting.ts's portalPositionsFor.
+export const PORTAL_TEXTURE_KEY = 'portal';
+// Bramwick's own clickable name sign (a later follow-up ask) — see
+// shared/lighting.ts's BRAMWICK_SIGN_POSITION.
+export const SIGN_TEXTURE_KEY = 'sign';
 
 export const CHAR_SCALE = 0.275;
 export const CORPSE_SCALE = 0.35;
@@ -225,6 +231,11 @@ export type Facing = FacingGroup;
 export function floorTextureFor(mapName: MapName): string {
   if (mapName === 'Labyrinth' || (GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return 'stone';
   if (mapName === 'Floro' || mapName === 'Kortho' || (FLORO_SHOP_MAPS as readonly string[]).includes(mapName)) return 'concrete';
+  // Bramwick's own shop cottages (a later follow-up ask) get the same
+  // stone interior as Floro's shops; the village street itself is the
+  // "dirt road" the entrance north of Grimoak Grounds leads into.
+  if ((BRAMWICK_SHOP_MAPS as readonly string[]).includes(mapName)) return 'stone';
+  if (mapName === 'Bramwick') return 'dirt';
   return 'grass';
 }
 

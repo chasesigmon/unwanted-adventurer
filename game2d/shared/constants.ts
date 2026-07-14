@@ -46,6 +46,41 @@ export const FLORO_SHOP_MAPS = [
   'Floro Jobs Office',
 ] as const;
 
+// Bramwick (a later follow-up ask) — a small village just north of
+// Grimoak Grounds, dirt-road street with 4 shop cottages (same "real
+// separate map, entered through a door on the street" shape as Floro's
+// own shops — see shared/maps.ts). Mechanics for what's actually sold
+// come later; these are greeting-only shopkeepers for now (see
+// server/worlds/vendors.ts).
+export const BRAMWICK_SHOP_MAPS = ['Bramwick General Shop', 'Bramwick Wands', 'Bramwick Armor', 'Bramwick Potions'] as const;
+
+// The 3 upper-floor landings (a later follow-up ask) — each a small hub
+// room reached by stairs, hanging 5 specialization chambers off its own
+// north wall (floors 2 and 3) or, for floor 4, nothing but 4 decorative
+// portals (see shared/lighting.ts's portalPositionsFor) — mechanics for
+// the portals and the specialization chambers themselves come later.
+export const CASTLE_UPPER_FLOOR_MAPS = ['Grimoak Castle 2nd Floor', 'Grimoak Castle 3rd Floor', 'Grimoak Castle 4th Floor'] as const;
+
+// One chamber per specialization path (see SPECIALIZATION_PATHS below) —
+// the first 5 hang off the 2nd floor, the other 5 off the 3rd (see
+// shared/maps.ts's floorLandingDefinition). Classroom-sized (same
+// CLASSROOM_ROWS/COLS as the 5 ground-floor classrooms) but deliberately
+// NOT added to CLASSROOM_MAPS below — "similar to the existing
+// classrooms... but no desks in these rooms," same "classroom-sized but
+// desk-free" carve-out the Specialization room already uses.
+export const SPECIALIZATION_CHAMBER_MAPS = [
+  'Necromancer Chamber',
+  'Enhancer Chamber',
+  'Elementalist Chamber',
+  'Summoner Chamber',
+  'Illusionist Chamber',
+  'Battlemage Chamber',
+  'Cleric Chamber',
+  'Druid Chamber',
+  'Diabolist Chamber',
+  'Hemomancer Chamber',
+] as const;
+
 // Grimoak Academy — the wizarding-school pivot (original names throughout,
 // no trademarked terms). "Grimoak Grounds" is the outer world (castle
 // exterior, courtyard, lake, pitch, forest edge); everything else here is
@@ -91,6 +126,8 @@ export const GRIMOAK_CASTLE_MAPS = [
   'Duskwing Dorms',
   'Emberclaw Dorms',
   'Starfall Dorms',
+  ...CASTLE_UPPER_FLOOR_MAPS,
+  ...SPECIALIZATION_CHAMBER_MAPS,
 ] as const;
 
 // Classroom-sized rooms (a follow-up ask: "a third of the size" of the
@@ -182,6 +219,8 @@ export const MAP_NAMES = [
   'Floro',
   'Kortho',
   ...FLORO_SHOP_MAPS,
+  'Bramwick',
+  ...BRAMWICK_SHOP_MAPS,
   'Grimoak Grounds',
   ...GRIMOAK_CASTLE_MAPS,
 ] as const;
@@ -208,6 +247,10 @@ export const TOWN_MAPS: MapName[] = ['Floro', 'Kortho'];
 export function whereLabelFor(mapName: MapName): string | null {
   const prefix = 'Floro ';
   if (mapName.startsWith(prefix) && (FLORO_SHOP_MAPS as readonly string[]).includes(mapName)) return mapName.slice(prefix.length);
+  // Bramwick's own 4 shops (a later follow-up ask) — same "<name> -
+  // Building" convention as Floro's own shops above.
+  const bramwickPrefix = 'Bramwick ';
+  if (mapName.startsWith(bramwickPrefix) && (BRAMWICK_SHOP_MAPS as readonly string[]).includes(mapName)) return mapName.slice(bramwickPrefix.length);
   // The castle's own rooms already read fine as their own names ("Great
   // Hall", "Alchemy", ...) without a building-suffix convention the way
   // Floro's shops needed one — but the Grounds itself should show as
@@ -223,6 +266,7 @@ export function whereLabelFor(mapName: MapName): string | null {
 // Everywhere else is its own town of one.
 export function townGroupFor(mapName: MapName): MapName {
   if (mapName === 'Floro' || (FLORO_SHOP_MAPS as readonly string[]).includes(mapName)) return 'Floro';
+  if (mapName === 'Bramwick' || (BRAMWICK_SHOP_MAPS as readonly string[]).includes(mapName)) return 'Bramwick';
   // Same idea for the castle — someone in the Great Hall or Emberclaw's
   // common room still shows up in the Where tab for a player standing
   // out on the Grounds.
