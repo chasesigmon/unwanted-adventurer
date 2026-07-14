@@ -180,7 +180,15 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     // needed.
     maxCount: 40,
     startingHp: 30,
-    expReward: 4,
+    // A follow-up ask: "the imps should give more than 3 exp at level 1
+    // compared to the players level 3... more like between 20 and 40" —
+    // 4 fed through expGainFor's own ratio formula at that exact pairing
+    // (imp level 1, killer level 3) rounded down to just 3 exp, barely
+    // worth the fight for 40 roaming imps. 30 lands at 25 for that same
+    // pairing, comfortably in range (and scales the same proportional
+    // way every other monster's own expReward already does at every
+    // OTHER level pairing — see expGainFor's own doc comment).
+    expReward: 30,
     // Paces back and forth within 3 tiles of wherever it spawned (a
     // follow-up ask), rather than roaming the whole map the way a wild
     // goblin/skeleton does — see MonsterManagerService.stepPatrol.

@@ -634,6 +634,12 @@ export const FLOOR_LANDING_COLS = Math.round(ENTRANCE_COLS / 2);
 export const FLOOR_LANDING_MID_ROW = Math.floor(FLOOR_LANDING_ROWS / 2);
 const FLOOR_LANDING_DOWN_STAIRS_COL = 6;
 export const FLOOR_LANDING_UP_STAIRS_COL = 19;
+// A later follow-up ask: "their exit position is north of the stairs,
+// not in the same position against the wall" — arriving via stairs used
+// to land the player directly ON the destination's own stairs tile
+// (FLOOR_LANDING_ROWS - 1, the south wall); one tile further in (north)
+// instead, at every floorLandingDefinition call site below.
+const FLOOR_LANDING_STAIRS_ARRIVAL_ROW = FLOOR_LANDING_ROWS - 2;
 
 // "About 7 feet equivalent left of the entrance to the entrance hall" —
 // the Entrance Hall's own main south door sits at (ENTRANCE_ROWS-1,
@@ -732,14 +738,14 @@ function floorLandingDefinition(
 const FLOOR2_LANDING = floorLandingDefinition(
   'Grimoak Castle 2nd Floor',
   FLOOR2_CHAMBER_DOORS,
-  { toMap: 'Grimoak Entrance Hall', toRow: ENTRANCE_HALL_UP_STAIRS.row, toCol: ENTRANCE_HALL_UP_STAIRS.col },
-  { toMap: 'Grimoak Castle 3rd Floor', toRow: FLOOR_LANDING_ROWS - 1, toCol: FLOOR_LANDING_DOWN_STAIRS_COL }
+  { toMap: 'Grimoak Entrance Hall', toRow: ENTRANCE_HALL_UP_STAIRS.row - 1, toCol: ENTRANCE_HALL_UP_STAIRS.col },
+  { toMap: 'Grimoak Castle 3rd Floor', toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW, toCol: FLOOR_LANDING_DOWN_STAIRS_COL }
 );
 const FLOOR3_LANDING = floorLandingDefinition(
   'Grimoak Castle 3rd Floor',
   FLOOR3_CHAMBER_DOORS,
-  { toMap: 'Grimoak Castle 2nd Floor', toRow: FLOOR_LANDING_ROWS - 1, toCol: FLOOR_LANDING_UP_STAIRS_COL },
-  { toMap: 'Grimoak Castle 4th Floor', toRow: FLOOR_LANDING_ROWS - 1, toCol: FLOOR_LANDING_DOWN_STAIRS_COL }
+  { toMap: 'Grimoak Castle 2nd Floor', toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW, toCol: FLOOR_LANDING_UP_STAIRS_COL },
+  { toMap: 'Grimoak Castle 4th Floor', toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW, toCol: FLOOR_LANDING_DOWN_STAIRS_COL }
 );
 // Floor 4 has no chambers of its own (no north-wall doors) and nothing
 // above it — just the down-stairs back to floor 3, plus 4 decorative
@@ -747,7 +753,7 @@ const FLOOR3_LANDING = floorLandingDefinition(
 // they render but can never actually transition anywhere yet).
 const FLOOR4_LANDING = floorLandingDefinition('Grimoak Castle 4th Floor', [], {
   toMap: 'Grimoak Castle 3rd Floor',
-  toRow: FLOOR_LANDING_ROWS - 1,
+  toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW,
   toCol: FLOOR_LANDING_UP_STAIRS_COL,
 });
 
@@ -761,7 +767,7 @@ ENTRANCE_HALL.exits.push({
   direction: 'south',
   kind: 'stairs',
   toMap: 'Grimoak Castle 2nd Floor',
-  toRow: FLOOR_LANDING_ROWS - 1,
+  toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW,
   toCol: FLOOR_LANDING_DOWN_STAIRS_COL,
 });
 
@@ -821,6 +827,13 @@ function bramwickShopDoorExits(): MapExit[] {
       toMap: name,
       toRow: SHOP_INTERIOR_DOOR_ROW,
       toCol: SHOP_INTERIOR_MID_COL,
+      // A later follow-up ask: "remove the wooden doors from in front of
+      // the shops... walking into the shop spritesheet's door should
+      // make the player enter" — no separate GRAND_DOOR sprite anymore
+      // (see WorldScene's renderDoorsAndChest); this exact tile is now
+      // anchored directly under the cottage's own baked-in door art (see
+      // WorldScene's cottageSprites positioning) instead.
+      kind: 'open',
     };
   });
 }
@@ -976,6 +989,16 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toMap: 'Grimoak Entrance Hall',
         toRow: ENTRANCE_ROWS - 1,
         toCol: ENTRANCE_MID_COL,
+        // A later follow-up ask: "remove the door from in front of
+        // Grimoak Castle... walk into the castle spritesheet's door" —
+        // the castle exterior's own glowing archway is ALREADY anchored
+        // exactly on this tile (see WorldScene's castleExteriorSprites,
+        // "positioned... so its glowing archway lines up with the actual
+        // entrance tile"), so the separate GRAND_DOOR sprite here was
+        // purely redundant, doubled-up art. The reciprocal exit inside
+        // the Entrance Hall itself is untouched — that's an ordinary
+        // room wall, not a spritesheet with its own painted door.
+        kind: 'open',
       },
       // Bramwick's own south entrance sits directly north of the castle
       // door, straight up the open ground north of the moat (a later

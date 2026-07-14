@@ -96,6 +96,7 @@ import {
 } from '../../shared/constants.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
+import { questIconStateFor } from '../../shared/quests.js';
 import {
   LUCEM_BOOK_MAP,
   LUCEM_BOOK_POSITION,
@@ -173,6 +174,12 @@ import {
   STANDING_TORCH_FRAME_HEIGHT,
   STANDING_TORCH_UNLIT_FRAME,
   STANDING_TORCH_LIT_FRAME,
+  QUEST_ICON_TEXTURE_KEY,
+  QUEST_ICON_FRAME_WIDTH,
+  QUEST_ICON_FRAME_HEIGHT,
+  QUEST_ICON_NOT_STARTED_FRAME,
+  QUEST_ICON_READY_FRAME,
+  QUEST_ICON_IN_PROGRESS_FRAME,
   CLASSROOM_ZOOM,
   COMMON_ROOM_ZOOM,
   DORM_ZOOM,
@@ -294,6 +301,15 @@ export class WorldScene extends Phaser.Scene {
   // handleWorldTime), not per-frame in update(), since the hour only
   // ever changes once per world-clock tick.
   private standingTorchSprites: Phaser.GameObjects.Sprite[] = [];
+  // A visible warm glow around each LIT standing torch (a follow-up bug
+  // fix: "the torches aren't actually providing a light source" — the
+  // mechanical darkFog radius push-back near a static light source, see
+  // shared/lighting.ts's staticLightRadiusAt, is subtle enough on its own
+  // that it doesn't read as "this torch is glowing" the way a player's
+  // own carried lucem light does; this makes it directly visible,
+  // matching lucem's own two-circle soft/bright glow shape, sized to the
+  // SAME functional radius torches actually light (LUCEM_LIGHT_RADIUS_TILES).
+  private standingTorchGlows: Phaser.GameObjects.Graphics[] = [];
   // Grimoak Castle's exterior + its flying crows (item 4) — only
   // populated on 'Grimoak Grounds'; the fireplaces (item 6) below are
   // only populated inside the castle's own interior rooms.
@@ -437,6 +453,12 @@ export class WorldScene extends Phaser.Scene {
   // destroys it alongside the teacher sprite itself (same shape as
   // vendorFrontSprites above).
   private teacherDeskSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  // A quest-giver's own floating status icon (a later follow-up ask) —
+  // one per teacher WITH a questId, keyed the same as teacherSprites so
+  // it destroys/rebuilds alongside it; refreshed (frame/visibility) via
+  // updateTeacherQuestIcons whenever myProfile.quests can have changed
+  // (accepting/completing a quest, a level-up, or any other full 'sync').
+  private teacherQuestIconSprites = new Map<string, Phaser.GameObjects.Sprite>();
   // Left-click target (see setTarget/handleLeftClick) — id is a username
   // for a player, otherwise the npc/monster's own id. Cleared whenever
   // the target dies/leaves/disconnects (see applyMapState's cleanup
@@ -493,6 +515,12 @@ export class WorldScene extends Phaser.Scene {
     this.load.spritesheet(STANDING_TORCH_TEXTURE_KEY, '/standing-torch-spritesheet.png', {
       frameWidth: STANDING_TORCH_FRAME_WIDTH,
       frameHeight: STANDING_TORCH_FRAME_HEIGHT,
+    });
+    // Quest status icons over a quest-giver's own head (a later follow-up
+    // ask) — 3 frames, see shared/quests.ts's QuestIconState.
+    this.load.spritesheet(QUEST_ICON_TEXTURE_KEY, '/quest-icon-spritesheet.png', {
+      frameWidth: QUEST_ICON_FRAME_WIDTH,
+      frameHeight: QUEST_ICON_FRAME_HEIGHT,
     });
     this.load.svg(TREE_TEXTURE_KEY, '/tree.svg', { width: 48, height: 64 });
     this.load.svg(DAGGER_TEXTURE_KEY, '/dagger.svg', { width: 16, height: 16 });
@@ -749,8 +777,10 @@ export class WorldScene extends Phaser.Scene {
     // during the day but become lit at night") — the hour only changes
     // once per world-clock tick, so this is cheaper than checking every
     // update() frame; a no-op array on every map but Bramwick.
-    const frame = isDarkHour(hour) ? STANDING_TORCH_LIT_FRAME : STANDING_TORCH_UNLIT_FRAME;
+    const lit = isDarkHour(hour);
+    const frame = lit ? STANDING_TORCH_LIT_FRAME : STANDING_TORCH_UNLIT_FRAME;
     for (const sprite of this.standingTorchSprites) sprite.setFrame(frame);
+    for (const glow of this.standingTorchGlows) glow.setVisible(lit);
   }
 
   update(): void {
@@ -1207,6 +1237,31 @@ export class WorldScene extends Phaser.Scene {
     updateStatusBar();
   }
 
+  // A quest-giver's own floating status icon (a later follow-up ask) —
+  // re-derives each teacher's current state fresh from myProfile.quests
+  // every call rather than trying to track deltas, same "just recompute
+  // it" approach updateOwnBars above already uses. Called once right
+  // after teachers are created (applyMapState) and again anywhere
+  // myProfile.quests can have changed (applySync, and after a quest
+  // accept/complete — see npcDialogueModal.ts).
+  updateTeacherQuestIcons(): void {
+    for (const iconSprite of this.teacherQuestIconSprites.values()) {
+      const questId = iconSprite.getData('questId') as string | undefined;
+      if (!questId) continue;
+      const state = myProfile
+        ? questIconStateFor(questId, myProfile.quests ?? {}, myProfile.skills, myProfile.inventory, { mapUnlocked: myProfile.mapUnlocked })
+        : 'not-started';
+      if (state === null) {
+        iconSprite.setVisible(false);
+        continue;
+      }
+      iconSprite.setVisible(true);
+      iconSprite.setFrame(
+        state === 'not-started' ? QUEST_ICON_NOT_STARTED_FRAME : state === 'ready' ? QUEST_ICON_READY_FRAME : QUEST_ICON_IN_PROGRESS_FRAME
+      );
+    }
+  }
+
   private ensureHpBar(sprite: Phaser.GameObjects.Sprite, hp: number, maxHp: number): void {
     let bar = sprite.getData('hpBar') as Phaser.GameObjects.Graphics | undefined;
     if (!bar) {
@@ -1573,10 +1628,16 @@ export class WorldScene extends Phaser.Scene {
         ? def.exits
             .filter((exit) => (BRAMWICK_SHOP_MAPS as readonly string[]).includes(exit.toMap))
             .map((exit) => {
-              const pos = this.tilePosition(exit.row - 1, exit.col);
+              // Anchored at the exit tile's own SOUTH edge (half a tile
+              // below tilePosition's center) rather than one tile north
+              // of it — the cottage's own baked-in door art touches the
+              // sprite's bottom edge (see tools' own generator), so this
+              // puts that door right on the real MapExit tile itself (a
+              // later follow-up ask, no separate door sprite anymore).
+              const pos = this.tilePosition(exit.row, exit.col);
               const frame = (BRAMWICK_SHOP_MAPS as readonly string[]).indexOf(exit.toMap);
               return this.add
-                .sprite(pos.x, pos.y, BRAMWICK_COTTAGE_TEXTURE_KEY, frame)
+                .sprite(pos.x, pos.y + TILE_SIZE / 2, BRAMWICK_COTTAGE_TEXTURE_KEY, frame)
                 .setOrigin(0.5, 1)
                 .setDepth(-0.75);
             })
@@ -1587,11 +1648,23 @@ export class WorldScene extends Phaser.Scene {
     // always unlit) so a transition into Bramwick at night doesn't show
     // every torch unlit for a moment until the next 'worldTime' tick.
     for (const sprite of this.standingTorchSprites) sprite.destroy();
-    this.standingTorchSprites = standingTorchPositionsFor(mapName).map(({ row, col }) => {
+    for (const glow of this.standingTorchGlows) glow.destroy();
+    const standingTorchLit = worldTimeKnown && isDarkHour(currentWorldHour);
+    const standingTorchGlowRadiusPx = LUCEM_LIGHT_RADIUS_TILES * TILE_SIZE;
+    this.standingTorchSprites = [];
+    this.standingTorchGlows = [];
+    for (const { row, col } of standingTorchPositionsFor(mapName)) {
       const pos = this.tilePosition(row, col);
-      const frame = worldTimeKnown && isDarkHour(currentWorldHour) ? STANDING_TORCH_LIT_FRAME : STANDING_TORCH_UNLIT_FRAME;
-      return this.add.sprite(pos.x, pos.y, STANDING_TORCH_TEXTURE_KEY, frame).setOrigin(0.5, 1).setDepth(-0.5);
-    });
+      const frame = standingTorchLit ? STANDING_TORCH_LIT_FRAME : STANDING_TORCH_UNLIT_FRAME;
+      this.standingTorchSprites.push(this.add.sprite(pos.x, pos.y, STANDING_TORCH_TEXTURE_KEY, frame).setOrigin(0.5, 1).setDepth(-0.5));
+      const glow = this.add.graphics().setDepth(-0.6).setVisible(standingTorchLit);
+      glow.setPosition(pos.x, pos.y - TILE_SIZE / 2);
+      glow.fillStyle(WAND_GLOW_COLOR, 0.12);
+      glow.fillCircle(0, 0, standingTorchGlowRadiusPx);
+      glow.fillStyle(WAND_GLOW_COLOR, 0.3);
+      glow.fillCircle(0, 0, standingTorchGlowRadiusPx * 0.4);
+      this.standingTorchGlows.push(glow);
+    }
 
     // Other entities belong to whichever map we just left — clear them
     // out immediately rather than waiting for the next map:state.
@@ -1615,6 +1688,8 @@ export class WorldScene extends Phaser.Scene {
     this.teacherSprites.clear();
     for (const sprite of this.teacherDeskSprites.values()) sprite.destroy();
     this.teacherDeskSprites.clear();
+    for (const sprite of this.teacherQuestIconSprites.values()) sprite.destroy();
+    this.teacherQuestIconSprites.clear();
 
     // Great-Plains-only, fixed positions from the shared/trees.ts seed —
     // the server blocks movement onto these same tiles (see
@@ -2385,6 +2460,7 @@ export class WorldScene extends Phaser.Scene {
     updateWorldLabel(player.map);
     notifyMapChanged();
     refreshOpenModals();
+    this.updateTeacherQuestIcons();
 
     // 'sync' fires on every level-up, not just map transitions — calling
     // renderMap unconditionally used to wipe every other-player/NPC/
@@ -2770,6 +2846,11 @@ export class WorldScene extends Phaser.Scene {
       // Long hair (a later follow-up ask, female teachers only) is its
       // own further variant of that same recolored sheet.
       const teacherKind = t.robeColorKey ? (`teacher-${t.robeColorKey}${t.longHair ? '-longhair' : ''}` as const) : 'teacher';
+      // A follow-up ask: "update the teacher titles... to be their name
+      // and their position" — e.g. "Professor Caldwell, House
+      // Administrator". Falls back to the plain name for every teacher
+      // without a distinct role (every classroom/chamber teacher).
+      const teacherDisplayName = t.title ? `${t.name}, ${t.title}` : t.name;
       const sprite = this.add
         .sprite(pos.x, pos.y, textureKeyFor(teacherKind), idleFrameFor(teacherKind, t.facing ?? 'down'))
         .setScale(CHAR_SCALE)
@@ -2786,20 +2867,20 @@ export class WorldScene extends Phaser.Scene {
         // message") as a shop's own SHOP_REACH_TILES.
         if (t.questId) {
           if (!isWithinRadius(this.row, this.col, t.row, t.col, SHOP_REACH_TILES)) {
-            logCombatMessage(`You're too far away to talk to ${t.name}.`);
+            logCombatMessage(`You're too far away to talk to ${teacherDisplayName}.`);
             return;
           }
-          openNpcDialogueModal(t.name, t.questId);
+          openNpcDialogueModal(teacherDisplayName, t.questId);
           return;
         }
         // The Specialization room's own teacher (a later follow-up ask)
         // — no quest, just a level-gated dialogue, same reach concept.
         if (t.specializationGate) {
           if (!isWithinRadius(this.row, this.col, t.row, t.col, SHOP_REACH_TILES)) {
-            logCombatMessage(`You're too far away to talk to ${t.name}.`);
+            logCombatMessage(`You're too far away to talk to ${teacherDisplayName}.`);
             return;
           }
-          openSpecializationDialogue(t.name);
+          openSpecializationDialogue(teacherDisplayName);
           return;
         }
         // The Entrance Hall's own house-assignment teacher (a later
@@ -2807,10 +2888,10 @@ export class WorldScene extends Phaser.Scene {
         // concept.
         if (t.houseChoiceGate) {
           if (!isWithinRadius(this.row, this.col, t.row, t.col, SHOP_REACH_TILES)) {
-            logCombatMessage(`You're too far away to talk to ${t.name}.`);
+            logCombatMessage(`You're too far away to talk to ${teacherDisplayName}.`);
             return;
           }
-          openHouseChoiceDialogue(t.name);
+          openHouseChoiceDialogue(teacherDisplayName);
           return;
         }
         // A fixed, generic line (a later follow-up ask dropped the
@@ -2825,7 +2906,19 @@ export class WorldScene extends Phaser.Scene {
         logCombatMessage(teacherMessage);
       });
       this.teacherSprites.set(t.id, sprite);
+
+      // A quest-giver's own status icon (a later follow-up ask) — same
+      // "above the head" offset HP bars use elsewhere, nudged up a
+      // little further since there's no HP bar here to clear.
+      if (t.questId) {
+        const iconSprite = this.add
+          .sprite(pos.x, pos.y + HP_BAR_OFFSET_Y - 8, QUEST_ICON_TEXTURE_KEY, QUEST_ICON_NOT_STARTED_FRAME)
+          .setDepth(1);
+        iconSprite.setData('questId', t.questId);
+        this.teacherQuestIconSprites.set(t.id, iconSprite);
+      }
     }
+    this.updateTeacherQuestIcons();
   }
 
   // A world-space speech-bubble tooltip (item 8's follow-up ask, made to
@@ -3039,6 +3132,16 @@ export class WorldScene extends Phaser.Scene {
           this.mimicForm = ack.player.mimicForm;
           if (myProfile) setMyProfile({ ...myProfile, map: ack.player.map });
           this.renderMap(ack.player.map);
+          // A follow-up bug fix: "teachers & desks or training skeletons
+          // were visible until I moved" — the server's own room-broadcast
+          // 'map:state' for the destination can race this ack (arriving
+          // before renderMap above has updated this.currentMap, so
+          // applyMapState's own "wrong map" guard silently dropped it,
+          // with nothing left to re-deliver it until incidental activity
+          // on the new map triggered another broadcast). ack.mapState
+          // rides along on exactly this ack instead, applied now that
+          // this.currentMap already matches it.
+          if (ack.mapState) this.applyMapState(ack.mapState);
           updateWorldLabel(ack.player.map);
           notifyMapChanged();
           const pos = this.tilePosition(ack.player.row, ack.player.col);

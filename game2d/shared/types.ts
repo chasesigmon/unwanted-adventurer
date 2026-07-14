@@ -286,6 +286,12 @@ export interface VendorSnapshot {
 export interface TeacherSnapshot {
   id: string;
   name: string;
+  // A later follow-up ask: "update the teachers titles in the entrance
+  // hall to be their name and their position" — e.g. "House
+  // Administrator", "Quest Giver". Absent for every teacher without a
+  // distinct role (every classroom/specialization-chamber teacher) —
+  // display code falls back to plain `name` for those.
+  title?: string;
   map: MapName;
   row: number;
   col: number;
@@ -409,6 +415,16 @@ export interface MoveAck {
   // enter the Labyrinth.") — purely cosmetic, the client doesn't have to
   // show it.
   message?: string;
+  // Set only on a map transition (a follow-up bug fix: "teachers & desks
+  // or training skeletons were visible until I moved") — the server also
+  // broadcasts a 'map:state' for the destination room the instant this
+  // socket joins it, but that broadcast can race the ack itself (arriving
+  // before the client has updated its own currentMap, and so getting
+  // silently dropped by applyMapState's "wrong map" guard) — this rides
+  // along with the ack instead, so the very first render of the new map
+  // is never missing its teachers/NPCs/monsters while waiting on a
+  // broadcast that may already have come and gone.
+  mapState?: MapStatePayload;
 }
 
 export interface KickedPayload {

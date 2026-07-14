@@ -6,7 +6,7 @@
 // button (started, still working on it), the quest's own "ready" line
 // with a "Complete Quest" button (every objective done, not yet turned
 // in), or its "completed" line with no button (already turned in).
-import { myProfile, network, setMyProfile } from '../state.js';
+import { activeScene, myProfile, network, setMyProfile } from '../state.js';
 import { QUESTS, allObjectivesDone } from '../../shared/quests.js';
 import { HOUSE_NAMES, SPECIALIZATION_PATHS, SPECIALIZATION_LEVEL_REQUIREMENT } from '../../shared/constants.js';
 import { logCombatMessage } from './log.js';
@@ -39,6 +39,7 @@ export function openNpcDialogueModal(name: string, questId: string): void {
             return;
           }
           if (myProfile) setMyProfile({ ...myProfile, quests: { ...myProfile.quests, [questId]: {} } });
+          activeScene?.updateTeacherQuestIcons();
           if (ack.message) showCenterToast(ack.message);
           npcDialogueActions.innerHTML = '';
         })

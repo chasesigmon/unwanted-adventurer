@@ -459,33 +459,40 @@ body {
   border: none;
 }
 
-/* #status-content also sets `display: flex` via its own ID selector,
-   which otherwise outranks the class-based rule above (an ID beats any
-   number of classes) — same specificity fix already used for
-   #auth-race-label. Without this, "collapsing" toggled the class/icon
-   but the content never actually hid. */
-#status-bar.collapsed #status-content {
-  display: none;
-}
-
-/* #status-bar sets its own padding unconditionally below (an ID beats
-   any class), which would otherwise fight .panel.collapsed's own
-   padding: 0 the exact same way #status-content's display did above —
-   collapsed needs the reset repeated here for the same reason. */
-#status-bar.collapsed {
-  padding: 0;
-}
-
 /* ---------- Status bar (level/hp/mana/mv/exp) ---------- */
 
-#status-bar {
+/* A follow-up bug fix: "the collapse button... not inside of the player
+   status label, make it to the right of the label" — same "own
+   positioned wrapper + a separate sibling toggle button" shape
+   #top-right-bar/#world-info-toggle already uses, instead of the old
+   #log-panel-style toggle floating inside the panel's own corner. */
+#status-bar-wrapper {
+  position: absolute;
   top: 12px;
   left: 12px;
-  padding: 6px 10px;
-  padding-right: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   /* Stays visible/usable above the sleep overlay (z-index 50) — sleeping
      only blacks out the world view, not the player's own vitals. */
   z-index: 60;
+}
+
+/* .panel's own `position: absolute` (needed for the OTHER panels, which
+   position themselves directly) would pull #status-bar out of its new
+   wrapper's flex flow entirely — it's just a plain flex child now, the
+   wrapper above handles placement on screen instead. */
+#status-bar {
+  position: static;
+  padding: 6px 10px;
+}
+
+/* Collapsing now hides the whole box outright (same shape as
+   #world-info-group.collapsed) — the wrapper's own flex layout leaves
+   just the external toggle button visible, no leftover shrunk-box
+   chrome to reset the way the old nested-toggle version needed. */
+#status-bar.collapsed {
+  display: none;
 }
 
 #status-content {

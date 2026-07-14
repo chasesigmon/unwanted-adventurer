@@ -198,3 +198,27 @@ export function allObjectivesDone(
 ): boolean {
   return quest.objectives.every((objective) => isObjectiveDone(objective, progress, skills, inventory, flags));
 }
+
+// The floating icon over a quest-giver's own head (a later follow-up
+// ask) — three states, matching a real quest board's own convention:
+// not yet accepted (a golden "!", the giver has something new for you),
+// accepted and every objective already done but not yet turned in (a
+// golden "?", go collect your reward), or accepted and still in progress
+// (a silver "?"). `null` once it's been turned in (completedAt set) —
+// nothing left to show.
+export type QuestIconState = 'not-started' | 'ready' | 'in-progress';
+
+export function questIconStateFor(
+  questId: string,
+  quests: Record<string, QuestProgress>,
+  skills: Record<string, number>,
+  inventory: string[],
+  flags: Partial<Record<QuestFlag, boolean>> = {}
+): QuestIconState | null {
+  const quest = questDefinition(questId);
+  if (!quest) return null;
+  const progress = quests[questId];
+  if (!progress) return 'not-started';
+  if (progress.completedAt) return null;
+  return allObjectivesDone(quest, progress, skills, inventory, flags) ? 'ready' : 'in-progress';
+}

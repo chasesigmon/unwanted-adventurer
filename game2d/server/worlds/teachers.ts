@@ -21,6 +21,7 @@ export const TEACHERS: TeacherSnapshot[] = [
   {
     id: 'headmistress',
     name: 'Headmistress Elowen',
+    title: 'Quest Giver',
     map: 'Grimoak Entrance Hall',
     row: 8,
     col: 26,
@@ -36,6 +37,7 @@ export const TEACHERS: TeacherSnapshot[] = [
   {
     id: 'imp-hunter-teacher',
     name: 'Professor Bramwell',
+    title: 'Quest Giver',
     map: 'Grimoak Entrance Hall',
     row: 8,
     col: 20,
@@ -45,6 +47,7 @@ export const TEACHERS: TeacherSnapshot[] = [
   {
     id: 'mana-crystal-teacher',
     name: 'Professor Thistlewood',
+    title: 'Quest Giver',
     map: 'Grimoak Entrance Hall',
     row: 8,
     col: 32,
@@ -66,6 +69,7 @@ export const TEACHERS: TeacherSnapshot[] = [
   {
     id: 'map-quest-teacher',
     name: 'Professor Hollowell',
+    title: 'Quest Giver',
     map: 'Grimoak Entrance Hall',
     row: 16,
     col: 14,
@@ -84,6 +88,7 @@ export const TEACHERS: TeacherSnapshot[] = [
   {
     id: 'house-teacher',
     name: 'Professor Caldwell',
+    title: 'House Administrator',
     map: 'Grimoak Entrance Hall',
     row: 25,
     col: 25,

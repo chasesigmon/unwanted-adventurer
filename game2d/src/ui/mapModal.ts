@@ -305,7 +305,10 @@ function renderPlayerListTab(tab: 'who' | 'where'): void {
       for (const p of players) {
         const li = document.createElement('li');
         if (tab === 'who') {
-          li.textContent = `${p.username} (Lv ${p.level}) — ${p.map}`;
+          // A follow-up ask: "should not show where the player is, only
+          // their name and level" — unlike "Where" (deliberately about
+          // location within your own town), "Who" is just a roster.
+          li.textContent = `${p.username} (Lv ${p.level})`;
         } else {
           const buildingLabel = whereLabelFor(p.map);
           li.textContent = buildingLabel ? `${p.username} (Lv ${p.level}) - ${buildingLabel}` : `${p.username} (Lv ${p.level})`;

@@ -63,8 +63,14 @@ export const SHOP_BUILDING_FACING_LEFT_FRAME = 1;
 // 'north'`, see shared/maps.ts's bramwickShopDoorExits), so unlike
 // Floro's mirrored pair this only ever needs the one orientation.
 export const BRAMWICK_COTTAGE_TEXTURE_KEY = 'bramwick-cottage';
-export const BRAMWICK_COTTAGE_FRAME_WIDTH = 96;
-export const BRAMWICK_COTTAGE_FRAME_HEIGHT = 128;
+// Doubled (a later follow-up ask) — the door is drawn touching the very
+// bottom edge of the frame now, so the sprite can be anchored directly
+// at the shop's own real MapExit tile (see WorldScene's own cottage
+// positioning) and "walking into the shop spritesheet's door" IS walking
+// onto that tile — no separate door sprite needed anymore (see
+// shared/maps.ts's bramwickShopDoorExits, now `kind: 'open'`).
+export const BRAMWICK_COTTAGE_FRAME_WIDTH = 192;
+export const BRAMWICK_COTTAGE_FRAME_HEIGHT = 256;
 
 // A single fancy double door (a follow-up ask) used for EVERY map exit
 // now — shop doors and every other transition alike — replacing both the
@@ -178,6 +184,16 @@ export const STANDING_TORCH_FRAME_WIDTH = 16;
 export const STANDING_TORCH_FRAME_HEIGHT = 32;
 export const STANDING_TORCH_UNLIT_FRAME = 0;
 export const STANDING_TORCH_LIT_FRAME = 1;
+
+// The quest status icon floating over a quest-giver's own head (a later
+// follow-up ask) — 3 frames, see shared/quests.ts's QuestIconState for
+// what each means.
+export const QUEST_ICON_TEXTURE_KEY = 'quest-icon';
+export const QUEST_ICON_FRAME_WIDTH = 20;
+export const QUEST_ICON_FRAME_HEIGHT = 20;
+export const QUEST_ICON_NOT_STARTED_FRAME = 0;
+export const QUEST_ICON_READY_FRAME = 1;
+export const QUEST_ICON_IN_PROGRESS_FRAME = 2;
 
 export const CHAR_SCALE = 0.275;
 export const CORPSE_SCALE = 0.35;

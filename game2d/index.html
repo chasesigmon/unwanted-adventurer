@@ -97,17 +97,19 @@
           <button type="button" id="logout-btn" title="Log out">&#128682;</button>
         </div>
 
-        <div id="status-bar" class="panel">
-          <button type="button" id="status-toggle" class="panel-toggle" title="Collapse">&minus;</button>
-          <div id="status-content" class="panel-body">
-            <span id="status-level"></span>
-            <span id="status-hp"></span>
-            <span id="status-mana"></span>
-            <span id="status-hunger"></span>
-            <span id="status-thirst"></span>
-            <span id="status-exp"></span>
-            <span id="status-gold"></span>
+        <div id="status-bar-wrapper">
+          <div id="status-bar" class="panel">
+            <div id="status-content" class="panel-body">
+              <span id="status-level"></span>
+              <span id="status-hp"></span>
+              <span id="status-mana"></span>
+              <span id="status-hunger"></span>
+              <span id="status-thirst"></span>
+              <span id="status-exp"></span>
+              <span id="status-gold"></span>
+            </div>
           </div>
+          <button type="button" id="status-toggle" class="corner-btn" title="Collapse">&minus;</button>
         </div>
 
         <div id="target-panel" class="panel" hidden>

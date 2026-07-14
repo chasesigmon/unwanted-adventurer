@@ -251,6 +251,13 @@ const LUCEM_UPKEEP_MANA_COST = 3;
 // ask) is automatically true rather than a second formula to keep in
 // sync.
 const SPELL_CAST_SUCCESS_BONUS = 10;
+// A later follow-up ask: "while the player is under level 15 they have
+// an extra 20% chance that the skill/spell will succeed. This handicap
+// disappears once the player turns level 15" — a new-player training-
+// wheels bonus on top of SPELL_CAST_SUCCESS_BONUS above, applied in
+// rollSpellSuccess.
+const LOW_LEVEL_HANDICAP_MAX_LEVEL = 15;
+const LOW_LEVEL_HANDICAP_BONUS_PERCENT = 20;
 // How long a timed spell (lucem, celeritas) stays active once cast,
 // real-world — a later follow-up ask ("lucem should last 3 minutes...
 // before it goes out"), scaling up toward double that as skill% climbs to
@@ -286,7 +293,8 @@ const CELERITAS_CAST_MANA_COST = 7;
 // handleCastAugue) instead of a bespoke constant here.
 const AUGUE_BOOK_COOLDOWN_TICKS = 2;
 const AUGUE_BOOK_LEARN_CHANCE = 0.1;
-const AUGUE_DAMAGE = 10;
+// Base damage 20 (a follow-up ask, up from 10).
+const AUGUE_DAMAGE = 20;
 const AUGUE_RANGE_TILES = SPELL_ATTACK_RANGE_TILES;
 // A follow-up ask: a successful augue hit also leaves the target
 // burning — 1 extra damage on each of the next 2 combat ticks (~3s
@@ -300,7 +308,9 @@ const AUGUE_BURN_TICKS = 2;
 // combat tick same as any other queued attack (see combatTick's own
 // WAND_BOLT_SKILL branch), no cooldown of its own beyond that natural
 // ~3s cadence.
-const WAND_BOLT_DAMAGE = 5;
+// Base damage 9 (a follow-up ask, up from 5) — "the player's base
+// [ranged] damage while a wand is equipped."
+const WAND_BOLT_DAMAGE = 9;
 const WAND_BOLT_RANGE_TILES = SPELL_ATTACK_RANGE_TILES;
 // The Utility Classroom's third podium (a later follow-up ask), teaching
 // resera — same learn-chance shape as the other podiums. Costs mana like
@@ -1838,10 +1848,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       void client.join(result.mapName);
       this.server.to(previousMap).emit('map:state', this.mapStateFor(previousMap));
     }
-    this.server.to(result.mapName).emit('map:state', this.mapStateFor(result.mapName));
+    const newMapState = this.mapStateFor(result.mapName);
+    this.server.to(result.mapName).emit('map:state', newMapState);
 
     const message = result.transitioned ? `You enter ${result.mapName}.` : undefined;
-    return { ok: true, player: this.snapshotFor(client), message };
+    // mapState rides along on a transition (a follow-up bug fix — see
+    // MoveAck's own doc comment for why the broadcast above alone isn't
+    // enough).
+    return { ok: true, player: this.snapshotFor(client), message, mapState: result.transitioned ? newMapState : undefined };
   }
 
   // Kill-count quest objectives (a follow-up ask's imp-extermination
@@ -2017,7 +2031,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // function's own doc comment in combat/formulas.ts.
     const intelligenceBonus = intelligenceSpellBonus(client.data.intelligence);
     const luckBonus = rollLuckSpellSuccessBonus(client.data.luck);
-    const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS + intelligenceBonus + luckBonus);
+    // A new-player handicap (a later follow-up ask) — an extra flat 20%
+    // while under level 15, gone entirely at 15 and above (a cliff, not
+    // a taper — "this handicap disappears once the player turns level
+    // 15").
+    const lowLevelBonus = client.data.level < LOW_LEVEL_HANDICAP_MAX_LEVEL ? LOW_LEVEL_HANDICAP_BONUS_PERCENT : 0;
+    const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS + intelligenceBonus + luckBonus + lowLevelBonus);
     return Math.random() * 100 < successChance;
   }
 
@@ -2602,6 +2621,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       npc.col = tile.col;
       npc.hp = npc.maxHp;
     }
+    // A follow-up bug fix: "when the player kills a training skeleton,
+    // have them stop fighting it automatically... select it again and
+    // begin fighting again" — every OTHER kill path (monsters, real
+    // players) already clears the auto-attack session on death; this one
+    // didn't, so combatTick just kept re-finding the same npc.id (reset
+    // to full hp, possibly relocated) and resumed swinging at it
+    // unattended.
+    if (died) this.playerCombat.delete(client.data.username);
 
     let message: string;
     if (skillName === BONE_FINGER_STRIKE_SKILL) {
@@ -4509,6 +4536,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.restState === 'sleeping') {
       this.setRestState(client, 'awake');
       this.systemMessage(client, 'You wake up.');
+    } else if (this.playerCombat.has(client.data.username)) {
+      // A follow-up bug fix: "I was fighting the training skeleton and
+      // went to sleep and it kept attacking the skeleton" — sleeping
+      // never actually stopped the auto-attack session (see combatTick,
+      // which doesn't check restState at all), so the player kept
+      // swinging away, unattended, the whole time they were "asleep."
+      // Simplest fix: block falling asleep in the first place while a
+      // session is still active, same as every other rest/sleep entry
+      // point below.
+      this.systemMessage(client, 'You must stop auto-attacking first (press X).');
     } else {
       this.setRestState(client, 'sleeping');
       this.systemMessage(client, "You lie down and drift off to sleep. You won't see anything until you wake up.");
@@ -4531,6 +4568,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (!isWithinRadius(client.data.row, client.data.col, row, col, BED_REACH_TILES)) {
       return { ok: false, message: "You're too far away to use that bed." };
+    }
+    // Same follow-up bug fix as handleSleepCommand's own guard.
+    if (this.playerCombat.has(client.data.username)) {
+      return { ok: false, message: 'You must stop auto-attacking first (press X).' };
     }
     client.data.sleepingInBed = true;
     this.setRestState(client, 'sleeping');
@@ -4562,6 +4603,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!isNearBench(client.data.map, client.data.row, client.data.col)) {
       return { ok: false, message: "You're too far away to reach that bench." };
     }
+    // Same follow-up bug fix as handleSleepCommand's own guard.
+    if (this.playerCombat.has(client.data.username)) {
+      return { ok: false, message: 'You must stop auto-attacking first (press X).' };
+    }
     this.setRestState(client, 'resting');
     const message = 'You sit down on the bench, receiving enhanced regeneration while you rest.';
     this.systemMessage(client, message);
@@ -4574,6 +4619,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.restState === 'resting') {
       this.setRestState(client, 'awake');
       this.systemMessage(client, 'You stand up.');
+    } else if (this.playerCombat.has(client.data.username)) {
+      // Same follow-up bug fix as handleSleepCommand above.
+      this.systemMessage(client, 'You must stop auto-attacking first (press X).');
     } else {
       this.setRestState(client, 'resting');
       this.systemMessage(client, 'You sit down to rest.');
