@@ -2507,6 +2507,15 @@ export class WorldScene extends Phaser.Scene {
     }
     const pos = this.tilePosition(player.row, player.col);
     this.player.setPosition(pos.x, pos.y);
+    // A later follow-up ask: a new (or respawning) character's spawn
+    // point on Grimoak Grounds now sits right at the south bridge's
+    // inner end, facing the castle — same MOAT_INNER_BOTTOM - 1 tile
+    // shared/maps.ts's own GRIMOAK_GROUNDS_SPAWN uses, checked here
+    // (rather than importing that constant) since 'up' should only ever
+    // apply exactly there, not to every visit to Grimoak Grounds.
+    if (player.map === 'Grimoak Grounds' && player.row === MOAT_INNER_BOTTOM - 1 && player.col === CASTLE_DOOR_ON_GROUNDS.col) {
+      this.facing = 'up';
+    }
     // A sync can land mid-punch or mid-move (e.g. a level-up granted by
     // the very punch that's still animating). setIdle() below calls
     // anims.stop(), which — unlike letting an animation finish on its own

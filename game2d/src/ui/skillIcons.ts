@@ -39,6 +39,7 @@ import {
   EXARME_SKILL,
   SCUTUM_SKILL,
   MURUS_LAPIDEUS_SKILL,
+  ANIMATE_DEAD_SKILL,
 } from '../../shared/skills.js';
 
 const STROKE = '#f5f0dc';
@@ -127,6 +128,13 @@ const ICONS: Record<string, string> = {
   ),
   [MURUS_LAPIDEUS_SKILL]: svgUrl(
     '<rect x="3" y="9" width="7" height="5" rx="0.5"/><rect x="10" y="9" width="7" height="5" rx="0.5"/><rect x="6.5" y="14" width="7" height="5" rx="0.5"/><rect x="13.5" y="14" width="7" height="5" rx="0.5"/>'
+  ),
+  [ANIMATE_DEAD_SKILL]: svgUrl(
+    '<path d="M12 3 C7.5 3 5 6.5 5 10.5 C5 13 6.3 15 8 16.5 V19 h8 v-2.5 c1.7 -1.5 3 -3.5 3 -6 C19 6.5 16.5 3 12 3 Z"/><circle cx="9" cy="10.5" r="1.3" fill="' +
+      STROKE +
+      '"/><circle cx="15" cy="10.5" r="1.3" fill="' +
+      STROKE +
+      '"/><path d="M9 19 v1.6 M11.4 19 v1.6 M14 19 v1.6"/>'
   ),
 };
 

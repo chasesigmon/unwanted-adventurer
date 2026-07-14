@@ -225,10 +225,11 @@ export function isWithinMoatFootprint(mapName: MapName, row: number, col: number
   return row >= MOAT_OUTER_TOP && row <= MOAT_OUTER_BOTTOM && col >= MOAT_OUTER_LEFT && col <= MOAT_OUTER_RIGHT;
 }
 
-// Just outside the moat's own outer edge, in front of the bridge — a new
-// player has to actually cross the bridge to reach the castle door now,
-// rather than spawning right next to it.
-export const GRIMOAK_GROUNDS_SPAWN = { row: MOAT_OUTER_BOTTOM + 1, col: CASTLE_DOOR_ON_GROUNDS.col };
+// Just north of the south bridge, touching its inner (castle-side) end —
+// a later follow-up ask moved the spawn here from just south of the
+// bridge, so a new (or respawning) player already stands at the bridge's
+// far end facing the castle, rather than needing to cross it first.
+export const GRIMOAK_GROUNDS_SPAWN = { row: MOAT_INNER_BOTTOM - 1, col: CASTLE_DOOR_ON_GROUNDS.col };
 
 // ---------- The castle gate (a follow-up ask: "add a large double metal
 // gate/fence on the other side of the bridge... it should open magically

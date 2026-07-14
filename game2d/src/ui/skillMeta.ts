@@ -31,6 +31,7 @@ import {
   EXARME_SKILL,
   SCUTUM_SKILL,
   MURUS_LAPIDEUS_SKILL,
+  ANIMATE_DEAD_SKILL,
   DRINK_SKILL,
   POUR_SKILL,
   SKILL_COOLDOWN_MS,
@@ -103,6 +104,7 @@ export function isUsableSkill(skillName: string): boolean {
     skillName === EXARME_SKILL ||
     skillName === SCUTUM_SKILL ||
     skillName === MURUS_LAPIDEUS_SKILL ||
+    skillName === ANIMATE_DEAD_SKILL ||
     skillName === DRINK_SKILL ||
     skillName === POUR_SKILL
   );
@@ -151,6 +153,8 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
     'No target needed — surrounds you with a protective shield that reduces all damage by 3 for 1 minute. Costs 10 mana; success chance scales with skill percent, intelligence, and luck — its own 2-minute cooldown only starts on a successful cast.',
   [MURUS_LAPIDEUS_SKILL]:
     'Click this, then click a spot on the map within 10 feet — summons a stone block ally there for 30 seconds (or until destroyed) that draws monster aggro and absorbs hits. Costs 10 mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.',
+  [ANIMATE_DEAD_SKILL]:
+    "Necromancer-only. Click this, then click a monster's corpse — raises it as an animated ally under your command (follow/stay/sleep/attack), with 2x its hp when alive and the same attack. Lasts until it's slain or you log off; limited to 1 at a time (2 at level 20+). Costs 15 mana; has its own 3-minute cooldown. Success chance scales with skill percent, intelligence, and luck.",
   [DRINK_SKILL]: 'Takes a drink from a targeted container (a canteen). Select it in your inventory first, then click this.',
   [POUR_SKILL]: 'Empties out a targeted container (a canteen). Select it in your inventory first, then click this.',
 };
@@ -284,6 +288,7 @@ const SKILL_CATEGORY_MAP: Record<string, SkillCategory> = {
   [REVERT_SKILL]: 'Utility',
   [EAT_BRAINS_SKILL]: 'Utility',
   [MURUS_LAPIDEUS_SKILL]: 'Summoning',
+  [ANIMATE_DEAD_SKILL]: 'Summoning',
   [IRRIGO_SKILL]: 'Elemental',
 };
 
