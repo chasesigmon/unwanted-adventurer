@@ -25,6 +25,10 @@ export interface PlayerSnapshot {
   maxHp: number;
   mana: number;
   maxMana: number;
+  // Movement points (a later follow-up ask re-added this resource) — see
+  // combat/formulas.ts's STARTING_MV/MV_COST_PER_TILE.
+  mv: number;
+  maxMv: number;
   strength: number;
   intelligence: number;
   wisdom: number;
@@ -117,6 +121,10 @@ export interface PlayerSnapshot {
   // the character sheet's own +/- buttons (see the 'allocateStatPoint'
   // event and game.gateway.ts's handleAllocateStatPoint).
   statPointsAvailable: number;
+  // "Practice points" (a later follow-up ask replaced the old podium-
+  // reading skill system) — 3 granted every level, spent at a teacher's
+  // own click-to-learn modal (see the 'learnSkill' event).
+  practicePointsAvailable: number;
   // Whether THIS player's own wand is currently lit (the lucem spell's
   // toggle — see game.gateway.ts's handleLucemCommand) — never persisted
   // (resets to unlit on reconnect, same tradeoff as restState/torchLitAt).
@@ -344,14 +352,14 @@ export interface TeacherSnapshot {
   // buttons if they have. No quest, permanent once chosen (see
   // game.gateway.ts's handleChooseHouse).
   houseChoiceGate?: boolean;
-  // The Necromancer Chamber's own teacher (a later follow-up ask: "the
-  // Necromancer specialist should offer 1 skill for purchase") — opens a
-  // dialogue offering a single one-time skill purchase for gold, instead
-  // of the plain classroom tooltip every other specialization-chamber
-  // teacher still gets. The skill name itself (currently always
-  // ANIMATE_DEAD_SKILL) lives here rather than being hardcoded client-side
-  // so a future 2nd chamber-taught skill just needs its own gate value.
-  skillPurchaseGate?: string;
+  // Every skill/spell this teacher offers through the click-to-learn
+  // modal (a later follow-up ask replaced the old podium-reading skill
+  // system, and generalized the Necromancer's own bespoke single-skill
+  // purchase gate into this list — any classroom or specialization
+  // teacher can offer any number of skills, each gated by its own
+  // shared/skills.ts SKILL_LEVEL_REQUIREMENT/SKILL_SPECIALIZATION_REQUIREMENT).
+  // Undefined/empty means the plain generic classroom tooltip instead.
+  teachesSkills?: string[];
   // A distinct robe color per teacher (a follow-up ask) — absent means
   // the spritesheet's own base navy. See src/characterSprites.ts's
   // teacher-${TeacherRobeColor} variant textures (one full recolored
@@ -532,44 +540,6 @@ export interface UseItemAck {
   message?: string;
 }
 
-// The Utilization classroom's spellbook podium (item 8) — same
-// "world-tick cooldown + a chance roll" shape as EatBrainsAck/UseItemAck's
-// consume path, just for a click-to-read interaction instead.
-export interface ReadLucemBookAck {
-  ok: boolean;
-  skills?: Record<string, number>;
-  lucemBookReadyAtTick?: number;
-  message?: string;
-}
-
-// Utility Classroom's own 4th podium, teaching irrigo (moved there from
-// the old Elemental Casting Classroom — a later follow-up ask) — same
-// shape as ReadLucemBookAck.
-export interface ReadIrrigoBookAck {
-  ok: boolean;
-  skills?: Record<string, number>;
-  irrigoBookReadyAtTick?: number;
-  message?: string;
-}
-
-// Utilization's second podium (a follow-up ask), teaching celeritas —
-// same shape as ReadLucemBookAck.
-export interface ReadCeleritasBookAck {
-  ok: boolean;
-  skills?: Record<string, number>;
-  celeritasBookReadyAtTick?: number;
-  message?: string;
-}
-
-// The Offense classroom's own podium (a follow-up ask), teaching augue —
-// same shape as ReadLucemBookAck.
-export interface ReadAugueBookAck {
-  ok: boolean;
-  skills?: Record<string, number>;
-  augueBookReadyAtTick?: number;
-  message?: string;
-}
-
 // Lucem/celeritas's own ack-based cast (a follow-up ask, replacing
 // lucem's old fire-and-forget '/lucem' chat command so the client can
 // toast the result even with a modal open — see WorldScene's
@@ -609,15 +579,6 @@ export interface AllocateStatPointAck {
   message?: string;
 }
 
-// The Utility Classroom's third podium (a follow-up ask), teaching
-// resera — same shape as ReadLucemBookAck.
-export interface ReadReseraBookAck {
-  ok: boolean;
-  skills?: Record<string, number>;
-  reseraBookReadyAtTick?: number;
-  message?: string;
-}
-
 // Resera's own targetable objects (a follow-up ask: "make all doors and
 // treasure chests targetable") — identifies WHICH door/chest by its own
 // map+position rather than a fixed enum, since every door in the castle
@@ -644,16 +605,6 @@ export interface CastReseraAck {
   message?: string;
 }
 
-// A later follow-up ask added 4 more podiums (stupefaciunt, exarme,
-// scutum, murus lapideus) — same read-a-podium shape every earlier one
-// uses, just without a bespoke per-spell readyAtTick field (dead data —
-// no client call site ever read those either, see e.g.
-// ReadReseraBookAck.reseraBookReadyAtTick). Reused for all 4.
-export interface ReadSpellBookAck {
-  ok: boolean;
-  skills?: Record<string, number>;
-  message?: string;
-}
 
 // Murus lapideus (a later follow-up ask) targets a MAP TILE, not a
 // player/npc/monster/door/chest — "click the spell, then click a spot on
@@ -728,6 +679,8 @@ export interface StatTickPayload {
   maxHp: number;
   mana: number;
   maxMana: number;
+  mv: number;
+  maxMv: number;
   hunger: number;
   thirst: number;
 }
@@ -792,32 +745,11 @@ export interface ClientToServerEvents {
   // Monster-corpse-only "sacrifice it to the gods" — see
   // game.gateway.ts's handleSacrificeCorpse for the gold formula.
   sacrificeCorpse: (corpseId: string, ack: (res: SacrificeAck) => void) => void;
-  // The Utilization classroom's spellbook podium (item 8) — a 10% chance
-  // per click of learning lucem, gated by a 2-world-tick cooldown; see
-  // game.gateway.ts's handleReadLucemBook.
-  readLucemBook: (ack: (res: ReadLucemBookAck) => void) => void;
-  // Utility Classroom's 4th podium (moved there from the old Elemental
-  // Casting Classroom — a later follow-up ask) — same shape, teaching
-  // irrigo instead; see game.gateway.ts's handleReadIrrigoBook.
-  readIrrigoBook: (ack: (res: ReadIrrigoBookAck) => void) => void;
-  // Utilization's second podium — same shape again, teaching quick
-  // movement; see game.gateway.ts's handleReadCeleritasBook.
-  readCeleritasBook: (ack: (res: ReadCeleritasBookAck) => void) => void;
-  // The Offense classroom's own podium (a follow-up ask) — same shape
-  // again, teaching augue instead; see game.gateway.ts's
-  // handleReadAugueBook.
-  readAugueBook: (ack: (res: ReadAugueBookAck) => void) => void;
-  // The Utility Classroom's third podium (a later follow-up ask) — same
-  // shape again, teaching resera instead; see game.gateway.ts's
-  // handleReadReseraBook.
-  readReseraBook: (ack: (res: ReadReseraBookAck) => void) => void;
-  // Offense's second and third podiums, Defense's own podium, and
-  // Summoning's own podium (a later follow-up ask) — same read-a-podium
-  // shape as every one above.
-  readStupefaciuntBook: (ack: (res: ReadSpellBookAck) => void) => void;
-  readExarmeBook: (ack: (res: ReadSpellBookAck) => void) => void;
-  readScutumBook: (ack: (res: ReadSpellBookAck) => void) => void;
-  readMurusLapideusBook: (ack: (res: ReadSpellBookAck) => void) => void;
+  // The classroom/specialization teacher click-to-learn modal (a later
+  // follow-up ask replaced the old podium-reading skill system — every
+  // readXBook event above it used to occupy this spot); see
+  // game.gateway.ts's handleLearnSkill.
+  learnSkill: (payload: { skill: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
   // No-target toggles (a follow-up ask, replacing the old '/lucem' chat
   // command so the result can be toasted even with a modal open) — see
   // game.gateway.ts's handleCastLucem/handleCastCeleritas.
@@ -917,7 +849,6 @@ export interface ClientToServerEvents {
   // level-10-gated, permanent once chosen (see game.gateway.ts's
   // handleChooseSpecialization).
   chooseSpecialization: (payload: { path: SpecializationPath }, ack: (res: { ok: boolean; message?: string }) => void) => void;
-  buyAnimateDead: (ack: (res: { ok: boolean; message?: string }) => void) => void;
   castAnimateDead: (payload: { corpseId: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
   animatedMonsterCommand: (payload: { id: string; command: PetCommand }, ack: (res: AnimatedMonsterCommandAck) => void) => void;
   // ===== TESTING OVERRIDE — REMOVE AFTER TESTING ===== "add a 'cheat'
@@ -951,6 +882,8 @@ export interface SocketData {
   maxHp: number;
   mana: number;
   maxMana: number;
+  mv: number;
+  maxMv: number;
   skills: Record<string, number>;
   inventory: string[];
   equipment: Record<string, string>;
@@ -985,6 +918,7 @@ export interface SocketData {
   // player doc on connect, incremented on level-up, decremented on
   // allocation.
   statPointsAvailable: number;
+  practicePointsAvailable: number;
   // The lucem spell's own toggle (see PlayerSnapshot's wandLit) — never
   // persisted, same tradeoff as restState/torchLitAt. wandLitUntil is the
   // epoch-ms it was last lit, or null while off — a follow-up ask gave
@@ -1002,23 +936,6 @@ export interface SocketData {
   // manual toggle-off, unlike lucem/celeritas).
   scutumActive: boolean;
   scutumActiveUntil: number | null;
-  // A 2-stat-tick cooldown gate on reading the lucem spellbook (item 8),
-  // same shape/units as eatBrainsReadyAtTick above.
-  lucemBookReadyAtTick: number;
-  // Same idea, for the Elemental Casting classroom's irrigo podium.
-  irrigoBookReadyAtTick: number;
-  // Same idea again, for Utilization's second podium (celeritas).
-  celeritasBookReadyAtTick: number;
-  // Same idea again, for the Offense classroom's own podium (augue).
-  augueBookReadyAtTick: number;
-  // Same idea again, for the Utility classroom's third podium (resera).
-  reseraBookReadyAtTick: number;
-  // Same idea again, for Offense's second/third podiums, Defense's own
-  // podium, and Summoning's own podium (a later follow-up ask).
-  stupefaciuntBookReadyAtTick: number;
-  exarmeBookReadyAtTick: number;
-  scutumBookReadyAtTick: number;
-  murusLapideusBookReadyAtTick: number;
   // The secret room system (a follow-up ask) — persisted; loaded from the
   // player doc on connect. See the DB column's own comment
   // (docker/postgres/init-postgres.sql) for what each one means.

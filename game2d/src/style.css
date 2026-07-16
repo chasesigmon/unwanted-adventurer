@@ -1330,6 +1330,23 @@ body {
   flex-direction: column;
 }
 
+/* The teacher click-to-learn modal (a later follow-up ask replaced the
+   podium/spellbook system) — one row per offered skill, label + its own
+   Learn/Known/locked button. */
+.teacher-skill-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.teacher-skill-label {
+  color: #ddd;
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
 #bed-sleep-yes,
 #bed-sleep-no {
   flex: 1;

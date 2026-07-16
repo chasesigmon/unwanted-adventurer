@@ -51,13 +51,18 @@ import {
   STARTING_EXP,
   STARTING_ATTRIBUTE,
   STARTING_VITAL,
+  STARTING_MV,
+  MV_COST_PER_TILE,
   STARTING_SKILL_PERCENT,
   MAX_SKILL_PERCENT,
   RACE_INNATE_SKILLS,
   SKILL_GROWTH_CHANCE,
   BIG_SKILL_GROWTH_CHANCE,
   BIG_SKILL_GROWTH_AMOUNT,
-  STAT_POINTS_PER_LEVEL,
+  TRAINING_POINTS_PER_5_LEVELS,
+  TRAINING_POINT_LEVEL_INTERVAL,
+  PRACTICE_POINTS_PER_LEVEL,
+  perLevelVitalGain,
   HP_PER_CONSTITUTION,
   MANA_PER_INTELLIGENCE,
   intelligenceSpellBonus,
@@ -117,18 +122,12 @@ import type {
   EatBrainsAck,
   SacrificeAck,
   MoveAck,
-  ReadLucemBookAck,
-  ReadIrrigoBookAck,
-  ReadCeleritasBookAck,
-  ReadAugueBookAck,
   CanteenActionAck,
   CastSpellAck,
   AugueTargetPayload,
-  ReadReseraBookAck,
   CastReseraAck,
   OpenChestAck,
   TakeChestItemAck,
-  ReadSpellBookAck,
   MapStatePayload,
   StoneBlockSnapshot,
   TileTargetPayload,
@@ -151,43 +150,26 @@ import {
 } from '../../shared/lighting.js';
 import { WAND_ITEM, isWandItem } from '../../shared/equipment.js';
 import {
-  LUCEM_SKILL,
-  IRRIGO_SKILL,
-  CELERITAS_SKILL,
-  AUGUE_SKILL,
+  LIGHT_SKILL,
+  WATERFILL_SKILL,
+  HASTE_SKILL,
+  ARCANE_BOLT_SKILL,
   WAND_BOLT_SKILL,
-  RESERA_SKILL,
+  UNLOCK_SKILL,
   SPELL_ATTACK_RANGE_TILES,
-  STUPEFACIUNT_SKILL,
-  EXARME_SKILL,
-  SCUTUM_SKILL,
-  MURUS_LAPIDEUS_SKILL,
+  STUN_SKILL,
+  DISARM_SKILL,
+  AEGIS_SKILL,
+  STONE_WALL_SKILL,
   ANIMATE_DEAD_SKILL,
-  ANIMATE_DEAD_PRICE,
   ANIMATE_DEAD_MANA_COST,
   ANIMATE_DEAD_HP_MULTIPLIER,
   animatedMonsterCapFor,
+  LEARNABLE_SKILLS,
+  skillLevelRequirement,
+  practicePointCostFor,
+  SKILL_SPECIALIZATION_REQUIREMENT,
 } from '../../shared/skills.js';
-import {
-  LUCEM_BOOK_MAP,
-  LUCEM_BOOK_POSITION,
-  IRRIGO_BOOK_MAP,
-  IRRIGO_BOOK_POSITION,
-  CELERITAS_BOOK_MAP,
-  CELERITAS_BOOK_POSITION,
-  AUGUE_BOOK_MAP,
-  AUGUE_BOOK_POSITION,
-  RESERA_BOOK_MAP,
-  RESERA_BOOK_POSITION,
-  STUPEFACIUNT_BOOK_MAP,
-  STUPEFACIUNT_BOOK_POSITION,
-  EXARME_BOOK_MAP,
-  EXARME_BOOK_POSITION,
-  SCUTUM_BOOK_MAP,
-  SCUTUM_BOOK_POSITION,
-  MURUS_LAPIDEUS_BOOK_MAP,
-  MURUS_LAPIDEUS_BOOK_POSITION,
-} from '../../shared/spells.js';
 import {
   CANTEEN_ITEM,
   CANTEEN_CAPACITY,
@@ -214,17 +196,6 @@ const equipmentSlotSchema = z.enum(EQUIPMENT_SLOTS);
 const useSkillSchema = z.object({ direction: directionSchema, skill: z.string() });
 const augueTargetSchema = z.object({ targetKind: z.enum(['player', 'npc', 'monster']), targetId: z.string() });
 
-// ===================== TESTING OVERRIDE — REMOVE AFTER TESTING =====================
-// "For now make it so that learning skills happens immediately 100% for
-// testing purposes, this is going to go back to the original formula
-// later." Flip this back to `false` (or delete it and the `? 1 :` ternary
-// at each *_BOOK_LEARN_CHANCE call site below) to restore the normal
-// 10%-per-read roll. See also the matching client-side testing hotkey
-// (WorldScene's '~' key -> network.cheatFullMana) for the OTHER active
-// testing change from this same request.
-const TESTING_INSTANT_PODIUM_LEARN = true;
-// ====================================================================================
-
 // One player's ongoing fight — engageCombat creates/refreshes one of
 // these instead of resolving a hit immediately; combatTick is the only
 // place that ever actually resolves damage from it.
@@ -249,13 +220,6 @@ const MONSTER_TICK_INTERVAL_MS = 3000;
 // ~2-2.7 minutes, not a fixed duration.
 const EAT_BRAINS_COOLDOWN_TICKS = 4;
 const EAT_BRAINS_HEAL_PERCENT = 20;
-// The Utilization classroom's spellbook podium (item 8) — same world-tick
-// unit as EAT_BRAINS_COOLDOWN_TICKS above ("2 stat ticks" per the
-// request); LUCEM_BOOK_MAP/POSITION live in shared/spells.ts so the
-// client (rendering/clicking the podium) and this reach check always
-// agree on where it actually is.
-const LUCEM_BOOK_COOLDOWN_TICKS = 2;
-const LUCEM_BOOK_LEARN_CHANCE = 0.1;
 // Casting lucem ON costs mana; turning it off is free (item 3's
 // follow-up ask). While it stays lit, it keeps draining a smaller amount
 // every global stat tick (see globalStatTick) — same "recoverable through
@@ -270,13 +234,6 @@ const LUCEM_UPKEEP_MANA_COST = 3;
 // ask) is automatically true rather than a second formula to keep in
 // sync.
 const SPELL_CAST_SUCCESS_BONUS = 10;
-// A later follow-up ask: "while the player is under level 15 they have
-// an extra 20% chance that the skill/spell will succeed. This handicap
-// disappears once the player turns level 15" — a new-player training-
-// wheels bonus on top of SPELL_CAST_SUCCESS_BONUS above, applied in
-// rollSpellSuccess.
-const LOW_LEVEL_HANDICAP_MAX_LEVEL = 15;
-const LOW_LEVEL_HANDICAP_BONUS_PERCENT = 20;
 // How long a timed spell (lucem, celeritas) stays active once cast,
 // real-world — a later follow-up ask ("lucem should last 3 minutes...
 // before it goes out"), scaling up toward double that as skill% climbs to
@@ -287,31 +244,21 @@ const SPELL_DURATION_BASE_MS = 3 * 60 * 1000;
 function spellDurationMs(skillPercent: number): number {
   return SPELL_DURATION_BASE_MS + Math.round((skillPercent / MAX_SKILL_PERCENT) * SPELL_DURATION_BASE_MS);
 }
-// Utility Classroom's 4th podium (moved there from the old Elemental
-// Casting Classroom — a later follow-up ask), teaching irrigo — same
-// shape as the lucem book above.
-const IRRIGO_BOOK_COOLDOWN_TICKS = 2;
-const IRRIGO_BOOK_LEARN_CHANCE = 0.1;
 // Irrigo itself (item 8's follow-up ask) — a flat mana cost per cast,
 // whether it succeeds in filling something or not (an already-full
 // target still counts as "you tried," same as a missed punch still costs
 // nothing extra but the attempt itself was real).
 // "Irrigo should cost 5 mana" (a later follow-up ask, down from 10).
 const IRRIGO_CAST_MANA_COST = 5;
-// Utilization's second podium (a later follow-up ask), teaching quick
-// movement — same shape/mana cost/success formula as lucem, just no wand
-// requirement (a self-buff, not tied to a carried light source).
-const CELERITAS_BOOK_COOLDOWN_TICKS = 2;
-const CELERITAS_BOOK_LEARN_CHANCE = 0.1;
+// Same shape/mana cost/success formula as lucem, just no wand requirement
+// (a self-buff, not tied to a carried light source).
 // "Celeritas should cost 7 mana" (a later follow-up ask, down from 10).
 const CELERITAS_CAST_MANA_COST = 7;
-// The Offense classroom's own podium (a later follow-up ask), teaching
-// augue — a targeted fireball, unlike lucem/irrigo/celeritas above. No
-// mana cost (not requested); its own cooldown lives in shared/skills.ts's
+// Arcane Bolt (a later follow-up ask renamed this from "augue") — a
+// targeted bolt, unlike lucem/irrigo/celeritas above. No mana cost (not
+// requested); its own cooldown lives in shared/skills.ts's
 // SKILL_COOLDOWN_MS (checked the same generic way Glare's is, see
 // handleCastAugue) instead of a bespoke constant here.
-const AUGUE_BOOK_COOLDOWN_TICKS = 2;
-const AUGUE_BOOK_LEARN_CHANCE = 0.1;
 // Base damage 20 (a follow-up ask, up from 10).
 const AUGUE_DAMAGE = 20;
 const AUGUE_RANGE_TILES = SPELL_ATTACK_RANGE_TILES;
@@ -331,25 +278,12 @@ const AUGUE_BURN_TICKS = 2;
 // [ranged] damage while a wand is equipped."
 const WAND_BOLT_DAMAGE = 9;
 const WAND_BOLT_RANGE_TILES = SPELL_ATTACK_RANGE_TILES;
-// The Utility Classroom's third podium (a later follow-up ask), teaching
-// resera — same learn-chance shape as the other podiums. Costs mana like
-// every other cast (not explicitly requested, but consistent with lucem/
-// celeritas/augue) via SPELL_CAST_MANA... reusing the same 10-mana figure
-// every other spell uses.
-const RESERA_BOOK_COOLDOWN_TICKS = 2;
-const RESERA_BOOK_LEARN_CHANCE = 0.1;
+// Resera costs mana like every other cast (not explicitly requested, but
+// consistent with lucem/celeritas/augue).
 const RESERA_CAST_MANA_COST = 10;
-// Offense's second/third podiums, Defense's own podium, and Summoning's
-// own podium (a later follow-up ask) — same learn-chance shape as every
-// other podium. "Both spells [stupefaciunt/exarme] should cost 10 mana"/
-// "the spell [scutum] should cost 10 mana" — one shared constant since
-// all three (and murus lapideus, see below) land on the exact same figure.
-const STUPEFACIUNT_BOOK_COOLDOWN_TICKS = 2;
-const STUPEFACIUNT_BOOK_LEARN_CHANCE = 0.1;
-const EXARME_BOOK_COOLDOWN_TICKS = 2;
-const EXARME_BOOK_LEARN_CHANCE = 0.1;
-const SCUTUM_BOOK_COOLDOWN_TICKS = 2;
-const SCUTUM_BOOK_LEARN_CHANCE = 0.1;
+// "Both spells [stupefaciunt/exarme] should cost 10 mana"/"the spell
+// [scutum] should cost 10 mana" — one shared constant since all three
+// (and murus lapideus, see below) land on the exact same figure.
 const SPELL_ATTACK_MANA_COST = 10;
 // "Cause them to be stunned in place for 2 combat ticks."
 const STUPEFACIUNT_STUN_TICKS = 2;
@@ -362,10 +296,6 @@ const SCUTUM_DURATION_MS = 60 * 1000;
 // to every source of damage a player can take (see
 // resolveMonsterCounterAttack/resolveHitOnPlayer).
 const SCUTUM_DAMAGE_REDUCTION = 3;
-// Summoning's own podium (a later follow-up ask), teaching murus
-// lapideus — same learn-chance shape as the others.
-const MURUS_LAPIDEUS_BOOK_COOLDOWN_TICKS = 2;
-const MURUS_LAPIDEUS_BOOK_LEARN_CHANCE = 0.1;
 // "Range of 10 feet" — a tile-based distance, same unit every other reach
 // check here uses despite the flavor-text "feet."
 const MURUS_LAPIDEUS_RANGE_TILES = 10;
@@ -696,6 +626,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // intelligence point, on top of whichever restState percent above.
     const manaPercent = percent * (1 + client.data.intelligence * INTELLIGENCE_MANA_REGEN_BONUS_PER_POINT);
     let mana = healed(client.data.mana, client.data.maxMana, manaPercent);
+    // Movement points (a later follow-up ask re-added this resource) —
+    // same plain restState-percent regen hp gets, no stat bonus (unlike
+    // mana's intelligence bonus above).
+    const mv = healed(client.data.mv, client.data.maxMv, percent);
 
     // Lucem's ongoing upkeep (item 3's follow-up ask) — drains a little
     // mana every tick while lit, applied after this tick's own regen so
@@ -726,15 +660,23 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const hunger = Math.max(0, client.data.hunger - HUNGER_THIRST_DECAY_PER_TICK);
     const thirst = Math.max(0, client.data.thirst - HUNGER_THIRST_DECAY_PER_TICK);
 
-    if (hp === client.data.hp && mana === client.data.mana && hunger === client.data.hunger && thirst === client.data.thirst && !wandJustWentOut) {
+    if (
+      hp === client.data.hp &&
+      mana === client.data.mana &&
+      mv === client.data.mv &&
+      hunger === client.data.hunger &&
+      thirst === client.data.thirst &&
+      !wandJustWentOut
+    ) {
       return;
     }
 
     client.data.hp = hp;
     client.data.mana = mana;
+    client.data.mv = mv;
     client.data.hunger = hunger;
     client.data.thirst = thirst;
-    this.worldManager.updateState(client.data.username, wandJustWentOut ? { hp, mana, wandLit: false } : { hp, mana });
+    this.worldManager.updateState(client.data.username, wandJustWentOut ? { hp, mana, mv, wandLit: false } : { hp, mana, mv });
     void this.persistStats(client);
     this.systemMessage(client, `${STAT_TICK_FLAVOR[client.data.restState]} and recover some hp/mana.`);
     if (wandJustWentOut) {
@@ -747,6 +689,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxHp: client.data.maxHp,
       mana: client.data.mana,
       maxMana: client.data.maxMana,
+      mv: client.data.mv,
+      maxMv: client.data.maxMv,
       hunger: client.data.hunger,
       thirst: client.data.thirst,
     });
@@ -768,6 +712,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxHp: client.data.maxHp,
       mana: client.data.mana,
       maxMana: client.data.maxMana,
+      mv: client.data.mv,
+      maxMv: client.data.maxMv,
       strength: client.data.strength,
       intelligence: client.data.intelligence,
       wisdom: client.data.wisdom,
@@ -796,6 +742,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       armorClass: armorClassFor(client.data.dexterity + dexterityEquipmentBonus(client.data.equipment), armorEquipmentBonus(client.data.equipment)),
       deathCount: client.data.deathCount,
       statPointsAvailable: client.data.statPointsAvailable,
+      practicePointsAvailable: client.data.practicePointsAvailable,
       mapUnlocked: client.data.mapUnlocked,
       secretDoorUnlocked: client.data.secretDoorUnlocked,
       secretChestUnlocked: client.data.secretChestUnlocked,
@@ -878,6 +825,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         map: client.data.map,
         row: client.data.row,
         col: client.data.col,
+        mv: client.data.mv,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -892,6 +840,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         maxHp: client.data.maxHp,
         mana: client.data.mana,
         maxMana: client.data.maxMana,
+        mv: client.data.mv,
+        maxMv: client.data.maxMv,
         strength: client.data.strength,
         intelligence: client.data.intelligence,
         wisdom: client.data.wisdom,
@@ -909,6 +859,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         mimicForm: client.data.mimicForm,
         deathCount: client.data.deathCount,
         statPointsAvailable: client.data.statPointsAvailable,
+        practicePointsAvailable: client.data.practicePointsAvailable,
         condemned: client.data.deathCount >= GameGateway.CONDEATH_LIMIT,
         secretDoorUnlocked: client.data.secretDoorUnlocked,
         secretChestUnlocked: client.data.secretChestUnlocked,
@@ -957,12 +908,29 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.exp = exp;
 
     // A later follow-up ask replaced the old automatic "+1 to every
-    // attribute" level-up bonus entirely: leveling up now just grants
-    // stat points (stacking if unspent) the player allocates themselves
-    // — see handleAllocateStatPoint. hp/mana still fully refill on a
-    // level-up itself as a bonus, same as before.
+    // attribute" level-up bonus entirely: leveling up now grants training
+    // points (stacking if unspent) the player allocates themselves — see
+    // handleAllocateStatPoint. hp/mana still fully refill on a level-up
+    // itself as a bonus, same as before.
     if (levelsGained > 0) {
-      client.data.statPointsAvailable += STAT_POINTS_PER_LEVEL * levelsGained;
+      // Training points only come every TRAINING_POINT_LEVEL_INTERVAL(5)
+      // levels — counts how many multiples of 5 were actually crossed, so
+      // a big exp gain jumping several levels at once grants exactly as
+      // many as leveling up that many times one at a time would.
+      const trainingPointsGained =
+        Math.floor(level / TRAINING_POINT_LEVEL_INTERVAL) * TRAINING_POINTS_PER_5_LEVELS -
+        Math.floor(before / TRAINING_POINT_LEVEL_INTERVAL) * TRAINING_POINTS_PER_5_LEVELS;
+      client.data.statPointsAvailable += trainingPointsGained;
+      client.data.practicePointsAvailable += PRACTICE_POINTS_PER_LEVEL * levelsGained;
+      // A later follow-up ask: automatic hp/mp growth per level, on top of
+      // whatever the player deliberately spends on constitution/
+      // intelligence — rolled once per level actually crossed (a big exp
+      // gain that jumps several levels at once grows just as much as
+      // leveling up that many times one at a time would).
+      for (let i = 0; i < levelsGained; i++) {
+        client.data.maxHp += perLevelVitalGain(client.data.constitution);
+        client.data.maxMana += perLevelVitalGain(client.data.intelligence);
+      }
       client.data.hp = client.data.maxHp;
       client.data.mana = client.data.maxMana;
     }
@@ -975,6 +943,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       mana: client.data.mana,
       maxMana: client.data.maxMana,
       statPointsAvailable: client.data.statPointsAvailable,
+      practicePointsAvailable: client.data.practicePointsAvailable,
     });
 
     // A level-up changes attributes/max-vitals beyond what the 'combat'
@@ -1175,26 +1144,47 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, message };
   }
 
-  // The Necromancer Chamber's own teacher (a later follow-up ask) — a
-  // one-time, gold-bought skill purchase, same "permanent once done"
-  // shape as chooseHouse/chooseSpecialization above, just spending gold
-  // instead of a level check. Only the necromancer path may buy it.
-  @SubscribeMessage('buyAnimateDead')
-  handleBuyAnimateDead(@ConnectedSocket() client: GameSocket): { ok: boolean; message?: string } {
-    if (client.data.specialization !== 'necromancer') {
-      return { ok: false, message: 'Only necromancers may learn this.' };
+  // The classroom/specialization teacher click-to-learn modal (a later
+  // follow-up ask replaced the old podium-reading skill system entirely:
+  // "the player should be able to click on the teacher... and a modal
+  // should pop up with skills & spells available") — spends practice
+  // points instead of gold/a random chance, gated by level and (for
+  // Necromancer's animate dead, the first skill to migrate onto this)
+  // an optional specialization requirement. Every specialization spell
+  // added from here on reuses this same handler.
+  @SubscribeMessage('learnSkill')
+  handleLearnSkill(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): { ok: boolean; message?: string } {
+    const parsed = z.object({ skill: z.string() }).safeParse(payload);
+    if (!parsed.success || !(LEARNABLE_SKILLS as readonly string[]).includes(parsed.data.skill)) {
+      return { ok: false, message: 'Invalid skill.' };
     }
-    if (client.data.skills[ANIMATE_DEAD_SKILL] !== undefined) {
-      return { ok: false, message: 'You have already learned animate dead.' };
+    const { skill } = parsed.data;
+
+    if (client.data.skills[skill] !== undefined) {
+      return { ok: false, message: `You already know ${skill}.` };
     }
-    if (client.data.gold < ANIMATE_DEAD_PRICE) {
-      return { ok: false, message: `You need ${ANIMATE_DEAD_PRICE} coins to learn animate dead.` };
+    const requiredLevel = skillLevelRequirement(skill);
+    if (client.data.level < requiredLevel) {
+      return { ok: false, message: `Return to me when you are level ${requiredLevel}.` };
     }
-    client.data.gold -= ANIMATE_DEAD_PRICE;
-    client.data.skills[ANIMATE_DEAD_SKILL] = STARTING_SKILL_PERCENT;
+    const requiredSpecialization = SKILL_SPECIALIZATION_REQUIREMENT[skill];
+    if (requiredSpecialization && client.data.specialization !== requiredSpecialization) {
+      return { ok: false, message: `Only those who walk the ${requiredSpecialization}'s path may learn this.` };
+    }
+    const cost = practicePointCostFor(skill);
+    if (client.data.practicePointsAvailable < cost) {
+      return { ok: false, message: `You need ${cost} practice point${cost === 1 ? '' : 's'} to learn ${skill}.` };
+    }
+
+    client.data.practicePointsAvailable -= cost;
+    client.data.skills = { ...client.data.skills, [skill]: STARTING_SKILL_PERCENT };
+    this.worldManager.updateState(client.data.username, {
+      skills: client.data.skills,
+      practicePointsAvailable: client.data.practicePointsAvailable,
+    });
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
-    const message = 'You have learned animate dead.';
+    const message = `You have learned ${skill}.`;
     this.systemMessage(client, message);
     return { ok: true, message };
   }
@@ -1679,6 +1669,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.maxHp = doc?.maxHp ?? STARTING_VITAL;
     client.data.mana = doc?.mana ?? STARTING_VITAL;
     client.data.maxMana = doc?.maxMana ?? STARTING_VITAL;
+    client.data.mv = doc?.mv ?? STARTING_MV;
+    client.data.maxMv = doc?.maxMv ?? STARTING_MV;
     client.data.skills = doc?.skills ?? startingSkills(client.data.race);
     // Backfills any race-innate skill an EXISTING account is still
     // missing (e.g. created before a registration bug — now fixed — used
@@ -1717,6 +1709,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // Stacks across levels if never spent (a later follow-up ask) — see
     // handleAllocateStatPoint.
     client.data.statPointsAvailable = doc?.statPointsAvailable ?? 0;
+    client.data.practicePointsAvailable = doc?.practicePointsAvailable ?? 0;
     // Never persisted — a fresh connection always starts awake, same as
     // the text game's own restState.
     client.data.restState = 'awake';
@@ -1746,15 +1739,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // Same tradeoff again — scutum never carries over either.
     client.data.scutumActive = false;
     client.data.scutumActiveUntil = null;
-    client.data.lucemBookReadyAtTick = 0;
-    client.data.irrigoBookReadyAtTick = 0;
-    client.data.celeritasBookReadyAtTick = 0;
-    client.data.augueBookReadyAtTick = 0;
-    client.data.reseraBookReadyAtTick = 0;
-    client.data.stupefaciuntBookReadyAtTick = 0;
-    client.data.exarmeBookReadyAtTick = 0;
-    client.data.scutumBookReadyAtTick = 0;
-    client.data.murusLapideusBookReadyAtTick = 0;
     // The secret room system (a follow-up ask) — persisted, unlike the
     // cooldowns above; loaded straight from the player doc, defaulting to
     // false for any character that predates this feature (every existing
@@ -1781,6 +1765,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxHp: client.data.maxHp,
       mana: client.data.mana,
       maxMana: client.data.maxMana,
+      mv: client.data.mv,
+      maxMv: client.data.maxMv,
       strength: client.data.strength,
       intelligence: client.data.intelligence,
       wisdom: client.data.wisdom,
@@ -1799,6 +1785,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       skillCooldowns: client.data.skillCooldowns,
       deathCount: client.data.deathCount,
       statPointsAvailable: client.data.statPointsAvailable,
+      practicePointsAvailable: client.data.practicePointsAvailable,
       wandLit: client.data.wandLit,
       celeritasActive: client.data.celeritasActive,
       scutumActive: client.data.scutumActive,
@@ -1920,6 +1907,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.map = result.mapName;
     client.data.row = result.row;
     client.data.col = result.col;
+    // Movement points (a later follow-up ask re-added this resource) —
+    // floors at 0 rather than going negative or blocking the move.
+    client.data.mv = Math.max(0, client.data.mv - MV_COST_PER_TILE);
+    this.worldManager.updateState(username, { mv: client.data.mv });
 
     void this.persistPosition(client);
 
@@ -2111,12 +2102,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // function's own doc comment in combat/formulas.ts.
     const intelligenceBonus = intelligenceSpellBonus(client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment));
     const luckBonus = rollLuckSpellSuccessBonus(client.data.luck);
-    // A new-player handicap (a later follow-up ask) — an extra flat 20%
-    // while under level 15, gone entirely at 15 and above (a cliff, not
-    // a taper — "this handicap disappears once the player turns level
-    // 15").
-    const lowLevelBonus = client.data.level < LOW_LEVEL_HANDICAP_MAX_LEVEL ? LOW_LEVEL_HANDICAP_BONUS_PERCENT : 0;
-    const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS + intelligenceBonus + luckBonus + lowLevelBonus);
+    // A later follow-up ask removed the new-player low-level handicap
+    // bonus entirely (skill percent now starts at a flat 70% for
+    // everything learned through the teacher click-to-learn modal, so the
+    // extra training-wheels bonus is no longer needed).
+    const successChance = Math.min(MAX_SKILL_PERCENT, skillPercent + SPELL_CAST_SUCCESS_BONUS + intelligenceBonus + luckBonus);
     return Math.random() * 100 < successChance;
   }
 
@@ -3213,243 +3203,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
-  // The Utilization classroom's spellbook podium (item 8): a 10% chance
-  // per click of learning lucem, gated by a 2-world-tick cooldown — same
-  // "reach check, then cooldown check, then a Math.random() roll" shape
-  // as handleEatBrains/applyConsume above.
-  @SubscribeMessage('readLucemBook')
-  handleReadLucemBook(@ConnectedSocket() client: GameSocket): ReadLucemBookAck {
-    if (client.data.map !== LUCEM_BOOK_MAP) {
-      return { ok: false, message: "There's no spellbook here." };
-    }
-    if (!this.isWithinLootReach(client, LUCEM_BOOK_POSITION.row, LUCEM_BOOK_POSITION.col)) {
-      return { ok: false, message: "You're too far away to reach the book." };
-    }
-    if (this.currentTick < client.data.lucemBookReadyAtTick) {
-      // A world tick and an in-game hour are the same unit (see
-      // globalStatTick, which advances both by exactly 1 together), so
-      // this is showing real hours, not a made-up "tick" concept.
-      const hoursLeft = client.data.lucemBookReadyAtTick - this.currentTick;
-      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
-    }
-    client.data.lucemBookReadyAtTick = this.currentTick + LUCEM_BOOK_COOLDOWN_TICKS;
-
-    if (client.data.skills[LUCEM_SKILL] !== undefined) {
-      return {
-        ok: true,
-        skills: client.data.skills,
-        lucemBookReadyAtTick: client.data.lucemBookReadyAtTick,
-        message: 'You already know how to conjure light with lucem.',
-      };
-    }
-
-    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : LUCEM_BOOK_LEARN_CHANCE)) {
-      client.data.skills = { ...client.data.skills, [LUCEM_SKILL]: STARTING_SKILL_PERCENT };
-      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
-      const expSuffix = this.grantSpellLearnExp(client);
-      void this.persistStats(client);
-      client.emit('sync', { player: this.snapshotFor(client) });
-      return {
-        ok: true,
-        skills: client.data.skills,
-        lucemBookReadyAtTick: client.data.lucemBookReadyAtTick,
-        message: `The words swim into focus — you have learned lucem!${expSuffix}`,
-      };
-    }
-
-    return {
-      ok: true,
-      lucemBookReadyAtTick: client.data.lucemBookReadyAtTick,
-      message: 'You pore over the pages, but nothing clicks yet.',
-    };
-  }
-
-  // The Elemental Casting classroom's own podium — identical shape to
-  // handleReadLucemBook above, teaching irrigo instead.
-  @SubscribeMessage('readIrrigoBook')
-  handleReadIrrigoBook(@ConnectedSocket() client: GameSocket): ReadIrrigoBookAck {
-    if (client.data.map !== IRRIGO_BOOK_MAP) {
-      return { ok: false, message: "There's no spellbook here." };
-    }
-    if (!this.isWithinLootReach(client, IRRIGO_BOOK_POSITION.row, IRRIGO_BOOK_POSITION.col)) {
-      return { ok: false, message: "You're too far away to reach the book." };
-    }
-    if (this.currentTick < client.data.irrigoBookReadyAtTick) {
-      const hoursLeft = client.data.irrigoBookReadyAtTick - this.currentTick;
-      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
-    }
-    client.data.irrigoBookReadyAtTick = this.currentTick + IRRIGO_BOOK_COOLDOWN_TICKS;
-
-    if (client.data.skills[IRRIGO_SKILL] !== undefined) {
-      return {
-        ok: true,
-        skills: client.data.skills,
-        irrigoBookReadyAtTick: client.data.irrigoBookReadyAtTick,
-        message: 'You already know how to conjure water with irrigo.',
-      };
-    }
-
-    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : IRRIGO_BOOK_LEARN_CHANCE)) {
-      client.data.skills = { ...client.data.skills, [IRRIGO_SKILL]: STARTING_SKILL_PERCENT };
-      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
-      const expSuffix = this.grantSpellLearnExp(client);
-      void this.persistStats(client);
-      client.emit('sync', { player: this.snapshotFor(client) });
-      return {
-        ok: true,
-        skills: client.data.skills,
-        irrigoBookReadyAtTick: client.data.irrigoBookReadyAtTick,
-        message: `The words swim into focus — you have learned irrigo!${expSuffix}`,
-      };
-    }
-
-    return {
-      ok: true,
-      irrigoBookReadyAtTick: client.data.irrigoBookReadyAtTick,
-      message: 'You pore over the pages, but nothing clicks yet.',
-    };
-  }
-
-  // Utilization's second podium (a later follow-up ask) — identical
-  // shape to handleReadLucemBook/handleReadIrrigoBook, teaching quick
-  // movement instead.
-  @SubscribeMessage('readCeleritasBook')
-  handleReadCeleritasBook(@ConnectedSocket() client: GameSocket): ReadCeleritasBookAck {
-    if (client.data.map !== CELERITAS_BOOK_MAP) {
-      return { ok: false, message: "There's no spellbook here." };
-    }
-    if (!this.isWithinLootReach(client, CELERITAS_BOOK_POSITION.row, CELERITAS_BOOK_POSITION.col)) {
-      return { ok: false, message: "You're too far away to reach the book." };
-    }
-    if (this.currentTick < client.data.celeritasBookReadyAtTick) {
-      const hoursLeft = client.data.celeritasBookReadyAtTick - this.currentTick;
-      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
-    }
-    client.data.celeritasBookReadyAtTick = this.currentTick + CELERITAS_BOOK_COOLDOWN_TICKS;
-
-    if (client.data.skills[CELERITAS_SKILL] !== undefined) {
-      return {
-        ok: true,
-        skills: client.data.skills,
-        celeritasBookReadyAtTick: client.data.celeritasBookReadyAtTick,
-        message: 'You already know how to quicken your steps.',
-      };
-    }
-
-    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : CELERITAS_BOOK_LEARN_CHANCE)) {
-      client.data.skills = { ...client.data.skills, [CELERITAS_SKILL]: STARTING_SKILL_PERCENT };
-      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
-      const expSuffix = this.grantSpellLearnExp(client);
-      void this.persistStats(client);
-      client.emit('sync', { player: this.snapshotFor(client) });
-      return {
-        ok: true,
-        skills: client.data.skills,
-        celeritasBookReadyAtTick: client.data.celeritasBookReadyAtTick,
-        message: `The words swim into focus — you have learned celeritas!${expSuffix}`,
-      };
-    }
-
-    return {
-      ok: true,
-      celeritasBookReadyAtTick: client.data.celeritasBookReadyAtTick,
-      message: 'You pore over the pages, but nothing clicks yet.',
-    };
-  }
-
-  // The Offense classroom's own podium (a later follow-up ask) —
-  // identical shape to handleReadLucemBook/handleReadCeleritasBook,
-  // teaching augue instead.
-  @SubscribeMessage('readAugueBook')
-  handleReadAugueBook(@ConnectedSocket() client: GameSocket): ReadAugueBookAck {
-    if (client.data.map !== AUGUE_BOOK_MAP) {
-      return { ok: false, message: "There's no spellbook here." };
-    }
-    if (!this.isWithinLootReach(client, AUGUE_BOOK_POSITION.row, AUGUE_BOOK_POSITION.col)) {
-      return { ok: false, message: "You're too far away to reach the book." };
-    }
-    if (this.currentTick < client.data.augueBookReadyAtTick) {
-      const hoursLeft = client.data.augueBookReadyAtTick - this.currentTick;
-      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
-    }
-    client.data.augueBookReadyAtTick = this.currentTick + AUGUE_BOOK_COOLDOWN_TICKS;
-
-    if (client.data.skills[AUGUE_SKILL] !== undefined) {
-      return {
-        ok: true,
-        skills: client.data.skills,
-        augueBookReadyAtTick: client.data.augueBookReadyAtTick,
-        message: 'You already know how to conjure augue.',
-      };
-    }
-
-    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : AUGUE_BOOK_LEARN_CHANCE)) {
-      client.data.skills = { ...client.data.skills, [AUGUE_SKILL]: STARTING_SKILL_PERCENT };
-      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
-      const expSuffix = this.grantSpellLearnExp(client);
-      void this.persistStats(client);
-      client.emit('sync', { player: this.snapshotFor(client) });
-      return {
-        ok: true,
-        skills: client.data.skills,
-        augueBookReadyAtTick: client.data.augueBookReadyAtTick,
-        message: `The words swim into focus — you have learned augue!${expSuffix}`,
-      };
-    }
-
-    return {
-      ok: true,
-      augueBookReadyAtTick: client.data.augueBookReadyAtTick,
-      message: 'You pore over the pages, but nothing clicks yet.',
-    };
-  }
-
-  // The Utility Classroom's third podium (a later follow-up ask) —
-  // identical shape to handleReadLucemBook/handleReadAugueBook, teaching
-  // resera instead.
-  @SubscribeMessage('readReseraBook')
-  handleReadReseraBook(@ConnectedSocket() client: GameSocket): ReadReseraBookAck {
-    if (client.data.map !== RESERA_BOOK_MAP) {
-      return { ok: false, message: "There's no spellbook here." };
-    }
-    if (!this.isWithinLootReach(client, RESERA_BOOK_POSITION.row, RESERA_BOOK_POSITION.col)) {
-      return { ok: false, message: "You're too far away to reach the book." };
-    }
-    if (this.currentTick < client.data.reseraBookReadyAtTick) {
-      const hoursLeft = client.data.reseraBookReadyAtTick - this.currentTick;
-      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
-    }
-    client.data.reseraBookReadyAtTick = this.currentTick + RESERA_BOOK_COOLDOWN_TICKS;
-
-    if (client.data.skills[RESERA_SKILL] !== undefined) {
-      return {
-        ok: true,
-        skills: client.data.skills,
-        reseraBookReadyAtTick: client.data.reseraBookReadyAtTick,
-        message: 'You already know how to conjure resera.',
-      };
-    }
-
-    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : RESERA_BOOK_LEARN_CHANCE)) {
-      client.data.skills = { ...client.data.skills, [RESERA_SKILL]: STARTING_SKILL_PERCENT };
-      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
-      const expSuffix = this.grantSpellLearnExp(client);
-      void this.persistStats(client);
-      client.emit('sync', { player: this.snapshotFor(client) });
-      return {
-        ok: true,
-        skills: client.data.skills,
-        reseraBookReadyAtTick: client.data.reseraBookReadyAtTick,
-        message: `The words swim into focus — you have learned resera!${expSuffix}`,
-      };
-    }
-
-    return {
-      ok: true,
-      reseraBookReadyAtTick: client.data.reseraBookReadyAtTick,
-      message: 'You pore over the pages, but nothing clicks yet.',
-    };
-  }
+  // A later follow-up ask removed the podium/spellbook system entirely —
+  // see handleLearnSkill for the teacher click-to-learn modal that
+  // replaced every handleReadXBook handler that used to live here
+  // (lucem, irrigo, celeritas, augue, resera, stupefaciunt, exarme,
+  // scutum, murus lapideus).
 
   // Resera (a later follow-up ask) — a targeted UTILITY spell: requires
   // selecting one of the game's two lockable objects (the secret room's
@@ -3460,7 +3218,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // player's success never unlocks it for anyone else.
   @SubscribeMessage('castResera')
   handleCastResera(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastReseraAck {
-    if (client.data.skills[RESERA_SKILL] === undefined) {
+    if (client.data.skills[UNLOCK_SKILL] === undefined) {
       return { ok: false, message: "You don't know the resera spell yet." };
     }
     if (!isWandItem(client.data.equipment.weapon)) {
@@ -3489,7 +3247,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // it says" shape as every other cast here.
     const isSecretDoor =
       kind === 'door' &&
-      ((map === RESERA_BOOK_MAP && row === CAVERNA_SECRET_DOOR_POSITION.row && col === CAVERNA_SECRET_DOOR_POSITION.col) ||
+      // The secret door's OUTSIDE face sits in Utility Classroom (a
+      // former follow-up ask put resera's own podium in that same room —
+      // now removed, see the podium-system removal above — but the
+      // door's own location is unchanged).
+      ((map === 'Utility Classroom' && row === CAVERNA_SECRET_DOOR_POSITION.row && col === CAVERNA_SECRET_DOOR_POSITION.col) ||
         (map === 'Caverna Secretissima' && row === CAVERNA_SECRET_DOOR_INSIDE_POSITION.row && col === CAVERNA_SECRET_DOOR_INSIDE_POSITION.col));
     const isChest = kind === 'chest' && map === 'Caverna Secretissima' && row === CAVERNA_CHEST_POSITION.row && col === CAVERNA_CHEST_POSITION.col;
 
@@ -3516,7 +3278,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.mana -= RESERA_CAST_MANA_COST;
 
     let message: string;
-    if (this.rollSpellSuccess(client, RESERA_SKILL)) {
+    if (this.rollSpellSuccess(client, UNLOCK_SKILL)) {
       if (isSecretDoor) {
         client.data.secretDoorUnlocked = true;
         message = 'The lock clicks open — the door is unlocked.';
@@ -3530,7 +3292,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     // Resera grows with practice on every cast, success or fail (a later
     // follow-up ask, item 18 — applies to every spell, not just this one).
-    const growth = this.maybeGrowSpellSkill(client, RESERA_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, UNLOCK_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     void this.persistStats(client);
@@ -3611,13 +3373,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
   @SubscribeMessage('castAugue')
   handleCastAugue(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
-    if (client.data.skills[AUGUE_SKILL] === undefined) {
+    if (client.data.skills[ARCANE_BOLT_SKILL] === undefined) {
       return { ok: false, message: "You don't know the augue spell yet." };
     }
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
-    const cooldownUntil = client.data.skillCooldowns[AUGUE_SKILL];
+    const cooldownUntil = client.data.skillCooldowns[ARCANE_BOLT_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
       return { ok: false, message: `Augue is still recharging (${secondsLeft}s left).` };
@@ -3649,12 +3411,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
 
       client.data.mana -= SPELL_ATTACK_MANA_COST;
-      this.startSkillCooldown(client, AUGUE_SKILL);
+      this.startSkillCooldown(client, ARCANE_BOLT_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
       const label = npc.label ?? 'training dummy';
 
-      if (!this.rollSpellSuccess(client, AUGUE_SKILL)) {
-        const growth = this.maybeGrowSpellSkill(client, AUGUE_SKILL);
+      if (!this.rollSpellSuccess(client, ARCANE_BOLT_SKILL)) {
+        const growth = this.maybeGrowSpellSkill(client, ARCANE_BOLT_SKILL);
         const message = `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
         void this.persistStats(client);
         client.emit('sync', { player: this.snapshotFor(client) });
@@ -3691,7 +3453,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
 
       const growthMessages: string[] = [];
-      const growth = this.maybeGrowSpellSkill(client, AUGUE_SKILL);
+      const growth = this.maybeGrowSpellSkill(client, ARCANE_BOLT_SKILL);
       if (growth) growthMessages.push(growth);
 
       const message = died
@@ -3718,7 +3480,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         targetDied: died,
         message,
         growthMessages,
-        skill: AUGUE_SKILL,
+        skill: ARCANE_BOLT_SKILL,
       });
       this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
       return { ok: true, skills: client.data.skills, message };
@@ -3735,11 +3497,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     client.data.mana -= SPELL_ATTACK_MANA_COST;
-    this.startSkillCooldown(client, AUGUE_SKILL);
+    this.startSkillCooldown(client, ARCANE_BOLT_SKILL);
     this.startAutoAttackAfterSpell(client, 'monster', monster.id);
 
-    if (!this.rollSpellSuccess(client, AUGUE_SKILL)) {
-      const growth = this.maybeGrowSpellSkill(client, AUGUE_SKILL);
+    if (!this.rollSpellSuccess(client, ARCANE_BOLT_SKILL)) {
+      const growth = this.maybeGrowSpellSkill(client, ARCANE_BOLT_SKILL);
       const message = `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
@@ -3764,7 +3526,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     const growthMessages: string[] = [];
-    const growth = this.maybeGrowSpellSkill(client, AUGUE_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, ARCANE_BOLT_SKILL);
     if (growth) growthMessages.push(growth);
 
     let expGained: number | undefined;
@@ -3802,80 +3564,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       leveledUp,
       message,
       growthMessages,
-      skill: AUGUE_SKILL,
+      skill: ARCANE_BOLT_SKILL,
     });
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
 
     return { ok: true, skills: client.data.skills, message };
   }
 
-  // Offense's second podium (a later follow-up ask), teaching
-  // stupefaciunt — same read-a-podium shape as every earlier one.
-  @SubscribeMessage('readStupefaciuntBook')
-  handleReadStupefaciuntBook(@ConnectedSocket() client: GameSocket): ReadSpellBookAck {
-    if (client.data.map !== STUPEFACIUNT_BOOK_MAP) {
-      return { ok: false, message: "There's no spellbook here." };
-    }
-    if (!this.isWithinLootReach(client, STUPEFACIUNT_BOOK_POSITION.row, STUPEFACIUNT_BOOK_POSITION.col)) {
-      return { ok: false, message: "You're too far away to reach the book." };
-    }
-    if (this.currentTick < client.data.stupefaciuntBookReadyAtTick) {
-      const hoursLeft = client.data.stupefaciuntBookReadyAtTick - this.currentTick;
-      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
-    }
-    client.data.stupefaciuntBookReadyAtTick = this.currentTick + STUPEFACIUNT_BOOK_COOLDOWN_TICKS;
-
-    if (client.data.skills[STUPEFACIUNT_SKILL] !== undefined) {
-      return { ok: true, skills: client.data.skills, message: 'You already know how to conjure stupefaciunt.' };
-    }
-    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : STUPEFACIUNT_BOOK_LEARN_CHANCE)) {
-      client.data.skills = { ...client.data.skills, [STUPEFACIUNT_SKILL]: STARTING_SKILL_PERCENT };
-      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
-      const expSuffix = this.grantSpellLearnExp(client);
-      void this.persistStats(client);
-      client.emit('sync', { player: this.snapshotFor(client) });
-      return {
-        ok: true,
-        skills: client.data.skills,
-        message: `The words swim into focus — you have learned stupefaciunt!${expSuffix}`,
-      };
-    }
-    return { ok: true, message: 'You pore over the pages, but nothing clicks yet.' };
-  }
-
-  // Offense's third podium (a later follow-up ask), teaching exarme —
-  // same shape again.
-  @SubscribeMessage('readExarmeBook')
-  handleReadExarmeBook(@ConnectedSocket() client: GameSocket): ReadSpellBookAck {
-    if (client.data.map !== EXARME_BOOK_MAP) {
-      return { ok: false, message: "There's no spellbook here." };
-    }
-    if (!this.isWithinLootReach(client, EXARME_BOOK_POSITION.row, EXARME_BOOK_POSITION.col)) {
-      return { ok: false, message: "You're too far away to reach the book." };
-    }
-    if (this.currentTick < client.data.exarmeBookReadyAtTick) {
-      const hoursLeft = client.data.exarmeBookReadyAtTick - this.currentTick;
-      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
-    }
-    client.data.exarmeBookReadyAtTick = this.currentTick + EXARME_BOOK_COOLDOWN_TICKS;
-
-    if (client.data.skills[EXARME_SKILL] !== undefined) {
-      return { ok: true, skills: client.data.skills, message: 'You already know how to conjure exarme.' };
-    }
-    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : EXARME_BOOK_LEARN_CHANCE)) {
-      client.data.skills = { ...client.data.skills, [EXARME_SKILL]: STARTING_SKILL_PERCENT };
-      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
-      const expSuffix = this.grantSpellLearnExp(client);
-      void this.persistStats(client);
-      client.emit('sync', { player: this.snapshotFor(client) });
-      return {
-        ok: true,
-        skills: client.data.skills,
-        message: `The words swim into focus — you have learned exarme!${expSuffix}`,
-      };
-    }
-    return { ok: true, message: 'You pore over the pages, but nothing clicks yet.' };
-  }
+  // A later follow-up ask removed the podium/spellbook system entirely —
+  // see handleLearnSkill for the teacher click-to-learn modal that
+  // replaced the stupefaciunt/exarme podium-reading handlers that used
+  // to live here.
 
   // Stupefaciunt (a later follow-up ask) — a targeted stun, same
   // range/target shape as augue but no damage: 2 combat ticks of
@@ -3885,13 +3584,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // gated only by mana and its own cooldown.
   @SubscribeMessage('castStupefaciunt')
   handleCastStupefaciunt(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
-    if (client.data.skills[STUPEFACIUNT_SKILL] === undefined) {
+    if (client.data.skills[STUN_SKILL] === undefined) {
       return { ok: false, message: "You don't know the stupefaciunt spell yet." };
     }
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
-    const cooldownUntil = client.data.skillCooldowns[STUPEFACIUNT_SKILL];
+    const cooldownUntil = client.data.skillCooldowns[STUN_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
       return { ok: false, message: `Stupefaciunt is still recharging (${secondsLeft}s left).` };
@@ -3913,11 +3612,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: false, message: "You're too far away to hit that with stupefaciunt." };
       }
       client.data.mana -= SPELL_ATTACK_MANA_COST;
-      this.startSkillCooldown(client, STUPEFACIUNT_SKILL);
+      this.startSkillCooldown(client, STUN_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
       const label = npc.label ?? 'training dummy';
-      const succeeded = this.rollSpellSuccess(client, STUPEFACIUNT_SKILL);
-      const growth = this.maybeGrowSpellSkill(client, STUPEFACIUNT_SKILL);
+      const succeeded = this.rollSpellSuccess(client, STUN_SKILL);
+      const growth = this.maybeGrowSpellSkill(client, STUN_SKILL);
       const message = succeeded
         ? `${client.data.username} stuns the ${label} in place!${growth ? ` ${growth}` : ''}`
         : `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
@@ -3939,11 +3638,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     client.data.mana -= SPELL_ATTACK_MANA_COST;
-    this.startSkillCooldown(client, STUPEFACIUNT_SKILL);
+    this.startSkillCooldown(client, STUN_SKILL);
     this.startAutoAttackAfterSpell(client, 'monster', monster.id);
-    const stupefaciuntSucceeded = this.rollSpellSuccess(client, STUPEFACIUNT_SKILL);
+    const stupefaciuntSucceeded = this.rollSpellSuccess(client, STUN_SKILL);
     if (stupefaciuntSucceeded) this.monsterManager.stun(monster.id, this.combatTickCount + STUPEFACIUNT_STUN_TICKS);
-    const growth = this.maybeGrowSpellSkill(client, STUPEFACIUNT_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, STUN_SKILL);
     const message = stupefaciuntSucceeded
       ? `${client.data.username}'s stupefaciunt freezes the ${monster.kind} in place!${growth ? ` ${growth}` : ''}`
       : `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
@@ -3963,13 +3662,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // range/no-success-roll shape as stupefaciunt above.
   @SubscribeMessage('castExarme')
   handleCastExarme(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
-    if (client.data.skills[EXARME_SKILL] === undefined) {
+    if (client.data.skills[DISARM_SKILL] === undefined) {
       return { ok: false, message: "You don't know the exarme spell yet." };
     }
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
-    const cooldownUntil = client.data.skillCooldowns[EXARME_SKILL];
+    const cooldownUntil = client.data.skillCooldowns[DISARM_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
       return { ok: false, message: `Exarme is still recharging (${secondsLeft}s left).` };
@@ -3990,10 +3689,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: false, message: "You're too far away to hit that with exarme." };
       }
       client.data.mana -= SPELL_ATTACK_MANA_COST;
-      this.startSkillCooldown(client, EXARME_SKILL);
+      this.startSkillCooldown(client, DISARM_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
-      const succeeded = this.rollSpellSuccess(client, EXARME_SKILL);
-      const growth = this.maybeGrowSpellSkill(client, EXARME_SKILL);
+      const succeeded = this.rollSpellSuccess(client, DISARM_SKILL);
+      const growth = this.maybeGrowSpellSkill(client, DISARM_SKILL);
       const label = npc.label ?? 'training dummy';
       // A follow-up ask gave the training skeletons a wooden club (see
       // server/worlds/npcs.ts) specifically so this branch — previously
@@ -4035,10 +3734,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     client.data.mana -= SPELL_ATTACK_MANA_COST;
-    this.startSkillCooldown(client, EXARME_SKILL);
+    this.startSkillCooldown(client, DISARM_SKILL);
     this.startAutoAttackAfterSpell(client, 'monster', monster.id);
     let message: string;
-    if (!this.rollSpellSuccess(client, EXARME_SKILL)) {
+    if (!this.rollSpellSuccess(client, DISARM_SKILL)) {
       message = 'You fumble the incantation and nothing happens.';
     } else {
       const weaponIndex = monster.carriedItems.findIndex((item) => item.toLowerCase().includes('dagger'));
@@ -4052,7 +3751,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         message = `${client.data.username}'s exarme knocks the ${weapon} from the ${monster.kind}'s grip!`;
       }
     }
-    const growth = this.maybeGrowSpellSkill(client, EXARME_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, DISARM_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
@@ -4063,39 +3762,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
   }
 
-  // Defense's own podium (a later follow-up ask), teaching scutum — same
-  // read-a-podium shape as every earlier one.
-  @SubscribeMessage('readScutumBook')
-  handleReadScutumBook(@ConnectedSocket() client: GameSocket): ReadSpellBookAck {
-    if (client.data.map !== SCUTUM_BOOK_MAP) {
-      return { ok: false, message: "There's no spellbook here." };
-    }
-    if (!this.isWithinLootReach(client, SCUTUM_BOOK_POSITION.row, SCUTUM_BOOK_POSITION.col)) {
-      return { ok: false, message: "You're too far away to reach the book." };
-    }
-    if (this.currentTick < client.data.scutumBookReadyAtTick) {
-      const hoursLeft = client.data.scutumBookReadyAtTick - this.currentTick;
-      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
-    }
-    client.data.scutumBookReadyAtTick = this.currentTick + SCUTUM_BOOK_COOLDOWN_TICKS;
-
-    if (client.data.skills[SCUTUM_SKILL] !== undefined) {
-      return { ok: true, skills: client.data.skills, message: 'You already know how to conjure scutum.' };
-    }
-    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : SCUTUM_BOOK_LEARN_CHANCE)) {
-      client.data.skills = { ...client.data.skills, [SCUTUM_SKILL]: STARTING_SKILL_PERCENT };
-      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
-      const expSuffix = this.grantSpellLearnExp(client);
-      void this.persistStats(client);
-      client.emit('sync', { player: this.snapshotFor(client) });
-      return {
-        ok: true,
-        skills: client.data.skills,
-        message: `The words swim into focus — you have learned scutum!${expSuffix}`,
-      };
-    }
-    return { ok: true, message: 'You pore over the pages, but nothing clicks yet.' };
-  }
+  // A later follow-up ask removed the podium/spellbook system entirely —
+  // see handleLearnSkill for the teacher click-to-learn modal that
+  // replaced the scutum podium-reading handler that used to live here.
 
   // Scutum (a later follow-up ask) — a fixed-duration self-buff, unlike
   // lucem/celeritas: always ON for SCUTUM_DURATION_MS once cast (no
@@ -4108,7 +3777,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // starts the cooldown even on a fumble).
   @SubscribeMessage('castScutum')
   handleCastScutum(@ConnectedSocket() client: GameSocket): CastSpellAck {
-    if (client.data.skills[SCUTUM_SKILL] === undefined) {
+    if (client.data.skills[AEGIS_SKILL] === undefined) {
       const message = "You don't know the scutum spell yet.";
       this.systemMessage(client, message);
       return { ok: false, message };
@@ -4118,7 +3787,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, message);
       return { ok: false, message };
     }
-    const cooldownUntil = client.data.skillCooldowns[SCUTUM_SKILL];
+    const cooldownUntil = client.data.skillCooldowns[AEGIS_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
       const message = `Scutum is still recharging (${secondsLeft}s left).`;
@@ -4138,10 +3807,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // scutum can just be retried immediately (still costs the mana,
     // same "swinging and missing still counts as the swing" reasoning,
     // just not the cooldown on top of it).
-    const succeeded = this.rollSpellSuccess(client, SCUTUM_SKILL);
+    const succeeded = this.rollSpellSuccess(client, AEGIS_SKILL);
     let message: string;
     if (succeeded) {
-      this.startSkillCooldown(client, SCUTUM_SKILL);
+      this.startSkillCooldown(client, AEGIS_SKILL);
       client.data.scutumActive = true;
       client.data.scutumActiveUntil = Date.now() + SCUTUM_DURATION_MS;
       message = 'A shimmering shield surrounds you.';
@@ -4149,7 +3818,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message = 'You fumble the incantation and nothing happens.';
     }
 
-    const growth = this.maybeGrowSpellSkill(client, SCUTUM_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, AEGIS_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills, scutumActive: client.data.scutumActive });
@@ -4160,39 +3829,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, active: succeeded, mana: client.data.mana, skills: client.data.skills, message };
   }
 
-  // Summoning's own podium (a later follow-up ask), teaching murus
-  // lapideus — same read-a-podium shape as every earlier one.
-  @SubscribeMessage('readMurusLapideusBook')
-  handleReadMurusLapideusBook(@ConnectedSocket() client: GameSocket): ReadSpellBookAck {
-    if (client.data.map !== MURUS_LAPIDEUS_BOOK_MAP) {
-      return { ok: false, message: "There's no spellbook here." };
-    }
-    if (!this.isWithinLootReach(client, MURUS_LAPIDEUS_BOOK_POSITION.row, MURUS_LAPIDEUS_BOOK_POSITION.col)) {
-      return { ok: false, message: "You're too far away to reach the book." };
-    }
-    if (this.currentTick < client.data.murusLapideusBookReadyAtTick) {
-      const hoursLeft = client.data.murusLapideusBookReadyAtTick - this.currentTick;
-      return { ok: false, message: `You need a moment before reading again (${hoursLeft} more hour${hoursLeft === 1 ? '' : 's'}).` };
-    }
-    client.data.murusLapideusBookReadyAtTick = this.currentTick + MURUS_LAPIDEUS_BOOK_COOLDOWN_TICKS;
-
-    if (client.data.skills[MURUS_LAPIDEUS_SKILL] !== undefined) {
-      return { ok: true, skills: client.data.skills, message: 'You already know how to conjure murus lapideus.' };
-    }
-    if (Math.random() < (TESTING_INSTANT_PODIUM_LEARN ? 1 : MURUS_LAPIDEUS_BOOK_LEARN_CHANCE)) {
-      client.data.skills = { ...client.data.skills, [MURUS_LAPIDEUS_SKILL]: STARTING_SKILL_PERCENT };
-      this.worldManager.updateState(client.data.username, { skills: client.data.skills });
-      const expSuffix = this.grantSpellLearnExp(client);
-      void this.persistStats(client);
-      client.emit('sync', { player: this.snapshotFor(client) });
-      return {
-        ok: true,
-        skills: client.data.skills,
-        message: `The words swim into focus — you have learned murus lapideus!${expSuffix}`,
-      };
-    }
-    return { ok: true, message: 'You pore over the pages, but nothing clicks yet.' };
-  }
+  // A later follow-up ask removed the podium/spellbook system entirely —
+  // see handleLearnSkill for the teacher click-to-learn modal that
+  // replaced the murus lapideus podium-reading handler that used to live
+  // here.
 
   // Murus lapideus (a later follow-up ask) — "click the spell, then click
   // a spot on the map" (see WorldScene's own murusLapideusTargeting flow);
@@ -4202,13 +3842,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // — harmless no-op if nothing's aggro'd onto them.
   @SubscribeMessage('castMurusLapideus')
   handleCastMurusLapideus(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
-    if (client.data.skills[MURUS_LAPIDEUS_SKILL] === undefined) {
+    if (client.data.skills[STONE_WALL_SKILL] === undefined) {
       return { ok: false, message: "You don't know the murus lapideus spell yet." };
     }
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
-    const cooldownUntil = client.data.skillCooldowns[MURUS_LAPIDEUS_SKILL];
+    const cooldownUntil = client.data.skillCooldowns[STONE_WALL_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
       return { ok: false, message: `Murus lapideus is still recharging (${secondsLeft}s left).` };
@@ -4240,13 +3880,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.mana -= SPELL_ATTACK_MANA_COST;
 
     let message: string;
-    if (!this.rollSpellSuccess(client, MURUS_LAPIDEUS_SKILL)) {
+    if (!this.rollSpellSuccess(client, STONE_WALL_SKILL)) {
       message = 'You fumble the incantation and nothing happens.';
     } else {
       // A follow-up ask: cooldown should only start on an actual
       // success, not a fumble — a fumbled cast still costs mana but
       // shouldn't lock the player out of trying again right away.
-      this.startSkillCooldown(client, MURUS_LAPIDEUS_SKILL);
+      this.startSkillCooldown(client, STONE_WALL_SKILL);
       const id = randomUUID();
       this.stoneBlocks.set(id, {
         id,
@@ -4266,7 +3906,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message = 'A block of stone rises from the ground, eyes blinking open.';
     }
 
-    const growth = this.maybeGrowSpellSkill(client, MURUS_LAPIDEUS_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, STONE_WALL_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
@@ -4434,7 +4074,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // mana but leaves the target's fill level untouched.
   @SubscribeMessage('castIrrigo')
   handleCastIrrigo(@ConnectedSocket() client: GameSocket, @MessageBody() itemIndex: unknown): CanteenActionAck {
-    if (client.data.skills[IRRIGO_SKILL] === undefined) {
+    if (client.data.skills[WATERFILL_SKILL] === undefined) {
       return { ok: false, message: "You don't know the irrigo spell yet." };
     }
     if (!isWandItem(client.data.equipment.weapon)) {
@@ -4452,7 +4092,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.mana -= IRRIGO_CAST_MANA_COST;
 
     let message: string;
-    if (!this.rollSpellSuccess(client, IRRIGO_SKILL)) {
+    if (!this.rollSpellSuccess(client, WATERFILL_SKILL)) {
       message = 'You fumble the incantation and nothing happens.';
     } else if (client.data.canteenDrinks >= CANTEEN_CAPACITY) {
       message = `Your ${resolved.item} is already full and cannot be filled.`;
@@ -4461,7 +4101,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message = `You fill your ${resolved.item} with water!`;
     }
 
-    const growth = this.maybeGrowSpellSkill(client, IRRIGO_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, WATERFILL_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, canteenDrinks: client.data.canteenDrinks, skills: client.data.skills });
@@ -4512,7 +4152,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     '/mimic [race] - slime only: with no argument, lists what you can mimic; with one, shifts your form to it',
     '/revert - slime only: shift back to your natural slime form',
     '/time - show the current game hour and whether it is day or night',
-    "/lucem - toggle your equipped wand's light on or off (requires the lucem skill)",
+    "/light - toggle your equipped wand's light on or off (requires the light skill)",
   ].join('\n');
 
   private handleCommand(client: GameSocket, commandText: string): void {
@@ -4550,7 +4190,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       case 'time':
         this.handleTimeCommand(client);
         break;
-      case 'lucem':
+      case 'light':
         this.handleLucemCommand(client);
         break;
       default:
@@ -4621,7 +4261,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // visible even with the Inventory (or any other) modal open, on top of
   // still logging it the normal way via systemMessage below.
   private handleLucemCommand(client: GameSocket): CastSpellAck {
-    if (client.data.skills[LUCEM_SKILL] === undefined) {
+    if (client.data.skills[LIGHT_SKILL] === undefined) {
       const message = "You don't know the lucem spell yet.";
       this.systemMessage(client, message);
       return { ok: false, message };
@@ -4635,7 +4275,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // every other on-cooldown spell — only gates turning it ON, not
     // toggling it back off (see startSkillCooldown's own call below,
     // only reached from the success branch).
-    const cooldownUntil = client.data.skillCooldowns[LUCEM_SKILL];
+    const cooldownUntil = client.data.skillCooldowns[LIGHT_SKILL];
     if (!client.data.wandLit && cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
       const message = `Lucem is still recharging (${secondsLeft}s left).`;
@@ -4651,11 +4291,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: false, message: insufficientMana };
       }
       client.data.mana -= LUCEM_CAST_MANA_COST;
-      const skillPercent = client.data.skills[LUCEM_SKILL] ?? STARTING_SKILL_PERCENT;
-      if (this.rollSpellSuccess(client, LUCEM_SKILL)) {
+      const skillPercent = client.data.skills[LIGHT_SKILL] ?? STARTING_SKILL_PERCENT;
+      if (this.rollSpellSuccess(client, LIGHT_SKILL)) {
         client.data.wandLit = true;
         client.data.wandLitUntil = Date.now() + spellDurationMs(skillPercent);
-        this.startSkillCooldown(client, LUCEM_SKILL);
+        this.startSkillCooldown(client, LIGHT_SKILL);
         message = 'Your wand glows with a soft light.';
       } else {
         message = 'You fumble the incantation and nothing happens.';
@@ -4666,7 +4306,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message = 'Your wand goes dark.';
     }
 
-    const growth = this.maybeGrowSpellSkill(client, LUCEM_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, LIGHT_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, { wandLit: client.data.wandLit, mana: client.data.mana, skills: client.data.skills });
@@ -4692,7 +4332,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // effectiveMoveCooldownMs) for spellDurationMs, scaling up with skill%
   // the same way lucem's own duration does.
   private handleCeleritasCommand(client: GameSocket): CastSpellAck {
-    if (client.data.skills[CELERITAS_SKILL] === undefined) {
+    if (client.data.skills[HASTE_SKILL] === undefined) {
       const message = "You don't know the celeritas spell yet.";
       this.systemMessage(client, message);
       return { ok: false, message };
@@ -4704,7 +4344,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     // A follow-up ask: a flat 5-minute cooldown, same shape as lucem's
     // own — only gates turning it ON.
-    const cooldownUntil = client.data.skillCooldowns[CELERITAS_SKILL];
+    const cooldownUntil = client.data.skillCooldowns[HASTE_SKILL];
     if (!client.data.celeritasActive && cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
       const message = `Celeritas is still recharging (${secondsLeft}s left).`;
@@ -4720,11 +4360,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: false, message: insufficientMana };
       }
       client.data.mana -= CELERITAS_CAST_MANA_COST;
-      const skillPercent = client.data.skills[CELERITAS_SKILL] ?? STARTING_SKILL_PERCENT;
-      if (this.rollSpellSuccess(client, CELERITAS_SKILL)) {
+      const skillPercent = client.data.skills[HASTE_SKILL] ?? STARTING_SKILL_PERCENT;
+      if (this.rollSpellSuccess(client, HASTE_SKILL)) {
         client.data.celeritasActive = true;
         client.data.celeritasActiveUntil = Date.now() + spellDurationMs(skillPercent);
-        this.startSkillCooldown(client, CELERITAS_SKILL);
+        this.startSkillCooldown(client, HASTE_SKILL);
         message = 'Your feet feel lighter — you move with a spring in your step.';
       } else {
         message = 'You fumble the incantation and nothing happens.';
@@ -4735,7 +4375,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message = 'The spring leaves your step.';
     }
 
-    const growth = this.maybeGrowSpellSkill(client, CELERITAS_SKILL);
+    const growth = this.maybeGrowSpellSkill(client, HASTE_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, {

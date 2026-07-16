@@ -9,7 +9,7 @@ import { PlayersService } from '../players/players.service.js';
 import { SessionStoreService } from './session-store.service.js';
 import { ActiveConnectionsService } from './active-connections.service.js';
 import { startingPositionFor } from '../../shared/maps.js';
-import { STARTING_MAP } from '../../shared/constants.js';
+import { STARTING_MAP, RACE_STARTING_STATS } from '../../shared/constants.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
 import { CANTEEN_ITEM } from '../../shared/items.js';
 import { startingSkills } from '../combat/formulas.js';
@@ -171,10 +171,12 @@ export class AuthService {
     }));
   }
 
-  // Every new character is a human wizard (item 4) — race is no longer a
-  // player choice, just always 'human'; gender/hairColor/skinTone are
-  // the appearance choices that replace it.
-  async createCharacter(accountToken: string, { name, gender, hairColor, skinTone }: CreateCharacterDto): Promise<CharacterSummary> {
+  // Every new character used to be a human wizard only (item 4); a later
+  // follow-up ask restored race as a real choice among the 5 playable
+  // ones — RACE_STARTING_STATS supplies each race's own starting
+  // attribute spread (hp/mana/mv all start the same regardless of race,
+  // via the entity's own column defaults).
+  async createCharacter(accountToken: string, { name, race, gender, hairColor, skinTone }: CreateCharacterDto): Promise<CharacterSummary> {
     const { accountId } = await this.verifyAccountToken(accountToken);
 
     const existing = await this.playersService.findByUsernameCaseInsensitive(name);
@@ -182,7 +184,7 @@ export class AuthService {
       throw new ConflictException('That character name is already taken.');
     }
 
-    const race = 'human' as const;
+    const startingStats = RACE_STARTING_STATS[race];
     const spawn = startingPositionFor(STARTING_MAP);
     const player = await this.playersService.create({
       username: name,
@@ -191,6 +193,7 @@ export class AuthService {
       gender,
       hairColor,
       skinTone,
+      ...startingStats,
       map: STARTING_MAP,
       row: spawn.row,
       col: spawn.col,

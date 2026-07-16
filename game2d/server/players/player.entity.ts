@@ -103,6 +103,15 @@ export class Player {
   @Column({ name: 'max_mana', type: 'int', default: 100 })
   maxMana!: number;
 
+  // Movement points (a later follow-up ask re-added this resource) —
+  // 'real' (not 'int'), same fractional-decay precedent hunger/thirst
+  // already use, since a move costs 0.5 mv (see MV_COST_PER_TILE).
+  @Column({ type: 'real', default: 200 })
+  mv!: number;
+
+  @Column({ name: 'max_mv', type: 'real', default: 200 })
+  maxMv!: number;
+
   @Column({ type: 'int', default: 1 })
   level!: number;
 
@@ -145,13 +154,21 @@ export class Player {
   @Column({ name: 'death_count', type: 'int', default: 0 })
   deathCount!: number;
 
-  // A later follow-up ask replaced the old automatic per-level attribute
-  // bonus: leveling up now just grants stat points (stacking across
-  // multiple levels if unspent) here, spent one at a time via the
-  // character sheet's own +/- buttons (see game.gateway.ts's
-  // handleAllocateStatPoint).
+  // "Training points" (a later follow-up ask renamed/repaced the cadence
+  // of this same mechanic — it used to grant one every level, now every
+  // 5th) — stat points, stacking across multiple levels if unspent, spent
+  // one at a time via the character sheet's own +/- buttons (see
+  // game.gateway.ts's handleAllocateStatPoint). The DB column name stays
+  // the same to avoid an unnecessary rename migration.
   @Column({ name: 'stat_points_available', type: 'int', default: 0 })
   statPointsAvailable!: number;
+
+  // "Practice points" (a later follow-up ask replaced the old podium-
+  // reading skill system entirely) — 3 granted every level, spent at a
+  // classroom/specialization teacher's own click-to-learn modal (see
+  // game.gateway.ts's handleLearnSkill).
+  @Column({ name: 'practice_points_available', type: 'int', default: 0 })
+  practicePointsAvailable!: number;
 
   @Column({ type: 'boolean', default: false })
   condemned!: boolean;

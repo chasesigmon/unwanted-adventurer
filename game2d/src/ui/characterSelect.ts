@@ -5,7 +5,7 @@
 // created) is what actually swaps the held token to a character-level
 // one and starts the game.
 import { network } from '../state.js';
-import type { Gender, HairColor, SkinTone } from '../../shared/constants.js';
+import type { Gender, HairColor, SkinTone, PlayableRace } from '../../shared/constants.js';
 import { showAuthScreen } from './authScreen.js';
 
 const screen = document.getElementById('character-select-screen') as HTMLDivElement;
@@ -17,6 +17,7 @@ const deleteConfirmYesBtn = document.getElementById('character-delete-confirm-ye
 const deleteConfirmNoBtn = document.getElementById('character-delete-confirm-no') as HTMLButtonElement;
 const createForm = document.getElementById('create-character-form') as HTMLFormElement;
 const nameInput = document.getElementById('new-character-name') as HTMLInputElement;
+const raceSelect = document.getElementById('new-character-race') as HTMLSelectElement;
 const genderSelect = document.getElementById('new-character-gender') as HTMLSelectElement;
 const skinSelect = document.getElementById('new-character-skin') as HTMLSelectElement;
 const hairSelect = document.getElementById('new-character-hair') as HTMLSelectElement;
@@ -32,14 +33,27 @@ export function hideCharacterSelectScreen(): void {
 // The same gender/skin/hair -> spritesheet naming convention
 // characterSprites.ts's effectiveSpriteKind uses server-side — the first
 // (down-facing idle) frame of that sheet is the live preview, cropped via
-// a plain CSS background-position rather than a canvas.
+// a plain CSS background-position rather than a canvas. A later follow-up
+// ask restored race as a real choice: only human's own texture varies by
+// gender/skin/hair (the other 4 playable races each have one plain
+// spritesheet, same as every non-human race already did) — the skin/hair
+// pickers are hidden for those, since they'd have no visible effect.
 function updatePreview(): void {
-  const gender = genderSelect.value as Gender;
-  const skinTone = skinSelect.value as SkinTone;
-  const hairColor = hairSelect.value as HairColor;
-  previewEl.style.backgroundImage = `url(/human-${gender}-${skinTone}-${hairColor}-spritesheet.png)`;
+  const race = raceSelect.value as PlayableRace;
+  const isHuman = race === 'human';
+  skinSelect.closest('label')!.hidden = !isHuman;
+  hairSelect.closest('label')!.hidden = !isHuman;
+  if (isHuman) {
+    const gender = genderSelect.value as Gender;
+    const skinTone = skinSelect.value as SkinTone;
+    const hairColor = hairSelect.value as HairColor;
+    previewEl.style.backgroundImage = `url(/human-${gender}-${skinTone}-${hairColor}-spritesheet.png)`;
+  } else {
+    previewEl.style.backgroundImage = `url(/${race}-spritesheet.png)`;
+  }
   previewEl.style.backgroundSize = '880px 560px';
 }
+raceSelect.addEventListener('change', updatePreview);
 genderSelect.addEventListener('change', updatePreview);
 skinSelect.addEventListener('change', updatePreview);
 hairSelect.addEventListener('change', updatePreview);
@@ -96,7 +110,10 @@ async function refreshCharacterList(): Promise<void> {
       li.className = 'character-list-item';
 
       const label = document.createElement('span');
-      const appearance = c.gender ? `${c.gender}, ${c.skinTone} skin, ${c.hairColor} hair` : c.race;
+      // Only human's own texture actually varies by gender/skin/hair (a
+      // later follow-up ask restored race as a real choice) — every other
+      // playable race just shows its own name instead.
+      const appearance = c.race === 'human' ? `${c.gender}, ${c.skinTone} skin, ${c.hairColor} hair` : c.race;
       label.textContent = `${c.name} — ${appearance}, level ${c.level} (${c.map})`;
       label.className = 'character-list-label';
       label.addEventListener('click', () => void chooseCharacter(c.name));
@@ -140,7 +157,13 @@ createForm.addEventListener('submit', (e) => {
     errorEl.textContent = '';
     const name = nameInput.value.trim();
     try {
-      await network.createCharacter(name, genderSelect.value as Gender, hairSelect.value as HairColor, skinSelect.value as SkinTone);
+      await network.createCharacter(
+        name,
+        raceSelect.value as PlayableRace,
+        genderSelect.value as Gender,
+        hairSelect.value as HairColor,
+        skinSelect.value as SkinTone
+      );
       await network.selectCharacter(name);
     } catch (err) {
       errorEl.textContent = err instanceof Error ? err.message : 'Could not create that character.';
@@ -164,6 +187,7 @@ export function showCharacterSelectScreen(onChosen: () => void): void {
   errorEl.textContent = '';
   hideDeleteConfirm();
   nameInput.value = '';
+  raceSelect.value = 'human';
   genderSelect.value = 'male';
   skinSelect.value = 'white';
   hairSelect.value = 'brown';

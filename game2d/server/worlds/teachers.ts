@@ -1,6 +1,6 @@
 import type { MapName } from '../../shared/constants.js';
 import type { TeacherSnapshot } from '../../shared/types.js';
-import { LEARN_SPELLS_QUEST_ID, KILL_IMPS_QUEST_ID, GATHER_MANA_CRYSTALS_QUEST_ID, FIND_THE_MAP_QUEST_ID } from '../../shared/quests.js';
+import { LEARN_SPELLS_QUEST_ID, KILL_IMPS_QUEST_ID, GATHER_MANA_CRYSTALS_QUEST_ID, FIND_THE_MAP_QUEST_ID, CLASSROOM_SPELLS } from '../../shared/quests.js';
 import { ANIMATE_DEAD_SKILL } from '../../shared/skills.js';
 
 // Static, permanent classroom occupants (a follow-up ask: "Add teacher
@@ -102,10 +102,31 @@ export const TEACHERS: TeacherSnapshot[] = [
   // level-10 "choose your path as a mage" dialogue instead (no quest —
   // see WorldScene's own specializationGate branch).
   { id: 'elemental-casting-teacher', name: 'Professor Ashgrove', map: 'Specialization', row: 2, col: 9, specializationGate: true, robeColorKey: 'amber' },
-  { id: 'defense-teacher', name: 'Professor Vantor', map: 'Defense Classroom', row: 2, col: 9, robeColorKey: 'steel' },
-  { id: 'summoning-teacher', name: 'Professor Nyx', map: 'Summoning Classroom', row: 2, col: 9, robeColorKey: 'plum' },
-  { id: 'utilization-teacher', name: 'Professor Wren', map: 'Utility Classroom', row: 2, col: 9, robeColorKey: 'olive' },
-  { id: 'offense-teacher', name: 'Professor Kastellan', map: 'Offense Classroom', row: 2, col: 9, robeColorKey: 'maroon' },
+  // A later follow-up ask removed the podium/spellbook system entirely —
+  // each classroom teacher now offers their room's own spells directly
+  // through the click-to-learn modal (teachesSkills), reusing the exact
+  // same CLASSROOM_SPELLS grouping the Learn Spells quest's objectives
+  // already relied on so the two can never drift apart.
+  { id: 'defense-teacher', name: 'Professor Vantor', map: 'Defense Classroom', row: 2, col: 9, teachesSkills: CLASSROOM_SPELLS['Defense Classroom'], robeColorKey: 'steel' },
+  {
+    id: 'summoning-teacher',
+    name: 'Professor Nyx',
+    map: 'Summoning Classroom',
+    row: 2,
+    col: 9,
+    teachesSkills: CLASSROOM_SPELLS['Summoning Classroom'],
+    robeColorKey: 'plum',
+  },
+  {
+    id: 'utilization-teacher',
+    name: 'Professor Wren',
+    map: 'Utility Classroom',
+    row: 2,
+    col: 9,
+    teachesSkills: CLASSROOM_SPELLS['Utility Classroom'],
+    robeColorKey: 'olive',
+  },
+  { id: 'offense-teacher', name: 'Professor Kastellan', map: 'Offense Classroom', row: 2, col: 9, teachesSkills: CLASSROOM_SPELLS['Offense Classroom'], robeColorKey: 'maroon' },
   // The 10 specialization chambers (a later follow-up ask) — one teacher
   // each, same row/col as every other classroom teacher (their own
   // desk sits one tile south, per deskPositionFor's default). No special
@@ -114,10 +135,12 @@ export const TEACHERS: TeacherSnapshot[] = [
   // fall back to the same plain generic-tooltip click every classroom
   // teacher without one of those already gets.
   // A later follow-up ask gave the Necromancer specialist an actual
-  // click behavior: offering "animate dead" for one-time purchase (see
-  // ANIMATE_DEAD_SKILL) — the other 9 chamber teachers are still plain
-  // tooltip-only for now.
-  { id: 'necromancer-teacher', name: 'Professor Voss', map: 'Necromancer Chamber', row: 2, col: 9, skillPurchaseGate: ANIMATE_DEAD_SKILL, robeColorKey: 'slate' },
+  // click behavior: offering "animate dead" through the same
+  // click-to-learn modal every classroom teacher now uses (originally a
+  // bespoke gold purchase, migrated onto teachesSkills/practice points by
+  // a still-later follow-up ask) — the other 9 chamber teachers are still
+  // plain tooltip-only for now.
+  { id: 'necromancer-teacher', name: 'Professor Voss', map: 'Necromancer Chamber', row: 2, col: 9, teachesSkills: [ANIMATE_DEAD_SKILL], robeColorKey: 'slate' },
   { id: 'enhancer-teacher', name: 'Professor Brann', map: 'Enhancer Chamber', row: 2, col: 9, robeColorKey: 'olive' },
   { id: 'elementalist-teacher', name: 'Professor Tempest', map: 'Elementalist Chamber', row: 2, col: 9, robeColorKey: 'teal' },
   { id: 'summoner-teacher', name: 'Professor Corvin', map: 'Summoner Chamber', row: 2, col: 9, robeColorKey: 'plum' },

@@ -12,6 +12,7 @@ const statusToggle = document.getElementById('status-toggle') as HTMLButtonEleme
 const statusLevel = document.getElementById('status-level') as HTMLSpanElement;
 const statusHp = document.getElementById('status-hp') as HTMLSpanElement;
 const statusMana = document.getElementById('status-mana') as HTMLSpanElement;
+const statusMv = document.getElementById('status-mv') as HTMLSpanElement;
 const statusHunger = document.getElementById('status-hunger') as HTMLSpanElement;
 const statusThirst = document.getElementById('status-thirst') as HTMLSpanElement;
 const statusExp = document.getElementById('status-exp') as HTMLSpanElement;
@@ -66,6 +67,7 @@ export function updateStatusBar(): void {
   statusLevel.textContent = `Lv ${myProfile.level}`;
   statusHp.textContent = `HP ${myProfile.hp}/${myProfile.maxHp}`;
   statusMana.textContent = `MP ${myProfile.mana}/${myProfile.maxMana}`;
+  statusMv.textContent = `MV ${wholeNumber(myProfile.mv)}/${wholeNumber(myProfile.maxMv)}`;
   statusHunger.textContent = `Hunger ${wholeNumber(myProfile.hunger ?? 100)}/100`;
   statusThirst.textContent = `Thirst ${wholeNumber(myProfile.thirst ?? 100)}/100`;
   statusExp.textContent = `EXP ${myProfile.exp}`;

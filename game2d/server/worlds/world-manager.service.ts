@@ -29,7 +29,7 @@ import {
 } from '../../shared/maps.js';
 import { vendorsForMap } from './vendors.js';
 import { teachersForMap, teacherDeskFootprintFor } from './teachers.js';
-import { isPodiumBlocked, isChestBlocked } from '../../shared/spells.js';
+import { isChestBlocked } from '../../shared/spells.js';
 import { armorClassFor, armorEquipmentBonus } from '../combat/formulas.js';
 
 // A much smaller version of the text game's own WorldManagerService — no
@@ -160,9 +160,6 @@ export class WorldManagerService {
     );
     if (teacherHit) return true;
 
-    // Both classroom spellbook podiums — a follow-up ask to give them
-    // collision too.
-    if (isPodiumBlocked(mapName, row, col)) return true;
     if (isChestBlocked(mapName, row, col)) return true;
 
     for (const [username, state] of this.playerLocation) {
@@ -219,6 +216,8 @@ export class WorldManagerService {
         maxHp: state.maxHp,
         mana: state.mana,
         maxMana: state.maxMana,
+        mv: state.mv,
+        maxMv: state.maxMv,
         strength: state.strength,
         intelligence: state.intelligence,
         wisdom: state.wisdom,
@@ -246,6 +245,7 @@ export class WorldManagerService {
         armorClass: armorClassFor(state.dexterity, armorEquipmentBonus(state.equipment)),
         deathCount: state.deathCount,
         statPointsAvailable: state.statPointsAvailable,
+        practicePointsAvailable: state.practicePointsAvailable,
       });
     }
 

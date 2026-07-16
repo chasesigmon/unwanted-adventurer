@@ -22,15 +22,15 @@ import {
   ENHANCED_DURABILITY_SKILL,
   BONE_FINGER_STRIKE_SKILL,
   GLARE_SKILL,
-  LUCEM_SKILL,
-  IRRIGO_SKILL,
-  CELERITAS_SKILL,
-  AUGUE_SKILL,
-  RESERA_SKILL,
-  STUPEFACIUNT_SKILL,
-  EXARME_SKILL,
-  SCUTUM_SKILL,
-  MURUS_LAPIDEUS_SKILL,
+  LIGHT_SKILL,
+  WATERFILL_SKILL,
+  HASTE_SKILL,
+  ARCANE_BOLT_SKILL,
+  UNLOCK_SKILL,
+  STUN_SKILL,
+  DISARM_SKILL,
+  AEGIS_SKILL,
+  STONE_WALL_SKILL,
   ANIMATE_DEAD_SKILL,
   DRINK_SKILL,
   POUR_SKILL,
@@ -95,15 +95,15 @@ export function isUsableSkill(skillName: string): boolean {
     skillName === GLARE_SKILL ||
     skillName === MIMIC_SKILL ||
     skillName === REVERT_SKILL ||
-    skillName === LUCEM_SKILL ||
-    skillName === IRRIGO_SKILL ||
-    skillName === CELERITAS_SKILL ||
-    skillName === AUGUE_SKILL ||
-    skillName === RESERA_SKILL ||
-    skillName === STUPEFACIUNT_SKILL ||
-    skillName === EXARME_SKILL ||
-    skillName === SCUTUM_SKILL ||
-    skillName === MURUS_LAPIDEUS_SKILL ||
+    skillName === LIGHT_SKILL ||
+    skillName === WATERFILL_SKILL ||
+    skillName === HASTE_SKILL ||
+    skillName === ARCANE_BOLT_SKILL ||
+    skillName === UNLOCK_SKILL ||
+    skillName === STUN_SKILL ||
+    skillName === DISARM_SKILL ||
+    skillName === AEGIS_SKILL ||
+    skillName === STONE_WALL_SKILL ||
     skillName === ANIMATE_DEAD_SKILL ||
     skillName === DRINK_SKILL ||
     skillName === POUR_SKILL
@@ -135,23 +135,23 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
   [ENHANCED_DURABILITY_SKILL]: 'Skeleton-only: passively tougher armor (future work — no armor system yet).',
   [BONE_FINGER_STRIKE_SKILL]:
     'A separate active attack, earnable by chance from consuming bone daggers. Deals 1.5x your normal hit damage, scaling further with skill percent.',
-  [LUCEM_SKILL]:
+  [LIGHT_SKILL]:
     "No target needed — lights or extinguishes your equipped wand's tip, granting a light source like a torch would. Success chance scales with skill percent, intelligence, and luck.",
-  [IRRIGO_SKILL]:
+  [WATERFILL_SKILL]:
     'Fills a targeted container (a canteen) with water. Select it in your inventory first, then click this. Costs mana; requires a wand equipped. Success chance scales with skill percent, intelligence, and luck.',
-  [CELERITAS_SKILL]:
+  [HASTE_SKILL]:
     'No target needed — quickens your own footsteps by about 10% for a time, plus a little more for every point of dexterity. Costs mana; lasts longer the higher your skill. Success chance scales with skill percent, intelligence, and luck.',
-  [AUGUE_SKILL]:
+  [ARCANE_BOLT_SKILL]:
     'Hurls a bolt of flame at your selected target (a monster) from up to 7 tiles away. Deals 10 damage; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.',
-  [RESERA_SKILL]:
+  [UNLOCK_SKILL]:
     'Unlocks a targeted door or chest. Left-click the door/chest first, then use this. Costs mana; success chance scales with skill percent, intelligence, and luck.',
-  [STUPEFACIUNT_SKILL]:
+  [STUN_SKILL]:
     'Stuns your selected target (a monster) in place for 2 combat ticks, from up to 7 tiles away. Costs 10 mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.',
-  [EXARME_SKILL]:
+  [DISARM_SKILL]:
     "Disarms your selected target's weapon (a monster) into your own inventory, from up to 7 tiles away. Costs 10 mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.",
-  [SCUTUM_SKILL]:
+  [AEGIS_SKILL]:
     'No target needed — surrounds you with a protective shield that reduces all damage by 3 for 1 minute. Costs 10 mana; success chance scales with skill percent, intelligence, and luck — its own 2-minute cooldown only starts on a successful cast.',
-  [MURUS_LAPIDEUS_SKILL]:
+  [STONE_WALL_SKILL]:
     'Click this, then click a spot on the map within 10 feet — summons a stone block ally there for 30 seconds (or until destroyed) that draws monster aggro and absorbs hits. Costs 10 mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.',
   [ANIMATE_DEAD_SKILL]:
     "Necromancer-only. Click this, then click a monster's corpse — raises it as an animated ally under your command (follow/stay/sleep/attack), with 2x its hp when alive and the same attack. Lasts until it's slain or you log off; limited to 1 at a time (2 at level 20+). Costs 15 mana; has its own 3-minute cooldown. Success chance scales with skill percent, intelligence, and luck.",
@@ -267,9 +267,9 @@ const SKILL_CATEGORY_MAP: Record<string, SkillCategory> = {
   [LACERATE_SKILL]: 'Offense',
   [BONE_FINGER_STRIKE_SKILL]: 'Offense',
   [GLARE_SKILL]: 'Offense',
-  [AUGUE_SKILL]: 'Offense',
-  [STUPEFACIUNT_SKILL]: 'Offense',
-  [EXARME_SKILL]: 'Offense',
+  [ARCANE_BOLT_SKILL]: 'Offense',
+  [STUN_SKILL]: 'Offense',
+  [DISARM_SKILL]: 'Offense',
   [DODGE_SKILL]: 'Defense',
   [PARRY_SKILL]: 'Defense',
   [SHIELD_BLOCK_SKILL]: 'Defense',
@@ -277,19 +277,19 @@ const SKILL_CATEGORY_MAP: Record<string, SkillCategory> = {
   [LESSER_UNDEAD_MONSTER_RESISTANCE]: 'Defense',
   [LESSER_FIRE_RESISTANCE]: 'Defense',
   [ENHANCED_DURABILITY_SKILL]: 'Defense',
-  [SCUTUM_SKILL]: 'Defense',
-  [LUCEM_SKILL]: 'Utility',
-  [CELERITAS_SKILL]: 'Utility',
-  [RESERA_SKILL]: 'Utility',
+  [AEGIS_SKILL]: 'Defense',
+  [LIGHT_SKILL]: 'Utility',
+  [HASTE_SKILL]: 'Utility',
+  [UNLOCK_SKILL]: 'Utility',
   [DRINK_SKILL]: 'Utility',
   [POUR_SKILL]: 'Utility',
   [INFRAVISION_SKILL]: 'Utility',
   [MIMIC_SKILL]: 'Utility',
   [REVERT_SKILL]: 'Utility',
   [EAT_BRAINS_SKILL]: 'Utility',
-  [MURUS_LAPIDEUS_SKILL]: 'Summoning',
+  [STONE_WALL_SKILL]: 'Summoning',
   [ANIMATE_DEAD_SKILL]: 'Summoning',
-  [IRRIGO_SKILL]: 'Elemental',
+  [WATERFILL_SKILL]: 'Elemental',
 };
 
 // Falls back to Utility for anything not explicitly listed above (a

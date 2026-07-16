@@ -1,14 +1,39 @@
 // The original 5 fantasy races each have their own spritesheet (see
 // characterSprites.ts for the race->texture-key mapping; 'dragonborn'
-// reuses the dragon-man-spritesheet.png asset).
-// 'human' is the wizarding-school pivot's only playable race — a
-// character creation screen no longer asks for a race at all (see
-// characterSelect.ts), it's implied and always 'human'; customization
-// instead comes from gender/hairColor/skinTone (see GENDERS/HAIR_COLORS/
-// SKIN_TONES below). The original 5 fantasy races are kept, not deleted —
-// this is a pivot in what NEW characters are, not a rewrite of the
-// existing goblin-game mechanics those races still drive.
-export const RACES = ['goblin', 'skeleton', 'zombie', 'dragonborn', 'slime', 'human'] as const;
+// reuses the dragon-man-spritesheet.png asset). They're kept, not
+// deleted, even though none of them is choosable at character creation
+// anymore — this is a pivot in what NEW characters are, not a rewrite of
+// the existing goblin-game mechanics those races still drive.
+// 'human' was the wizarding-school pivot's only playable race for a
+// while; a later follow-up ask restored race as a real character-creation
+// choice, adding elf/half-elf/viravis/pixie alongside it (see
+// RACE_STARTING_STATS below for each one's starting attributes) — gender/
+// hairColor/skinTone customization (see GENDERS/HAIR_COLORS/SKIN_TONES)
+// still applies to all 5 of these playable races, same as it did for
+// human alone before.
+export const RACES = ['goblin', 'skeleton', 'zombie', 'dragonborn', 'slime', 'human', 'elf', 'half-elf', 'viravis', 'pixie'] as const;
+// The 5 races a player can actually pick at character creation (a later
+// follow-up ask) — the original 5 fantasy races above stay in RACES only
+// for existing/monster-side compatibility, never offered on the
+// creation screen.
+export const PLAYABLE_RACES = ['human', 'elf', 'half-elf', 'viravis', 'pixie'] as const;
+export type PlayableRace = (typeof PLAYABLE_RACES)[number];
+
+// Starting attribute spread per playable race (a later follow-up ask) —
+// threaded through server/auth/auth.service.ts's createCharacter, which
+// previously passed no overrides at all and silently relied on every
+// attribute's own column default of 1. hp/mana/mv all start the same
+// (100/100/200) regardless of race — only these 6 attributes vary.
+export const RACE_STARTING_STATS: Record<
+  PlayableRace,
+  { strength: number; intelligence: number; wisdom: number; dexterity: number; constitution: number; luck: number }
+> = {
+  human: { strength: 10, intelligence: 10, wisdom: 10, dexterity: 10, constitution: 10, luck: 10 },
+  elf: { strength: 8, intelligence: 12, wisdom: 8, dexterity: 12, constitution: 8, luck: 10 },
+  'half-elf': { strength: 10, intelligence: 11, wisdom: 7, dexterity: 12, constitution: 10, luck: 10 },
+  viravis: { strength: 9, intelligence: 11, wisdom: 10, dexterity: 12, constitution: 8, luck: 10 },
+  pixie: { strength: 7, intelligence: 13, wisdom: 10, dexterity: 12, constitution: 8, luck: 10 },
+};
 // Never selectable at registration — the goblin-game's own
 // consume-your-way-to-evolving mechanic that used to be the only way
 // here was removed entirely (a later follow-up ask: "there is no

@@ -7,7 +7,7 @@
 // from this modal). A follow-up ask: still list every spell (so a player
 // can see what's out there to learn), but visually distinguish which
 // ones this character has actually learned yet — a spell's own name
-// doubles as its skill key (see shared/skills.ts's AUGUE_SKILL etc., each
+// doubles as its skill key (see shared/skills.ts's ARCANE_BOLT_SKILL etc., each
 // just the plain spell name string), so myProfile.skills already has
 // everything needed to tell the two apart.
 import { myProfile } from '../state.js';

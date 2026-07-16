@@ -45,16 +45,16 @@ import {
   MIMIC_SKILL,
   REVERT_SKILL,
   INFRAVISION_SKILL,
-  LUCEM_SKILL,
-  IRRIGO_SKILL,
-  CELERITAS_SKILL,
-  AUGUE_SKILL,
+  LIGHT_SKILL,
+  WATERFILL_SKILL,
+  HASTE_SKILL,
+  ARCANE_BOLT_SKILL,
   WAND_BOLT_SKILL,
-  RESERA_SKILL,
-  STUPEFACIUNT_SKILL,
-  EXARME_SKILL,
-  SCUTUM_SKILL,
-  MURUS_LAPIDEUS_SKILL,
+  UNLOCK_SKILL,
+  STUN_SKILL,
+  DISARM_SKILL,
+  AEGIS_SKILL,
+  STONE_WALL_SKILL,
   ANIMATE_DEAD_SKILL,
   SPELL_ATTACK_RANGE_TILES,
   DRINK_SKILL,
@@ -98,35 +98,6 @@ import {
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { WAND_ITEM, isWandItem } from '../../shared/equipment.js';
 import { questIconStateFor } from '../../shared/quests.js';
-import {
-  LUCEM_BOOK_MAP,
-  LUCEM_BOOK_POSITION,
-  LUCEM_BOOK_LABEL,
-  IRRIGO_BOOK_MAP,
-  IRRIGO_BOOK_POSITION,
-  IRRIGO_BOOK_LABEL,
-  CELERITAS_BOOK_MAP,
-  CELERITAS_BOOK_POSITION,
-  CELERITAS_BOOK_LABEL,
-  AUGUE_BOOK_MAP,
-  AUGUE_BOOK_POSITION,
-  AUGUE_BOOK_LABEL,
-  RESERA_BOOK_MAP,
-  RESERA_BOOK_POSITION,
-  RESERA_BOOK_LABEL,
-  STUPEFACIUNT_BOOK_MAP,
-  STUPEFACIUNT_BOOK_POSITION,
-  STUPEFACIUNT_BOOK_LABEL,
-  EXARME_BOOK_MAP,
-  EXARME_BOOK_POSITION,
-  EXARME_BOOK_LABEL,
-  SCUTUM_BOOK_MAP,
-  SCUTUM_BOOK_POSITION,
-  SCUTUM_BOOK_LABEL,
-  MURUS_LAPIDEUS_BOOK_MAP,
-  MURUS_LAPIDEUS_BOOK_POSITION,
-  MURUS_LAPIDEUS_BOOK_LABEL,
-} from '../../shared/spells.js';
 import type { MapName, Race, Direction, MonsterKind, Gender, HairColor, SkinTone } from '../../shared/constants.js';
 import type {
   PlayerSnapshot,
@@ -153,10 +124,10 @@ import {
   CHAR_SCALE,
   CLASSROOM_DESK_TEXTURE_KEY,
   CLASSROOM_SYMBOL_TEXTURE_KEYS,
-  SPELLBOOK_PODIUM_TEXTURE_KEY,
   BENCH_TEXTURE_KEY,
   FIREBALL_TEXTURE_KEY,
   BOLT_TEXTURE_KEY,
+  ARCANE_BOLT_TEXTURE_KEY,
   CHEST_LOCKED_TEXTURE_KEY,
   CHEST_UNLOCKED_TEXTURE_KEY,
   STONE_BLOCK_TEXTURE_KEY,
@@ -208,7 +179,6 @@ import {
   BRAMWICK_COTTAGE_FRAME_WIDTH,
   BRAMWICK_COTTAGE_FRAME_HEIGHT,
   SWORD_CURSOR,
-  FEATHER_CURSOR,
   KEY_CURSOR,
   SLEEP_CURSOR,
   TILE_SIZE,
@@ -247,7 +217,7 @@ import { openBenchModal } from '../ui/benchModal.js';
 import { openShopModal } from '../ui/shopModal.js';
 import { openTargetInfoModal } from '../ui/targetInfoModal.js';
 import { notifyMapChanged } from '../ui/mapModal.js';
-import { openNpcDialogueModal, openSpecializationDialogue, openHouseChoiceDialogue, openAnimateDeadPurchaseDialogue } from '../ui/npcDialogueModal.js';
+import { openNpcDialogueModal, openSpecializationDialogue, openHouseChoiceDialogue, openTeacherLearnDialogue } from '../ui/npcDialogueModal.js';
 import { hideTargetPanel, updateTargetPanel, updateLockTargetPanel } from '../ui/targetPanel.js';
 import { updateGroupPanel } from '../ui/groupPanel.js';
 
@@ -388,34 +358,6 @@ export class WorldScene extends Phaser.Scene {
   // recreating together on every renderMap.
   private signSprites: Phaser.GameObjects.Sprite[] = [];
   private greatHallChairSprites: Phaser.GameObjects.Sprite[] = [];
-  // The Utilization classroom's clickable spellbook podium (item 8) —
-  // only ever populated while rendering that one map.
-  private spellbookPodiumSprite: Phaser.GameObjects.Sprite | null = null;
-  // Elemental Casting's own podium, teaching irrigo — a second, separate
-  // instance of the same mechanic (see renderSpellPodium).
-  private irrigoPodiumSprite: Phaser.GameObjects.Sprite | null = null;
-  // Utilization's SECOND podium (a follow-up ask), teaching quick
-  // movement — stands right next to spellbookPodiumSprite.
-  private celeritasPodiumSprite: Phaser.GameObjects.Sprite | null = null;
-  // The Offense classroom's own podium (a later follow-up ask), teaching
-  // augue.
-  private auguePodiumSprite: Phaser.GameObjects.Sprite | null = null;
-  // Utilization's THIRD podium (a later follow-up ask), teaching resera —
-  // stands next to the other two.
-  private reseraPodiumSprite: Phaser.GameObjects.Sprite | null = null;
-  // Offense's second and third podiums (a later follow-up ask), teaching
-  // stupefaciunt and exarme — stand next to augue's own.
-  private stupefaciuntPodiumSprite: Phaser.GameObjects.Sprite | null = null;
-  private exarmePodiumSprite: Phaser.GameObjects.Sprite | null = null;
-  // Defense's own podium (a later follow-up ask), teaching scutum.
-  private scutumPodiumSprite: Phaser.GameObjects.Sprite | null = null;
-  // Summoning's own podium (a later follow-up ask), teaching murus
-  // lapideus.
-  private murusLapideusPodiumSprite: Phaser.GameObjects.Sprite | null = null;
-  // Each podium's own small floating label (item 8's follow-up ask) —
-  // tracked in lockstep with the 4 podium sprites above purely so
-  // map-transition cleanup destroys them together.
-  private podiumLabelSprites: Phaser.GameObjects.Text[] = [];
   private race: Race = 'goblin';
   // Human-only appearance (item 4) — see displayKind/effectiveSpriteKind.
   private gender: Gender | null = null;
@@ -590,10 +532,10 @@ export class WorldScene extends Phaser.Scene {
     for (const key of Object.values(CLASSROOM_SYMBOL_TEXTURE_KEYS)) {
       this.load.svg(key, `/${key}.svg`, { width: 20, height: 20 });
     }
-    this.load.image(SPELLBOOK_PODIUM_TEXTURE_KEY, '/spellbook-podium.png');
     this.load.image(BENCH_TEXTURE_KEY, '/bench.png');
     this.load.image(FIREBALL_TEXTURE_KEY, '/fireball.png');
     this.load.image(BOLT_TEXTURE_KEY, '/bolt.png');
+    this.load.image(ARCANE_BOLT_TEXTURE_KEY, '/arcane-bolt.png');
     this.load.image(CHEST_LOCKED_TEXTURE_KEY, '/chest-locked.png');
     this.load.image(CHEST_UNLOCKED_TEXTURE_KEY, '/chest-unlocked.png');
     this.load.image(STONE_BLOCK_TEXTURE_KEY, '/stone-block.png');
@@ -672,16 +614,6 @@ export class WorldScene extends Phaser.Scene {
         [...this.npcSprites.values()].some(
           (s) => s.getData('label') === 'training skeleton' && s.getBounds().contains(pointer.worldX, pointer.worldY)
         );
-      const overPodium =
-        Boolean(this.spellbookPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
-        Boolean(this.irrigoPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
-        Boolean(this.celeritasPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
-        Boolean(this.auguePodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
-        Boolean(this.reseraPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
-        Boolean(this.stupefaciuntPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
-        Boolean(this.exarmePodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
-        Boolean(this.scutumPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY)) ||
-        Boolean(this.murusLapideusPodiumSprite?.getBounds().contains(pointer.worldX, pointer.worldY));
       // A teacher's own `useHandCursor` (set on their sprite below) never
       // actually showed — this SAME pointermove handler fires on every
       // mouse move and unconditionally reset the cursor back to '' right
@@ -701,7 +633,7 @@ export class WorldScene extends Phaser.Scene {
         Boolean(hoveredTeacher?.getData('questId')) ||
         Boolean(hoveredTeacher?.getData('specializationGate')) ||
         Boolean(hoveredTeacher?.getData('houseChoiceGate')) ||
-        Boolean(hoveredTeacher?.getData('skillPurchaseGate'));
+        ((hoveredTeacher?.getData('teachesSkills') as string[] | undefined)?.length ?? 0) > 0;
       // A key cursor over any door or the treasure chest (a follow-up
       // ask) — every door is resera-targetable now, not just the secret
       // one (see the doorSprites click handler below).
@@ -737,9 +669,7 @@ export class WorldScene extends Phaser.Scene {
           ? KEY_CURSOR
           : overBed
             ? SLEEP_CURSOR
-            : overPodium
-              ? FEATHER_CURSOR
-              : overQuestGiverTeacher
+            : overQuestGiverTeacher
                 ? 'pointer'
                 : overTeacher
                   ? 'help'
@@ -2181,116 +2111,9 @@ export class WorldScene extends Phaser.Scene {
         return sign;
       });
 
-    // The classroom spellbook podiums (item 8, item 9's follow-up ask) —
-    // clickable, roll a 10% chance of learning their own spell server-side;
-    // reach-gated the same way a vendor/corpse is. Half-sized (item 5's
-    // follow-up ask) — see renderSpellPodium's own setScale.
-    this.spellbookPodiumSprite = this.renderSpellPodium(
-      this.spellbookPodiumSprite,
-      mapName,
-      LUCEM_BOOK_MAP,
-      LUCEM_BOOK_POSITION,
-      () => this.network.readLucemBook()
-    );
-    this.irrigoPodiumSprite = this.renderSpellPodium(
-      this.irrigoPodiumSprite,
-      mapName,
-      IRRIGO_BOOK_MAP,
-      IRRIGO_BOOK_POSITION,
-      () => this.network.readIrrigoBook()
-    );
-    // Utilization's second podium (a follow-up ask), teaching quick
-    // movement — same mechanic, standing right next to the lucem one.
-    this.celeritasPodiumSprite = this.renderSpellPodium(
-      this.celeritasPodiumSprite,
-      mapName,
-      CELERITAS_BOOK_MAP,
-      CELERITAS_BOOK_POSITION,
-      () => this.network.readCeleritasBook()
-    );
-    // The Offense classroom's own podium (a later follow-up ask), teaching
-    // augue.
-    this.auguePodiumSprite = this.renderSpellPodium(
-      this.auguePodiumSprite,
-      mapName,
-      AUGUE_BOOK_MAP,
-      AUGUE_BOOK_POSITION,
-      () => this.network.readAugueBook()
-    );
-    // Utilization's THIRD podium (a later follow-up ask), teaching resera.
-    this.reseraPodiumSprite = this.renderSpellPodium(
-      this.reseraPodiumSprite,
-      mapName,
-      RESERA_BOOK_MAP,
-      RESERA_BOOK_POSITION,
-      () => this.network.readReseraBook()
-    );
-    // Offense's second and third podiums (a later follow-up ask), teaching
-    // stupefaciunt and exarme.
-    this.stupefaciuntPodiumSprite = this.renderSpellPodium(
-      this.stupefaciuntPodiumSprite,
-      mapName,
-      STUPEFACIUNT_BOOK_MAP,
-      STUPEFACIUNT_BOOK_POSITION,
-      () => this.network.readStupefaciuntBook()
-    );
-    this.exarmePodiumSprite = this.renderSpellPodium(
-      this.exarmePodiumSprite,
-      mapName,
-      EXARME_BOOK_MAP,
-      EXARME_BOOK_POSITION,
-      () => this.network.readExarmeBook()
-    );
-    // Defense's own podium (a later follow-up ask), teaching scutum.
-    this.scutumPodiumSprite = this.renderSpellPodium(
-      this.scutumPodiumSprite,
-      mapName,
-      SCUTUM_BOOK_MAP,
-      SCUTUM_BOOK_POSITION,
-      () => this.network.readScutumBook()
-    );
-    // Summoning's own podium (a later follow-up ask), teaching murus
-    // lapideus.
-    this.murusLapideusPodiumSprite = this.renderSpellPodium(
-      this.murusLapideusPodiumSprite,
-      mapName,
-      MURUS_LAPIDEUS_BOOK_MAP,
-      MURUS_LAPIDEUS_BOOK_POSITION,
-      () => this.network.readMurusLapideusBook()
-    );
-
-    // A small floating label above each podium (a follow-up ask) —
-    // hinting what it teaches without giving the exact spell name away.
-    for (const sprite of this.podiumLabelSprites) sprite.destroy();
-    this.podiumLabelSprites = [];
-    const podiumLabels: Array<{ map: MapName; position: { row: number; col: number }; label: string }> = [
-      { map: LUCEM_BOOK_MAP, position: LUCEM_BOOK_POSITION, label: LUCEM_BOOK_LABEL },
-      { map: IRRIGO_BOOK_MAP, position: IRRIGO_BOOK_POSITION, label: IRRIGO_BOOK_LABEL },
-      { map: CELERITAS_BOOK_MAP, position: CELERITAS_BOOK_POSITION, label: CELERITAS_BOOK_LABEL },
-      { map: AUGUE_BOOK_MAP, position: AUGUE_BOOK_POSITION, label: AUGUE_BOOK_LABEL },
-      { map: RESERA_BOOK_MAP, position: RESERA_BOOK_POSITION, label: RESERA_BOOK_LABEL },
-      { map: STUPEFACIUNT_BOOK_MAP, position: STUPEFACIUNT_BOOK_POSITION, label: STUPEFACIUNT_BOOK_LABEL },
-      { map: EXARME_BOOK_MAP, position: EXARME_BOOK_POSITION, label: EXARME_BOOK_LABEL },
-      { map: SCUTUM_BOOK_MAP, position: SCUTUM_BOOK_POSITION, label: SCUTUM_BOOK_LABEL },
-      { map: MURUS_LAPIDEUS_BOOK_MAP, position: MURUS_LAPIDEUS_BOOK_POSITION, label: MURUS_LAPIDEUS_BOOK_LABEL },
-    ];
-    for (const { map, position, label } of podiumLabels) {
-      if (mapName !== map) continue;
-      const pos = this.tilePosition(position.row, position.col);
-      // Shrunk again and wrapped narrow (a follow-up ask: "still
-      // overlapping") — Utility's own two podiums stand only 3 tiles
-      // (96px) apart, and even the previous 8px single-line label was
-      // wide enough to spill into its neighbor's; wrapping to a ~52px
-      // column keeps each label's own footprint well inside that gap.
-      // Nudged up further still (a later follow-up ask: "overlapping
-      // with the podium's white pages") — the podium sprite's own open-
-      // book art sits higher than -26px cleared.
-      const text = this.add
-        .text(pos.x, pos.y - 34, label, { fontSize: '6px', color: '#d8c888', fontStyle: 'italic', align: 'center', wordWrap: { width: 52 } })
-        .setOrigin(0.5, 1)
-        .setDepth(-0.4);
-      this.podiumLabelSprites.push(text);
-    }
+    // A later follow-up ask removed the podium/spellbook system entirely
+    // — see WorldScene's teacher click handler (below) for the
+    // click-to-learn modal that replaced it.
   }
 
   // Doors + the secret room's own treasure chest — split out of renderMap
@@ -2442,40 +2265,6 @@ export class WorldScene extends Phaser.Scene {
   private clearBlockmanTarget(): void {
     this.selectedStoneBlockId = null;
     hideTargetPanel();
-  }
-
-  // Shared by both classroom podiums above — only their map/position/
-  // read-action actually differ.
-  private renderSpellPodium(
-    existing: Phaser.GameObjects.Sprite | null,
-    currentMapName: MapName,
-    bookMap: MapName,
-    position: { row: number; col: number },
-    readAction: () => Promise<{ ok: boolean; message?: string; skills?: Record<string, number> }>
-  ): Phaser.GameObjects.Sprite | null {
-    existing?.destroy();
-    if (currentMapName !== bookMap) return null;
-
-    const pos = this.tilePosition(position.row, position.col);
-    // No useHandCursor here — the podium gets its own custom feather
-    // cursor instead (see the unified pointermove handler in create()),
-    // which would otherwise fight with Phaser's own hover cursor.
-    const podium = this.add.sprite(pos.x, pos.y, SPELLBOOK_PODIUM_TEXTURE_KEY).setOrigin(0.5, 0.85).setScale(0.5).setDepth(-0.5).setInteractive();
-    podium.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (isInputCaptured() || !pointer.leftButtonDown()) return;
-      if (!isWithinRadius(this.row, this.col, position.row, position.col, 1)) {
-        logCombatMessage("You're too far away to reach the book.");
-        return;
-      }
-      void readAction().then((ack) => {
-        if (ack.message) logCombatMessage(ack.message);
-        if (ack.ok && myProfile && ack.skills) {
-          setMyProfile({ ...myProfile, skills: ack.skills });
-          refreshOpenModals();
-        }
-      });
-    });
-    return podium;
   }
 
   private applySync(player: PlayerSnapshot): void {
@@ -3008,7 +2797,7 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('questId', t.questId);
       sprite.setData('specializationGate', t.specializationGate);
       sprite.setData('houseChoiceGate', t.houseChoiceGate);
-      sprite.setData('skillPurchaseGate', t.skillPurchaseGate);
+      sprite.setData('teachesSkills', t.teachesSkills);
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
         // A follow-up ask: the Headmistress opens a dialogue modal (with
@@ -3045,14 +2834,15 @@ export class WorldScene extends Phaser.Scene {
           openHouseChoiceDialogue(teacherDisplayName);
           return;
         }
-        // The Necromancer Chamber's own teacher (a later follow-up ask)
-        // — offers a one-time skill purchase, same reach concept.
-        if (t.skillPurchaseGate) {
+        // Every classroom/specialization teacher who offers skills through
+        // the click-to-learn modal (a later follow-up ask replaced the
+        // podium system) — same reach concept.
+        if (t.teachesSkills && t.teachesSkills.length > 0) {
           if (!isWithinRadius(this.row, this.col, t.row, t.col, SHOP_REACH_TILES)) {
             logCombatMessage(`You're too far away to talk to ${teacherDisplayName}.`);
             return;
           }
-          openAnimateDeadPurchaseDialogue(teacherDisplayName);
+          openTeacherLearnDialogue(teacherDisplayName, t.teachesSkills);
           return;
         }
         // A fixed, generic line (a later follow-up ask dropped the
@@ -3404,7 +3194,7 @@ export class WorldScene extends Phaser.Scene {
   private handleLeftClick(pointer: Phaser.Input.Pointer): void {
     // Murus lapideus (a later follow-up ask: "the player must first click
     // the spell and then click a spot on the map") — armed by
-    // useTargetedSkill's own MURUS_LAPIDEUS_SKILL branch; this consumes
+    // useTargetedSkill's own STONE_WALL_SKILL branch; this consumes
     // the NEXT click anywhere in the world as the summon's target tile,
     // taking priority over every other click handling below.
     if (this.murusLapideusTargeting) {
@@ -3585,7 +3375,7 @@ export class WorldScene extends Phaser.Scene {
     void action.then((ack) => {
       if (ack.message) {
         logCombatMessage(ack.message);
-        if (skillName === IRRIGO_SKILL) showCenterToast(ack.message);
+        if (skillName === WATERFILL_SKILL) showCenterToast(ack.message);
       }
       if (!ack.ok || !myProfile) return;
       setMyProfile({
@@ -3676,11 +3466,11 @@ export class WorldScene extends Phaser.Scene {
     // or to remove light") — ack-based (a later follow-up ask) rather
     // than driving a chat command, so the result can be toasted even
     // with a modal open.
-    if (skillName === LUCEM_SKILL) {
+    if (skillName === LIGHT_SKILL) {
       this.castToggleSpell(() => this.network.castLucem());
       return;
     }
-    if (skillName === CELERITAS_SKILL) {
+    if (skillName === HASTE_SKILL) {
       this.castToggleSpell(() => this.network.castCeleritas());
       return;
     }
@@ -3689,7 +3479,7 @@ export class WorldScene extends Phaser.Scene {
     // checkScutumExpiry server-side), but reuses the exact same
     // "call the network method, patch mana/skills, refresh" mechanics
     // castToggleSpell already provides.
-    if (skillName === SCUTUM_SKILL) {
+    if (skillName === AEGIS_SKILL) {
       this.castToggleSpell(() => this.network.castScutum());
       return;
     }
@@ -3697,7 +3487,7 @@ export class WorldScene extends Phaser.Scene {
     // player/npc/monster — "the player must first click the spell and
     // then click a spot on the map." Arms murusLapideusTargeting; the
     // actual cast happens on the next left-click (see handleLeftClick).
-    if (skillName === MURUS_LAPIDEUS_SKILL) {
+    if (skillName === STONE_WALL_SKILL) {
       this.murusLapideusTargeting = true;
       logCombatMessage('Click a spot on the map to summon the stone block.');
       return;
@@ -3717,7 +3507,7 @@ export class WorldScene extends Phaser.Scene {
     // separate targeting concept (see setItemTarget, driven by clicking a
     // fillable item in the Inventory modal) from targetKind/targetId
     // below.
-    if (skillName === DRINK_SKILL || skillName === POUR_SKILL || skillName === IRRIGO_SKILL) {
+    if (skillName === DRINK_SKILL || skillName === POUR_SKILL || skillName === WATERFILL_SKILL) {
       this.useItemTargetedSkill(skillName);
       return;
     }
@@ -3727,7 +3517,7 @@ export class WorldScene extends Phaser.Scene {
     // renderDoorsAndChest) from targetKind/targetId below. Stays selected
     // across repeated casts (item 6's follow-up ask) — only
     // clearLockTarget (clicking elsewhere) drops it.
-    if (skillName === RESERA_SKILL) {
+    if (skillName === UNLOCK_SKILL) {
       if (!this.lockTarget) {
         logCombatMessage('Select a door or chest first (left-click it).');
         return;
@@ -3768,7 +3558,7 @@ export class WorldScene extends Phaser.Scene {
     // (the old `!ack.ok &&` check silently swallowed every fumble, since
     // a fumble still comes back as `ok: true`) — same bug class already
     // fixed for stupefaciunt/exarme/murus lapideus.
-    if (skillName === AUGUE_SKILL) {
+    if (skillName === ARCANE_BOLT_SKILL) {
       const targetKind = this.targetKind;
       const targetId = this.targetId;
       this.tryRangedAction(targetKind, targetId, SPELL_ATTACK_RANGE_TILES, () => {
@@ -3783,7 +3573,7 @@ export class WorldScene extends Phaser.Scene {
     }
     // Stupefaciunt/exarme (a later follow-up ask) — same ranged,
     // walk-into-range shape as augue above.
-    if (skillName === STUPEFACIUNT_SKILL) {
+    if (skillName === STUN_SKILL) {
       const targetKind = this.targetKind;
       const targetId = this.targetId;
       this.tryRangedAction(targetKind, targetId, SPELL_ATTACK_RANGE_TILES, () => {
@@ -3802,7 +3592,7 @@ export class WorldScene extends Phaser.Scene {
       });
       return;
     }
-    if (skillName === EXARME_SKILL) {
+    if (skillName === DISARM_SKILL) {
       const targetKind = this.targetKind;
       const targetId = this.targetId;
       this.tryRangedAction(targetKind, targetId, SPELL_ATTACK_RANGE_TILES, () => {
@@ -3894,14 +3684,14 @@ export class WorldScene extends Phaser.Scene {
     return dCol <= 0 ? 'left' : 'right';
   }
 
-  // Augue's fireball / the wand's own ranged bolt (a follow-up ask) — a
-  // small sprite tweened from the attacker's current tile to the
+  // Arcane Bolt's own projectile / the wand's own ranged bolt (a follow-up
+  // ask) — a small sprite tweened from the attacker's current tile to the
   // target's, rotated to face the way it's actually travelling, then
   // destroyed on arrival. No-op for any other skill (melee has no
   // projectile to animate) or if either end's position isn't resolvable
   // (e.g. the target already left the map some other way).
   private playProjectileEffect(event: CombatEventPayload): void {
-    if (event.skill !== AUGUE_SKILL && event.skill !== WAND_BOLT_SKILL) return;
+    if (event.skill !== ARCANE_BOLT_SKILL && event.skill !== WAND_BOLT_SKILL) return;
     const attackerPos = this.attackerPosition(event.attacker);
     if (!attackerPos) return;
 
@@ -3912,7 +3702,7 @@ export class WorldScene extends Phaser.Scene {
     if (!targetSprite) return;
 
     const from = this.tilePosition(attackerPos.row, attackerPos.col);
-    const textureKey = event.skill === AUGUE_SKILL ? FIREBALL_TEXTURE_KEY : BOLT_TEXTURE_KEY;
+    const textureKey = event.skill === ARCANE_BOLT_SKILL ? ARCANE_BOLT_TEXTURE_KEY : BOLT_TEXTURE_KEY;
     const projectile = this.add.sprite(from.x, from.y, textureKey).setDepth(4);
     projectile.setRotation(Phaser.Math.Angle.Between(from.x, from.y, targetSprite.x, targetSprite.y));
 

@@ -96,6 +96,14 @@ const TEXTURE_KEYS: Record<SpriteKind, string> = {
   // directly — effectiveSpriteKind always resolves the full gender/skin/
   // hair composite key first. Present only to satisfy Record totality.
   human: 'human-male-white-brown',
+  // A later follow-up ask restored race as a real character-creation
+  // choice — these 4 new playable races each get one plain spritesheet
+  // (no gender/skin/hair baking), same "single fixed look" treatment
+  // every non-human race already has.
+  elf: 'elf',
+  'half-elf': 'half-elf',
+  viravis: 'viravis',
+  pixie: 'pixie',
   'wild goblin': 'wild-goblin',
   'wild skeleton': 'wild-skeleton',
   imp: 'imp',
@@ -113,6 +121,10 @@ const SHEET_PATHS: Record<SpriteKind, string> = {
   dragonborn: '/dragon-man-spritesheet.png',
   slime: '/slime-spritesheet.png',
   human: '/human-male-white-brown-spritesheet.png',
+  elf: '/elf-spritesheet.png',
+  'half-elf': '/half-elf-spritesheet.png',
+  viravis: '/viravis-spritesheet.png',
+  pixie: '/pixie-spritesheet.png',
   'wild goblin': '/wild-goblin-spritesheet.png',
   'wild skeleton': '/wild-skeleton-spritesheet.png',
   imp: '/imp-spritesheet.png',

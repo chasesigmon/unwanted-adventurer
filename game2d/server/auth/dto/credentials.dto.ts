@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { GENDERS, HAIR_COLORS, SKIN_TONES } from '../../../shared/constants.js';
+import { GENDERS, HAIR_COLORS, SKIN_TONES, PLAYABLE_RACES } from '../../../shared/constants.js';
 
 const usernameLength = { min: 2, max: 16 } as const;
 
@@ -31,9 +31,11 @@ export const registerAccountSchema = z.object({
 // A character's own display name — letters only, same shape the old
 // registration's username used to require (this project's sprite/skill
 // systems don't key off it being alphanumeric the way an account
-// username can be). Every new character is a human wizard now (item 4)
-// — no race picker anymore, just the appearance choices that actually
-// matter for a human: gender, hair color, skin tone.
+// username can be). Every new character used to be a human wizard only
+// (item 4, "no race picker anymore"); a later follow-up ask restored race
+// as a real choice among the 5 playable ones (human plus elf/half-elf/
+// viravis/pixie) — gender/hairColor/skinTone still apply to all 5, even
+// though only human's own texture actually varies by them.
 export const createCharacterSchema = z.object({
   name: z
     .string()
@@ -41,6 +43,7 @@ export const createCharacterSchema = z.object({
     .min(usernameLength.min, 'Character name must be 2-16 characters.')
     .max(usernameLength.max, 'Character name must be 2-16 characters.')
     .regex(/^[a-zA-Z]+$/, 'Character name may only contain letters.'),
+  race: z.enum(PLAYABLE_RACES),
   gender: z.enum(GENDERS),
   hairColor: z.enum(HAIR_COLORS),
   skinTone: z.enum(SKIN_TONES),

@@ -25,6 +25,13 @@ const BODY_PART_LABEL: Record<Race | MonsterKind, string> = {
   // lookup must stay total over Race — a plausible placeholder rather
   // than a runtime crash if this is ever reached.
   human: 'lock of hair',
+  // Placeholders, like the human entry above — a later follow-up ask
+  // added these 4 as playable races, but no PvP/combat-death system
+  // targets a player corpse yet for any of them either.
+  elf: 'elf ear',
+  'half-elf': 'half-elf ear',
+  viravis: 'viravis feather',
+  pixie: 'pixie dust',
   'wild goblin': 'wild goblin ear',
   'wild skeleton': 'wild skeleton bone',
   // A placeholder, like the human entry above — imp combat/death details

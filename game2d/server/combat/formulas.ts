@@ -52,6 +52,17 @@ export {
 
 export const STARTING_ATTRIBUTE = 1;
 export const STARTING_VITAL = 100;
+// Movement points (a later follow-up ask re-added this resource) — every
+// race starts with the same 200, unlike hp/mana which will vary per race
+// (see RACE_STARTING_STATS).
+export const STARTING_MV = 200;
+// "1 point per 2 feet moved" — this project already treats "N feet" as N
+// tiles everywhere else (shop/gate reach, spell ranges), so this is 0.5 mv
+// per tile. Floors at 0 rather than blocking movement — mv depletes/
+// regens but doesn't gate anything yet (a deliberate first-pass scope,
+// same as a few other "earnable now, inert until wired to something"
+// mechanics already in this project).
+export const MV_COST_PER_TILE = 0.5;
 export const STARTING_LEVEL = 1;
 // A goblin can't level past this without evolving — matches the text
 // game's own GOBLIN_MAX_LEVEL exactly. (Skeleton/zombie/dragonborn/slime
@@ -557,13 +568,20 @@ export function applyExpGain(state: LevelState, gained: number): LevelState {
 }
 
 // A later follow-up ask replaced the old "every level automatically
-// grants +1 to every attribute" system entirely: leveling up now just
-// grants STAT_POINTS_PER_LEVEL stat point(s) (stacking if unspent) the
-// player allocates themselves, one at a time, to whichever attribute(s)
-// they choose (see game.gateway.ts's handleAllocateStatPoint). hp/mana
-// still fully refill on a level-up itself as a bonus, same as before —
-// only the automatic attribute/vital GROWTH is gone.
-export const STAT_POINTS_PER_LEVEL = 1;
+// grants +1 to every attribute" system entirely: leveling up grants
+// "training points" (stacking if unspent) the player allocates themselves,
+// one at a time, to whichever attribute(s) they choose (see
+// game.gateway.ts's handleAllocateStatPoint) — a still-later follow-up ask
+// changed the cadence from every level to every 5th ("training points are
+// allowed to be allocated to stats... every 5 levels a player should get a
+// training point"). hp/mana still fully refill on a level-up itself as a
+// bonus, same as before.
+export const TRAINING_POINTS_PER_5_LEVELS = 1;
+export const TRAINING_POINT_LEVEL_INTERVAL = 5;
+// "Every level a player should gain 3 practice points" — spent at a
+// teacher's own click-to-learn modal (see game.gateway.ts's
+// handleLearnSkill), replacing the old podium-reading skill system.
+export const PRACTICE_POINTS_PER_LEVEL = 3;
 // Constitution's own contribution to max hp (a later follow-up ask: "con
 // x 20") — applied incrementally, +HP_PER_CONSTITUTION every time a stat
 // point actually goes into constitution (or subtracted by condeath's own
@@ -574,6 +592,20 @@ export const HP_PER_CONSTITUTION = 20;
 // "increase mana by int x 10") — same incremental-on-allocation shape as
 // HP_PER_CONSTITUTION above.
 export const MANA_PER_INTELLIGENCE = 10;
+
+// A later follow-up ask: "hp and mp should grow by a random amount PER
+// LEVEL of 7 to 15 depending on the intelligence and constitution stats" —
+// on top of (not instead of) the deliberate HP_PER_CONSTITUTION/
+// MANA_PER_INTELLIGENCE bump above. A genuine random roll each level, but
+// biased toward the top of the range by the driving stat (constitution for
+// hp, intelligence for mana) so a higher stat reliably lands closer to 15
+// while a low one stays closer to 7.
+export const PER_LEVEL_VITAL_GAIN_MIN = 7;
+export const PER_LEVEL_VITAL_GAIN_MAX = 15;
+export function perLevelVitalGain(drivingStat: number): number {
+  const raw = PER_LEVEL_VITAL_GAIN_MIN + Math.random() * (PER_LEVEL_VITAL_GAIN_MAX - PER_LEVEL_VITAL_GAIN_MIN) + (drivingStat - 1) * 0.3;
+  return Math.min(PER_LEVEL_VITAL_GAIN_MAX, Math.max(PER_LEVEL_VITAL_GAIN_MIN, Math.round(raw)));
+}
 
 // --- Spellcasting: intelligence/luck bonuses (a later follow-up ask) ---
 

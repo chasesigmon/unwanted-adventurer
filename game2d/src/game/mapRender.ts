@@ -128,9 +128,6 @@ export const CLASSROOM_SYMBOL_TEXTURE_KEYS: Partial<Record<MapName, string>> = {
 // separate server entity; positioned from server/worlds/teachers.ts's
 // deskPositionFor, always one tile in front of its teacher.
 export const CLASSROOM_DESK_TEXTURE_KEY = 'classroom-desk';
-// The Utilization classroom's clickable spellbook podium (item 8) — see
-// shared/spells.ts's LUCEM_BOOK_MAP/POSITION.
-export const SPELLBOOK_PODIUM_TEXTURE_KEY = 'spellbook-podium';
 // A social gathering spot's benches (a follow-up ask upgraded these from
 // plain chairs) — see shared/lighting.ts's benchPositionsFor.
 export const BENCH_TEXTURE_KEY = 'bench';
@@ -138,6 +135,11 @@ export const BENCH_TEXTURE_KEY = 'bench';
 // playProjectileEffect, triggered off a 'combat' event's own `skill`.
 export const FIREBALL_TEXTURE_KEY = 'fireball';
 export const BOLT_TEXTURE_KEY = 'bolt';
+// Arcane Bolt's own projectile (a later follow-up ask renamed augue and
+// gave it a distinct light-blue sprite instead of reusing the fireball
+// texture — the fireball animation is reserved for the Elementalist's fire
+// bolt spell instead).
+export const ARCANE_BOLT_TEXTURE_KEY = 'arcane-bolt';
 // The secret room's treasure chest (a later follow-up ask) — two frames
 // picked by the player's own secretChestUnlocked flag, see
 // shared/maps.ts's CAVERNA_CHEST_POSITION.

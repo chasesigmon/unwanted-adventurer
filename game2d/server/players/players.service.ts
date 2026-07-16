@@ -9,10 +9,22 @@ export interface NewPlayerInput {
   username: string;
   accountId: number;
   race: Race;
-  // Only meaningful (and only ever provided) for race: 'human'.
+  // Provided for every playable race now (a later follow-up ask restored
+  // race as a real choice) — only human's own texture actually varies by
+  // them, but they're still stored/shown for the other 4 too.
   gender?: Gender;
   hairColor?: HairColor;
   skinTone?: SkinTone;
+  // Starting attribute spread (a later follow-up ask) — see
+  // shared/constants.ts's RACE_STARTING_STATS; optional only because
+  // every column already defaults to 1, not because any real call site
+  // omits them.
+  strength?: number;
+  intelligence?: number;
+  wisdom?: number;
+  dexterity?: number;
+  constitution?: number;
+  luck?: number;
   map: MapName;
   row: number;
   col: number;
@@ -31,6 +43,10 @@ export interface PlayerPosition {
   map: MapName;
   row: number;
   col: number;
+  // Movement points change on every single move (see MV_COST_PER_TILE) —
+  // persisted alongside position rather than waiting for the much less
+  // frequent updateStats write.
+  mv?: number;
 }
 
 export interface PlayerStatsUpdate {
@@ -38,6 +54,8 @@ export interface PlayerStatsUpdate {
   maxHp?: number;
   mana?: number;
   maxMana?: number;
+  mv?: number;
+  maxMv?: number;
   strength?: number;
   intelligence?: number;
   wisdom?: number;
@@ -55,6 +73,7 @@ export interface PlayerStatsUpdate {
   mimicForm?: string | null;
   deathCount?: number;
   statPointsAvailable?: number;
+  practicePointsAvailable?: number;
   condemned?: boolean;
   secretDoorUnlocked?: boolean;
   secretChestUnlocked?: boolean;

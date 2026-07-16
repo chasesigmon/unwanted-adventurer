@@ -14,16 +14,10 @@ import type {
   AnimatedMonsterCommandAck,
   EatBrainsAck,
   SacrificeAck,
-  ReadLucemBookAck,
-  ReadIrrigoBookAck,
-  ReadCeleritasBookAck,
-  ReadAugueBookAck,
-  ReadReseraBookAck,
   CastReseraAck,
   OpenChestAck,
   TakeChestItemAck,
   LockTarget,
-  ReadSpellBookAck,
   TileTargetPayload,
   CanteenActionAck,
   CastSpellAck,
@@ -36,7 +30,7 @@ import type {
   AllocatableStat,
   AllocateStatPointAck,
 } from '../shared/types.js';
-import type { Direction, Gender, HairColor, SkinTone, HouseName, SpecializationPath } from '../shared/constants.js';
+import type { Direction, Gender, HairColor, SkinTone, HouseName, SpecializationPath, PlayableRace } from '../shared/constants.js';
 import type { EquipmentSlot } from '../shared/equipment.js';
 import type { PetCommand } from '../shared/pets.js';
 
@@ -160,11 +154,11 @@ export class NetworkManager extends EventTarget {
     return data.characters;
   }
 
-  async createCharacter(name: string, gender: Gender, hairColor: HairColor, skinTone: SkinTone): Promise<CharacterSummary> {
+  async createCharacter(name: string, race: PlayableRace, gender: Gender, hairColor: HairColor, skinTone: SkinTone): Promise<CharacterSummary> {
     const res = await fetch(`${this.serverUrl}/characters`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.accountToken}` },
-      body: JSON.stringify({ name, gender, hairColor, skinTone }),
+      body: JSON.stringify({ name, race, gender, hairColor, skinTone }),
     });
     const data = (await res.json().catch(() => null)) as CharacterResponse | null;
     if (!res.ok || !data || !data.ok) {
@@ -466,32 +460,6 @@ export class NetworkManager extends EventTarget {
     });
   }
 
-  readLucemBook(): Promise<ReadLucemBookAck> {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) {
-        reject(new Error('Not connected.'));
-        return;
-      }
-      this.socket.emit('readLucemBook', (res) => {
-        if (res) resolve(res);
-        else reject(new Error('No response from server.'));
-      });
-    });
-  }
-
-  readIrrigoBook(): Promise<ReadIrrigoBookAck> {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) {
-        reject(new Error('Not connected.'));
-        return;
-      }
-      this.socket.emit('readIrrigoBook', (res) => {
-        if (res) resolve(res);
-        else reject(new Error('No response from server.'));
-      });
-    });
-  }
-
   drinkItem(itemIndex: number): Promise<CanteenActionAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
@@ -531,19 +499,6 @@ export class NetworkManager extends EventTarget {
     });
   }
 
-  readCeleritasBook(): Promise<ReadCeleritasBookAck> {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) {
-        reject(new Error('Not connected.'));
-        return;
-      }
-      this.socket.emit('readCeleritasBook', (res) => {
-        if (res) resolve(res);
-        else reject(new Error('No response from server.'));
-      });
-    });
-  }
-
   // Ack-based (a follow-up ask, replacing the old fire-and-forget
   // '/lucem' chat command) so the result can be toasted even with a
   // modal open — see WorldScene's useTargetedSkill.
@@ -573,19 +528,6 @@ export class NetworkManager extends EventTarget {
     });
   }
 
-  readAugueBook(): Promise<ReadAugueBookAck> {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) {
-        reject(new Error('Not connected.'));
-        return;
-      }
-      this.socket.emit('readAugueBook', (res) => {
-        if (res) resolve(res);
-        else reject(new Error('No response from server.'));
-      });
-    });
-  }
-
   // Augue (a later follow-up ask) needs a target, unlike lucem/celeritas
   // above — see WorldScene's useTargetedSkill.
   castAugue(target: AugueTargetPayload): Promise<CastSpellAck> {
@@ -595,19 +537,6 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('castAugue', target, (res) => {
-        if (res) resolve(res);
-        else reject(new Error('No response from server.'));
-      });
-    });
-  }
-
-  readReseraBook(): Promise<ReadReseraBookAck> {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) {
-        reject(new Error('Not connected.'));
-        return;
-      }
-      this.socket.emit('readReseraBook', (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });
@@ -736,28 +665,17 @@ export class NetworkManager extends EventTarget {
     });
   }
 
-  // The Necromancer Chamber's own teacher (a later follow-up ask) — see
-  // game.gateway.ts's handleBuyAnimateDead.
-  buyAnimateDead(): Promise<{ ok: boolean; message?: string }> {
+  // The classroom/specialization teacher click-to-learn modal (a later
+  // follow-up ask replaced the old podium-reading skill system, and
+  // migrated the Necromancer's own bespoke animate-dead purchase onto
+  // this same generic handler) — see game.gateway.ts's handleLearnSkill.
+  learnSkill(skill: string): Promise<{ ok: boolean; message?: string }> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
         reject(new Error('Not connected.'));
         return;
       }
-      this.socket.emit('buyAnimateDead', (res) => {
-        if (res) resolve(res);
-        else reject(new Error('No response from server.'));
-      });
-    });
-  }
-
-  readStupefaciuntBook(): Promise<ReadSpellBookAck> {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) {
-        reject(new Error('Not connected.'));
-        return;
-      }
-      this.socket.emit('readStupefaciuntBook', (res) => {
+      this.socket.emit('learnSkill', { skill }, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });
@@ -777,19 +695,6 @@ export class NetworkManager extends EventTarget {
     });
   }
 
-  readExarmeBook(): Promise<ReadSpellBookAck> {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) {
-        reject(new Error('Not connected.'));
-        return;
-      }
-      this.socket.emit('readExarmeBook', (res) => {
-        if (res) resolve(res);
-        else reject(new Error('No response from server.'));
-      });
-    });
-  }
-
   castExarme(target: AugueTargetPayload): Promise<CastSpellAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
@@ -803,19 +708,6 @@ export class NetworkManager extends EventTarget {
     });
   }
 
-  readScutumBook(): Promise<ReadSpellBookAck> {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) {
-        reject(new Error('Not connected.'));
-        return;
-      }
-      this.socket.emit('readScutumBook', (res) => {
-        if (res) resolve(res);
-        else reject(new Error('No response from server.'));
-      });
-    });
-  }
-
   castScutum(): Promise<CastSpellAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
@@ -823,19 +715,6 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('castScutum', (res) => {
-        if (res) resolve(res);
-        else reject(new Error('No response from server.'));
-      });
-    });
-  }
-
-  readMurusLapideusBook(): Promise<ReadSpellBookAck> {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) {
-        reject(new Error('Not connected.'));
-        return;
-      }
-      this.socket.emit('readMurusLapideusBook', (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

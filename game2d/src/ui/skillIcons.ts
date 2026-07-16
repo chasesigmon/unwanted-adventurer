@@ -28,17 +28,17 @@ import {
   GLARE_SKILL,
   ENHANCED_DURABILITY_SKILL,
   BONE_FINGER_STRIKE_SKILL,
-  LUCEM_SKILL,
-  IRRIGO_SKILL,
-  CELERITAS_SKILL,
-  RESERA_SKILL,
-  AUGUE_SKILL,
+  LIGHT_SKILL,
+  WATERFILL_SKILL,
+  HASTE_SKILL,
+  UNLOCK_SKILL,
+  ARCANE_BOLT_SKILL,
   DRINK_SKILL,
   POUR_SKILL,
-  STUPEFACIUNT_SKILL,
-  EXARME_SKILL,
-  SCUTUM_SKILL,
-  MURUS_LAPIDEUS_SKILL,
+  STUN_SKILL,
+  DISARM_SKILL,
+  AEGIS_SKILL,
+  STONE_WALL_SKILL,
   ANIMATE_DEAD_SKILL,
 } from '../../shared/skills.js';
 
@@ -100,33 +100,33 @@ const ICONS: Record<string, string> = {
   [BONE_FINGER_STRIKE_SKILL]: svgUrl(
     '<path d="M6 13 c-1.2 0 -2 -1 -1.6 -2.2 c-1 -0.4 -1 -1.9 0.1 -2.2 c-0.3 -1.2 0.8 -2.2 1.9 -1.7 c0.4 -1.1 2 -1.1 2.4 0 c1.1 -0.5 2.2 0.5 1.9 1.7 c1.1 0.3 1.1 1.8 0.1 2.2 c0.4 1.2 -0.4 2.2 -1.6 2.2 Z"/><path d="M8 13 v4 a2 2 0 0 0 2 2 h1 a2 2 0 0 0 2 -2 v-6"/>'
   ),
-  [LUCEM_SKILL]: svgUrl('<circle cx="12" cy="12" r="4"/><path d="M12 3 v2.5 M12 18.5 v2.5 M3 12 h2.5 M18.5 12 h2.5 M5.6 5.6 l1.8 1.8 M16.6 16.6 l1.8 1.8 M5.6 18.4 l1.8 -1.8 M16.6 7.4 l1.8 -1.8"/>'),
-  [IRRIGO_SKILL]: svgUrl('<path d="M12 3 C8 9 5 12.5 5 15.5 A7 7 0 0 0 19 15.5 C19 12.5 16 9 12 3 Z" fill="' + STROKE + '" fill-opacity="0.25"/>'),
-  [CELERITAS_SKILL]: svgUrl(
+  [LIGHT_SKILL]: svgUrl('<circle cx="12" cy="12" r="4"/><path d="M12 3 v2.5 M12 18.5 v2.5 M3 12 h2.5 M18.5 12 h2.5 M5.6 5.6 l1.8 1.8 M16.6 16.6 l1.8 1.8 M5.6 18.4 l1.8 -1.8 M16.6 7.4 l1.8 -1.8"/>'),
+  [WATERFILL_SKILL]: svgUrl('<path d="M12 3 C8 9 5 12.5 5 15.5 A7 7 0 0 0 19 15.5 C19 12.5 16 9 12 3 Z" fill="' + STROKE + '" fill-opacity="0.25"/>'),
+  [HASTE_SKILL]: svgUrl(
     '<path d="M8 20 l5 -18 l-2 8 h4 l-6 12 l1 -7 h-3 Z" fill="' + STROKE + '"/><path d="M2 9 h4 M1 12.5 h4.5 M2 16 h4" stroke-width="1.2"/>'
   ),
-  [RESERA_SKILL]: svgUrl(
+  [UNLOCK_SKILL]: svgUrl(
     '<circle cx="7" cy="7" r="4"/><circle cx="7" cy="7" r="1.3" fill="' +
       STROKE +
       '"/><path d="M10 10 L20 20 M16 16 l2.5 -2.5 M18.5 18.5 l2.5 -2.5"/>'
   ),
-  [AUGUE_SKILL]: svgUrl(
+  [ARCANE_BOLT_SKILL]: svgUrl(
     '<path d="M12 3 c3 3.5 3 6.5 0.8 9 c0.5 -1.6 -0.5 -2.4 -1.3 -1.6 c-1 1 -0.5 3.2 1.2 4 c-3 0.5 -5 -1.6 -4.4 -4.5 c0.4 -1.8 1.7 -3 3.7 -6.9 Z" fill="' +
       STROKE +
       '"/>'
   ),
   [DRINK_SKILL]: svgUrl('<path d="M6 4 h12 l-1.5 14 a2 2 0 0 1 -2 1.8 h-5 a2 2 0 0 1 -2 -1.8 Z"/><path d="M7 9 h10"/>'),
   [POUR_SKILL]: svgUrl('<path d="M5 5 h10 l-1 9 a2 2 0 0 1 -2 1.7 h-4 a2 2 0 0 1 -2 -1.7 Z" transform="rotate(-25 10 12)"/><path d="M17 8 q4 1 4 4"/>'),
-  [STUPEFACIUNT_SKILL]: svgUrl(
+  [STUN_SKILL]: svgUrl(
     '<circle cx="12" cy="12" r="2"/><path d="M12 4 a8 8 0 0 1 8 8" stroke-dasharray="2 3"/><path d="M4 12 a8 8 0 0 1 3 -6.2" stroke-dasharray="2 3"/><path d="M6 18.5 a8 8 0 0 1 -2 -4.5" stroke-dasharray="2 3"/>'
   ),
-  [EXARME_SKILL]: svgUrl(
+  [DISARM_SKILL]: svgUrl(
     '<path d="M5 5 L11 11 M13 13 L15 15" /><path d="M15 15 L20 20 M17 21 L21 17"/><path d="M9 15 L5 19 M5 15 l4 4"/>'
   ),
-  [SCUTUM_SKILL]: svgUrl(
+  [AEGIS_SKILL]: svgUrl(
     '<path d="M12 3 l7 3 v5 c0 5 -3.5 8 -7 9 c-3.5 -1 -7 -4 -7 -9 v-5 Z"/><circle cx="12" cy="11" r="2.4" fill="' + STROKE + '" fill-opacity="0.5"/>'
   ),
-  [MURUS_LAPIDEUS_SKILL]: svgUrl(
+  [STONE_WALL_SKILL]: svgUrl(
     '<rect x="3" y="9" width="7" height="5" rx="0.5"/><rect x="10" y="9" width="7" height="5" rx="0.5"/><rect x="6.5" y="14" width="7" height="5" rx="0.5"/><rect x="13.5" y="14" width="7" height="5" rx="0.5"/>'
   ),
   [ANIMATE_DEAD_SKILL]: svgUrl(

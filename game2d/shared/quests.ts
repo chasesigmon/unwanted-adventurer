@@ -1,13 +1,13 @@
 import {
-  IRRIGO_SKILL,
-  SCUTUM_SKILL,
-  MURUS_LAPIDEUS_SKILL,
-  LUCEM_SKILL,
-  CELERITAS_SKILL,
-  RESERA_SKILL,
-  AUGUE_SKILL,
-  STUPEFACIUNT_SKILL,
-  EXARME_SKILL,
+  WATERFILL_SKILL,
+  AEGIS_SKILL,
+  STONE_WALL_SKILL,
+  LIGHT_SKILL,
+  HASTE_SKILL,
+  UNLOCK_SKILL,
+  ARCANE_BOLT_SKILL,
+  STUN_SKILL,
+  DISARM_SKILL,
 } from './skills.js';
 
 // Quest definitions live entirely in code (not the DB) — a player's own
@@ -85,11 +85,16 @@ export const FIND_THE_MAP_QUEST_ID = 'find-the-map';
 // Utility now has 4 (irrigo moved in from the old Elemental Casting
 // Classroom, which stopped being a classroom entirely — a later
 // follow-up ask), every other classroom has exactly 1.
-const CLASSROOM_SPELLS: Record<string, string[]> = {
-  'Defense Classroom': [SCUTUM_SKILL],
-  'Summoning Classroom': [MURUS_LAPIDEUS_SKILL],
-  'Utility Classroom': [IRRIGO_SKILL, LUCEM_SKILL, CELERITAS_SKILL, RESERA_SKILL],
-  'Offense Classroom': [AUGUE_SKILL, STUPEFACIUNT_SKILL, EXARME_SKILL],
+// Exported (a later follow-up ask removed the podium system in favor of a
+// teacher click-to-learn modal) — server/worlds/teachers.ts reuses this
+// exact map to populate each classroom teacher's own teachesSkills list,
+// so the Learn Spells quest's objectives and what a teacher actually
+// offers can never drift apart.
+export const CLASSROOM_SPELLS: Record<string, string[]> = {
+  'Defense Classroom': [AEGIS_SKILL],
+  'Summoning Classroom': [STONE_WALL_SKILL],
+  'Utility Classroom': [WATERFILL_SKILL, LIGHT_SKILL, HASTE_SKILL, UNLOCK_SKILL],
+  'Offense Classroom': [ARCANE_BOLT_SKILL, STUN_SKILL, DISARM_SKILL],
 };
 
 export const QUESTS: Record<string, QuestDefinition> = {

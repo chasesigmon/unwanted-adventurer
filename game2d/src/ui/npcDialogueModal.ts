@@ -9,7 +9,7 @@
 import { activeScene, myProfile, network, setMyProfile } from '../state.js';
 import { QUESTS, allObjectivesDone } from '../../shared/quests.js';
 import { HOUSE_NAMES, SPECIALIZATION_PATHS, SPECIALIZATION_LEVEL_REQUIREMENT } from '../../shared/constants.js';
-import { ANIMATE_DEAD_SKILL, ANIMATE_DEAD_PRICE, STARTING_SKILL_PERCENT } from '../../shared/skills.js';
+import { STARTING_SKILL_PERCENT, SKILL_SPECIALIZATION_REQUIREMENT, skillLevelRequirement, practicePointCostFor } from '../../shared/skills.js';
 import { logCombatMessage } from './log.js';
 import { showCenterToast } from './toast.js';
 import { closeAllModals, npcDialogueActions, npcDialogueModal, npcDialogueName, npcDialogueText, updateInputCaptured } from './modalCore.js';
@@ -132,46 +132,75 @@ export function openSpecializationDialogue(name: string): void {
   updateInputCaptured();
 }
 
-// The Necromancer Chamber's own teacher (a later follow-up ask) — offers
-// "animate dead" for one-time purchase. Only a necromancer may buy it;
-// only shows a Buy button if not already learned.
-export function openAnimateDeadPurchaseDialogue(name: string): void {
+// The classroom/specialization teacher click-to-learn modal (a later
+// follow-up ask replaced the old podium-reading skill system entirely,
+// and migrated the Necromancer's own bespoke animate-dead-purchase
+// dialogue onto this same generic shape) — one row per skill the teacher
+// offers, each showing its own level/practice-point requirement, grayed
+// out below level or lacking the right specialization, otherwise a
+// "Learn" button (or "Known" once learned).
+export function openTeacherLearnDialogue(name: string, skills: string[]): void {
   closeAllModals();
   npcDialogueName.textContent = name;
+  npcDialogueText.textContent = 'Here is what I can teach you:';
   npcDialogueActions.innerHTML = '';
 
-  const alreadyKnown = myProfile?.skills?.[ANIMATE_DEAD_SKILL] !== undefined;
-  if (myProfile?.specialization !== 'necromancer') {
-    npcDialogueText.textContent = 'Only those who walk the necromancer\'s path may learn from me.';
-  } else if (alreadyKnown) {
-    npcDialogueText.textContent = 'You have already learned to animate the dead. Use it wisely.';
-  } else {
-    npcDialogueText.textContent = `I can teach you to animate dead for ${ANIMATE_DEAD_PRICE} coins. Once raised, the corpse will fight at your command until it falls, or you do.`;
+  for (const skill of skills) {
+    const row = document.createElement('div');
+    row.className = 'teacher-skill-row';
+
+    const label = document.createElement('div');
+    label.className = 'teacher-skill-label';
+    const requiredLevel = skillLevelRequirement(skill);
+    const cost = practicePointCostFor(skill);
+    label.textContent = `${skill} (Lv ${requiredLevel}, ${cost} practice point${cost === 1 ? '' : 's'})`;
+    row.appendChild(label);
+
+    const known = myProfile?.skills?.[skill] !== undefined;
+    const requiredSpecialization = SKILL_SPECIALIZATION_REQUIREMENT[skill];
+    const meetsSpecialization = !requiredSpecialization || myProfile?.specialization === requiredSpecialization;
+    const meetsLevel = (myProfile?.level ?? 0) >= requiredLevel;
+
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.textContent = `Learn Animate Dead (${ANIMATE_DEAD_PRICE} coins)`;
-    btn.addEventListener('click', () => {
+    if (known) {
+      btn.textContent = 'Known';
       btn.disabled = true;
-      void network
-        .buyAnimateDead()
-        .then((ack) => {
-          if (!ack.ok) {
+    } else if (!meetsSpecialization) {
+      btn.textContent = requiredSpecialization ? `Requires ${requiredSpecialization}` : 'Locked';
+      btn.disabled = true;
+    } else if (!meetsLevel) {
+      btn.textContent = `Requires level ${requiredLevel}`;
+      btn.disabled = true;
+    } else {
+      btn.textContent = 'Learn';
+      btn.addEventListener('click', () => {
+        btn.disabled = true;
+        void network
+          .learnSkill(skill)
+          .then((ack) => {
+            if (!ack.ok) {
+              btn.disabled = false;
+              if (ack.message) logCombatMessage(ack.message);
+              return;
+            }
+            if (myProfile) {
+              setMyProfile({
+                ...myProfile,
+                skills: { ...myProfile.skills, [skill]: STARTING_SKILL_PERCENT },
+                practicePointsAvailable: myProfile.practicePointsAvailable - cost,
+              });
+            }
+            if (ack.message) showCenterToast(ack.message);
+            btn.textContent = 'Known';
+          })
+          .catch(() => {
             btn.disabled = false;
-            if (ack.message) logCombatMessage(ack.message);
-            return;
-          }
-          if (myProfile) {
-            setMyProfile({ ...myProfile, skills: { ...myProfile.skills, [ANIMATE_DEAD_SKILL]: STARTING_SKILL_PERCENT } });
-          }
-          if (ack.message) showCenterToast(ack.message);
-          npcDialogueText.textContent = 'You have already learned to animate the dead. Use it wisely.';
-          npcDialogueActions.innerHTML = '';
-        })
-        .catch(() => {
-          btn.disabled = false;
-        });
-    });
-    npcDialogueActions.appendChild(btn);
+          });
+      });
+    }
+    row.appendChild(btn);
+    npcDialogueActions.appendChild(row);
   }
 
   npcDialogueModal.hidden = false;

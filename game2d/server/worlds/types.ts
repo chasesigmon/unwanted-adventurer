@@ -23,6 +23,8 @@ export interface PlayerState extends Location, Attributes {
   maxHp: number;
   mana: number;
   maxMana: number;
+  mv: number;
+  maxMv: number;
   skills: Record<string, number>;
   inventory: string[];
   equipment: Record<string, string>;
@@ -36,6 +38,7 @@ export interface PlayerState extends Location, Attributes {
   // Stacks across levels if never spent (a later follow-up ask) — see
   // game.gateway.ts's handleAllocateStatPoint.
   statPointsAvailable: number;
+  practicePointsAvailable: number;
   // The lucem spell's toggle (see shared/types.ts's PlayerSnapshot) —
   // needed here too so getMapState's hasLight calc (see
   // world-manager.service.ts) can factor it in for OTHER players' benefit.
