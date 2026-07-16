@@ -140,6 +140,19 @@ export const BOLT_TEXTURE_KEY = 'bolt';
 // texture — the fireball animation is reserved for the Elementalist's fire
 // bolt spell instead).
 export const ARCANE_BOLT_TEXTURE_KEY = 'arcane-bolt';
+// The Elementalist's own water/air/earth bolts (a later follow-up ask) —
+// fire bolt reuses FIREBALL_TEXTURE_KEY above per the same ask, these 3
+// get their own new sprites.
+export const WATER_BOLT_TEXTURE_KEY = 'water-bolt';
+export const AIR_BOLT_TEXTURE_KEY = 'air-bolt';
+export const EARTH_BOLT_TEXTURE_KEY = 'earth-bolt';
+// Druid's wisp transformation (a later follow-up ask) — a 6-frame
+// shimmering-orb spritesheet (24x24 per frame), replacing the caster's
+// own character sprite entirely while active — see WorldScene's
+// updateWispVisual.
+export const WISP_TEXTURE_KEY = 'wisp';
+export const WISP_FRAME_SIZE = 24;
+export const WISP_ANIM_KEY = 'wisp-shimmer';
 // The secret room's treasure chest (a later follow-up ask) — two frames
 // picked by the player's own secretChestUnlocked flag, see
 // shared/maps.ts's CAVERNA_CHEST_POSITION.

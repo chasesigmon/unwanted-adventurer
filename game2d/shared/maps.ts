@@ -654,7 +654,7 @@ const ENTRANCE_HALL_UP_STAIRS = { row: ENTRANCE_ROWS - 1, col: ENTRANCE_MID_COL 
 // shared/constants.ts's SPECIALIZATION_PATHS/SPECIALIZATION_CHAMBER_MAPS).
 const FLOOR2_CHAMBER_DOORS: Array<{ col: number; name: MapName }> = [
   { col: 4, name: 'Necromancer Chamber' },
-  { col: 8, name: 'Enhancer Chamber' },
+  { col: 8, name: 'Shaman Chamber' },
   { col: 12, name: 'Elementalist Chamber' },
   { col: 16, name: 'Summoner Chamber' },
   { col: 20, name: 'Illusionist Chamber' },
@@ -849,7 +849,7 @@ ENTRANCE_HALL.exits.push({
 });
 
 const NECROMANCER_CHAMBER = chamberOffFloorLanding('Necromancer Chamber', 'Grimoak Castle 2nd Floor', FLOOR2_CHAMBER_DOORS);
-const ENHANCER_CHAMBER = chamberOffFloorLanding('Enhancer Chamber', 'Grimoak Castle 2nd Floor', FLOOR2_CHAMBER_DOORS);
+const SHAMAN_CHAMBER = chamberOffFloorLanding('Shaman Chamber', 'Grimoak Castle 2nd Floor', FLOOR2_CHAMBER_DOORS);
 const ELEMENTALIST_CHAMBER = chamberOffFloorLanding('Elementalist Chamber', 'Grimoak Castle 2nd Floor', FLOOR2_CHAMBER_DOORS);
 const SUMMONER_CHAMBER = chamberOffFloorLanding('Summoner Chamber', 'Grimoak Castle 2nd Floor', FLOOR2_CHAMBER_DOORS);
 const ILLUSIONIST_CHAMBER = chamberOffFloorLanding('Illusionist Chamber', 'Grimoak Castle 2nd Floor', FLOOR2_CHAMBER_DOORS);
@@ -1128,7 +1128,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Grimoak Castle 3rd Floor': FLOOR3_LANDING,
   'Grimoak Castle 4th Floor': FLOOR4_LANDING,
   'Necromancer Chamber': NECROMANCER_CHAMBER,
-  'Enhancer Chamber': ENHANCER_CHAMBER,
+  'Shaman Chamber': SHAMAN_CHAMBER,
   'Elementalist Chamber': ELEMENTALIST_CHAMBER,
   'Summoner Chamber': SUMMONER_CHAMBER,
   'Illusionist Chamber': ILLUSIONIST_CHAMBER,

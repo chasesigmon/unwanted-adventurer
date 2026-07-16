@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
-import type { MapName, MonsterKind } from '../../shared/constants.js';
+import type { MapName, MonsterKind, Race } from '../../shared/constants.js';
 import type { PetCommand, AnimatedMonsterSnapshot } from '../../shared/pets.js';
 import { animatedMonsterCapFor } from '../../shared/skills.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
@@ -25,7 +25,7 @@ export class AnimatedMonsterManagerService {
   animate(
     ownerUsername: string,
     ownerLevel: number,
-    monsterKind: MonsterKind,
+    monsterKind: MonsterKind | Race,
     name: string,
     maxHp: number,
     attackDamage: number,
@@ -107,6 +107,37 @@ export class AnimatedMonsterManagerService {
   // disconnect (see game.gateway.ts's handleDisconnect).
   removeAllForOwner(ownerUsername: string): void {
     this.monsters.delete(ownerUsername);
+  }
+
+  // "There should be an option... to 'remove' and get rid of" (a later
+  // follow-up ask, asked for animate dead/monster summons/demon imp/the
+  // Illusionist's duplicate alike) — a deliberate player action, unlike
+  // dying (hp reaching 0) or the owner disconnecting. Returns false if
+  // this owner has no such monster (already gone/wrong id).
+  remove(ownerUsername: string, id: string): boolean {
+    const owned = this.monsters.get(ownerUsername);
+    if (!owned) return false;
+    const index = owned.findIndex((m) => m.id === id);
+    if (index === -1) return false;
+    owned.splice(index, 1);
+    return true;
+  }
+
+  // Recall's own "bring my companions with me" behavior (a later
+  // follow-up ask) — same instant-snap shape as PetManagerService's own
+  // teleportToOwner. Returns every distinct PREVIOUS map any of this
+  // owner's animated monsters were on (so the caller can re-broadcast
+  // those too) — empty if this owner has none.
+  teleportAllToOwner(ownerUsername: string, map: MapName, row: number, col: number): Set<MapName> {
+    const previousMaps = new Set<MapName>();
+    for (const monster of this.monsters.get(ownerUsername) ?? []) {
+      if (!monster.alive) continue;
+      previousMaps.add(monster.map);
+      monster.map = map;
+      monster.row = row;
+      monster.col = col;
+    }
+    return previousMaps;
   }
 
   getSnapshotsForMap(mapName: MapName): AnimatedMonsterSnapshot[] {

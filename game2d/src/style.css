@@ -633,6 +633,13 @@ body {
   color: #6b9fd4;
 }
 
+/* Hemomancer's own "bp" stat (a later follow-up ask: "show it as a
+   bright red in player stats") — only shown once specialized (see
+   statusBar.ts's updateStatusBar). */
+.status-bp {
+  color: #ff2b2b;
+}
+
 #status-exp {
   color: #c9a2e6;
 }

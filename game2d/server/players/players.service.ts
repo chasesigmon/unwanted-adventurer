@@ -56,6 +56,7 @@ export interface PlayerStatsUpdate {
   maxMana?: number;
   mv?: number;
   maxMv?: number;
+  bp?: number;
   strength?: number;
   intelligence?: number;
   wisdom?: number;
@@ -83,6 +84,8 @@ export interface PlayerStatsUpdate {
   quests?: Record<string, QuestProgress>;
   house?: HouseName | null;
   specialization?: SpecializationPath | null;
+  visitedPois?: string[];
+  killedMonsterKinds?: string[];
 }
 
 @Injectable()

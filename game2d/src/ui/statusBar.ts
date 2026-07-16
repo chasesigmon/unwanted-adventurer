@@ -6,6 +6,7 @@ import type { MapName } from '../../shared/constants.js';
 import { timeOfDayLabel } from '../../shared/lighting.js';
 import { setupCollapsible } from './collapsible.js';
 import { wholeNumber } from './modalCore.js';
+import { MAX_BP } from '../../shared/skills.js';
 
 const statusBarPanel = document.getElementById('status-bar') as HTMLDivElement;
 const statusToggle = document.getElementById('status-toggle') as HTMLButtonElement;
@@ -13,6 +14,7 @@ const statusLevel = document.getElementById('status-level') as HTMLSpanElement;
 const statusHp = document.getElementById('status-hp') as HTMLSpanElement;
 const statusMana = document.getElementById('status-mana') as HTMLSpanElement;
 const statusMv = document.getElementById('status-mv') as HTMLSpanElement;
+const statusBp = document.getElementById('status-bp') as HTMLSpanElement;
 const statusHunger = document.getElementById('status-hunger') as HTMLSpanElement;
 const statusThirst = document.getElementById('status-thirst') as HTMLSpanElement;
 const statusExp = document.getElementById('status-exp') as HTMLSpanElement;
@@ -68,6 +70,11 @@ export function updateStatusBar(): void {
   statusHp.textContent = `HP ${myProfile.hp}/${myProfile.maxHp}`;
   statusMana.textContent = `MP ${myProfile.mana}/${myProfile.maxMana}`;
   statusMv.textContent = `MV ${wholeNumber(myProfile.mv)}/${wholeNumber(myProfile.maxMv)}`;
+  // Hemomancer's own "bp" stat (a later follow-up ask) — only shown once
+  // a player has actually specialized into Hemomancer; hidden (not just
+  // zeroed) for everyone else, matching "gain an extra stat" phrasing.
+  statusBp.hidden = myProfile.specialization !== 'hemomancer';
+  if (!statusBp.hidden) statusBp.textContent = `BP ${myProfile.bp}/${MAX_BP}`;
   statusHunger.textContent = `Hunger ${wholeNumber(myProfile.hunger ?? 100)}/100`;
   statusThirst.textContent = `Thirst ${wholeNumber(myProfile.thirst ?? 100)}/100`;
   statusExp.textContent = `EXP ${myProfile.exp}`;

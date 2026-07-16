@@ -25,6 +25,7 @@ export interface PlayerState extends Location, Attributes {
   maxMana: number;
   mv: number;
   maxMv: number;
+  bp: number;
   skills: Record<string, number>;
   inventory: string[];
   equipment: Record<string, string>;
@@ -52,6 +53,18 @@ export interface PlayerState extends Location, Attributes {
   // its blue-sphere visual has to be visible to every OTHER nearby player
   // as well, not just the caster's own Affects modal.
   scutumActive: boolean;
+  // Barrier's own toggle (a later follow-up ask) — same "other nearby
+  // players need to see the dome too" reasoning as scutumActive above.
+  barrierActive: boolean;
+  // Wisp transformation's own toggle (a later follow-up ask) — same
+  // "other nearby players need to see the sprite swap too" reasoning as
+  // scutumActive/barrierActive above.
+  wispActive: boolean;
+  // Invisibility's own toggle (a later follow-up ask) — needed here too
+  // so getMapState knows which OTHER players to skip rendering entirely
+  // client-side (the opposite of scutum/barrier/wisp's own "show a
+  // visible effect" reasoning).
+  invisibleActive: boolean;
   canteenDrinks: number;
   // The /dance command (a later follow-up ask) — needed here too so
   // getMapState's player list shows every OTHER nearby player dancing,

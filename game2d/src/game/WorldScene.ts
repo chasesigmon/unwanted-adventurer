@@ -56,6 +56,25 @@ import {
   AEGIS_SKILL,
   STONE_WALL_SKILL,
   ANIMATE_DEAD_SKILL,
+  RECALL_SKILL,
+  BARRIER_SKILL,
+  BARRIER_RADIUS_TILES,
+  SHAMAN_ENHANCE_DAMAGE_SKILL,
+  FIRE_BOLT_SKILL,
+  WATER_BOLT_SKILL,
+  AIR_BOLT_SKILL,
+  EARTH_BOLT_SKILL,
+  LESSER_HEAL_SKILL,
+  LESSER_SELF_HEAL_SKILL,
+  WISP_TRANSFORMATION_SKILL,
+  WISP_MOVE_COOLDOWN_FACTOR,
+  KINETIC_STRIKE_SKILL,
+  SAP_HEALTH_SKILL,
+  MONSTER_SUMMONS_SKILL,
+  DEMON_IMP_KIND,
+  SUMMON_DEMON_IMP_SKILL,
+  INVISIBILITY_SKILL,
+  CREATE_DUPLICATE_SKILL,
   SPELL_ATTACK_RANGE_TILES,
   DRINK_SKILL,
   POUR_SKILL,
@@ -128,6 +147,12 @@ import {
   FIREBALL_TEXTURE_KEY,
   BOLT_TEXTURE_KEY,
   ARCANE_BOLT_TEXTURE_KEY,
+  WATER_BOLT_TEXTURE_KEY,
+  AIR_BOLT_TEXTURE_KEY,
+  EARTH_BOLT_TEXTURE_KEY,
+  WISP_TEXTURE_KEY,
+  WISP_FRAME_SIZE,
+  WISP_ANIM_KEY,
   CHEST_LOCKED_TEXTURE_KEY,
   CHEST_UNLOCKED_TEXTURE_KEY,
   STONE_BLOCK_TEXTURE_KEY,
@@ -220,6 +245,8 @@ import { notifyMapChanged } from '../ui/mapModal.js';
 import { openNpcDialogueModal, openSpecializationDialogue, openHouseChoiceDialogue, openTeacherLearnDialogue } from '../ui/npcDialogueModal.js';
 import { hideTargetPanel, updateTargetPanel, updateLockTargetPanel } from '../ui/targetPanel.js';
 import { updateGroupPanel } from '../ui/groupPanel.js';
+import { openRecallModal } from '../ui/recallModal.js';
+import { openMonsterSummonsModal } from '../ui/monsterSummonsModal.js';
 
 const autopilotStatusEl = document.getElementById('autopilot-status') as HTMLDivElement;
 
@@ -241,6 +268,22 @@ export class WorldScene extends Phaser.Scene {
   // player), visible to everyone nearby, not just the caster (see
   // updateScutumGlow).
   private scutumGlows = new Map<string, Phaser.GameObjects.Graphics>();
+  // Barrier's own fixed-position dome (a later follow-up ask) — unlike
+  // scutum's sphere (which just follows whichever sprite has it active),
+  // the dome is anchored to the exact tile it was cast on (see
+  // handleCastBarrier's own barrierOrigin) since the player can move
+  // around inside it but never past its edge. Local-player-only for this
+  // first pass — see updateBarrierVisual's own doc comment.
+  private barrierDomeOrigin: { row: number; col: number } | null = null;
+  private barrierDomeGraphics: Phaser.GameObjects.Graphics | null = null;
+  // Wisp transformation's own shimmering-orb overlay (a later follow-up
+  // ask) — one per player currently transformed (keyed by username,
+  // 'self' for the local player), visible to everyone nearby. Unlike
+  // scutum's glow (an ADDITIONAL effect layered on top of the normal
+  // character sprite), this REPLACES it — see updateWispVisual, which
+  // hides the underlying character sprite while its own wisp sprite is
+  // shown.
+  private wispSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private floorTile!: Phaser.GameObjects.TileSprite;
   private doorSprites: Phaser.GameObjects.Sprite[] = [];
   // Classroom door symbols (a follow-up ask) — recreated alongside
@@ -536,6 +579,10 @@ export class WorldScene extends Phaser.Scene {
     this.load.image(FIREBALL_TEXTURE_KEY, '/fireball.png');
     this.load.image(BOLT_TEXTURE_KEY, '/bolt.png');
     this.load.image(ARCANE_BOLT_TEXTURE_KEY, '/arcane-bolt.png');
+    this.load.image(WATER_BOLT_TEXTURE_KEY, '/water-bolt.png');
+    this.load.image(AIR_BOLT_TEXTURE_KEY, '/air-bolt.png');
+    this.load.image(EARTH_BOLT_TEXTURE_KEY, '/earth-bolt.png');
+    this.load.spritesheet(WISP_TEXTURE_KEY, '/wisp.png', { frameWidth: WISP_FRAME_SIZE, frameHeight: WISP_FRAME_SIZE });
     this.load.image(CHEST_LOCKED_TEXTURE_KEY, '/chest-locked.png');
     this.load.image(CHEST_UNLOCKED_TEXTURE_KEY, '/chest-unlocked.png');
     this.load.image(STONE_BLOCK_TEXTURE_KEY, '/stone-block.png');
@@ -554,6 +601,17 @@ export class WorldScene extends Phaser.Scene {
   create(): void {
     createCharacterAnims(this);
     defineBodyPartFrames(this);
+    // Wisp transformation's own shimmering-orb loop (a later follow-up
+    // ask) — a slow, continuous animation cycling all 6 frames, never
+    // stopping while active (see updateWispVisual).
+    if (!this.anims.exists(WISP_ANIM_KEY)) {
+      this.anims.create({
+        key: WISP_ANIM_KEY,
+        frames: this.anims.generateFrameNumbers(WISP_TEXTURE_KEY, { start: 0, end: 5 }),
+        frameRate: 6,
+        repeat: -1,
+      });
+    }
 
     this.player = this.add.sprite(0, 0, textureKeyFor('goblin'), idleFrameFor('goblin', 'down')).setScale(CHAR_SCALE);
     this.playerHpBar = this.add.graphics();
@@ -1124,9 +1182,17 @@ export class WorldScene extends Phaser.Scene {
     this.repositionShieldSprite(this.playerShieldSprite, this.player, this.facing);
     this.repositionShieldSprite(this.playerTorchSprite, this.player, this.facing);
     this.updateScutumGlow('self', this.player, Boolean(myProfile?.scutumActive));
+    this.updateBarrierVisual();
+    this.updateWispVisual('self', this.player, Boolean(myProfile?.wispActive));
+    // Invisibility (a later follow-up ask) — "make the player's sprite
+    // slightly faded while the spell is active," for the CASTER'S OWN
+    // view of themselves only; other players don't even get a faded
+    // sprite, they get NO sprite at all (see applyMapState).
+    this.player.setAlpha(myProfile?.invisibleActive ? 0.4 : 1);
     for (const [username, sprite] of this.otherPlayers) {
       this.repositionBarFor(sprite);
       this.updateScutumGlow(username, sprite, Boolean(sprite.getData('scutumActive')));
+      this.updateWispVisual(username, sprite, Boolean(sprite.getData('wispActive')));
     }
     for (const sprite of this.npcSprites.values()) this.repositionBarFor(sprite);
     for (const sprite of this.monsterSprites.values()) this.repositionBarFor(sprite);
@@ -1156,6 +1222,67 @@ export class WorldScene extends Phaser.Scene {
     glow.strokeCircle(0, 0, 22);
     glow.fillStyle(0x4aa8ff, 0.12);
     glow.fillCircle(0, 0, 22);
+  }
+
+  // Wisp transformation's own shimmering orb (a later follow-up ask) —
+  // unlike scutum's glow (layered ON TOP of the normal character
+  // sprite), this REPLACES it entirely: the underlying character sprite
+  // is hidden while the wisp sprite is shown in its place, and restored
+  // the moment the transformation ends. Keyed by username ('self' for
+  // the local player), same as updateScutumGlow. First-pass scope
+  // decision: equipped-gear overlay sprites (weapon/wand/shield/torch)
+  // aren't separately hidden here — a minor cosmetic gap (a floating
+  // weapon icon can still peek out), not a mechanical one, since combat
+  // is already blocked entirely while transformed.
+  private updateWispVisual(key: string, sprite: Phaser.GameObjects.Sprite, active: boolean): void {
+    let wisp = this.wispSprites.get(key);
+    if (!active) {
+      wisp?.setVisible(false);
+      sprite.setVisible(true);
+      return;
+    }
+    sprite.setVisible(false);
+    if (!wisp) {
+      wisp = this.add.sprite(sprite.x, sprite.y, WISP_TEXTURE_KEY).setDepth(sprite.depth);
+      wisp.play(WISP_ANIM_KEY);
+      this.wispSprites.set(key, wisp);
+    }
+    wisp.setVisible(true);
+    wisp.setPosition(sprite.x, sprite.y);
+  }
+
+  // Barrier's own yellow dome (a later follow-up ask) — deliberately
+  // local-player-only for this first pass (a bystander doesn't need to
+  // see another player's exact dome extent; only monster-avoidance and
+  // this player's own movement-confinement are ever checked against it).
+  // Drawn fixed at barrierDomeOrigin, not following the player's own
+  // sprite, since the whole point is a zone the player can move around
+  // inside but never past.
+  private updateBarrierVisual(): void {
+    if (!myProfile?.barrierActive || !this.barrierDomeOrigin) {
+      this.barrierDomeGraphics?.setVisible(false);
+      return;
+    }
+    if (!this.barrierDomeGraphics) {
+      this.barrierDomeGraphics = this.add.graphics().setDepth(0.9);
+    }
+    const pos = this.tilePosition(this.barrierDomeOrigin.row, this.barrierDomeOrigin.col);
+    const baseRadiusPx = (BARRIER_RADIUS_TILES + 0.5) * TILE_SIZE;
+    // A slow, gentle pulse (a follow-up ask: "create the animation sprite
+    // for the barrier") — the dome itself is a vector shape (its exact
+    // radius has to match BARRIER_RADIUS_TILES precisely for the
+    // collision boundary to look correct), so the "animation" is this
+    // breathing radius/alpha cycle rather than a baked sprite sheet.
+    const pulse = Math.sin(this.time.now / 500) * 0.03;
+    const radiusPx = baseRadiusPx * (1 + pulse);
+    const alpha = 0.85 + pulse * 2;
+    this.barrierDomeGraphics.setVisible(true);
+    this.barrierDomeGraphics.setPosition(pos.x, pos.y);
+    this.barrierDomeGraphics.clear();
+    this.barrierDomeGraphics.lineStyle(3, 0xe8d84a, alpha);
+    this.barrierDomeGraphics.strokeCircle(0, 0, radiusPx);
+    this.barrierDomeGraphics.fillStyle(0xe8d84a, 0.1);
+    this.barrierDomeGraphics.fillCircle(0, 0, radiusPx);
   }
 
   private repositionBarFor(sprite: Phaser.GameObjects.Sprite): void {
@@ -1632,6 +1759,8 @@ export class WorldScene extends Phaser.Scene {
     this.otherPlayers.clear();
     for (const glow of this.scutumGlows.values()) glow.destroy();
     this.scutumGlows.clear();
+    for (const sprite of this.wispSprites.values()) sprite.destroy();
+    this.wispSprites.clear();
     for (const sprite of this.npcSprites.values()) this.destroyEntitySprite(sprite);
     this.npcSprites.clear();
     for (const sprite of this.monsterSprites.values()) this.destroyEntitySprite(sprite);
@@ -2417,6 +2546,26 @@ export class WorldScene extends Phaser.Scene {
       if (p.username === this.myUsername) continue;
       seenPlayers.add(p.username);
 
+      // Invisibility (a later follow-up ask) — "monsters and players
+      // cannot see the player while it's active": skip rendering this
+      // OTHER player's sprite entirely (not just faded, like the
+      // CASTER'S OWN view of themselves — see repositionHpBars).
+      // Destroys whatever sprite already existed the instant they turn
+      // invisible; simply not recreated while this stays true, then
+      // picks back up normally the moment it clears.
+      if (p.invisibleActive) {
+        const existing = this.otherPlayers.get(p.username);
+        if (existing) {
+          this.destroyEntitySprite(existing);
+          this.otherPlayers.delete(p.username);
+          this.scutumGlows.get(p.username)?.destroy();
+          this.scutumGlows.delete(p.username);
+          this.wispSprites.get(p.username)?.destroy();
+          this.wispSprites.delete(p.username);
+        }
+        continue;
+      }
+
       // A slime's mimicForm (if set) overrides its rendered appearance
       // entirely, while p.race stays the real, mechanical one underneath.
       const displayKind: SpriteKind = p.mimicForm ?? effectiveSpriteKind(p.race, p.gender, p.skinTone, p.hairColor);
@@ -2450,6 +2599,7 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('level', p.level);
       sprite.setData('equipment', p.equipment);
       sprite.setData('scutumActive', p.scutumActive);
+      sprite.setData('wispActive', p.wispActive);
       this.ensureHpBar(sprite, p.hp, p.maxHp);
       this.ensureWeaponSprite(sprite, p.equipment.weapon === 'bone dagger', (sprite.getData('facing') as Facing) ?? 'down');
       this.ensureWandSprite(sprite, isWandItem(p.equipment.weapon), (sprite.getData('facing') as Facing) ?? 'down');
@@ -2465,6 +2615,8 @@ export class WorldScene extends Phaser.Scene {
         if (this.targetKind === 'player' && this.targetId === username) this.clearTarget();
         this.scutumGlows.get(username)?.destroy();
         this.scutumGlows.delete(username);
+        this.wispSprites.get(username)?.destroy();
+        this.wispSprites.delete(username);
       }
     }
 
@@ -2590,7 +2742,10 @@ export class WorldScene extends Phaser.Scene {
         const pos = this.tilePosition(am.row, am.col);
         sprite = this.add
           .sprite(pos.x, pos.y, textureKeyFor(am.monsterKind), idleFrameFor(am.monsterKind, 'down'))
-          .setScale(CHAR_SCALE)
+          // Diabolist's own demon imp (a later follow-up ask) — "a
+          // little smaller than the imps on Grimoak Grounds," same
+          // shape as the rare-monster upscale below just downward.
+          .setScale(am.monsterKind === DEMON_IMP_KIND ? CHAR_SCALE * 0.85 : CHAR_SCALE)
           .setTint(0x9a7bd6);
         sprite.setData('row', am.row);
         sprite.setData('col', am.col);
@@ -3411,6 +3566,10 @@ export class WorldScene extends Phaser.Scene {
     // 10% cut celeritas gets, stacking multiplicatively with it if both
     // are active at once.
     if (myProfile?.equipment.boots === 'boots of quickness') base = Math.round(base * 0.9);
+    // Wisp transformation (a later follow-up ask) — "move 20% faster
+    // than their base (including bonuses)" — stacks multiplicatively with
+    // celeritas/boots above, same as those stack with each other.
+    if (myProfile?.wispActive) base = Math.round(base * WISP_MOVE_COOLDOWN_FACTOR);
     // Every character starts at 1 dexterity (server/combat/formulas.ts's
     // STARTING_ATTRIBUTE) — only points ABOVE that baseline speed you up.
     const dexterity = myProfile?.dexterity ?? 1;
@@ -3502,6 +3661,48 @@ export class WorldScene extends Phaser.Scene {
       logCombatMessage('Click a monster corpse to animate it.');
       return;
     }
+    // Recall (a later follow-up ask) opens its own destination-picker
+    // modal directly — no arm-then-click flow needed, since the list of
+    // valid choices is already fully known client-side (myProfile's own
+    // visitedPois).
+    if (skillName === RECALL_SKILL) {
+      openRecallModal();
+      return;
+    }
+    // Monster summons (a later follow-up ask) opens its own picker modal
+    // directly, same "no arm-then-click flow" shape as recall above,
+    // since the list of valid choices is already fully known client-side
+    // (myProfile's own killedMonsterKinds).
+    if (skillName === MONSTER_SUMMONS_SKILL) {
+      openMonsterSummonsModal();
+      return;
+    }
+    // Barrier (a later follow-up ask) is a no-target toggle too — casting
+    // it again while active cancels it early server-side (see
+    // handleCastBarrier) — NOT reusing castToggleSpell here since this
+    // needs the ack's own barrierOrigin (only present on a fresh
+    // successful cast) to know where to actually draw the dome.
+    if (skillName === BARRIER_SKILL) {
+      void this.network.castBarrier().then((ack) => {
+        if (ack.message) {
+          showCenterToast(ack.message);
+          logCombatMessage(ack.message);
+        }
+        if (!ack.ok || !myProfile) return;
+        setMyProfile({ ...myProfile, mana: ack.mana ?? myProfile.mana, skills: ack.skills ?? myProfile.skills });
+        this.barrierDomeOrigin = ack.barrierOrigin ?? null;
+        this.updateOwnBars();
+        refreshOpenModals();
+      });
+      return;
+    }
+    // Shaman's enhance damage (a later follow-up ask) is a no-target
+    // self-buff too — always ON for its own fixed duration once cast (no
+    // manual toggle-off, no visual), same castToggleSpell shape as scutum.
+    if (skillName === SHAMAN_ENHANCE_DAMAGE_SKILL) {
+      this.castToggleSpell(() => this.network.castEnhanceDamage());
+      return;
+    }
     // Drink/pour/irrigo (items 7, 8 & 11's follow-up asks) act on a
     // targeted INVENTORY item, not a player/npc/monster — a wholly
     // separate targeting concept (see setItemTarget, driven by clicking a
@@ -3541,6 +3742,72 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
 
+    // Lesser heal (a later follow-up ask) needs no target at all — a
+    // selected PLAYER is passed along as a "friendly target" hint, but
+    // the server falls back to healing the caster if there's none (or
+    // the selection isn't a player, or that player turns out hostile).
+    if (skillName === LESSER_HEAL_SKILL) {
+      const target = this.targetKind === 'player' && this.targetId ? { targetKind: this.targetKind, targetId: this.targetId } : null;
+      void this.network.castLesserHeal(target).then((ack) => {
+        if (ack.message) {
+          showCenterToast(ack.message);
+          logCombatMessage(ack.message);
+        }
+      });
+      return;
+    }
+    // Druid's lesser self heal (a later follow-up ask) — no target at
+    // all, always heals the caster.
+    if (skillName === LESSER_SELF_HEAL_SKILL) {
+      void this.network.castLesserSelfHeal().then((ack) => {
+        if (ack.message) {
+          showCenterToast(ack.message);
+          logCombatMessage(ack.message);
+        }
+      });
+      return;
+    }
+    // Diabolist's summon demon imp (a later follow-up ask) — no target,
+    // no modal, always the same fixed summon.
+    if (skillName === SUMMON_DEMON_IMP_SKILL) {
+      void this.network.castSummonDemonImp().then((ack) => {
+        if (ack.message) {
+          showCenterToast(ack.message);
+          logCombatMessage(ack.message);
+        }
+      });
+      return;
+    }
+    // Wisp transformation (a later follow-up ask) is a no-target toggle
+    // too — always ON for its own fixed duration once cast (no manual
+    // toggle-off, see checkWispTransformationExpiry server-side), same
+    // castToggleSpell mechanics as scutum/Shaman's enhance damage.
+    if (skillName === WISP_TRANSFORMATION_SKILL) {
+      this.castToggleSpell(() => this.network.castWispTransformation());
+      return;
+    }
+    // Invisibility (a later follow-up ask) is a no-target toggle too —
+    // always ON for its own fixed duration once cast, same
+    // castToggleSpell mechanics as wisp above. It CAN end early (see
+    // breakInvisibilityIfActive server-side), but that's a side effect
+    // of attacking, not something this client needs to manage — the
+    // next 'sync'/map:state simply reflects it.
+    if (skillName === INVISIBILITY_SKILL) {
+      this.castToggleSpell(() => this.network.castInvisibility());
+      return;
+    }
+    // Illusionist's create duplicate (a later follow-up ask) — no
+    // target, no modal, always the same fixed-stat-snapshot duplicate.
+    if (skillName === CREATE_DUPLICATE_SKILL) {
+      void this.network.castCreateDuplicate().then((ack) => {
+        if (ack.message) {
+          showCenterToast(ack.message);
+          logCombatMessage(ack.message);
+        }
+      });
+      return;
+    }
+
     if (!this.targetKind || !this.targetId) {
       logCombatMessage('Select a target first (left-click a player or monster).');
       return;
@@ -3563,6 +3830,59 @@ export class WorldScene extends Phaser.Scene {
       const targetId = this.targetId;
       this.tryRangedAction(targetKind, targetId, SPELL_ATTACK_RANGE_TILES, () => {
         void this.network.castAugue({ targetKind, targetId }).then((ack) => {
+          if (ack.message) {
+            showCenterToast(ack.message);
+            logCombatMessage(ack.message);
+          }
+        });
+      });
+      return;
+    }
+    // The Elementalist's own 4 bolts (a later follow-up ask) — same
+    // ranged, walk-into-range shape as augue above.
+    if (skillName === FIRE_BOLT_SKILL || skillName === WATER_BOLT_SKILL || skillName === AIR_BOLT_SKILL || skillName === EARTH_BOLT_SKILL) {
+      const targetKind = this.targetKind;
+      const targetId = this.targetId;
+      const cast =
+        skillName === FIRE_BOLT_SKILL
+          ? this.network.castFireBolt.bind(this.network)
+          : skillName === WATER_BOLT_SKILL
+            ? this.network.castWaterBolt.bind(this.network)
+            : skillName === AIR_BOLT_SKILL
+              ? this.network.castAirBolt.bind(this.network)
+              : this.network.castEarthBolt.bind(this.network);
+      this.tryRangedAction(targetKind, targetId, SPELL_ATTACK_RANGE_TILES, () => {
+        void cast({ targetKind, targetId }).then((ack) => {
+          if (ack.message) {
+            showCenterToast(ack.message);
+            logCombatMessage(ack.message);
+          }
+        });
+      });
+      return;
+    }
+    // Battlemage's own kinetic strike (a later follow-up ask) — same
+    // ranged, walk-into-range shape as augue/the elemental bolts above.
+    if (skillName === KINETIC_STRIKE_SKILL) {
+      const targetKind = this.targetKind;
+      const targetId = this.targetId;
+      this.tryRangedAction(targetKind, targetId, SPELL_ATTACK_RANGE_TILES, () => {
+        void this.network.castKineticStrike({ targetKind, targetId }).then((ack) => {
+          if (ack.message) {
+            showCenterToast(ack.message);
+            logCombatMessage(ack.message);
+          }
+        });
+      });
+      return;
+    }
+    // Hemomancer's own sap health (a later follow-up ask) — same ranged,
+    // walk-into-range shape as augue/the elemental bolts/kinetic strike.
+    if (skillName === SAP_HEALTH_SKILL) {
+      const targetKind = this.targetKind;
+      const targetId = this.targetId;
+      this.tryRangedAction(targetKind, targetId, SPELL_ATTACK_RANGE_TILES, () => {
+        void this.network.castSapHealth({ targetKind, targetId }).then((ack) => {
           if (ack.message) {
             showCenterToast(ack.message);
             logCombatMessage(ack.message);
@@ -3691,7 +4011,16 @@ export class WorldScene extends Phaser.Scene {
   // projectile to animate) or if either end's position isn't resolvable
   // (e.g. the target already left the map some other way).
   private playProjectileEffect(event: CombatEventPayload): void {
-    if (event.skill !== ARCANE_BOLT_SKILL && event.skill !== WAND_BOLT_SKILL) return;
+    const isProjectileSkill =
+      event.skill === ARCANE_BOLT_SKILL ||
+      event.skill === WAND_BOLT_SKILL ||
+      event.skill === FIRE_BOLT_SKILL ||
+      event.skill === WATER_BOLT_SKILL ||
+      event.skill === AIR_BOLT_SKILL ||
+      event.skill === EARTH_BOLT_SKILL ||
+      event.skill === KINETIC_STRIKE_SKILL ||
+      event.skill === SAP_HEALTH_SKILL;
+    if (!isProjectileSkill) return;
     const attackerPos = this.attackerPosition(event.attacker);
     if (!attackerPos) return;
 
@@ -3701,18 +4030,33 @@ export class WorldScene extends Phaser.Scene {
     else targetSprite = event.target === this.myUsername ? this.player : this.otherPlayers.get(event.target);
     if (!targetSprite) return;
 
-    const from = this.tilePosition(attackerPos.row, attackerPos.col);
-    const textureKey = event.skill === ARCANE_BOLT_SKILL ? ARCANE_BOLT_TEXTURE_KEY : BOLT_TEXTURE_KEY;
+    const attackerPixelPos = this.tilePosition(attackerPos.row, attackerPos.col);
+    // Sap health (a later follow-up ask) — "blood flowing from the target
+    // into the player": the ONE projectile here that travels in reverse
+    // (target -> attacker, tinted red) rather than attacker -> target.
+    const isSapHealth = event.skill === SAP_HEALTH_SKILL;
+    const from = isSapHealth ? { x: targetSprite.x, y: targetSprite.y } : attackerPixelPos;
+    const to = isSapHealth ? attackerPixelPos : { x: targetSprite.x, y: targetSprite.y };
+    // Fire bolt reuses the fireball texture (a later follow-up ask); the
+    // other 3 elemental bolts each get their own new sprite.
+    let textureKey: string;
+    if (event.skill === ARCANE_BOLT_SKILL) textureKey = ARCANE_BOLT_TEXTURE_KEY;
+    else if (event.skill === FIRE_BOLT_SKILL) textureKey = FIREBALL_TEXTURE_KEY;
+    else if (event.skill === WATER_BOLT_SKILL) textureKey = WATER_BOLT_TEXTURE_KEY;
+    else if (event.skill === AIR_BOLT_SKILL) textureKey = AIR_BOLT_TEXTURE_KEY;
+    else if (event.skill === EARTH_BOLT_SKILL) textureKey = EARTH_BOLT_TEXTURE_KEY;
+    else textureKey = BOLT_TEXTURE_KEY;
     const projectile = this.add.sprite(from.x, from.y, textureKey).setDepth(4);
-    projectile.setRotation(Phaser.Math.Angle.Between(from.x, from.y, targetSprite.x, targetSprite.y));
+    if (isSapHealth) projectile.setTint(0xaa0000);
+    projectile.setRotation(Phaser.Math.Angle.Between(from.x, from.y, to.x, to.y));
 
-    const distance = Phaser.Math.Distance.Between(from.x, from.y, targetSprite.x, targetSprite.y);
+    const distance = Phaser.Math.Distance.Between(from.x, from.y, to.x, to.y);
     const PROJECTILE_SPEED_PX_PER_S = 480;
     const duration = Math.max(120, (distance / PROJECTILE_SPEED_PX_PER_S) * 1000);
     this.tweens.add({
       targets: projectile,
-      x: targetSprite.x,
-      y: targetSprite.y,
+      x: to.x,
+      y: to.y,
       duration,
       onComplete: () => projectile.destroy(),
     });

@@ -67,6 +67,17 @@ export const affectsBody = document.getElementById('affects-body') as HTMLDivEle
 export const chestModal = document.getElementById('chest-modal') as HTMLDivElement;
 export const chestModalTitle = document.getElementById('chest-modal-title') as HTMLHeadingElement;
 export const chestItemList = document.getElementById('chest-item-list') as HTMLUListElement;
+
+// Recall's own destination picker (a later follow-up ask) — a plain list
+// of every visited point of interest, same "simple clickable list" shape
+// as the chest modal above.
+export const recallModal = document.getElementById('recall-modal') as HTMLDivElement;
+export const recallPoiList = document.getElementById('recall-poi-list') as HTMLUListElement;
+// The Summoner's own "monster summons" picker (a later follow-up ask) —
+// same plain clickable-list shape as recall's own destination picker
+// above, just listing killedMonsterKinds instead of visitedPois.
+export const monsterSummonsModal = document.getElementById('monster-summons-modal') as HTMLDivElement;
+export const monsterSummonsList = document.getElementById('monster-summons-list') as HTMLUListElement;
 // A Dorms bed's own sleep-confirmation prompt (a later follow-up ask) —
 // plain Yes/No, no list.
 export const bedModal = document.getElementById('bed-modal') as HTMLDivElement;
@@ -98,6 +109,8 @@ export const ALL_MODALS = [
   targetInfoModal,
   autopilotModal,
   chestModal,
+  recallModal,
+  monsterSummonsModal,
   bedModal,
   benchModal,
   logoutConfirmModal,

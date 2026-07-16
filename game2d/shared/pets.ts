@@ -9,7 +9,7 @@
 // until the player buys a new one is NOT possible (only one at a time),
 // so for now a killed pet simply stops acting until a future
 // resurrection feature exists.
-import type { MapName, MonsterKind } from './constants.js';
+import type { MapName, MonsterKind, Race } from './constants.js';
 
 export const PET_KINDS = ['puppy', 'kitten', 'piglet'] as const;
 export type PetKind = (typeof PET_KINDS)[number];
@@ -56,7 +56,16 @@ export interface PetSnapshot {
 export interface AnimatedMonsterSnapshot {
   id: string;
   ownerUsername: string;
-  monsterKind: MonsterKind;
+  // Usually a real MonsterKind (animate dead/monster summons/demon imp).
+  // The Illusionist's own "create duplicate" (a later follow-up ask)
+  // instead stores the caster's own Race here, so it renders as a copy
+  // of the player's own sprite — characterSprites.ts's SpriteKind (client-
+  // only) already spans both MonsterKind and Race, so no client-side
+  // rendering change is needed, just this widened shared type. A human
+  // caster's duplicate falls back to the same generic
+  // 'human-male-white-brown' placeholder look the corpse system already
+  // uses for a human race with no other death-system entry.
+  monsterKind: MonsterKind | Race;
   name: string;
   hp: number;
   maxHp: number;

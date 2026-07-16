@@ -30,6 +30,16 @@ export type StoneBlockLocator = (id: string) => { mapName: MapName; row: number;
 // it no longer exists (already destroyed/expired) — lets
 // stepTowardAggroTarget know whether to keep chasing it.
 export type StoneBlockDamager = (id: string, amount: number, attackerLabel: string) => number | undefined;
+// The Diabolist's demon imp (a later follow-up ask): "draw the aggro of
+// monsters the player is attacking" — locates the OWNER's own active
+// demon imp (if any), keyed by owner username since setAggro only ever
+// knows the attacking player's username, not an animated-monster id.
+// Set by GameGateway (which owns AnimatedMonsterManagerService), same
+// callback-injection reasoning as StoneBlockLocator above.
+export type DemonImpLocator = (ownerUsername: string) => { id: string; mapName: MapName; row: number; col: number } | undefined;
+// Returns the imp's REMAINING hp after the hit, or undefined if it no
+// longer exists (already killed/removed).
+export type DemonImpDamager = (ownerUsername: string, id: string, amount: number) => number | undefined;
 
 // A much smaller version of the text game's own monster-manager.service.ts
 // — no engaged-in-combat tracking (a punch here is a single instant
@@ -56,6 +66,16 @@ export class MonsterManagerService {
     this.isPlayerAt = checker;
   }
 
+  // Barrier (a later follow-up ask) — "monsters cannot get into the
+  // barrier while it is active." Same callback-injection reasoning as the
+  // occupancy checker above (GameGateway owns the activeBarriers
+  // registry, not this service).
+  private isBarrierZone: OccupancyChecker = () => false;
+
+  setBarrierZoneChecker(checker: OccupancyChecker): void {
+    this.isBarrierZone = checker;
+  }
+
   // Set alongside the occupancy checker, same reasoning — lets a monster
   // that's aggroed onto a player (see setAggro/wanderAll) know where to
   // chase them without a circular Monsters<->Worlds dependency.
@@ -79,6 +99,26 @@ export class MonsterManagerService {
   private static readonly AGGRO_CHASE_STEPS_PER_TICK = 2;
 
   setAggro(monsterId: string, targetUsername: string, tick: number): void {
+    // Illusionist's own invisibility (a later follow-up ask) — "monsters
+    // ... cannot see the player while it's active": refuse to set NEW
+    // aggro at all while invisible. Aggro already pointed at this player
+    // from BEFORE they turned invisible is cleared separately, the
+    // instant invisibility actually activates (see clearAllAggroOnto,
+    // called from game.gateway.ts's handleCastInvisibility).
+    if (this.isInvisible(targetUsername)) return;
+    // Diabolist's own demon imp (a later follow-up ask) — "draw the
+    // aggro of monsters the player is attacking": unlike murus
+    // lapideus's own one-time redirect at cast time, this checks on
+    // EVERY setAggro call, so every monster this owner subsequently
+    // attacks goes after the imp instead of them for as long as it's
+    // alive, not just whatever happened to be aggro'd the instant it
+    // was summoned.
+    const demonImp = this.locateDemonImp(targetUsername);
+    if (demonImp) {
+      this.animatedMonsterAggro.set(monsterId, { ownerUsername: targetUsername, animatedMonsterId: demonImp.id, lastContactTick: tick });
+      this.aggro.delete(monsterId);
+      return;
+    }
     this.aggro.set(monsterId, { targetUsername, lastContactTick: tick });
   }
 
@@ -126,6 +166,40 @@ export class MonsterManagerService {
     this.damageStoneBlock = damager;
   }
 
+  // Diabolist's own demon imp (a later follow-up ask) — same callback-
+  // injection reasoning as the stone-block callbacks above, since
+  // GameGateway (not MonsterManagerService) owns
+  // AnimatedMonsterManagerService. Keyed by monsterId (which monster is
+  // aggro'd onto which owner's imp), mirroring stoneBlockAggro's own shape.
+  private animatedMonsterAggro = new Map<string, { ownerUsername: string; animatedMonsterId: string; lastContactTick: number }>();
+  private locateDemonImp: DemonImpLocator = () => undefined;
+  private damageDemonImp: DemonImpDamager = () => undefined;
+  private static readonly MONSTER_VS_DEMON_IMP_DAMAGE = 5;
+
+  setDemonImpCallbacks(locator: DemonImpLocator, damager: DemonImpDamager): void {
+    this.locateDemonImp = locator;
+    this.damageDemonImp = damager;
+  }
+
+  // Illusionist's own invisibility (a later follow-up ask) — same
+  // callback-injection reasoning as the others above, since invisibility
+  // state lives on SocketData (GameGateway), not here.
+  private isInvisible: (username: string) => boolean = () => false;
+  setInvisibilityChecker(checker: (username: string) => boolean): void {
+    this.isInvisible = checker;
+  }
+
+  // Clears EVERY monster currently aggro'd onto this player (unlike
+  // findMonsterAggroedOnto's own "any ONE is fine" shape) — called the
+  // instant invisibility actually activates, so monsters that were
+  // already chasing this player don't keep doing so just because
+  // setAggro itself is only ever consulted on a FRESH aggro attempt.
+  clearAllAggroOnto(targetUsername: string): void {
+    for (const [monsterId, entry] of this.aggro) {
+      if (entry.targetUsername === targetUsername) this.aggro.delete(monsterId);
+    }
+  }
+
   // Finds ONE monster currently aggro'd onto this player (any one is
   // fine — "a monster" singular, not all of them) — used by
   // handleCastMurusLapideus to know whether there's anything to redirect.
@@ -152,6 +226,40 @@ export class MonsterManagerService {
   isStunned(monsterId: string, currentTick: number): boolean {
     const monster = this.monsters.get(monsterId);
     return monster?.stunUntilTick !== undefined && currentTick < monster.stunUntilTick;
+  }
+
+  // Water bolt (a later follow-up ask) — see Monster.slowUntilTick.
+  slow(monsterId: string, untilTick: number): void {
+    const monster = this.monsters.get(monsterId);
+    if (monster) monster.slowUntilTick = untilTick;
+  }
+
+  isSlowed(monsterId: string, currentTick: number): boolean {
+    const monster = this.monsters.get(monsterId);
+    return monster?.slowUntilTick !== undefined && currentTick < monster.slowUntilTick;
+  }
+
+  // Air bolt (a later follow-up ask) — "slightly push the monster back":
+  // one tile directly away from the caster's own position, only if that
+  // tile is actually free (a wall/another monster/water etc. just
+  // absorbs the push rather than erroring). A much smaller nudge than
+  // Battlemage's own kinetic-strike knockback (7 feet) — same direction
+  // math, different magnitude, so both can share this helper.
+  knockback(monsterId: string, fromRow: number, fromCol: number, tiles: number): void {
+    const monster = this.monsters.get(monsterId);
+    if (!monster) return;
+    const dRow = monster.row - fromRow;
+    const dCol = monster.col - fromCol;
+    const stepRow = Math.abs(dRow) >= Math.abs(dCol) ? Math.sign(dRow) : 0;
+    const stepCol = stepRow === 0 ? Math.sign(dCol) : 0;
+    if (stepRow === 0 && stepCol === 0) return; // caster standing on the monster's own tile — no direction to push
+    for (let i = 0; i < tiles; i++) {
+      const nextRow = monster.row + stepRow;
+      const nextCol = monster.col + stepCol;
+      if (!this.isFree(monster.mapName, nextRow, nextCol)) break;
+      monster.row = nextRow;
+      monster.col = nextCol;
+    }
   }
 
   spawnInitial(): void {
@@ -201,6 +309,7 @@ export class MonsterManagerService {
     if (isPortalBlocked(mapName, row, col)) return false;
     if (isBramwickSignBlocked(mapName, row, col)) return false;
     if (isStairsSideBlocked(mapName, row, col)) return false;
+    if (this.isBarrierZone(mapName, row, col)) return false;
     for (const m of this.monsters.values()) {
       if (m.mapName === mapName && m.row === row && m.col === col) return false;
     }
@@ -399,6 +508,32 @@ export class MonsterManagerService {
       return true;
     }
 
+    // Diabolist's own demon imp (a later follow-up ask) — same
+    // "redirect takes priority, chase-then-chip-away" shape as the
+    // stone-block branch above; redirected automatically in setAggro
+    // (not a one-time snapshot like murus lapideus), so this covers
+    // every monster the owner has ATTACKED since the imp went up, not
+    // just whatever happened to already be aggro'd.
+    const demonImpAggro = this.animatedMonsterAggro.get(monster.id);
+    if (demonImpAggro) {
+      const target = this.locateDemonImp(demonImpAggro.ownerUsername);
+      if (!target || target.id !== demonImpAggro.animatedMonsterId || target.mapName !== monster.mapName) {
+        this.animatedMonsterAggro.delete(monster.id);
+        return false;
+      }
+      const dRow = target.row - monster.row;
+      const dCol = target.col - monster.col;
+      if (Math.abs(dRow) <= 1 && Math.abs(dCol) <= 1) {
+        const remainingHp = this.damageDemonImp(demonImpAggro.ownerUsername, demonImpAggro.animatedMonsterId, MonsterManagerService.MONSTER_VS_DEMON_IMP_DAMAGE);
+        if (remainingHp === undefined || remainingHp <= 0) this.animatedMonsterAggro.delete(monster.id);
+        return true;
+      }
+      if (this.stepToward(monster, target.row, target.col, changedMaps)) {
+        demonImpAggro.lastContactTick = currentTick;
+      }
+      return true;
+    }
+
     const aggro = this.aggro.get(monster.id);
     if (!aggro) return false;
 
@@ -451,7 +586,11 @@ export class MonsterManagerService {
     // overshooting past the player. Patrol/free wander and the
     // stone-block chase above are unaffected — only closing in on an
     // aggro'd PLAYER gets the speed boost.
-    for (let i = 0; i < MonsterManagerService.AGGRO_CHASE_STEPS_PER_TICK; i++) {
+    // Water bolt (a later follow-up ask) — "slow the monster down for 1
+    // combat tick": a slowed monster still chases, just at the ordinary
+    // 1-step pace even while aggro'd, for as long as slowUntilTick says.
+    const chaseSteps = this.isSlowed(monster.id, currentTick) ? 1 : MonsterManagerService.AGGRO_CHASE_STEPS_PER_TICK;
+    for (let i = 0; i < chaseSteps; i++) {
       this.stepToward(monster, target.row, target.col, changedMaps);
       if (Math.abs(target.row - monster.row) <= 1 && Math.abs(target.col - monster.col) <= 1) break;
     }

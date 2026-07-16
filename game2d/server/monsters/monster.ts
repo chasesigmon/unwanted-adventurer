@@ -61,6 +61,12 @@ export interface Monster extends CombatantStats {
   // MonsterManagerService.isStunned/stun). Undefined (the common case)
   // means "not currently stunned."
   stunUntilTick?: number;
+  // Water bolt (a later follow-up ask) — a much lighter version of the
+  // above: while currentTick is below this, the monster still moves/acts,
+  // just at the ordinary (non-aggro'd) pace even if it's currently
+  // aggro'd (see MonsterManagerService.slow/isSlowed and its own
+  // AGGRO_CHASE_STEPS_PER_TICK step-count check).
+  slowUntilTick?: number;
   // Copied from MonsterSpecies.attackDamage at spawn time (a later
   // follow-up ask: "the imp did not start moving toward the player when
   // attacked... they should move into range to hit the player if

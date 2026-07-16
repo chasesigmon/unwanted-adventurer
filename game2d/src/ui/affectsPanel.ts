@@ -31,6 +31,18 @@ function activeAffects(): ActiveAffect[] {
   if (myProfile.scutumActive && myProfile.scutumActiveUntil) {
     affects.push({ label: 'Scutum', expiresAt: myProfile.scutumActiveUntil });
   }
+  if (myProfile.barrierActive && myProfile.barrierActiveUntil) {
+    affects.push({ label: 'Barrier', expiresAt: myProfile.barrierActiveUntil });
+  }
+  if (myProfile.enhanceDamageActive && myProfile.enhanceDamageActiveUntil) {
+    affects.push({ label: 'Enhance Damage', expiresAt: myProfile.enhanceDamageActiveUntil });
+  }
+  if (myProfile.invisibleActive && myProfile.invisibleActiveUntil) {
+    affects.push({ label: 'Invisibility', expiresAt: myProfile.invisibleActiveUntil });
+  }
+  if (myProfile.wispActive && myProfile.wispActiveUntil) {
+    affects.push({ label: 'Wisp Transformation', expiresAt: myProfile.wispActiveUntil });
+  }
   // A later follow-up ask — restState has no fixed duration at all (the
   // player wakes/stands up whenever they choose), so these never carry an
   // expiresAt.

@@ -112,6 +112,15 @@ export class Player {
   @Column({ name: 'max_mv', type: 'real', default: 200 })
   maxMv!: number;
 
+  // Hemomancer's own resource (a later follow-up ask) — granted at 100
+  // the moment a player becomes a Hemomancer (see handleChooseSpecialization),
+  // 0 for everyone else. No max_bp column — MAX_BP is a flat constant
+  // (shared/skills.ts), never scales with level/stats. Uncapped at the
+  // FLOOR (unlike hp/mana/mv) — see applyStatTick's own bp regen and
+  // handleCastSapHealth's below-zero HP penalty.
+  @Column({ type: 'int', default: 0 })
+  bp!: number;
+
   @Column({ type: 'int', default: 1 })
   level!: number;
 
@@ -207,6 +216,18 @@ export class Player {
 
   @Column({ type: 'varchar', length: 16, nullable: true, default: null })
   specialization!: SpecializationPath | null;
+
+  // Recall's own "have I been there" gate (a later follow-up ask) — a
+  // flat array of shared/recall.ts RecallPoint ids, appended to the first
+  // time the player ever enters that point of interest's own map (see
+  // game.gateway.ts's handleMove).
+  @Column({ name: 'visited_pois', type: 'jsonb', default: () => "'[]'" })
+  visitedPois!: string[];
+
+  // Summoner's own kill-tracking (a later follow-up ask) — see
+  // shared/types.ts's own doc comment.
+  @Column({ name: 'killed_monster_kinds', type: 'jsonb', default: () => "'[]'" })
+  killedMonsterKinds!: string[];
 
   @Column({ name: 'last_login', type: 'timestamptz', default: () => 'now()' })
   lastLogin!: Date;

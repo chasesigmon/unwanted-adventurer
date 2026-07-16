@@ -543,6 +543,125 @@ export class NetworkManager extends EventTarget {
     });
   }
 
+  // The Elementalist's own 4 bolts (a later follow-up ask) — same target
+  // shape as augue above.
+  castFireBolt(target: AugueTargetPayload): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castFireBolt', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castWaterBolt(target: AugueTargetPayload): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castWaterBolt', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castAirBolt(target: AugueTargetPayload): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castAirBolt', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castEarthBolt(target: AugueTargetPayload): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castEarthBolt', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castLesserHeal(target: AugueTargetPayload | null): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castLesserHeal', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castSapHealth(target: AugueTargetPayload): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castSapHealth', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castKineticStrike(target: AugueTargetPayload): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castKineticStrike', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castLesserSelfHeal(): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castLesserSelfHeal', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castWispTransformation(): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castWispTransformation', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
   // Resera (a later follow-up ask) targets a door or chest, not a combat
   // target — see WorldScene's own lockTarget field.
   castResera(target: LockTarget): Promise<CastReseraAck> {
@@ -721,6 +840,19 @@ export class NetworkManager extends EventTarget {
     });
   }
 
+  castEnhanceDamage(): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castEnhanceDamage', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
   castMurusLapideus(target: TileTargetPayload): Promise<CastSpellAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
@@ -747,6 +879,88 @@ export class NetworkManager extends EventTarget {
     });
   }
 
+  // The Utility Classroom's own level-15 spell (a later follow-up ask) —
+  // see game.gateway.ts's handleCastRecall.
+  castRecall(poiId: string): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castRecall', { poiId }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castInvisibility(): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castInvisibility', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castCreateDuplicate(): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castCreateDuplicate', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castSummonDemonImp(): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castSummonDemonImp', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castMonsterSummons(monsterKind: string): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castMonsterSummons', { monsterKind }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // The Defense Classroom's own level-10 spell (a later follow-up ask) —
+  // see game.gateway.ts's handleCastBarrier.
+  castBarrier(): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castBarrier', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
   animatedMonsterCommand(id: string, command: PetCommand): Promise<AnimatedMonsterCommandAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
@@ -754,6 +968,19 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('animatedMonsterCommand', { id, command }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  removeAnimatedMonster(id: string): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('removeAnimatedMonster', { id }, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

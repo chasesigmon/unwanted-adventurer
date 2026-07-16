@@ -98,7 +98,9 @@ export const CASTLE_UPPER_FLOOR_MAPS = ['Grimoak Castle 2nd Floor', 'Grimoak Cas
 // desk-free" carve-out the Specialization room already uses.
 export const SPECIALIZATION_CHAMBER_MAPS = [
   'Necromancer Chamber',
-  'Enhancer Chamber',
+  // A later follow-up ask renamed this specialization from Enhancer to
+  // Shaman (mechanics to come later) — the chamber map name follows suit.
+  'Shaman Chamber',
   'Elementalist Chamber',
   'Summoner Chamber',
   'Illusionist Chamber',
@@ -223,7 +225,9 @@ export function houseForMap(map: MapName): HouseName | undefined {
 // handleChooseSpecialization).
 export const SPECIALIZATION_PATHS = [
   'necromancer',
-  'enhancer',
+  // A later follow-up ask renamed this path from Enhancer to Shaman —
+  // mechanics come later (see item 34's follow-up ask for the first one).
+  'shaman',
   'elementalist',
   'summoner',
   'illusionist',
@@ -331,7 +335,10 @@ export type Direction = (typeof DIRECTIONS)[number];
 // bare "goblin"/"skeleton") so they're never confused with the
 // player-choosable races above, same disambiguation the text game's own
 // monster kinds use.
-export const MONSTER_KINDS = ['wild goblin', 'wild skeleton', 'imp'] as const;
+// 'demon imp' (a later follow-up ask) is Diabolist-summon-only — never a
+// wild spawn, so it has no MONSTER_SPECIES entry, no corpse, no
+// carriedItemRolls; see game.gateway.ts's handleCastSummonDemonImp.
+export const MONSTER_KINDS = ['wild goblin', 'wild skeleton', 'imp', 'demon imp'] as const;
 export type MonsterKind = (typeof MONSTER_KINDS)[number];
 
 // Same idea as the text game's own monster classification — determines

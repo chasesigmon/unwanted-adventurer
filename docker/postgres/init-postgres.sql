@@ -71,6 +71,10 @@ CREATE TABLE IF NOT EXISTS players (
   max_hp INTEGER NOT NULL DEFAULT 100,
   mana INTEGER NOT NULL DEFAULT 100,
   max_mana INTEGER NOT NULL DEFAULT 100,
+  -- Hemomancer's own resource (a later follow-up ask) — 0 for everyone
+  -- else, granted at 100 the moment a player becomes a Hemomancer. No
+  -- max_bp column; its max (100) is a flat constant, never per-player.
+  bp INTEGER NOT NULL DEFAULT 0,
   level INTEGER NOT NULL DEFAULT 1,
   exp INTEGER NOT NULL DEFAULT 0,
   skills JSONB NOT NULL DEFAULT '{"punch": 1}',

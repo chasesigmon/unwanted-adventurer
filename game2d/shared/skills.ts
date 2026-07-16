@@ -2,7 +2,7 @@
 // which owns the actual growth/chance mechanics) and the client (the
 // Skills/Spells modals) — pure data, no server-only logic, so it lives
 // here rather than being duplicated.
-import type { Race, SpecializationPath } from './constants.js';
+import type { Race, SpecializationPath, MonsterKind } from './constants.js';
 
 // A follow-up ask: "once a skill is learned, start it out at 10% instead
 // of 1%" — applies uniformly to every skill grant in the game (starting
@@ -175,8 +175,278 @@ export const ANIMATE_DEAD_CAP_AT_LEVEL_20 = 2;
 export function animatedMonsterCapFor(level: number): number {
   return level >= ANIMATE_DEAD_LEVEL_20_THRESHOLD ? ANIMATE_DEAD_CAP_AT_LEVEL_20 : ANIMATE_DEAD_CAP_BEFORE_LEVEL_20;
 }
+
 // "The animated monster should have 2x the hp of the original monster."
 export const ANIMATE_DEAD_HP_MULTIPLIER = 2;
+
+// The Utility Classroom's own level-15 spell (a later follow-up ask) —
+// opens a modal listing every major point of interest the player has
+// already visited (see shared/recall.ts), rather than a click-a-tile/
+// click-a-corpse targeted cast. Teleports the caster's own pet/animated
+// monsters along with them.
+export const RECALL_SKILL = 'recall';
+export const RECALL_MANA_COST = 30;
+
+// The Defense Classroom's own level-10 spell (a later follow-up ask) —
+// a fixed-position dome around the caster's cast location: they can't
+// leave it, and monsters can't enter it or damage them while it's active
+// (see game.gateway.ts's own activeBarriers registry). Recasting while
+// active cancels it early, bypassing the cooldown gate entirely — only a
+// FRESH barrier (cast while none is active) is cooldown-gated.
+export const BARRIER_SKILL = 'barrier';
+export const BARRIER_MANA_COST = 15;
+export const BARRIER_DURATION_MS = 2 * 60 * 1000;
+export const BARRIER_COOLDOWN_MS = 4 * 60 * 1000;
+export const BARRIER_RADIUS_TILES = 3;
+
+// The Shaman specialization's own level-15 spell (a later follow-up ask)
+// — a fixed-duration self-buff adding a flat bonus to the caster's basic
+// (ranged or physical) attack damage while active, same "always ON for
+// its own duration, no manual toggle-off" shape as scutum. Named
+// distinctly from the pre-existing ENHANCED_DAMAGE_SKILL (a Hobgoblin-
+// only INNATE passive with a different string value, 'enhanced damage')
+// to avoid confusion despite the near-identical names.
+export const SHAMAN_ENHANCE_DAMAGE_SKILL = 'enhance damage';
+export const SHAMAN_ENHANCE_DAMAGE_MANA_COST = 15;
+export const SHAMAN_ENHANCE_DAMAGE_DURATION_MS = 3 * 60 * 1000;
+export const SHAMAN_ENHANCE_DAMAGE_COOLDOWN_MS = 4 * 60 * 1000;
+export const SHAMAN_ENHANCE_DAMAGE_BONUS = 5;
+
+// The Elementalist specialization's own 4 level-15 spells (a later
+// follow-up ask) — same targeted-bolt shape as Arcane Bolt (same range,
+// same mana cost/damage across all 4), each with its own secondary
+// effect on a successful hit: fire bolt burns (same DoT as the
+// pre-existing augue/fireball mechanic, see game.gateway.ts's
+// augueBurns), water bolt slows, air bolt knocks back slightly, earth
+// bolt stuns briefly in place.
+export const FIRE_BOLT_SKILL = 'fire bolt';
+export const WATER_BOLT_SKILL = 'water bolt';
+export const AIR_BOLT_SKILL = 'air bolt';
+export const EARTH_BOLT_SKILL = 'earth bolt';
+export const ELEMENTAL_BOLT_SKILLS = [FIRE_BOLT_SKILL, WATER_BOLT_SKILL, AIR_BOLT_SKILL, EARTH_BOLT_SKILL];
+export const ELEMENTAL_BOLT_MANA_COST = 10;
+export const ELEMENTAL_BOLT_DAMAGE = 10;
+// "A cooldown of 1 combat tick" — same literal MONSTER_TICK_INTERVAL_MS
+// reasoning as Arcane Bolt's own cooldown (shared/ can't import a
+// server-only constant); these are direct siblings of that spell.
+export const ELEMENTAL_BOLT_COOLDOWN_MS = 1 * 3000;
+// "Create a rock formation around the target's legs for 1 combat tick" —
+// earth bolt's own stun duration, deliberately shorter than
+// stupefaciunt's own 2-tick STUPEFACIUNT_STUN_TICKS.
+export const EARTH_BOLT_STUN_TICKS = 1;
+// "Slow the monster down for 1 combat tick."
+export const WATER_BOLT_SLOW_TICKS = 1;
+// "Slightly push the monster or player back" — one tile, a much smaller
+// nudge than Battlemage's own kinetic-strike knockback (7 feet).
+export const AIR_BOLT_KNOCKBACK_TILES = 1;
+
+// The Cleric specialization's own level-15 spell (a later follow-up ask)
+// — heals the caster's own "friendly target" (see game.gateway.ts's
+// handleCastLesserHeal for exactly what counts), falling back to healing
+// the caster themselves when no such target is selected. No cooldown of
+// its own — mana cost alone gates recasting, same as recall.
+export const LESSER_HEAL_SKILL = 'lesser heal';
+export const LESSER_HEAL_MANA_COST = 10;
+export const LESSER_HEAL_AMOUNT = 15;
+
+// The Cleric specialization's own passive (a later follow-up ask) — a
+// flat bonus added to the caster's basic (ranged or physical) attack
+// damage, but ONLY against a target classified undead (a monster with
+// MonsterClass 'undead', or any character — monster/NPC/player — of the
+// 'skeleton' race; see game.gateway.ts's isUndeadTarget). One of the rare
+// skills explicitly stated to start at MAX_SKILL_PERCENT (see
+// startingPercentFor below) rather than the ordinary 70% baseline.
+export const ENHANCED_UNDEAD_DAMAGE_SKILL = 'enhanced undead damage';
+export const ENHANCED_UNDEAD_DAMAGE_BONUS = 5;
+
+// The Druid specialization's own level-15 spell (a later follow-up ask)
+// — no target at all, always heals the caster. A short 5-second
+// cooldown (only starts on a successful cast) rather than the
+// minutes-long cooldowns every other spell here uses.
+export const LESSER_SELF_HEAL_SKILL = 'lesser self heal';
+export const LESSER_SELF_HEAL_MANA_COST = 5;
+export const LESSER_SELF_HEAL_AMOUNT = 10;
+export const LESSER_SELF_HEAL_COOLDOWN_MS = 5 * 1000;
+
+// The Druid specialization's other level-15 spell (a later follow-up
+// ask) — a fixed-duration self-transformation, same "always ON for its
+// own duration once cast, no manual toggle-off" shape as scutum/barrier
+// (needs the same full PlayerState/world-manager threading THOSE use,
+// since every nearby player needs to see the caster's sprite actually
+// change — see WorldScene's own wisp-sprite swap). While active: no
+// attacking (see game.gateway.ts's wispActive checks in handlePunch/
+// handleUseSkill/handleEngageRangedAttack) and movement is 20% faster
+// (see WorldScene's effectiveMoveCooldownMs).
+export const WISP_TRANSFORMATION_SKILL = 'wisp transformation';
+export const WISP_TRANSFORMATION_MANA_COST = 20;
+export const WISP_TRANSFORMATION_DURATION_MS = 2 * 60 * 1000;
+export const WISP_TRANSFORMATION_COOLDOWN_MS = 3 * 60 * 1000;
+// "20% faster" — a move-cooldown multiplier, same shape as celeritas's
+// own 0.9 factor (10% faster) in WorldScene's effectiveMoveCooldownMs.
+export const WISP_MOVE_COOLDOWN_FACTOR = 0.8;
+
+// The Battlemage specialization's own 2 level-15 passives (a later
+// follow-up ask) — each a CHANCE (scaled off learned percent, same
+// scaledSkillChance formula hobgoblin's second/third attack already
+// uses) to grant a flat +5, rolled per-hit. Enhanced armor grows every
+// hit the battlemage TAKES from a monster; enhanced damage grows every
+// ranged/physical attack the battlemage MAKES (see game.gateway.ts's
+// resolveMonsterCounterAttack/rollExtraAttacks). Named
+// BATTLEMAGE_ENHANCED_DAMAGE_SKILL with its own distinct string value —
+// the ask calls it "enhanced damage" too, same as the pre-existing
+// Hobgoblin-only ENHANCED_DAMAGE_SKILL, but the two must never share a
+// literal skills-record key or a Hobgoblin Battlemage's innate flat
+// bonus and this chance-based learned one would corrupt each other.
+export const BATTLEMAGE_ENHANCED_ARMOR_SKILL = 'enhanced armor';
+export const BATTLEMAGE_ENHANCED_ARMOR_BONUS = 5;
+export const BATTLEMAGE_ENHANCED_DAMAGE_SKILL = 'battlemage enhanced damage';
+export const BATTLEMAGE_ENHANCED_DAMAGE_BONUS = 5;
+
+// The Battlemage specialization's own level-15 spell (a later follow-up
+// ask) — same targeted, ranged, monster/npc-only shape as the
+// Elementalist's bolts (see game.gateway.ts's resolveElementalBolt,
+// reused directly with this spell's own damage/mana figures), but knocks
+// the target back a full 7 tiles ("7 feet equivalent") instead of
+// applying a status effect. No mana cost or cooldown was specified in
+// the original ask — mana matches every other targeted-attack spell
+// here (SPELL_ATTACK_MANA_COST), and the cooldown matches the
+// Elementalist bolts' own 1-combat-tick figure, as the closest sibling
+// spell shape.
+export const KINETIC_STRIKE_SKILL = 'kinetic strike';
+export const KINETIC_STRIKE_MANA_COST = 10;
+export const KINETIC_STRIKE_DAMAGE = 5;
+export const KINETIC_STRIKE_KNOCKBACK_TILES = 7;
+export const KINETIC_STRIKE_COOLDOWN_MS = 1 * 3000;
+
+// The Hemomancer specialization's own resource (a later follow-up ask)
+// — a flat, never-scaling max (unlike hp/mana/mv, no maxBp column at
+// all — see player.entity.ts's own bp column). Granted at MAX_BP the
+// moment a player becomes a Hemomancer (see game.gateway.ts's
+// handleChooseSpecialization); regenerates on every stat tick like mana,
+// but at BP_REGEN_MULTIPLIER the rate (see applyStatTick), and — unlike
+// every other resource here — has no floor at 0: see
+// SAP_HEALTH_HP_PENALTY below.
+export const MAX_BP = 100;
+export const BP_REGEN_MULTIPLIER = 2;
+
+// The Hemomancer specialization's own level-15 spell (a later follow-up
+// ask) — the first spell in the game costed in BP instead of mana. Same
+// targeted, ranged, monster/npc-only shape as the Elementalist's bolts,
+// but drains the damage dealt back to the caster as healing (the ask's
+// own "blood flowing from the target into the player" animation cue).
+// "The player should be able to continue using BP even when they reach
+// 0 or below" — casting never fails for lack of BP, it just goes
+// negative; but "once the player STARTS USING BP BELOW 0" (i.e. BP is
+// ALREADY negative at the moment of a fresh cast) "it should cost them
+// half the spell cost... in health per cast" — see
+// game.gateway.ts's handleCastSapHealth for exactly where that check
+// happens (BEFORE this cast's own deduction, not after).
+export const SAP_HEALTH_SKILL = 'sap health';
+export const SAP_HEALTH_BP_COST = 10;
+export const SAP_HEALTH_AMOUNT = 10;
+export const SAP_HEALTH_HP_PENALTY = Math.floor(SAP_HEALTH_BP_COST / 2);
+export const SAP_HEALTH_COOLDOWN_MS = 1 * 3000;
+
+// The Summoner specialization's own level-15 spell (a later follow-up
+// ask) — "similar mechanics to animate dead or pets," so it reuses
+// AnimatedMonsterManagerService.animate() directly (same
+// animatedMonsterCapFor cap: 1 at level 15, 2 at level 20 — identical
+// numbers to animate dead's own cap, not a coincidence) rather than a
+// new manager service. Clicking/hotkeying it opens a modal (client-side)
+// listing every unique monster kind this Summoner has ever killed (see
+// game.gateway.ts's recordMonsterKill, gated on specialization ===
+// 'summoner'); picking one from that modal is the actual cast, costing
+// mana and rolling success like any other spell. The summoned monster's
+// stats are the killed species' own base maxHp/attackDamage (see
+// MONSTER_SPECIES) plus these flat bonuses.
+export const MONSTER_SUMMONS_SKILL = 'monster summons';
+export const MONSTER_SUMMONS_MANA_COST = 20;
+// No cooldown was specified in the original ask — matches
+// ANIMATE_DEAD_COOLDOWN_MS exactly, the closest sibling spell (both
+// summon a persistent ally through the same manager service).
+export const MONSTER_SUMMONS_COOLDOWN_MS = ANIMATE_DEAD_COOLDOWN_MS;
+export const MONSTER_SUMMONS_HP_BONUS = 100;
+export const MONSTER_SUMMONS_DAMAGE_BONUS = 5;
+
+// The Diabolist specialization's own level-15 spell (a later follow-up
+// ask) — "similar mechanics to animate dead or pets" (same cap, same
+// command/remove infrastructure), but a FIXED summon rather than
+// choosing from a killed-monster list: always the same new,
+// Diabolist-only MonsterKind with its own fixed stats, never a wild
+// spawn (no MONSTER_SPECIES entry, no corpse). "Draw the aggro of
+// monsters the player is attacking" is handled server-side in
+// MonsterManagerService's own setAggro/setDemonImpCallbacks.
+export const DEMON_IMP_KIND: MonsterKind = 'demon imp';
+export const SUMMON_DEMON_IMP_SKILL = 'summon demon imp';
+export const SUMMON_DEMON_IMP_MANA_COST = 20;
+export const DEMON_IMP_HP = 200;
+export const DEMON_IMP_DAMAGE = 10;
+// No cooldown was specified in the original ask — matches
+// ANIMATE_DEAD_COOLDOWN_MS exactly, the closest sibling spell (both
+// summon a persistent ally through the same manager service).
+export const SUMMON_DEMON_IMP_COOLDOWN_MS = 3 * 60 * 1000;
+
+// The Diabolist specialization's other level-15 skill (a later follow-up
+// ask) — same "+5 vs a classified target" shape as Cleric's enhanced
+// undead damage, but for a 'holy' classification that doesn't exist
+// anywhere in this game yet (MonsterClass is only 'normal' | 'undead' —
+// see shared/constants.ts). Deliberately NOT wired into any damage
+// calculation (would just be permanently-dead code always checking
+// false) — learnable and described like every other skill, but stays
+// mechanically inert until some future monster/race is actually
+// classified holy.
+export const ENHANCED_HOLY_DAMAGE_SKILL = 'enhanced holy damage';
+export const ENHANCED_HOLY_DAMAGE_BONUS = 5;
+
+// The Illusionist specialization's own level-15 spell (a later follow-up
+// ask) — a fixed-duration self-buff like scutum, but with an extra early-
+// cancel condition scutum doesn't have: "if the player attacks while
+// invisible then the effect should go away" (see game.gateway.ts's
+// breakInvisibilityIfActive, checked at the same basic-attack entry
+// points wisp's own no-attack rule uses). Two conflicting mana figures
+// appeared in the original ask (10, then 15) — going with 15, the more
+// specific one (mentioned alongside the spell's own cooldown). "Monsters
+// and players cannot see the player" is handled server-side (clears/
+// blocks monster aggro — see MonsterManagerService's own
+// setInvisibilityChecker) and client-side (bystanders skip rendering
+// this player's sprite entirely — see WorldScene's applyMapState; the
+// CASTER's own client instead fades their own sprite, per "make the
+// player's sprite slightly faded").
+export const INVISIBILITY_SKILL = 'invisibility';
+export const INVISIBILITY_MANA_COST = 15;
+export const INVISIBILITY_DURATION_MS = 1 * 60 * 1000;
+export const INVISIBILITY_COOLDOWN_MS = 2 * 60 * 1000;
+
+// The Illusionist specialization's other level-15 spell (a later follow-
+// up ask) — "similar mechanics to animate dead or pets" (same cap, same
+// command/remove infrastructure) but a FIXED 5-minute lifespan (unlike
+// every other animated ally here, which lasts until logged out or
+// killed) — see game.gateway.ts's own activeDuplicates registry/
+// checkDuplicateExpiry. Renders as an exact copy of the caster's own
+// sprite (their Race — see AnimatedMonsterSnapshot's own widened
+// monsterKind type) rather than a MonsterKind. "Should do ranged or
+// physical damage depending on what is equipped" is captured as a single
+// damage-figure SNAPSHOT taken at cast time (see
+// game.gateway.ts's duplicateDamageFor) — no animated monster/pet in
+// this game has live equipment-aware combat AI yet ('attack' mode is
+// still just a stored command, not yet resolved into actual damage, for
+// every summon type built so far), so this matches that same existing
+// scope boundary rather than inventing one just for the duplicate.
+export const CREATE_DUPLICATE_SKILL = 'create duplicate';
+export const CREATE_DUPLICATE_MANA_COST = 20;
+export const CREATE_DUPLICATE_HP_MULTIPLIER = 0.75;
+export const CREATE_DUPLICATE_DURATION_MS = 5 * 60 * 1000;
+export const CREATE_DUPLICATE_COOLDOWN_MS = 6 * 60 * 1000;
+
+// The small number of skills explicitly stated to start at 100% instead
+// of the ordinary 70% baseline (see STARTING_SKILL_PERCENT above) — both
+// are passive "extra damage vs a classified target" skills belonging to
+// specializations whose own flavor is built around already being
+// experts at it (Cleric vs undead here; Diabolist vs holy, still to come).
+export const FULLY_LEARNED_SKILLS = [ENHANCED_UNDEAD_DAMAGE_SKILL, ENHANCED_HOLY_DAMAGE_SKILL];
+export function startingPercentFor(skill: string): number {
+  return FULLY_LEARNED_SKILLS.includes(skill) ? MAX_SKILL_PERCENT : STARTING_SKILL_PERCENT;
+}
 
 // Which level a skill/spell becomes learnable at (a later follow-up ask
 // replaced the old podium-reading system with a teacher click-to-learn
@@ -191,6 +461,26 @@ export const SKILL_LEVEL_REQUIREMENT: Record<string, number> = {
   [DISARM_SKILL]: 5,
   [STONE_WALL_SKILL]: 5,
   [ANIMATE_DEAD_SKILL]: 15,
+  [RECALL_SKILL]: 15,
+  [BARRIER_SKILL]: 10,
+  [SHAMAN_ENHANCE_DAMAGE_SKILL]: 15,
+  [FIRE_BOLT_SKILL]: 15,
+  [WATER_BOLT_SKILL]: 15,
+  [AIR_BOLT_SKILL]: 15,
+  [EARTH_BOLT_SKILL]: 15,
+  [LESSER_HEAL_SKILL]: 15,
+  [ENHANCED_UNDEAD_DAMAGE_SKILL]: 15,
+  [LESSER_SELF_HEAL_SKILL]: 15,
+  [WISP_TRANSFORMATION_SKILL]: 15,
+  [BATTLEMAGE_ENHANCED_ARMOR_SKILL]: 15,
+  [BATTLEMAGE_ENHANCED_DAMAGE_SKILL]: 15,
+  [KINETIC_STRIKE_SKILL]: 15,
+  [SAP_HEALTH_SKILL]: 15,
+  [MONSTER_SUMMONS_SKILL]: 15,
+  [SUMMON_DEMON_IMP_SKILL]: 15,
+  [ENHANCED_HOLY_DAMAGE_SKILL]: 15,
+  [INVISIBILITY_SKILL]: 15,
+  [CREATE_DUPLICATE_SKILL]: 15,
 };
 
 // A skill/spell that also requires a specific chosen specialization to
@@ -199,6 +489,24 @@ export const SKILL_LEVEL_REQUIREMENT: Record<string, number> = {
 // level is met).
 export const SKILL_SPECIALIZATION_REQUIREMENT: Partial<Record<string, SpecializationPath>> = {
   [ANIMATE_DEAD_SKILL]: 'necromancer',
+  [SHAMAN_ENHANCE_DAMAGE_SKILL]: 'shaman',
+  [FIRE_BOLT_SKILL]: 'elementalist',
+  [WATER_BOLT_SKILL]: 'elementalist',
+  [AIR_BOLT_SKILL]: 'elementalist',
+  [EARTH_BOLT_SKILL]: 'elementalist',
+  [LESSER_HEAL_SKILL]: 'cleric',
+  [ENHANCED_UNDEAD_DAMAGE_SKILL]: 'cleric',
+  [LESSER_SELF_HEAL_SKILL]: 'druid',
+  [WISP_TRANSFORMATION_SKILL]: 'druid',
+  [BATTLEMAGE_ENHANCED_ARMOR_SKILL]: 'battlemage',
+  [BATTLEMAGE_ENHANCED_DAMAGE_SKILL]: 'battlemage',
+  [KINETIC_STRIKE_SKILL]: 'battlemage',
+  [SAP_HEALTH_SKILL]: 'hemomancer',
+  [MONSTER_SUMMONS_SKILL]: 'summoner',
+  [SUMMON_DEMON_IMP_SKILL]: 'diabolist',
+  [ENHANCED_HOLY_DAMAGE_SKILL]: 'diabolist',
+  [INVISIBILITY_SKILL]: 'illusionist',
+  [CREATE_DUPLICATE_SKILL]: 'illusionist',
 };
 
 // Every skill a teacher can actually offer through the click-to-learn
@@ -216,6 +524,26 @@ export const LEARNABLE_SKILLS = [
   DISARM_SKILL,
   STONE_WALL_SKILL,
   ANIMATE_DEAD_SKILL,
+  RECALL_SKILL,
+  BARRIER_SKILL,
+  SHAMAN_ENHANCE_DAMAGE_SKILL,
+  FIRE_BOLT_SKILL,
+  WATER_BOLT_SKILL,
+  AIR_BOLT_SKILL,
+  EARTH_BOLT_SKILL,
+  LESSER_HEAL_SKILL,
+  ENHANCED_UNDEAD_DAMAGE_SKILL,
+  LESSER_SELF_HEAL_SKILL,
+  WISP_TRANSFORMATION_SKILL,
+  BATTLEMAGE_ENHANCED_ARMOR_SKILL,
+  BATTLEMAGE_ENHANCED_DAMAGE_SKILL,
+  KINETIC_STRIKE_SKILL,
+  SAP_HEALTH_SKILL,
+  MONSTER_SUMMONS_SKILL,
+  SUMMON_DEMON_IMP_SKILL,
+  ENHANCED_HOLY_DAMAGE_SKILL,
+  INVISIBILITY_SKILL,
+  CREATE_DUPLICATE_SKILL,
 ];
 
 // A skill with an entry here can't be re-queued until this long (wall-
@@ -247,6 +575,32 @@ export const SKILL_COOLDOWN_MS: Partial<Record<string, number>> = {
   [HASTE_SKILL]: 5 * 60 * 1000,
   // "A 3 minute cooldown" (a later follow-up ask, for animate dead).
   [ANIMATE_DEAD_SKILL]: ANIMATE_DEAD_COOLDOWN_MS,
+  // "A cooldown of 4 minutes" (a later follow-up ask, for barrier) — only
+  // gates starting a FRESH barrier; recasting while one is already active
+  // cancels it instead, bypassing this entirely (see
+  // game.gateway.ts's handleCastBarrier).
+  [BARRIER_SKILL]: BARRIER_COOLDOWN_MS,
+  // "A 4 minute cooldown" (a later follow-up ask, for Shaman's enhance
+  // damage) — only starts on a successful cast, same as every other timed
+  // self-buff here.
+  [SHAMAN_ENHANCE_DAMAGE_SKILL]: SHAMAN_ENHANCE_DAMAGE_COOLDOWN_MS,
+  [FIRE_BOLT_SKILL]: ELEMENTAL_BOLT_COOLDOWN_MS,
+  [WATER_BOLT_SKILL]: ELEMENTAL_BOLT_COOLDOWN_MS,
+  [AIR_BOLT_SKILL]: ELEMENTAL_BOLT_COOLDOWN_MS,
+  [EARTH_BOLT_SKILL]: ELEMENTAL_BOLT_COOLDOWN_MS,
+  // "5 second cooldown on success" (a later follow-up ask, for Druid's
+  // lesser self heal) — only starts on a successful cast, same as every
+  // other timed spell/self-buff here.
+  [LESSER_SELF_HEAL_SKILL]: LESSER_SELF_HEAL_COOLDOWN_MS,
+  // "A 3 minute cooldown on success" (a later follow-up ask, for wisp
+  // transformation).
+  [WISP_TRANSFORMATION_SKILL]: WISP_TRANSFORMATION_COOLDOWN_MS,
+  [KINETIC_STRIKE_SKILL]: KINETIC_STRIKE_COOLDOWN_MS,
+  [SAP_HEALTH_SKILL]: SAP_HEALTH_COOLDOWN_MS,
+  [MONSTER_SUMMONS_SKILL]: MONSTER_SUMMONS_COOLDOWN_MS,
+  [SUMMON_DEMON_IMP_SKILL]: SUMMON_DEMON_IMP_COOLDOWN_MS,
+  [INVISIBILITY_SKILL]: INVISIBILITY_COOLDOWN_MS,
+  [CREATE_DUPLICATE_SKILL]: CREATE_DUPLICATE_COOLDOWN_MS,
 };
 
 export const RACE_INNATE_SKILLS: Record<Race, string[]> = {

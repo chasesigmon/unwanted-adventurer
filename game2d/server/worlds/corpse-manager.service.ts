@@ -37,6 +37,11 @@ const BODY_PART_LABEL: Record<Race | MonsterKind, string> = {
   // A placeholder, like the human entry above — imp combat/death details
   // ("killing an imp") are still to come.
   imp: 'imp horn',
+  // A placeholder too — a Diabolist's demon imp is summon-only (never a
+  // wild spawn) and never actually drops a corpse when it dies (see
+  // AnimatedMonsterManagerService, which has no corpse-spawning of its
+  // own), but the lookup must stay total over MonsterKind.
+  'demon imp': 'imp horn',
 };
 
 export function bodyPartLabelFor(kind: Race | MonsterKind): string {

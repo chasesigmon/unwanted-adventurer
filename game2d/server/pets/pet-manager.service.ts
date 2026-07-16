@@ -121,6 +121,22 @@ export class PetManagerService {
     this.pets.delete(ownerUsername);
   }
 
+  // Recall's own "bring my companions with me" behavior (a later
+  // follow-up ask) — an instant snap to the caster's own destination,
+  // same shape tickAll's own map-change branch already uses, just
+  // triggered directly instead of discovered on the next follow tick.
+  // Returns the pet's PREVIOUS map (so the caller can also re-broadcast
+  // that map's own state) — undefined if this owner has no living pet.
+  teleportToOwner(ownerUsername: string, map: MapName, row: number, col: number): MapName | undefined {
+    const pet = this.pets.get(ownerUsername);
+    if (!pet || !pet.alive) return undefined;
+    const previousMap = pet.map;
+    pet.map = map;
+    pet.row = row;
+    pet.col = col;
+    return previousMap;
+  }
+
   getSnapshotsForMap(mapName: MapName): PetSnapshot[] {
     const snapshots: PetSnapshot[] = [];
     for (const pet of this.pets.values()) {

@@ -20,7 +20,8 @@ function buildMemberCard(
   alive: boolean,
   command: PetCommand,
   expText: string | undefined,
-  onCommand: (command: PetCommand) => void
+  onCommand: (command: PetCommand) => void,
+  onRemove?: () => void
 ): HTMLDivElement {
   const card = document.createElement('div');
   card.className = 'group-member';
@@ -69,6 +70,24 @@ function buildMemberCard(
     });
     commandsEl.appendChild(btn);
   }
+  // "An option... to 'remove' and get rid of" (a later follow-up ask) —
+  // animated monsters only (animate dead/monster summons/demon imp/the
+  // Illusionist's duplicate); a real purchased pet is never removable
+  // this way, so onRemove is simply absent for a pet's own card.
+  if (onRemove) {
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.textContent = 'Remove';
+    removeBtn.disabled = !alive;
+    removeBtn.addEventListener('click', () => {
+      if (sendingCommand) return;
+      sendingCommand = true;
+      Promise.resolve(onRemove()).finally(() => {
+        sendingCommand = false;
+      });
+    });
+    commandsEl.appendChild(removeBtn);
+  }
   card.appendChild(commandsEl);
 
   return card;
@@ -96,10 +115,21 @@ export function updateGroupPanel(pet: PetSnapshot | null, animatedMonsters: Anim
 
   for (const am of animatedMonsters) {
     groupMembers.appendChild(
-      buildMemberCard(am.name, am.hp, am.maxHp, am.alive, am.command, undefined, (command) =>
-        network.animatedMonsterCommand(am.id, command).then((ack) => {
-          if (!ack.ok && ack.message) logCombatMessage(ack.message);
-        })
+      buildMemberCard(
+        am.name,
+        am.hp,
+        am.maxHp,
+        am.alive,
+        am.command,
+        undefined,
+        (command) =>
+          network.animatedMonsterCommand(am.id, command).then((ack) => {
+            if (!ack.ok && ack.message) logCombatMessage(ack.message);
+          }),
+        () =>
+          network.removeAnimatedMonster(am.id).then((ack) => {
+            if (!ack.ok && ack.message) logCombatMessage(ack.message);
+          })
       )
     );
   }

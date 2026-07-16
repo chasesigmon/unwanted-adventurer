@@ -29,6 +29,11 @@ export interface PlayerSnapshot {
   // combat/formulas.ts's STARTING_MV/MV_COST_PER_TILE.
   mv: number;
   maxMv: number;
+  // Hemomancer's own resource (a later follow-up ask) — 0 for everyone
+  // else, granted at 100 the moment a player becomes a Hemomancer. No
+  // maxBp — its max (MAX_BP, shared/skills.ts) is a flat constant.
+  // Can go below 0 (see game.gateway.ts's handleCastSapHealth).
+  bp: number;
   strength: number;
   intelligence: number;
   wisdom: number;
@@ -97,6 +102,45 @@ export interface PlayerSnapshot {
   // check server-side (see resolveHitOnPlayer).
   scutumActive: boolean;
   scutumActiveUntil?: number | null;
+  // Barrier (a later follow-up ask) — same absolute-expiry-timestamp
+  // shape as scutumActiveUntil above, drives the yellow dome visual (see
+  // WorldScene's updateBarrierVisual) and the movement/damage-immunity
+  // gates server-side (see game.gateway.ts's handleMove/
+  // resolveMonsterCounterAttack). The dome's own fixed origin lives in
+  // GameGateway's own activeBarriers registry, not here.
+  barrierActive: boolean;
+  barrierActiveUntil?: number | null;
+  // Shaman's "enhance damage" (a later follow-up ask) — same fixed-
+  // duration self-buff shape as scutum, but with no visible effect on
+  // OTHER players' screens (just a flat damage bonus — see
+  // game.gateway.ts's rollExtraAttacks/resolveRangedAutoAttack), so unlike
+  // scutum/barrier this never needs to thread through PlayerState/
+  // world-manager's broadcast snapshot — only the OWNING client's own
+  // Affects modal countdown reads it.
+  enhanceDamageActive?: boolean;
+  enhanceDamageActiveUntil?: number | null;
+  // Druid's wisp transformation (a later follow-up ask) — same
+  // fixed-duration self-buff shape as scutum/barrier, threaded through
+  // PlayerState/world-manager's broadcast snapshot (unlike
+  // enhanceDamageActive above) since every nearby player needs to see
+  // the caster's sprite actually swap to the wisp form (see WorldScene's
+  // updateWispVisual). No damage-immunity/movement-confinement gate like
+  // barrier — just the no-attack/faster-movement rules (see
+  // game.gateway.ts's wispActive checks, WorldScene's
+  // effectiveMoveCooldownMs).
+  wispActive: boolean;
+  wispActiveUntil?: number | null;
+  // Illusionist's invisibility (a later follow-up ask) — same
+  // fixed-duration self-buff shape as scutum/barrier/wisp, threaded
+  // through PlayerState/world-manager's broadcast snapshot for the
+  // OPPOSITE reason wisp's own visual is: every nearby player needs to
+  // know to SKIP rendering this player's sprite entirely (see
+  // WorldScene's applyMapState), while the OWNING client instead just
+  // fades its own sprite (see updateInvisibilityVisual). Breaks early on
+  // the caster's own basic attack (see game.gateway.ts's
+  // breakInvisibilityIfActive) — no manual recast-to-cancel like barrier.
+  invisibleActive: boolean;
+  invisibleActiveUntil?: number | null;
   // Zombie-only Eat Brains cooldown, in the same world-tick units as
   // WorldTimePayload.tick — lets the client gray the button out instead
   // of letting it be clicked and fail (see main.ts's updateEatBrainsButton).
@@ -179,6 +223,17 @@ export interface PlayerSnapshot {
   // recording the choice. Optional for the same reason as mapUnlocked
   // above.
   specialization?: SpecializationPath;
+  // Recall's own "have I been there" gate (a later follow-up ask) — only
+  // ever populated/read for the LOCAL player's own snapshot (see
+  // game.gateway.ts's snapshotFor); other players' own map:state entries
+  // simply omit it, same "optional, self-only" shape as mapUnlocked.
+  visitedPois?: string[];
+  // Summoner's own "which monster kinds can I summon" gate (a later
+  // follow-up ask) — same "optional, self-only" shape as visitedPois:
+  // only populated once a player has actually specialized into Summoner
+  // (see game.gateway.ts's recordMonsterKill), read by the monster
+  // summons modal.
+  killedMonsterKinds?: string[];
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
@@ -556,6 +611,11 @@ export interface CastSpellAck {
   mana?: number;
   skills?: Record<string, number>;
   message?: string;
+  // Barrier's own fixed dome origin (a later follow-up ask) — present
+  // only on a successful FRESH barrier cast, so the caster's own client
+  // can draw the dome centered on the exact server-authoritative cast
+  // tile rather than assuming its own (possibly stale) local position.
+  barrierOrigin?: { row: number; col: number };
 }
 
 // Augue's own target (a follow-up ask) — the only kind of target this
@@ -681,6 +741,7 @@ export interface StatTickPayload {
   maxMana: number;
   mv: number;
   maxMv: number;
+  bp: number;
   hunger: number;
   thirst: number;
 }
@@ -759,6 +820,34 @@ export interface ClientToServerEvents {
   // one needs a target (the only kind this game currently offers is a
   // wild monster); see game.gateway.ts's handleCastAugue.
   castAugue: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  // The Elementalist's own 4 bolts (a later follow-up ask) — same target
+  // shape as augue above.
+  castFireBolt: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  castWaterBolt: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  castAirBolt: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  castEarthBolt: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  // Cleric's own lesser heal (a later follow-up ask) — null when the
+  // caster has no player currently selected (heals themselves instead).
+  castLesserHeal: (payload: AugueTargetPayload | null, ack: (res: CastSpellAck) => void) => void;
+  // Druid's own 2 spells (a later follow-up ask) — both no-target.
+  castLesserSelfHeal: (ack: (res: CastSpellAck) => void) => void;
+  castWispTransformation: (ack: (res: CastSpellAck) => void) => void;
+  // Battlemage's own targeted spell (a later follow-up ask) — same
+  // target shape as augue/the elemental bolts.
+  castKineticStrike: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  // Hemomancer's own targeted spell (a later follow-up ask) — same
+  // target shape as augue/the elemental bolts/kinetic strike.
+  castSapHealth: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  // The Summoner's own monster-summons modal pick (a later follow-up
+  // ask) — no target selection needed, just which kind to summon.
+  castMonsterSummons: (payload: { monsterKind: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
+  // The Diabolist's own fixed summon (a later follow-up ask) — no
+  // payload needed at all.
+  castSummonDemonImp: (ack: (res: { ok: boolean; message?: string }) => void) => void;
+  // The Illusionist's own 2 spells (a later follow-up ask) — both
+  // no-target.
+  castInvisibility: (ack: (res: CastSpellAck) => void) => void;
+  castCreateDuplicate: (ack: (res: { ok: boolean; message?: string }) => void) => void;
   // The wand's ranged auto-attack (a follow-up ask) — arms/refreshes a
   // sustained combat session against this target (resolved automatically
   // every combat tick from here on, see combatTick's own WAND_BOLT_SKILL
@@ -851,6 +940,13 @@ export interface ClientToServerEvents {
   chooseSpecialization: (payload: { path: SpecializationPath }, ack: (res: { ok: boolean; message?: string }) => void) => void;
   castAnimateDead: (payload: { corpseId: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
   animatedMonsterCommand: (payload: { id: string; command: PetCommand }, ack: (res: AnimatedMonsterCommandAck) => void) => void;
+  // "An option... to 'remove' and get rid of" (a later follow-up ask) —
+  // a dedicated event rather than folding into PetCommand, since a real
+  // pet is never removable this way (only animated monsters are).
+  removeAnimatedMonster: (payload: { id: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
+  castRecall: (payload: { poiId: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
+  castBarrier: (ack: (res: { ok: boolean; message?: string }) => void) => void;
+  castEnhanceDamage: (ack: (res: CastSpellAck) => void) => void;
   // ===== TESTING OVERRIDE — REMOVE AFTER TESTING ===== "add a 'cheat'
   // hotkey... pressing it should recover my mana to 100%. This will go
   // away after testing." Bound to the '~' key client-side (see
@@ -884,6 +980,7 @@ export interface SocketData {
   maxMana: number;
   mv: number;
   maxMv: number;
+  bp: number;
   skills: Record<string, number>;
   inventory: string[];
   equipment: Record<string, string>;
@@ -936,6 +1033,17 @@ export interface SocketData {
   // manual toggle-off, unlike lucem/celeritas).
   scutumActive: boolean;
   scutumActiveUntil: number | null;
+  barrierActive: boolean;
+  barrierActiveUntil: number | null;
+  // Shaman's "enhance damage" — see PlayerSnapshot's own enhanceDamageActive.
+  enhanceDamageActive: boolean;
+  enhanceDamageActiveUntil: number | null;
+  // Druid's wisp transformation — see PlayerSnapshot's own wispActive.
+  wispActive: boolean;
+  wispActiveUntil: number | null;
+  // Illusionist's invisibility — see PlayerSnapshot's own invisibleActive.
+  invisibleActive: boolean;
+  invisibleActiveUntil: number | null;
   // The secret room system (a follow-up ask) — persisted; loaded from the
   // player doc on connect. See the DB column's own comment
   // (docker/postgres/init-postgres.sql) for what each one means.
@@ -954,6 +1062,12 @@ export interface SocketData {
   // set). See PlayerSnapshot's own doc comment for what each gates.
   house: HouseName | null;
   specialization: SpecializationPath | null;
+  // Recall's own "have I been there" gate (a later follow-up ask) — see
+  // PlayerSnapshot's own doc comment.
+  visitedPois: string[];
+  // Summoner's own kill-tracking (a later follow-up ask) — see
+  // PlayerSnapshot's own doc comment.
+  killedMonsterKinds: string[];
 }
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

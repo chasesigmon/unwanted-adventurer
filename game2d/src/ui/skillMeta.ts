@@ -32,6 +32,56 @@ import {
   AEGIS_SKILL,
   STONE_WALL_SKILL,
   ANIMATE_DEAD_SKILL,
+  RECALL_SKILL,
+  RECALL_MANA_COST,
+  BARRIER_SKILL,
+  BARRIER_MANA_COST,
+  BARRIER_RADIUS_TILES,
+  SHAMAN_ENHANCE_DAMAGE_SKILL,
+  SHAMAN_ENHANCE_DAMAGE_MANA_COST,
+  SHAMAN_ENHANCE_DAMAGE_BONUS,
+  FIRE_BOLT_SKILL,
+  WATER_BOLT_SKILL,
+  AIR_BOLT_SKILL,
+  EARTH_BOLT_SKILL,
+  ELEMENTAL_BOLT_MANA_COST,
+  ELEMENTAL_BOLT_DAMAGE,
+  LESSER_HEAL_SKILL,
+  LESSER_HEAL_MANA_COST,
+  LESSER_HEAL_AMOUNT,
+  ENHANCED_UNDEAD_DAMAGE_SKILL,
+  ENHANCED_UNDEAD_DAMAGE_BONUS,
+  LESSER_SELF_HEAL_SKILL,
+  LESSER_SELF_HEAL_MANA_COST,
+  LESSER_SELF_HEAL_AMOUNT,
+  WISP_TRANSFORMATION_SKILL,
+  WISP_TRANSFORMATION_MANA_COST,
+  BATTLEMAGE_ENHANCED_ARMOR_SKILL,
+  BATTLEMAGE_ENHANCED_ARMOR_BONUS,
+  BATTLEMAGE_ENHANCED_DAMAGE_SKILL,
+  BATTLEMAGE_ENHANCED_DAMAGE_BONUS,
+  KINETIC_STRIKE_SKILL,
+  KINETIC_STRIKE_MANA_COST,
+  KINETIC_STRIKE_DAMAGE,
+  KINETIC_STRIKE_KNOCKBACK_TILES,
+  SAP_HEALTH_SKILL,
+  SAP_HEALTH_BP_COST,
+  SAP_HEALTH_AMOUNT,
+  MONSTER_SUMMONS_SKILL,
+  MONSTER_SUMMONS_MANA_COST,
+  MONSTER_SUMMONS_HP_BONUS,
+  MONSTER_SUMMONS_DAMAGE_BONUS,
+  SUMMON_DEMON_IMP_SKILL,
+  SUMMON_DEMON_IMP_MANA_COST,
+  DEMON_IMP_HP,
+  DEMON_IMP_DAMAGE,
+  ENHANCED_HOLY_DAMAGE_SKILL,
+  ENHANCED_HOLY_DAMAGE_BONUS,
+  INVISIBILITY_SKILL,
+  INVISIBILITY_MANA_COST,
+  CREATE_DUPLICATE_SKILL,
+  CREATE_DUPLICATE_MANA_COST,
+  CREATE_DUPLICATE_HP_MULTIPLIER,
   DRINK_SKILL,
   POUR_SKILL,
   SKILL_COOLDOWN_MS,
@@ -105,6 +155,22 @@ export function isUsableSkill(skillName: string): boolean {
     skillName === AEGIS_SKILL ||
     skillName === STONE_WALL_SKILL ||
     skillName === ANIMATE_DEAD_SKILL ||
+    skillName === RECALL_SKILL ||
+    skillName === BARRIER_SKILL ||
+    skillName === SHAMAN_ENHANCE_DAMAGE_SKILL ||
+    skillName === FIRE_BOLT_SKILL ||
+    skillName === WATER_BOLT_SKILL ||
+    skillName === AIR_BOLT_SKILL ||
+    skillName === EARTH_BOLT_SKILL ||
+    skillName === LESSER_HEAL_SKILL ||
+    skillName === LESSER_SELF_HEAL_SKILL ||
+    skillName === WISP_TRANSFORMATION_SKILL ||
+    skillName === KINETIC_STRIKE_SKILL ||
+    skillName === SAP_HEALTH_SKILL ||
+    skillName === MONSTER_SUMMONS_SKILL ||
+    skillName === SUMMON_DEMON_IMP_SKILL ||
+    skillName === INVISIBILITY_SKILL ||
+    skillName === CREATE_DUPLICATE_SKILL ||
     skillName === DRINK_SKILL ||
     skillName === POUR_SKILL
   );
@@ -155,6 +221,26 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
     'Click this, then click a spot on the map within 10 feet — summons a stone block ally there for 30 seconds (or until destroyed) that draws monster aggro and absorbs hits. Costs 10 mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.',
   [ANIMATE_DEAD_SKILL]:
     "Necromancer-only. Click this, then click a monster's corpse — raises it as an animated ally under your command (follow/stay/sleep/attack), with 2x its hp when alive and the same attack. Lasts until it's slain or you log off; limited to 1 at a time (2 at level 20+). Costs 15 mana; has its own 3-minute cooldown. Success chance scales with skill percent, intelligence, and luck.",
+  [RECALL_SKILL]: `Opens a list of every major point of interest you've already visited — click one to teleport there instantly, along with your pet/animated monsters. Costs ${RECALL_MANA_COST} mana. Success chance scales with skill percent, intelligence, and luck.`,
+  [BARRIER_SKILL]: `No target needed — summons a ${BARRIER_RADIUS_TILES}-tile-radius dome centered on you that fully blocks monster attacks and confines your own movement to its edge for 2 minutes. Cast again anytime (even on cooldown) to cancel it early for free. Costs ${BARRIER_MANA_COST} mana; a fresh cast has its own 4-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [SHAMAN_ENHANCE_DAMAGE_SKILL]: `Shaman-only. No target needed — adds +${SHAMAN_ENHANCE_DAMAGE_BONUS} to your basic ranged/physical attack damage for 3 minutes. Costs ${SHAMAN_ENHANCE_DAMAGE_MANA_COST} mana; a fresh cast has its own 4-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [FIRE_BOLT_SKILL]: `Elementalist-only. Hurls a bolt of fire at your selected target (a monster) from up to 7 tiles away, dealing ${ELEMENTAL_BOLT_DAMAGE} damage plus a couple ticks of lingering burn damage. Costs ${ELEMENTAL_BOLT_MANA_COST} mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [WATER_BOLT_SKILL]: `Elementalist-only. Hurls a bolt of water at your selected target (a monster) from up to 7 tiles away, dealing ${ELEMENTAL_BOLT_DAMAGE} damage and slowing it for a combat tick. Costs ${ELEMENTAL_BOLT_MANA_COST} mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [AIR_BOLT_SKILL]: `Elementalist-only. Hurls a bolt of wind at your selected target (a monster) from up to 7 tiles away, dealing ${ELEMENTAL_BOLT_DAMAGE} damage and pushing it back a step. Costs ${ELEMENTAL_BOLT_MANA_COST} mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [EARTH_BOLT_SKILL]: `Elementalist-only. Hurls a bolt of stone at your selected target (a monster) from up to 7 tiles away, dealing ${ELEMENTAL_BOLT_DAMAGE} damage and rooting it in place for a combat tick. Costs ${ELEMENTAL_BOLT_MANA_COST} mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [LESSER_HEAL_SKILL]: `Cleric-only. Heals your selected friendly target (another player, as long as they aren't currently attacking you) for ${LESSER_HEAL_AMOUNT} hp, or yourself if no such target is selected. Costs ${LESSER_HEAL_MANA_COST} mana. Success chance scales with skill percent, intelligence, and luck.`,
+  [ENHANCED_UNDEAD_DAMAGE_SKILL]: `Cleric-only: a flat +${ENHANCED_UNDEAD_DAMAGE_BONUS} bonus added to your ranged/physical attacks against anything classified undead (wild skeletons, and any skeleton-race player).`,
+  [LESSER_SELF_HEAL_SKILL]: `Druid-only. No target needed — heals yourself for ${LESSER_SELF_HEAL_AMOUNT} hp. Costs ${LESSER_SELF_HEAL_MANA_COST} mana; a successful cast has its own 5-second cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [WISP_TRANSFORMATION_SKILL]: `Druid-only. No target needed — transforms you into a shimmering wisp of light for 2 minutes: you can't attack while transformed, but move 20% faster. Costs ${WISP_TRANSFORMATION_MANA_COST} mana; a successful cast has its own 3-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [BATTLEMAGE_ENHANCED_ARMOR_SKILL]: `Battlemage-only: a chance (scaling with skill percent) to reduce a hit you take from a monster by ${BATTLEMAGE_ENHANCED_ARMOR_BONUS}. Grows every hit you take, landed or avoided.`,
+  [BATTLEMAGE_ENHANCED_DAMAGE_SKILL]: `Battlemage-only: a chance (scaling with skill percent) to add +${BATTLEMAGE_ENHANCED_DAMAGE_BONUS} to a ranged/physical attack you make. Grows every attack you make, hit or miss.`,
+  [KINETIC_STRIKE_SKILL]: `Battlemage-only. Strikes your selected target (a monster) from up to 7 tiles away for ${KINETIC_STRIKE_DAMAGE} damage and knocks it back ${KINETIC_STRIKE_KNOCKBACK_TILES} tiles. Costs ${KINETIC_STRIKE_MANA_COST} mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [SAP_HEALTH_SKILL]: `Hemomancer-only. Drains your selected target (a monster) from up to 7 tiles away for ${SAP_HEALTH_AMOUNT} damage and heals you for the same amount. Costs ${SAP_HEALTH_BP_COST} bp instead of mana — bp can go below 0, but casting again while it's already negative also costs you hp. Has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [MONSTER_SUMMONS_SKILL]: `Summoner-only. Opens a list of every unique monster you've killed since specializing — pick one to summon it as an ally with +${MONSTER_SUMMONS_HP_BONUS} hp and +${MONSTER_SUMMONS_DAMAGE_BONUS} damage over the original. Costs ${MONSTER_SUMMONS_MANA_COST} mana. Success chance scales with skill percent, intelligence, and luck.`,
+  [SUMMON_DEMON_IMP_SKILL]: `Diabolist-only. No target needed — summons a demon imp ally with ${DEMON_IMP_HP} hp and ${DEMON_IMP_DAMAGE} damage per hit, which draws the aggro of any monster you attack while it's alive. Costs ${SUMMON_DEMON_IMP_MANA_COST} mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [ENHANCED_HOLY_DAMAGE_SKILL]: `Diabolist-only: a flat +${ENHANCED_HOLY_DAMAGE_BONUS} bonus added to your ranged/physical attacks against anything classified holy. (No monster or race in the game is classified holy yet.)`,
+  [INVISIBILITY_SKILL]: `Illusionist-only. No target needed — turns you invisible to monsters and other players for 1 minute (your own sprite just looks faded to you). Attacking breaks it early. Costs ${INVISIBILITY_MANA_COST} mana; a successful cast has its own 2-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [CREATE_DUPLICATE_SKILL]: `Illusionist-only. No target needed — creates a duplicate of yourself with ${Math.round(CREATE_DUPLICATE_HP_MULTIPLIER * 100)}% of your hp, lasting 5 minutes. Costs ${CREATE_DUPLICATE_MANA_COST} mana; a successful cast has its own 6-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
   [DRINK_SKILL]: 'Takes a drink from a targeted container (a canteen). Select it in your inventory first, then click this.',
   [POUR_SKILL]: 'Empties out a targeted container (a canteen). Select it in your inventory first, then click this.',
 };
@@ -278,9 +364,29 @@ const SKILL_CATEGORY_MAP: Record<string, SkillCategory> = {
   [LESSER_FIRE_RESISTANCE]: 'Defense',
   [ENHANCED_DURABILITY_SKILL]: 'Defense',
   [AEGIS_SKILL]: 'Defense',
+  [BARRIER_SKILL]: 'Defense',
+  [SHAMAN_ENHANCE_DAMAGE_SKILL]: 'Offense',
+  [FIRE_BOLT_SKILL]: 'Offense',
+  [WATER_BOLT_SKILL]: 'Offense',
+  [AIR_BOLT_SKILL]: 'Offense',
+  [EARTH_BOLT_SKILL]: 'Offense',
+  [LESSER_HEAL_SKILL]: 'Utility',
+  [LESSER_SELF_HEAL_SKILL]: 'Utility',
+  [WISP_TRANSFORMATION_SKILL]: 'Utility',
+  [BATTLEMAGE_ENHANCED_ARMOR_SKILL]: 'Defense',
+  [BATTLEMAGE_ENHANCED_DAMAGE_SKILL]: 'Offense',
+  [KINETIC_STRIKE_SKILL]: 'Offense',
+  [SAP_HEALTH_SKILL]: 'Offense',
+  [MONSTER_SUMMONS_SKILL]: 'Summoning',
+  [SUMMON_DEMON_IMP_SKILL]: 'Summoning',
+  [ENHANCED_HOLY_DAMAGE_SKILL]: 'Offense',
+  [INVISIBILITY_SKILL]: 'Utility',
+  [CREATE_DUPLICATE_SKILL]: 'Summoning',
+  [ENHANCED_UNDEAD_DAMAGE_SKILL]: 'Offense',
   [LIGHT_SKILL]: 'Utility',
   [HASTE_SKILL]: 'Utility',
   [UNLOCK_SKILL]: 'Utility',
+  [RECALL_SKILL]: 'Utility',
   [DRINK_SKILL]: 'Utility',
   [POUR_SKILL]: 'Utility',
   [INFRAVISION_SKILL]: 'Utility',

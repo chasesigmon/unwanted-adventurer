@@ -169,6 +169,67 @@ import {
   skillLevelRequirement,
   practicePointCostFor,
   SKILL_SPECIALIZATION_REQUIREMENT,
+  RECALL_SKILL,
+  RECALL_MANA_COST,
+  BARRIER_SKILL,
+  BARRIER_MANA_COST,
+  BARRIER_DURATION_MS,
+  BARRIER_RADIUS_TILES,
+  SHAMAN_ENHANCE_DAMAGE_SKILL,
+  SHAMAN_ENHANCE_DAMAGE_MANA_COST,
+  SHAMAN_ENHANCE_DAMAGE_DURATION_MS,
+  SHAMAN_ENHANCE_DAMAGE_BONUS,
+  FIRE_BOLT_SKILL,
+  WATER_BOLT_SKILL,
+  AIR_BOLT_SKILL,
+  EARTH_BOLT_SKILL,
+  ELEMENTAL_BOLT_MANA_COST,
+  ELEMENTAL_BOLT_DAMAGE,
+  EARTH_BOLT_STUN_TICKS,
+  WATER_BOLT_SLOW_TICKS,
+  AIR_BOLT_KNOCKBACK_TILES,
+  LESSER_HEAL_SKILL,
+  LESSER_HEAL_MANA_COST,
+  LESSER_HEAL_AMOUNT,
+  ENHANCED_UNDEAD_DAMAGE_SKILL,
+  ENHANCED_UNDEAD_DAMAGE_BONUS,
+  startingPercentFor,
+  LESSER_SELF_HEAL_SKILL,
+  LESSER_SELF_HEAL_MANA_COST,
+  LESSER_SELF_HEAL_AMOUNT,
+  WISP_TRANSFORMATION_SKILL,
+  WISP_TRANSFORMATION_MANA_COST,
+  WISP_TRANSFORMATION_DURATION_MS,
+  BATTLEMAGE_ENHANCED_ARMOR_SKILL,
+  BATTLEMAGE_ENHANCED_ARMOR_BONUS,
+  BATTLEMAGE_ENHANCED_DAMAGE_SKILL,
+  BATTLEMAGE_ENHANCED_DAMAGE_BONUS,
+  KINETIC_STRIKE_SKILL,
+  KINETIC_STRIKE_MANA_COST,
+  KINETIC_STRIKE_DAMAGE,
+  KINETIC_STRIKE_KNOCKBACK_TILES,
+  MAX_BP,
+  BP_REGEN_MULTIPLIER,
+  SAP_HEALTH_SKILL,
+  SAP_HEALTH_BP_COST,
+  SAP_HEALTH_AMOUNT,
+  SAP_HEALTH_HP_PENALTY,
+  MONSTER_SUMMONS_SKILL,
+  MONSTER_SUMMONS_MANA_COST,
+  MONSTER_SUMMONS_HP_BONUS,
+  MONSTER_SUMMONS_DAMAGE_BONUS,
+  DEMON_IMP_KIND,
+  SUMMON_DEMON_IMP_SKILL,
+  SUMMON_DEMON_IMP_MANA_COST,
+  DEMON_IMP_HP,
+  DEMON_IMP_DAMAGE,
+  INVISIBILITY_SKILL,
+  INVISIBILITY_MANA_COST,
+  INVISIBILITY_DURATION_MS,
+  CREATE_DUPLICATE_SKILL,
+  CREATE_DUPLICATE_MANA_COST,
+  CREATE_DUPLICATE_HP_MULTIPLIER,
+  CREATE_DUPLICATE_DURATION_MS,
 } from '../../shared/skills.js';
 import {
   CANTEEN_ITEM,
@@ -188,6 +249,7 @@ import {
   POTION_RESTORE_AMOUNT,
 } from '../../shared/items.js';
 import { questDefinition, QUESTS, LEARN_SPELLS_QUEST_ID, allObjectivesDone } from '../../shared/quests.js';
+import { recallPointForMap, recallPointById } from '../../shared/recall.js';
 import { MONSTER_KINDS } from '../../shared/constants.js';
 import type { Direction, MapName, MonsterClass, MonsterKind, Race } from '../../shared/constants.js';
 
@@ -195,6 +257,9 @@ const directionSchema = z.enum(DIRECTIONS);
 const equipmentSlotSchema = z.enum(EQUIPMENT_SLOTS);
 const useSkillSchema = z.object({ direction: directionSchema, skill: z.string() });
 const augueTargetSchema = z.object({ targetKind: z.enum(['player', 'npc', 'monster']), targetId: z.string() });
+// Lesser heal (a later follow-up ask) — nullable since "no friendly
+// target selected" is a valid, explicitly-specced request (heal self).
+const lesserHealTargetSchema = z.object({ targetKind: z.enum(['player', 'npc', 'monster']), targetId: z.string() }).nullable();
 
 // One player's ongoing fight — engageCombat creates/refreshes one of
 // these instead of resolving a hit immediately; combatTick is the only
@@ -410,7 +475,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // handleCastAugue's own success branches. Several can coexist (even on
   // the same target, if augue lands again before an earlier burn
   // expires) — a plain array is enough since each only lives 2 ticks.
-  private augueBurns: Array<{ targetKind: 'npc' | 'monster'; targetId: string; mapName: MapName; ticksRemaining: number; casterUsername: string }> =
+  // spellLabel drives the burn-tick message only ("Lingering flames from
+  // X burn...") — defaults to 'augue' at every pre-existing push site;
+  // fire bolt (a later follow-up ask, same DoT mechanic reused verbatim)
+  // pushes 'fire bolt' instead.
+  private augueBurns: Array<{ targetKind: 'npc' | 'monster'; targetId: string; mapName: MapName; ticksRemaining: number; casterUsername: string; spellLabel: string }> =
     [];
   // One active fight per player, keyed by username — set by engageCombat
   // (right-click or a queued action-bar skill) and resolved once per
@@ -486,12 +555,40 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return died ? 0 : block.hp;
       }
     );
+    // Barrier (a later follow-up ask) — same callback-injection reasoning
+    // as the stone-block callbacks above, since GameGateway (not
+    // MonsterManagerService) owns the activeBarriers registry.
+    this.monsterManager.setBarrierZoneChecker((mapName, row, col) => this.isWithinBarrierZone(mapName, row, col));
+    // Diabolist's own demon imp (a later follow-up ask) — same
+    // callback-injection reasoning as the stone-block callbacks above,
+    // since GameGateway (not MonsterManagerService) owns
+    // AnimatedMonsterManagerService.
+    this.monsterManager.setDemonImpCallbacks(
+      (ownerUsername) => {
+        const imp = this.animatedMonsterManager.getSnapshotsForOwner(ownerUsername).find((m) => m.monsterKind === DEMON_IMP_KIND && m.alive);
+        return imp ? { id: imp.id, mapName: imp.map, row: imp.row, col: imp.col } : undefined;
+      },
+      (ownerUsername, id, amount) => {
+        const result = this.animatedMonsterManager.applyDamage(ownerUsername, id, amount);
+        return result ? result.monster.hp : undefined;
+      }
+    );
+    // Illusionist's own invisibility (a later follow-up ask) — same
+    // callback-injection reasoning as the demon imp callbacks above,
+    // since invisibility state lives on SocketData (this class), not in
+    // MonsterManagerService.
+    this.monsterManager.setInvisibilityChecker((username) => {
+      const socketId = this.activeConnections.getActiveSocketId(username);
+      const socket = socketId ? (this.server.sockets.sockets.get(socketId) as GameSocket | undefined) : undefined;
+      return socket?.data.invisibleActive ?? false;
+    });
     this.monsterManager.spawnInitial();
 
     setInterval(() => {
       this.combatTickCount += 1;
       this.combatTick();
       this.tickAugueBurns();
+      this.checkDuplicateExpiry();
       this.monsterManager.wanderAll(this.combatTickCount);
       this.resolveMonsterInitiatedAttack(this.combatTickCount);
       this.monsterManager.respawnBelowMax();
@@ -524,6 +621,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         this.checkLucemExpiry(client);
         this.checkCeleritasExpiry(client);
         this.checkScutumExpiry(client);
+        this.checkBarrierExpiry(client);
+        this.checkEnhanceDamageExpiry(client);
+        this.checkWispTransformationExpiry(client);
+        this.checkInvisibilityExpiry(client);
       }
     }, MONSTER_TICK_INTERVAL_MS);
 
@@ -630,6 +731,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // same plain restState-percent regen hp gets, no stat bonus (unlike
     // mana's intelligence bonus above).
     const mv = healed(client.data.mv, client.data.maxMv, percent);
+    // Hemomancer's own BP (a later follow-up ask) — "recover similar to
+    // mana on every stat tick, but times 2." healed()'s own Math.min cap
+    // works fine even from a negative starting value (see
+    // handleCastSapHealth's own below-zero overdraft) — it just moves bp
+    // toward/through 0 without a floor, same as the "should be able to go
+    // below 0" spec.
+    const bp = healed(client.data.bp, MAX_BP, manaPercent * BP_REGEN_MULTIPLIER);
 
     // Lucem's ongoing upkeep (item 3's follow-up ask) — drains a little
     // mana every tick while lit, applied after this tick's own regen so
@@ -664,6 +772,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       hp === client.data.hp &&
       mana === client.data.mana &&
       mv === client.data.mv &&
+      bp === client.data.bp &&
       hunger === client.data.hunger &&
       thirst === client.data.thirst &&
       !wandJustWentOut
@@ -674,9 +783,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.hp = hp;
     client.data.mana = mana;
     client.data.mv = mv;
+    client.data.bp = bp;
     client.data.hunger = hunger;
     client.data.thirst = thirst;
-    this.worldManager.updateState(client.data.username, wandJustWentOut ? { hp, mana, mv, wandLit: false } : { hp, mana, mv });
+    this.worldManager.updateState(client.data.username, wandJustWentOut ? { hp, mana, mv, bp, wandLit: false } : { hp, mana, mv, bp });
     void this.persistStats(client);
     this.systemMessage(client, `${STAT_TICK_FLAVOR[client.data.restState]} and recover some hp/mana.`);
     if (wandJustWentOut) {
@@ -691,6 +801,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxMana: client.data.maxMana,
       mv: client.data.mv,
       maxMv: client.data.maxMv,
+      bp: client.data.bp,
       hunger: client.data.hunger,
       thirst: client.data.thirst,
     });
@@ -714,6 +825,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxMana: client.data.maxMana,
       mv: client.data.mv,
       maxMv: client.data.maxMv,
+      bp: client.data.bp,
       strength: client.data.strength,
       intelligence: client.data.intelligence,
       wisdom: client.data.wisdom,
@@ -731,9 +843,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       wandLit: client.data.wandLit,
       celeritasActive: client.data.celeritasActive,
       scutumActive: client.data.scutumActive,
+      barrierActive: client.data.barrierActive,
+      enhanceDamageActive: client.data.enhanceDamageActive,
+      wispActive: client.data.wispActive,
+      invisibleActive: client.data.invisibleActive,
       wandLitUntil: client.data.wandLitUntil,
       celeritasActiveUntil: client.data.celeritasActiveUntil,
       scutumActiveUntil: client.data.scutumActiveUntil,
+      barrierActiveUntil: client.data.barrierActiveUntil,
+      enhanceDamageActiveUntil: client.data.enhanceDamageActiveUntil,
+      wispActiveUntil: client.data.wispActiveUntil,
+      invisibleActiveUntil: client.data.invisibleActiveUntil,
       gold: client.data.gold,
       mimicableRaces: client.data.mimicableRaces,
       mimicForm: client.data.mimicForm,
@@ -752,6 +872,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       enhancedLearningUntil: client.data.enhancedLearningUntil,
       house: client.data.house ?? undefined,
       specialization: client.data.specialization ?? undefined,
+      visitedPois: client.data.visitedPois,
+      killedMonsterKinds: client.data.killedMonsterKinds,
     };
   }
 
@@ -770,6 +892,46 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       snapshots.push({ id: b.id, map: b.mapName, row: b.row, col: b.col, hp: b.hp, maxHp: b.maxHp });
     }
     return snapshots;
+  }
+
+  // Barrier (a later follow-up ask) — the dome's own fixed origin, keyed
+  // by the caster's username (only one barrier per player, same "one
+  // active thing" shape scutum's own toggle already has). Consulted by
+  // handleMove (a player can't leave their own dome) and
+  // MonsterManagerService's own isBarrierZone callback (no monster can
+  // enter ANY player's dome).
+  private activeBarriers = new Map<string, { mapName: MapName; row: number; col: number }>();
+
+  private isWithinBarrierZone(mapName: MapName, row: number, col: number): boolean {
+    for (const barrier of this.activeBarriers.values()) {
+      if (barrier.mapName !== mapName) continue;
+      if (Math.abs(barrier.row - row) <= BARRIER_RADIUS_TILES && Math.abs(barrier.col - col) <= BARRIER_RADIUS_TILES) return true;
+    }
+    return false;
+  }
+
+  // The Illusionist's own create duplicate (a later follow-up ask) — the
+  // ONE animated-monster type here with a FIXED lifespan (every other
+  // one lasts until logged out or killed), keyed by the animated
+  // monster's own id since a future cap change could allow more than one
+  // at once. See checkDuplicateExpiry, polled the same tick loop as
+  // every other timed effect here.
+  private activeDuplicates = new Map<string, { ownerUsername: string; expiresAt: number }>();
+
+  private checkDuplicateExpiry(): void {
+    if (this.activeDuplicates.size === 0) return;
+    const changedMaps = new Set<MapName>();
+    const now = Date.now();
+    for (const [id, entry] of this.activeDuplicates) {
+      if (now < entry.expiresAt) continue;
+      const owner = this.worldManager.getLocation(entry.ownerUsername);
+      if (owner) changedMaps.add(owner.mapName);
+      this.animatedMonsterManager.remove(entry.ownerUsername, id);
+      this.activeDuplicates.delete(id);
+    }
+    for (const mapName of changedMaps) {
+      this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
+    }
   }
 
   // Every map:state broadcast (25+ call sites) goes through here now
@@ -842,6 +1004,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         maxMana: client.data.maxMana,
         mv: client.data.mv,
         maxMv: client.data.maxMv,
+        bp: client.data.bp,
         strength: client.data.strength,
         intelligence: client.data.intelligence,
         wisdom: client.data.wisdom,
@@ -869,6 +1032,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         quests: client.data.quests,
         house: client.data.house,
         specialization: client.data.specialization,
+        visitedPois: client.data.visitedPois,
+        killedMonsterKinds: client.data.killedMonsterKinds,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1137,6 +1302,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: 'Your path has been chosen, may you make it your own.' };
     }
     client.data.specialization = parsed.data.path;
+    // "On becoming a Hemomancer, a player should gain an extra stat 'bp'
+    // ... the player should start with 100/100 bp" (a later follow-up
+    // ask) — granted once, right here, not from character creation.
+    if (parsed.data.path === 'hemomancer') {
+      client.data.bp = MAX_BP;
+    }
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     const message = `You have chosen the path of ${parsed.data.path}.`;
@@ -1177,7 +1348,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     client.data.practicePointsAvailable -= cost;
-    client.data.skills = { ...client.data.skills, [skill]: STARTING_SKILL_PERCENT };
+    client.data.skills = { ...client.data.skills, [skill]: startingPercentFor(skill) };
     this.worldManager.updateState(client.data.username, {
       skills: client.data.skills,
       practicePointsAvailable: client.data.practicePointsAvailable,
@@ -1304,9 +1475,34 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // thrown, hit or miss, same as every other skill in this project) plus
   // a flat enhanced-damage bonus, and dragonborn's lacerate (innate at
   // MAX_SKILL_PERCENT, so nothing left to grow).
-  private rollExtraAttacks(client: GameSocket, growthMessages: string[]): { swings: number; enhancedBonus: number } {
+  private rollExtraAttacks(client: GameSocket, growthMessages: string[], isUndeadTarget = false): { swings: number; enhancedBonus: number } {
     let swings = 1;
-    let enhancedBonus = 0;
+    // Shaman's own "enhance damage" (a later follow-up ask) — a flat
+    // +5 while active, independent of race, stacking with hobgoblin's own
+    // innate enhanced-damage bonus below if a player somehow has both.
+    let enhancedBonus = client.data.enhanceDamageActive ? SHAMAN_ENHANCE_DAMAGE_BONUS : 0;
+
+    // Cleric's own "enhanced undead damage" (a later follow-up ask) — a
+    // flat +5 vs a target classified undead ONLY (see isUndeadTarget at
+    // each call site), regardless of race/other bonuses above. Starts (and
+    // stays) at MAX_SKILL_PERCENT — see startingPercentFor — so there's
+    // nothing left to grow, same "innate at the cap" treatment as
+    // dragonborn's lacerate above.
+    if (isUndeadTarget && client.data.skills[ENHANCED_UNDEAD_DAMAGE_SKILL] !== undefined) {
+      enhancedBonus += ENHANCED_UNDEAD_DAMAGE_BONUS;
+    }
+
+    // Battlemage's own "enhanced damage" (a later follow-up ask, distinct
+    // from both of the above) — a CHANCE (not a flat guarantee) rolled on
+    // every ranged/physical attack MADE, growing every time regardless of
+    // whether it triggers, same shape as hobgoblin's second/third attack.
+    if (client.data.skills[BATTLEMAGE_ENHANCED_DAMAGE_SKILL] !== undefined) {
+      const battlemageGrowth = this.maybeGrowSkill(client, BATTLEMAGE_ENHANCED_DAMAGE_SKILL);
+      if (battlemageGrowth) growthMessages.push(battlemageGrowth);
+      if (Math.random() < computeExtraAttackChance(client.data.skills[BATTLEMAGE_ENHANCED_DAMAGE_SKILL])) {
+        enhancedBonus += BATTLEMAGE_ENHANCED_DAMAGE_BONUS;
+      }
+    }
 
     if (client.data.race === 'hobgoblin') {
       if (Math.random() < computeExtraAttackChance(client.data.skills[SECOND_ATTACK_SKILL] ?? 0)) {
@@ -1325,7 +1521,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
       const enhancedGrowth = this.maybeGrowSkill(client, ENHANCED_DAMAGE_SKILL);
       if (enhancedGrowth) growthMessages.push(enhancedGrowth);
-      enhancedBonus = enhancedDamageBonus(client.data.skills[ENHANCED_DAMAGE_SKILL] ?? 0);
+      enhancedBonus += enhancedDamageBonus(client.data.skills[ENHANCED_DAMAGE_SKILL] ?? 0);
     }
 
     if (client.data.race === 'dragonborn') {
@@ -1443,6 +1639,92 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.systemMessage(client, 'Your shimmering shield fades away.');
   }
 
+  // Barrier (a later follow-up ask) — same periodic-expiry shape as
+  // scutum above; also clears this player's own activeBarriers entry so
+  // monsters can wander back into the (now-dissolved) zone and the
+  // movement-confinement gate in handleMove stops applying.
+  private checkBarrierExpiry(client: GameSocket): void {
+    if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
+    if (!client.data.barrierActive || client.data.barrierActiveUntil === null) return;
+    if (Date.now() < client.data.barrierActiveUntil) return;
+
+    client.data.barrierActive = false;
+    client.data.barrierActiveUntil = null;
+    this.activeBarriers.delete(client.data.username);
+    this.worldManager.updateState(client.data.username, { barrierActive: false });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    this.systemMessage(client, 'Your barrier dissolves.');
+  }
+
+  // Shaman's enhance damage (a later follow-up ask) — same periodic-
+  // expiry shape as scutum above, no worldManager thread since nothing
+  // else needs to render it (see PlayerSnapshot's enhanceDamageActive).
+  private checkEnhanceDamageExpiry(client: GameSocket): void {
+    if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
+    if (!client.data.enhanceDamageActive || client.data.enhanceDamageActiveUntil === null) return;
+    if (Date.now() < client.data.enhanceDamageActiveUntil) return;
+
+    client.data.enhanceDamageActive = false;
+    client.data.enhanceDamageActiveUntil = null;
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, 'The extra power fades from your strikes.');
+  }
+
+  // Wisp transformation (a later follow-up ask) — same periodic-expiry
+  // shape as scutum/barrier above; DOES need the worldManager thread
+  // (unlike enhance damage) since other nearby players need to see the
+  // caster's sprite swap back.
+  private checkWispTransformationExpiry(client: GameSocket): void {
+    if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
+    if (!client.data.wispActive || client.data.wispActiveUntil === null) return;
+    if (Date.now() < client.data.wispActiveUntil) return;
+
+    client.data.wispActive = false;
+    client.data.wispActiveUntil = null;
+    this.worldManager.updateState(client.data.username, { wispActive: false });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    this.systemMessage(client, 'You transform back into your regular form.');
+  }
+
+  // Invisibility (a later follow-up ask) — same periodic-expiry shape as
+  // wisp transformation above (DOES need the worldManager thread, since
+  // other nearby players' clients need to know to start rendering this
+  // player's sprite again).
+  private checkInvisibilityExpiry(client: GameSocket): void {
+    if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
+    if (!client.data.invisibleActive || client.data.invisibleActiveUntil === null) return;
+    if (Date.now() < client.data.invisibleActiveUntil) return;
+
+    client.data.invisibleActive = false;
+    client.data.invisibleActiveUntil = null;
+    this.worldManager.updateState(client.data.username, { invisibleActive: false });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    this.systemMessage(client, 'You fade back into visibility.');
+  }
+
+  // "If the player attacks while invisible then the effect should go
+  // away and they should become visible again" (a later follow-up ask)
+  // — called from every BASIC-attack entry point (punch/useSkill/
+  // engageRangedAttack), unlike wisp's own no-attack rule which BLOCKS
+  // the attack outright: invisibility just ends as a side effect, the
+  // attack itself still goes through. No-op if not currently invisible.
+  private breakInvisibilityIfActive(client: GameSocket): void {
+    if (!client.data.invisibleActive) return;
+    client.data.invisibleActive = false;
+    client.data.invisibleActiveUntil = null;
+    this.worldManager.updateState(client.data.username, { invisibleActive: false });
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    this.systemMessage(client, 'Your invisibility shatters as you attack!');
+  }
+
   // A monster/dummy that survives a punch fights back — a flat punch
   // (or, if it's carrying a weapon, a weapon-style hit; see main.ts's
   // held-weapon overlay for the visual side), subject to the PLAYER's own
@@ -1478,12 +1760,27 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     growthMessages: string[],
     attacker?: { skills: Record<string, number>; carriedItems: string[]; attackDamage?: number }
   ): string {
+    // Barrier (a later follow-up ask) — full immunity from every monster
+    // attack while active, not just a damage reduction like scutum. Monsters
+    // can't even enter the dome (see MonsterManagerService's own
+    // isBarrierBlocked check), so this is mostly a defense-in-depth
+    // guard against whatever was already adjacent the instant it went up.
+    if (client.data.barrierActive) {
+      return `The ${attackerLabel}'s attack is stopped cold by your barrier!`;
+    }
     const defense = this.resolveDefense(this.attackerStatsFor(client), client.data.skills, client.data.equipment, attackerStats);
     if (defense.skill) {
       const growth = this.maybeGrowSkill(client, defense.skill);
       if (growth) growthMessages.push(growth);
     }
     this.maybeGrowResistanceSkill(client, monsterClass, growthMessages);
+    // Battlemage's own "enhanced armor" (a later follow-up ask) — grows
+    // on every hit taken, same "rolled whether landed or avoided" shape
+    // as the resistance skills above.
+    if (client.data.skills[BATTLEMAGE_ENHANCED_ARMOR_SKILL] !== undefined) {
+      const armorGrowth = this.maybeGrowSkill(client, BATTLEMAGE_ENHANCED_ARMOR_SKILL);
+      if (armorGrowth) growthMessages.push(armorGrowth);
+    }
     if (defense.avoided) {
       return defense.verb === 'block'
         ? `You block the ${attackerLabel}'s counter-attack with your shield!`
@@ -1501,7 +1798,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const rawDamage = attacker?.attackDamage ?? punchDamage(attackerStats, this.attackerStatsFor(client), skillPercent, weaponBonus, defenderAC);
     const reduction = monsterClass ? monsterDamageReduction(monsterClass, client.data.skills) : 0;
     const scutumReduction = client.data.scutumActive ? SCUTUM_DAMAGE_REDUCTION : 0;
-    const damage = Math.max(0, rawDamage - reduction - scutumReduction);
+    // Battlemage's own "enhanced armor" — "a CHANCE based on learned
+    // percent to grant +5 armor/reduced damage for every hit the player
+    // takes," same scaledSkillChance-based roll as hobgoblin's second/
+    // third attack, applied here per hit rather than as a flat guarantee.
+    const battlemageArmorReduction =
+      client.data.skills[BATTLEMAGE_ENHANCED_ARMOR_SKILL] !== undefined &&
+      Math.random() < computeExtraAttackChance(client.data.skills[BATTLEMAGE_ENHANCED_ARMOR_SKILL])
+        ? BATTLEMAGE_ENHANCED_ARMOR_BONUS
+        : 0;
+    const damage = Math.max(0, rawDamage - reduction - scutumReduction - battlemageArmorReduction);
     const verb = hasWeapon ? 'stabs' : 'punches';
 
     client.data.hp = Math.max(0, client.data.hp - damage);
@@ -1671,6 +1977,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.maxMana = doc?.maxMana ?? STARTING_VITAL;
     client.data.mv = doc?.mv ?? STARTING_MV;
     client.data.maxMv = doc?.maxMv ?? STARTING_MV;
+    client.data.bp = doc?.bp ?? 0;
     client.data.skills = doc?.skills ?? startingSkills(client.data.race);
     // Backfills any race-innate skill an EXISTING account is still
     // missing (e.g. created before a registration bug — now fixed — used
@@ -1739,6 +2046,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // Same tradeoff again — scutum never carries over either.
     client.data.scutumActive = false;
     client.data.scutumActiveUntil = null;
+    // Same tradeoff again — barrier never carries over either (its own
+    // fixed-origin registry entry wouldn't survive a reconnect anyway).
+    client.data.barrierActive = false;
+    client.data.barrierActiveUntil = null;
+    // Same tradeoff again — enhance damage never carries over either.
+    client.data.enhanceDamageActive = false;
+    client.data.enhanceDamageActiveUntil = null;
+    // Same tradeoff again — wisp transformation never carries over either.
+    client.data.wispActive = false;
+    client.data.wispActiveUntil = null;
+    // Same tradeoff again — invisibility never carries over either.
+    client.data.invisibleActive = false;
+    client.data.invisibleActiveUntil = null;
     // The secret room system (a follow-up ask) — persisted, unlike the
     // cooldowns above; loaded straight from the player doc, defaulting to
     // false for any character that predates this feature (every existing
@@ -1750,6 +2070,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // null until chosen (see handleChooseHouse/handleChooseSpecialization).
     client.data.house = doc?.house ?? null;
     client.data.specialization = doc?.specialization ?? null;
+    client.data.visitedPois = doc?.visitedPois ?? [];
+    client.data.killedMonsterKinds = doc?.killedMonsterKinds ?? [];
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
@@ -1767,6 +2089,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxMana: client.data.maxMana,
       mv: client.data.mv,
       maxMv: client.data.maxMv,
+      bp: client.data.bp,
       strength: client.data.strength,
       intelligence: client.data.intelligence,
       wisdom: client.data.wisdom,
@@ -1789,6 +2112,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       wandLit: client.data.wandLit,
       celeritasActive: client.data.celeritasActive,
       scutumActive: client.data.scutumActive,
+      barrierActive: client.data.barrierActive,
+      wispActive: client.data.wispActive,
+      invisibleActive: client.data.invisibleActive,
       dancing: client.data.dancing,
     });
     void client.join(client.data.map);
@@ -1882,6 +2208,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           return { ok: false, player: this.snapshotFor(client), message: 'Only students of this specialization may enter here.' };
         }
       }
+      // Barrier (a later follow-up ask: "the player will not be able to
+      // leave the barrier while it is active") — the candidate tile has
+      // to stay within the caster's OWN dome; recasting is still the only
+      // way to drop it early (see handleCastBarrier).
+      if (preview.ok) {
+        const ownBarrier = this.activeBarriers.get(client.data.username);
+        if (ownBarrier && (ownBarrier.mapName !== preview.mapName || !this.isWithinBarrierZone(preview.mapName, preview.row, preview.col))) {
+          return { ok: false, player: this.snapshotFor(client), message: 'Your barrier holds you in place.' };
+        }
+      }
     }
 
     const result = this.worldManager.processMove(username, parsed.data);
@@ -1918,6 +2254,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       void client.leave(previousMap);
       void client.join(result.mapName);
       this.server.to(previousMap).emit('map:state', this.mapStateFor(previousMap));
+      // Recall's own "have I been there" gate (a later follow-up ask) —
+      // marks a point of interest visited the first time the player ever
+      // steps onto its own map.
+      const recallPoint = recallPointForMap(result.mapName);
+      if (recallPoint && !client.data.visitedPois.includes(recallPoint.id)) {
+        client.data.visitedPois = [...client.data.visitedPois, recallPoint.id];
+        void this.persistStats(client);
+      }
     }
     const newMapState = this.mapStateFor(result.mapName);
     this.server.to(result.mapName).emit('map:state', newMapState);
@@ -1930,12 +2274,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   }
 
   // Kill-count quest objectives (a follow-up ask's imp-extermination
-  // quest, and any future one shaped like it) — called from every
-  // monster-kill site (melee, wand bolt, augue). Silent no-op once a
-  // quest isn't active, is already turned in, or that objective's own
-  // target count is already met, so this is safe to call unconditionally
-  // on every kill.
-  private recordMonsterKillForQuests(client: GameSocket, monsterKind: string): void {
+  // quest, and any future one shaped like it) PLUS Summoner's own unique-
+  // kind kill-tracking (a later follow-up ask: "once the player becomes
+  // a Summoner, begin tracking all of the unique monsters that they
+  // kill") — called from every monster-kill site (melee, wand bolt,
+  // augue, the elemental bolts/kinetic strike/sap health via
+  // resolveElementalBolt, the augue burn tick). Silent no-op once a
+  // quest isn't active/already turned in/that objective's own target
+  // count is already met AND the caster isn't a Summoner (or already has
+  // this kind recorded), so this is safe to call unconditionally on
+  // every kill.
+  private recordMonsterKill(client: GameSocket, monsterKind: string): void {
     let changed = false;
     const quests = { ...client.data.quests };
     for (const quest of Object.values(QUESTS)) {
@@ -1952,6 +2301,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           this.systemMessage(client, `Quest objective complete: ${objective.label} (${quest.title})`);
         }
       }
+    }
+    if (client.data.specialization === 'summoner' && !client.data.killedMonsterKinds.includes(monsterKind)) {
+      client.data.killedMonsterKinds = [...client.data.killedMonsterKinds, monsterKind];
+      changed = true;
     }
     if (!changed) return;
     client.data.quests = quests;
@@ -1975,6 +2328,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, "You are paralyzed by a skeleton's glare and cannot attack!");
       return;
     }
+    // Druid's own wisp transformation (a later follow-up ask) — "the
+    // player should not be able to attack while in wisp form."
+    if (client.data.wispActive) {
+      this.systemMessage(client, "You can't attack while in wisp form.");
+      return;
+    }
+    this.breakInvisibilityIfActive(client);
 
     const parsed = directionSchema.safeParse(rawDirection);
     if (!parsed.success) return;
@@ -1999,6 +2359,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, "You are paralyzed by a skeleton's glare and cannot attack!");
       return;
     }
+    if (client.data.wispActive) {
+      this.systemMessage(client, "You can't attack while in wisp form.");
+      return;
+    }
+    this.breakInvisibilityIfActive(client);
 
     const cooldownUntil = client.data.skillCooldowns[parsed.data.skill];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
@@ -2029,6 +2394,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, message);
       return { ok: false, message };
     }
+    if (client.data.wispActive) {
+      const message = "You can't attack while in wisp form.";
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+    this.breakInvisibilityIfActive(client);
     const parsed = augueTargetSchema.safeParse(payload);
     if (!parsed.success) return { ok: false, message: 'Invalid target.' };
 
@@ -2300,7 +2671,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
             this.grantExp(casterSocket, rawExpGained);
             void this.persistStats(casterSocket);
             casterSocket.emit('sync', { player: this.snapshotFor(casterSocket) });
-            this.recordMonsterKillForQuests(casterSocket, monster.kind);
+            this.recordMonsterKill(casterSocket, monster.kind);
           }
           const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
           this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, burn.casterUsername, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
@@ -2327,8 +2698,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
 
       const message = died
-        ? `Lingering flames from augue finish off the ${label} for ${AUGUE_BURN_DAMAGE_PER_TICK} damage!`
-        : `Lingering flames from augue burn the ${label} for ${AUGUE_BURN_DAMAGE_PER_TICK} damage. (${targetHp}/${targetMaxHp} hp)`;
+        ? `Lingering flames from ${burn.spellLabel} finish off the ${label} for ${AUGUE_BURN_DAMAGE_PER_TICK} damage!`
+        : `Lingering flames from ${burn.spellLabel} burn the ${label} for ${AUGUE_BURN_DAMAGE_PER_TICK} damage. (${targetHp}/${targetMaxHp} hp)`;
       this.server.to(burn.mapName).emit('combatNotice', message);
       this.server.to(burn.mapName).emit('map:state', this.mapStateFor(burn.mapName));
 
@@ -2345,16 +2716,38 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // crystal drop; NPC/scarecrow and player targets follow the same
   // simplified shape handleCastAugue's own target-kind branches use.
   private resolveRangedAutoAttack(client: GameSocket, session: CombatSession): void {
+    // Battlemage's own "enhanced damage" (a later follow-up ask) — same
+    // chance-based roll (and growth-on-every-attack, hit or miss) as the
+    // melee path in rollExtraAttacks.
+    let battlemageDamageBonus = 0;
+    if (client.data.skills[BATTLEMAGE_ENHANCED_DAMAGE_SKILL] !== undefined) {
+      const battlemageGrowth = this.maybeGrowSkill(client, BATTLEMAGE_ENHANCED_DAMAGE_SKILL);
+      if (battlemageGrowth) this.systemMessage(client, battlemageGrowth);
+      if (Math.random() < computeExtraAttackChance(client.data.skills[BATTLEMAGE_ENHANCED_DAMAGE_SKILL])) {
+        battlemageDamageBonus = BATTLEMAGE_ENHANCED_DAMAGE_BONUS;
+      }
+    }
     // A follow-up ask: "every point into intelligence also increases
     // ranged damage with a wand" — a flat +1 damage per point on top of
     // the base WAND_BOLT_DAMAGE.
-    const wandBoltDamage = WAND_BOLT_DAMAGE + client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment);
+    const baseWandBoltDamage =
+      WAND_BOLT_DAMAGE +
+      client.data.intelligence +
+      intelligenceEquipmentBonus(client.data.equipment) +
+      (client.data.enhanceDamageActive ? SHAMAN_ENHANCE_DAMAGE_BONUS : 0) +
+      battlemageDamageBonus;
+    // Cleric's own "enhanced undead damage" (a later follow-up ask) — the
+    // TARGET's own classification isn't known until each branch below
+    // resolves it, so this shadows baseWandBoltDamage with the final
+    // per-target figure rather than folding it into the constant above.
+    const enhancedUndeadDamageBonus = client.data.skills[ENHANCED_UNDEAD_DAMAGE_SKILL] !== undefined ? ENHANCED_UNDEAD_DAMAGE_BONUS : 0;
     if (session.targetKind === 'monster') {
       const monster = this.monsterManager.getMonster(session.targetId);
       if (!monster) {
         this.playerCombat.delete(client.data.username);
         return;
       }
+      const wandBoltDamage = baseWandBoltDamage + (monster.monsterClass === 'undead' ? enhancedUndeadDamageBonus : 0);
       this.monsterManager.setAggro(monster.id, client.data.username, this.combatTickCount);
       const result = this.monsterManager.applyDamage(monster.id, wandBoltDamage);
       if (!result) return;
@@ -2368,7 +2761,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         expGained = grantResult.message ? undefined : rawExpGained;
         const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
         this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
-        this.recordMonsterKillForQuests(client, monster.kind);
+        this.recordMonsterKill(client, monster.kind);
         this.playerCombat.delete(client.data.username);
       }
       const message = result.died
@@ -2398,6 +2791,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         this.playerCombat.delete(client.data.username);
         return;
       }
+      const wandBoltDamage = baseWandBoltDamage + (npc.race === 'skeleton' ? enhancedUndeadDamageBonus : 0);
       npc.hp = Math.max(0, npc.hp - wandBoltDamage);
       const died = npc.hp <= 0;
       const label = npc.label ?? 'training dummy';
@@ -2486,7 +2880,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const skillGrowth = this.maybeGrowSkill(client, BONE_FINGER_STRIKE_SKILL);
       if (skillGrowth) growthMessages.push(skillGrowth);
     } else {
-      const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
+      const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages, monster.monsterClass === 'undead');
       for (let i = 0; i < swings; i++) {
         const swingDamage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus, monsterAC) + enhancedBonus;
         const result = this.monsterManager.applyDamage(monster.id, swingDamage);
@@ -2516,7 +2910,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // lootable, no mechanical use yet.
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
       this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
-      this.recordMonsterKillForQuests(client, monster.kind);
+      this.recordMonsterKill(client, monster.kind);
       this.playerCombat.delete(client.data.username);
     }
     this.maybeGrowResistanceSkill(client, monster.monsterClass, growthMessages);
@@ -2653,7 +3047,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const skillGrowth = this.maybeGrowSkill(client, BONE_FINGER_STRIKE_SKILL);
       if (skillGrowth) growthMessages.push(skillGrowth);
     } else {
-      const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
+      const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages, npc.race === 'skeleton');
       for (let i = 0; i < swings; i++) {
         const swingDamage =
           punchDamage(
@@ -2809,7 +3203,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const skillGrowth = this.maybeGrowSkill(client, BONE_FINGER_STRIKE_SKILL);
       if (skillGrowth) growthMessages.push(skillGrowth);
     } else {
-      const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages);
+      const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages, targetClient.data.race === 'skeleton');
       for (let i = 0; i < swings; i++) {
         const swingDamage =
           punchDamage(
@@ -3435,6 +3829,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           mapName: npc.map,
           ticksRemaining: AUGUE_BURN_TICKS,
           casterUsername: client.data.username,
+          spellLabel: 'augue',
         });
       }
       if (died) {
@@ -3522,6 +3917,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         mapName: monster.mapName,
         ticksRemaining: AUGUE_BURN_TICKS,
         casterUsername: client.data.username,
+        spellLabel: 'augue',
       });
     }
 
@@ -3539,7 +3935,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (grantResult.message) growthMessages.push(grantResult.message);
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
       this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
-      this.recordMonsterKillForQuests(client, monster.kind);
+      this.recordMonsterKill(client, monster.kind);
       this.playerCombat.delete(client.data.username);
     }
 
@@ -3569,6 +3965,604 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
 
     return { ok: true, skills: client.data.skills, message };
+  }
+
+  // The Elementalist specialization's own 4 bolts (a later follow-up ask)
+  // — same targeted, ranged, monster/npc-only shape as augue above (same
+  // range, near-identical damage/cooldown/mana), differing only in their
+  // own secondary effect on a successful non-lethal hit. Shared here
+  // rather than copy-pasted 4 times; each @SubscribeMessage handler below
+  // is a thin wrapper supplying its own describeHit/onMonsterHit/burnOnHit.
+  private resolveElementalBolt(
+    client: GameSocket,
+    payload: unknown,
+    config: {
+      skill: string;
+      describeHit: (label: string) => string;
+      onMonsterHit?: (monster: Monster) => void;
+      burnOnHit?: boolean;
+      // Kinetic strike (a later follow-up ask, Battlemage) reuses this
+      // whole apparatus with its own damage/mana figures instead of the
+      // elemental bolts' shared ones.
+      manaCost?: number;
+      damage?: number;
+    }
+  ): CastSpellAck {
+    const { skill } = config;
+    const manaCost = config.manaCost ?? ELEMENTAL_BOLT_MANA_COST;
+    const damage = config.damage ?? ELEMENTAL_BOLT_DAMAGE;
+    const displayName = skill.charAt(0).toUpperCase() + skill.slice(1);
+    if (client.data.skills[skill] === undefined) {
+      return { ok: false, message: `You don't know the ${skill} spell yet.` };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    const cooldownUntil = client.data.skillCooldowns[skill];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `${displayName} is still recharging (${secondsLeft}s left).` };
+    }
+    const parsed = augueTargetSchema.safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid target.' };
+    }
+    if (client.data.mana < manaCost) {
+      return { ok: false, message: `You don't have enough mana to cast ${skill} (${manaCost} needed).` };
+    }
+
+    if (parsed.data.targetKind === 'npc') {
+      const npc = NPCS.find((n) => n.id === parsed.data.targetId);
+      if (!npc || npc.map !== client.data.map) {
+        return { ok: false, message: 'Your target is no longer here.' };
+      }
+      if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, SPELL_ATTACK_RANGE_TILES)) {
+        return { ok: false, message: `You're too far away to hit that with ${skill}.` };
+      }
+
+      client.data.mana -= manaCost;
+      this.startSkillCooldown(client, skill);
+      this.startAutoAttackAfterSpell(client, 'npc', npc.id);
+      const label = npc.label ?? 'training dummy';
+
+      if (!this.rollSpellSuccess(client, skill)) {
+        const growth = this.maybeGrowSpellSkill(client, skill);
+        const message = `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
+        void this.persistStats(client);
+        client.emit('sync', { player: this.snapshotFor(client) });
+        this.systemMessage(client, message);
+        return { ok: true, skills: client.data.skills, message };
+      }
+
+      npc.hp = Math.max(0, npc.hp - damage);
+      const died = npc.hp <= 0;
+      // Slow/knockback/stun are all skipped for an npc target — a static
+      // training dummy/skeleton doesn't wander or chase, so there'd be
+      // nothing observable to apply them to; only the burn DoT (fire
+      // bolt) still applies here, matching augue's own npc-burn precedent.
+      if (!died && config.burnOnHit) {
+        this.augueBurns.push({ targetKind: 'npc', targetId: npc.id, mapName: npc.map, ticksRemaining: AUGUE_BURN_TICKS, casterUsername: client.data.username, spellLabel: skill });
+      }
+      if (died) {
+        if (!npc.immortal) {
+          this.corpseManager.spawn(npc.race, npc.level, [bodyPartLabelFor(npc.race), 'bone dagger'], npc.map, npc.row, npc.col);
+          const tile = this.randomFreeTileFor(npc.map);
+          npc.row = tile.row;
+          npc.col = tile.col;
+        } else if (npc.carriedItems) {
+          npc.carriedItems = ['wooden club'];
+        }
+        npc.hp = npc.maxHp;
+      }
+
+      const growthMessages: string[] = [];
+      const growth = this.maybeGrowSpellSkill(client, skill);
+      if (growth) growthMessages.push(growth);
+
+      const message = died
+        ? npc.immortal
+          ? `${client.data.username}'s ${config.describeHit(label)} — it shrugs off the blow, unharmed.`
+          : `${client.data.username}'s ${config.describeHit(label)}, defeating it! It leaves a corpse and reappears elsewhere.`
+        : `${client.data.username}'s ${config.describeHit(label)}.`;
+
+      this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      this.emitCombat(client, {
+        targetKind: 'npc',
+        target: npc.id,
+        targetLabel: label,
+        damage,
+        targetHp: npc.hp,
+        targetMaxHp: npc.maxHp,
+        targetDied: died,
+        message,
+        growthMessages,
+        skill,
+      });
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      return { ok: true, skills: client.data.skills, message };
+    }
+
+    if (parsed.data.targetKind !== 'monster') {
+      return { ok: false, message: `${displayName} can only target a monster or training skeleton right now — that's the only kind of target you can select.` };
+    }
+    const monster = this.monsterManager.getMonster(parsed.data.targetId);
+    if (!monster || monster.mapName !== client.data.map) {
+      return { ok: false, message: 'Your target is no longer here.' };
+    }
+    if (!isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, SPELL_ATTACK_RANGE_TILES)) {
+      return { ok: false, message: `You're too far away to hit that with ${skill}.` };
+    }
+
+    client.data.mana -= manaCost;
+    this.startSkillCooldown(client, skill);
+    this.startAutoAttackAfterSpell(client, 'monster', monster.id);
+
+    if (!this.rollSpellSuccess(client, skill)) {
+      const growth = this.maybeGrowSpellSkill(client, skill);
+      const message = `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      this.systemMessage(client, message);
+      return { ok: true, skills: client.data.skills, message };
+    }
+
+    const result = this.monsterManager.applyDamage(monster.id, damage);
+    if (!result) {
+      return { ok: false, message: 'Your target is no longer here.' };
+    }
+    if (!result.died) {
+      if (config.burnOnHit) {
+        this.augueBurns.push({
+          targetKind: 'monster',
+          targetId: monster.id,
+          mapName: monster.mapName,
+          ticksRemaining: AUGUE_BURN_TICKS,
+          casterUsername: client.data.username,
+          spellLabel: skill,
+        });
+      }
+      config.onMonsterHit?.(monster);
+    }
+
+    const growthMessages: string[] = [];
+    const growth = this.maybeGrowSpellSkill(client, skill);
+    if (growth) growthMessages.push(growth);
+
+    let expGained: number | undefined;
+    let leveledUp = false;
+    if (result.died) {
+      const rawExpGained = expGainFor(monster.expReward, client.data.level, monster.level);
+      const grantResult = this.grantExp(client, rawExpGained);
+      leveledUp = grantResult.leveledUp;
+      expGained = grantResult.message ? undefined : rawExpGained;
+      if (grantResult.message) growthMessages.push(grantResult.message);
+      const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
+      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
+      this.recordMonsterKill(client, monster.kind);
+      this.playerCombat.delete(client.data.username);
+    }
+
+    const message = result.died
+      ? `${client.data.username}'s ${config.describeHit(monster.kind)}, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
+      : `${client.data.username}'s ${config.describeHit(monster.kind)}.`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.emitCombat(client, {
+      targetKind: 'monster',
+      target: monster.id,
+      targetLabel: monster.kind,
+      damage,
+      targetHp: result.monster.hp,
+      targetMaxHp: monster.maxHp,
+      targetDied: result.died,
+      expGained,
+      leveledUp,
+      message,
+      growthMessages,
+      skill,
+    });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+
+    return { ok: true, skills: client.data.skills, message };
+  }
+
+  @SubscribeMessage('castFireBolt')
+  handleCastFireBolt(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    return this.resolveElementalBolt(client, payload, {
+      skill: FIRE_BOLT_SKILL,
+      describeHit: (label) => `fire bolt engulfs the ${label} in flame for ${ELEMENTAL_BOLT_DAMAGE} damage`,
+      burnOnHit: true,
+    });
+  }
+
+  @SubscribeMessage('castWaterBolt')
+  handleCastWaterBolt(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    return this.resolveElementalBolt(client, payload, {
+      skill: WATER_BOLT_SKILL,
+      describeHit: (label) => `water bolt drenches the ${label} for ${ELEMENTAL_BOLT_DAMAGE} damage`,
+      onMonsterHit: (monster) => this.monsterManager.slow(monster.id, this.combatTickCount + WATER_BOLT_SLOW_TICKS),
+    });
+  }
+
+  @SubscribeMessage('castAirBolt')
+  handleCastAirBolt(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    return this.resolveElementalBolt(client, payload, {
+      skill: AIR_BOLT_SKILL,
+      describeHit: (label) => `air bolt slams into the ${label} for ${ELEMENTAL_BOLT_DAMAGE} damage`,
+      onMonsterHit: (monster) => this.monsterManager.knockback(monster.id, client.data.row, client.data.col, AIR_BOLT_KNOCKBACK_TILES),
+    });
+  }
+
+  @SubscribeMessage('castEarthBolt')
+  handleCastEarthBolt(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    return this.resolveElementalBolt(client, payload, {
+      skill: EARTH_BOLT_SKILL,
+      describeHit: (label) => `earth bolt pelts the ${label} with stone for ${ELEMENTAL_BOLT_DAMAGE} damage`,
+      onMonsterHit: (monster) => this.monsterManager.stun(monster.id, this.combatTickCount + EARTH_BOLT_STUN_TICKS),
+    });
+  }
+
+  // The Battlemage specialization's own level-15 spell (a later
+  // follow-up ask) — reuses resolveElementalBolt's whole apparatus with
+  // its own damage/mana figures; knocks the target back a full
+  // KINETIC_STRIKE_KNOCKBACK_TILES (7) instead of applying a status
+  // effect. "Seen visually" — the knockback lands via the very next
+  // map:state broadcast (resolveElementalBolt already emits one on every
+  // successful cast), same as any other monster reposition; no bespoke
+  // animation needed since monster movement is already interpolated
+  // client-side.
+  @SubscribeMessage('castKineticStrike')
+  handleCastKineticStrike(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    return this.resolveElementalBolt(client, payload, {
+      skill: KINETIC_STRIKE_SKILL,
+      manaCost: KINETIC_STRIKE_MANA_COST,
+      damage: KINETIC_STRIKE_DAMAGE,
+      describeHit: (label) => `kinetic strike slams into the ${label} for ${KINETIC_STRIKE_DAMAGE} damage`,
+      onMonsterHit: (monster) => this.monsterManager.knockback(monster.id, client.data.row, client.data.col, KINETIC_STRIKE_KNOCKBACK_TILES),
+    });
+  }
+
+  // The Hemomancer specialization's own level-15 spell (a later
+  // follow-up ask) — the first (and so far only) spell costed in BP
+  // instead of mana, so this is a bespoke handler rather than another
+  // resolveElementalBolt config: that helper hardcodes client.data.mana
+  // for its cost check/deduction/sync, which doesn't fit a resource this
+  // different (goes negative, has its own HP-overdraft penalty). Same
+  // target shape (monster/npc, 7 tiles) and fumble/growth mechanics as
+  // every other targeted spell, though — heals the caster for the same
+  // amount it damages the target ("blood flowing from the target into
+  // the player").
+  @SubscribeMessage('castSapHealth')
+  handleCastSapHealth(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    if (client.data.skills[SAP_HEALTH_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the sap health spell yet." };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    const cooldownUntil = client.data.skillCooldowns[SAP_HEALTH_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Sap health is still recharging (${secondsLeft}s left).` };
+    }
+    const parsed = augueTargetSchema.safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid target.' };
+    }
+
+    // "The player should be able to continue using BP even when they
+    // reach 0 or below" — no insufficient-BP rejection at all, unlike
+    // every mana-costed spell. "Once the player STARTS USING BP below 0
+    // it should cost them half the spell cost in health per cast" — the
+    // check is whether BP was ALREADY negative BEFORE this cast's own
+    // deduction, not whether this cast happens to push it negative for
+    // the first time.
+    const wasAlreadyNegative = client.data.bp < 0;
+    const applyBpCost = (): string => {
+      client.data.bp -= SAP_HEALTH_BP_COST;
+      if (!wasAlreadyNegative) return '';
+      client.data.hp = Math.max(0, client.data.hp - SAP_HEALTH_HP_PENALTY);
+      return ` The overdraft costs you ${SAP_HEALTH_HP_PENALTY} hp.`;
+    };
+
+    if (parsed.data.targetKind === 'npc') {
+      const npc = NPCS.find((n) => n.id === parsed.data.targetId);
+      if (!npc || npc.map !== client.data.map) {
+        return { ok: false, message: 'Your target is no longer here.' };
+      }
+      if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, SPELL_ATTACK_RANGE_TILES)) {
+        return { ok: false, message: "You're too far away to hit that with sap health." };
+      }
+
+      const overdraftMessage = applyBpCost();
+      this.startSkillCooldown(client, SAP_HEALTH_SKILL);
+      this.startAutoAttackAfterSpell(client, 'npc', npc.id);
+      const label = npc.label ?? 'training dummy';
+
+      if (!this.rollSpellSuccess(client, SAP_HEALTH_SKILL)) {
+        const growth = this.maybeGrowSpellSkill(client, SAP_HEALTH_SKILL);
+        const message = `You fumble the incantation and nothing happens.${overdraftMessage}${growth ? ` ${growth}` : ''}`;
+        void this.persistStats(client);
+        client.emit('sync', { player: this.snapshotFor(client) });
+        this.systemMessage(client, message);
+        return { ok: true, skills: client.data.skills, message };
+      }
+
+      npc.hp = Math.max(0, npc.hp - SAP_HEALTH_AMOUNT);
+      const died = npc.hp <= 0;
+      client.data.hp = Math.min(client.data.maxHp, client.data.hp + SAP_HEALTH_AMOUNT);
+      if (died) {
+        if (!npc.immortal) {
+          this.corpseManager.spawn(npc.race, npc.level, [bodyPartLabelFor(npc.race), 'bone dagger'], npc.map, npc.row, npc.col);
+          const tile = this.randomFreeTileFor(npc.map);
+          npc.row = tile.row;
+          npc.col = tile.col;
+        } else if (npc.carriedItems) {
+          npc.carriedItems = ['wooden club'];
+        }
+        npc.hp = npc.maxHp;
+      }
+
+      const growthMessages: string[] = [];
+      const growth = this.maybeGrowSpellSkill(client, SAP_HEALTH_SKILL);
+      if (growth) growthMessages.push(growth);
+
+      const message = died
+        ? npc.immortal
+          ? `${client.data.username}'s sap health drains the ${label} for ${SAP_HEALTH_AMOUNT} damage — it shrugs off the blow, unharmed.${overdraftMessage}`
+          : `${client.data.username}'s sap health drains the ${label} for ${SAP_HEALTH_AMOUNT} damage, defeating it! It leaves a corpse and reappears elsewhere.${overdraftMessage}`
+        : `${client.data.username}'s sap health drains the ${label} for ${SAP_HEALTH_AMOUNT} damage.${overdraftMessage}`;
+
+      this.worldManager.updateState(client.data.username, { hp: client.data.hp, bp: client.data.bp, skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      this.emitCombat(client, {
+        targetKind: 'npc',
+        target: npc.id,
+        targetLabel: label,
+        damage: SAP_HEALTH_AMOUNT,
+        targetHp: npc.hp,
+        targetMaxHp: npc.maxHp,
+        targetDied: died,
+        message,
+        growthMessages,
+        skill: SAP_HEALTH_SKILL,
+      });
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      return { ok: true, skills: client.data.skills, message };
+    }
+
+    if (parsed.data.targetKind !== 'monster') {
+      return { ok: false, message: "Sap health can only target a monster or training skeleton right now — that's the only kind of target you can select." };
+    }
+    const monster = this.monsterManager.getMonster(parsed.data.targetId);
+    if (!monster || monster.mapName !== client.data.map) {
+      return { ok: false, message: 'Your target is no longer here.' };
+    }
+    if (!isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, SPELL_ATTACK_RANGE_TILES)) {
+      return { ok: false, message: "You're too far away to hit that with sap health." };
+    }
+
+    const overdraftMessage = applyBpCost();
+    this.startSkillCooldown(client, SAP_HEALTH_SKILL);
+    this.startAutoAttackAfterSpell(client, 'monster', monster.id);
+
+    if (!this.rollSpellSuccess(client, SAP_HEALTH_SKILL)) {
+      const growth = this.maybeGrowSpellSkill(client, SAP_HEALTH_SKILL);
+      const message = `You fumble the incantation and nothing happens.${overdraftMessage}${growth ? ` ${growth}` : ''}`;
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      this.systemMessage(client, message);
+      return { ok: true, skills: client.data.skills, message };
+    }
+
+    const result = this.monsterManager.applyDamage(monster.id, SAP_HEALTH_AMOUNT);
+    if (!result) {
+      return { ok: false, message: 'Your target is no longer here.' };
+    }
+    client.data.hp = Math.min(client.data.maxHp, client.data.hp + SAP_HEALTH_AMOUNT);
+
+    const growthMessages: string[] = [];
+    const growth = this.maybeGrowSpellSkill(client, SAP_HEALTH_SKILL);
+    if (growth) growthMessages.push(growth);
+
+    let expGained: number | undefined;
+    let leveledUp = false;
+    if (result.died) {
+      const rawExpGained = expGainFor(monster.expReward, client.data.level, monster.level);
+      const grantResult = this.grantExp(client, rawExpGained);
+      leveledUp = grantResult.leveledUp;
+      expGained = grantResult.message ? undefined : rawExpGained;
+      if (grantResult.message) growthMessages.push(grantResult.message);
+      const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
+      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
+      this.recordMonsterKill(client, monster.kind);
+      this.playerCombat.delete(client.data.username);
+    }
+
+    const message = result.died
+      ? `${client.data.username}'s sap health drains the ${monster.kind} for ${SAP_HEALTH_AMOUNT} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}${overdraftMessage}`
+      : `${client.data.username}'s sap health drains the ${monster.kind} for ${SAP_HEALTH_AMOUNT} damage.${overdraftMessage}`;
+
+    this.worldManager.updateState(client.data.username, { hp: client.data.hp, bp: client.data.bp, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.emitCombat(client, {
+      targetKind: 'monster',
+      target: monster.id,
+      targetLabel: monster.kind,
+      damage: SAP_HEALTH_AMOUNT,
+      targetHp: result.monster.hp,
+      targetMaxHp: monster.maxHp,
+      targetDied: result.died,
+      expGained,
+      leveledUp,
+      message,
+      growthMessages,
+      skill: SAP_HEALTH_SKILL,
+    });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+
+    return { ok: true, skills: client.data.skills, message };
+  }
+
+  // The Cleric specialization's own level-15 spell (a later follow-up
+  // ask) — heals a "friendly target": another player the caster has
+  // selected, as long as that player isn't currently attacking the
+  // caster back (checked via playerCombat, keyed by the ATTACKER's own
+  // username). Any other selection (no target, a monster/npc, a hostile
+  // player) falls back to healing the caster themselves. No cooldown of
+  // its own — mana cost alone gates recasting, same as recall.
+  @SubscribeMessage('castLesserHeal')
+  handleCastLesserHeal(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    if (client.data.skills[LESSER_HEAL_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the lesser heal spell yet." };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    const parsed = lesserHealTargetSchema.safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid target.' };
+    }
+    if (client.data.mana < LESSER_HEAL_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast lesser heal (${LESSER_HEAL_MANA_COST} needed).` };
+    }
+
+    let targetClient = client;
+    const target = parsed.data;
+    if (target && target.targetKind === 'player' && target.targetId !== client.data.username) {
+      const targetSocketId = this.activeConnections.getActiveSocketId(target.targetId);
+      const candidate = targetSocketId ? (this.server.sockets.sockets.get(targetSocketId) as GameSocket | undefined) : undefined;
+      const attackerSession = this.playerCombat.get(target.targetId);
+      const isHostile = attackerSession?.targetKind === 'player' && attackerSession.targetId === client.data.username;
+      if (candidate && candidate.data.map === client.data.map && !isHostile) {
+        targetClient = candidate;
+      }
+    }
+
+    client.data.mana -= LESSER_HEAL_MANA_COST;
+    this.startSkillCooldown(client, LESSER_HEAL_SKILL);
+
+    let message: string;
+    if (!this.rollSpellSuccess(client, LESSER_HEAL_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else {
+      targetClient.data.hp = Math.min(targetClient.data.maxHp, targetClient.data.hp + LESSER_HEAL_AMOUNT);
+      this.worldManager.updateState(targetClient.data.username, { hp: targetClient.data.hp });
+      void this.persistStats(targetClient);
+      targetClient.emit('sync', { player: this.snapshotFor(targetClient) });
+      message =
+        targetClient === client
+          ? `You heal yourself for ${LESSER_HEAL_AMOUNT} hp.`
+          : `You heal ${targetClient.data.username} for ${LESSER_HEAL_AMOUNT} hp.`;
+      if (targetClient !== client) this.systemMessage(targetClient, `${client.data.username} heals you for ${LESSER_HEAL_AMOUNT} hp.`);
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    }
+
+    const growth = this.maybeGrowSpellSkill(client, LESSER_HEAL_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+  }
+
+  // The Druid specialization's own level-15 spell (a later follow-up
+  // ask) — no target at all, always heals the caster. A short 5-second
+  // cooldown that (per its own spec) only starts on a successful cast.
+  @SubscribeMessage('castLesserSelfHeal')
+  handleCastLesserSelfHeal(@ConnectedSocket() client: GameSocket): CastSpellAck {
+    if (client.data.skills[LESSER_SELF_HEAL_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the lesser self heal spell yet." };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    const cooldownUntil = client.data.skillCooldowns[LESSER_SELF_HEAL_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Lesser self heal is still recharging (${secondsLeft}s left).` };
+    }
+    if (client.data.mana < LESSER_SELF_HEAL_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast lesser self heal (${LESSER_SELF_HEAL_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= LESSER_SELF_HEAL_MANA_COST;
+
+    let message: string;
+    if (!this.rollSpellSuccess(client, LESSER_SELF_HEAL_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else {
+      this.startSkillCooldown(client, LESSER_SELF_HEAL_SKILL);
+      client.data.hp = Math.min(client.data.maxHp, client.data.hp + LESSER_SELF_HEAL_AMOUNT);
+      this.worldManager.updateState(client.data.username, { hp: client.data.hp });
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      message = `You heal yourself for ${LESSER_SELF_HEAL_AMOUNT} hp.`;
+    }
+
+    const growth = this.maybeGrowSpellSkill(client, LESSER_SELF_HEAL_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+  }
+
+  // The Druid specialization's other level-15 spell (a later follow-up
+  // ask) — a fixed-duration self-transformation, same "always ON for its
+  // own duration once cast" shape as scutum (no manual cancel, unlike
+  // barrier — nothing in the spec asks for one). No-attack/faster-
+  // movement rules live client-side (WorldScene) and at every attack
+  // entry point (handlePunch/handleUseSkill/handleEngageRangedAttack)
+  // rather than here.
+  @SubscribeMessage('castWispTransformation')
+  handleCastWispTransformation(@ConnectedSocket() client: GameSocket): CastSpellAck {
+    if (client.data.skills[WISP_TRANSFORMATION_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the wisp transformation spell yet." };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    const cooldownUntil = client.data.skillCooldowns[WISP_TRANSFORMATION_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Wisp transformation is still recharging (${secondsLeft}s left).` };
+    }
+    if (client.data.mana < WISP_TRANSFORMATION_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast wisp transformation (${WISP_TRANSFORMATION_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= WISP_TRANSFORMATION_MANA_COST;
+
+    let message: string;
+    if (!this.rollSpellSuccess(client, WISP_TRANSFORMATION_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else {
+      this.startSkillCooldown(client, WISP_TRANSFORMATION_SKILL);
+      client.data.wispActive = true;
+      client.data.wispActiveUntil = Date.now() + WISP_TRANSFORMATION_DURATION_MS;
+      this.worldManager.updateState(client.data.username, { wispActive: true });
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      message = 'You dissolve into a shimmering wisp of light.';
+    }
+
+    const growth = this.maybeGrowSpellSkill(client, WISP_TRANSFORMATION_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
   }
 
   // A later follow-up ask removed the podium/spellbook system entirely —
@@ -3991,6 +4985,261 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
   }
 
+  // The Summoner specialization's own level-15 spell (a later follow-up
+  // ask) — no in-world target at all: the client's own modal already
+  // narrowed the choice down to a monster kind this Summoner has
+  // actually killed (killedMonsterKinds), so this just validates that
+  // server-side and reuses animatedMonsterManager.animate() directly
+  // ("similar mechanics to animate dead or pets" — same cap, same
+  // command/remove infrastructure, see handleAnimatedMonsterCommand).
+  @SubscribeMessage('castMonsterSummons')
+  handleCastMonsterSummons(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): { ok: boolean; message?: string } {
+    if (client.data.skills[MONSTER_SUMMONS_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the monster summons spell yet." };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    const parsed = z.object({ monsterKind: z.string() }).safeParse(payload);
+    if (!parsed.success || !client.data.killedMonsterKinds.includes(parsed.data.monsterKind)) {
+      return { ok: false, message: "You haven't killed one of those yet." };
+    }
+    const species = MONSTER_SPECIES.find((s) => s.kind === parsed.data.monsterKind);
+    if (!species) {
+      return { ok: false, message: 'That monster cannot be summoned.' };
+    }
+    if (this.animatedMonsterManager.countFor(client.data.username) >= animatedMonsterCapFor(client.data.level)) {
+      return { ok: false, message: 'You cannot control any more summoned monsters.' };
+    }
+    const cooldownUntil = client.data.skillCooldowns[MONSTER_SUMMONS_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Monster summons is still recharging (${secondsLeft}s left).` };
+    }
+    if (client.data.mana < MONSTER_SUMMONS_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast monster summons (${MONSTER_SUMMONS_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= MONSTER_SUMMONS_MANA_COST;
+
+    let message: string;
+    if (!this.rollSpellSuccess(client, MONSTER_SUMMONS_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else {
+      this.startSkillCooldown(client, MONSTER_SUMMONS_SKILL);
+      this.animatedMonsterManager.animate(
+        client.data.username,
+        client.data.level,
+        species.kind,
+        `Summoned ${species.kind}`,
+        species.startingHp + MONSTER_SUMMONS_HP_BONUS,
+        (species.attackDamage ?? 0) + MONSTER_SUMMONS_DAMAGE_BONUS,
+        client.data.map,
+        client.data.row,
+        client.data.col
+      );
+      message = `You summon a ${species.kind}, bound to your will.`;
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    }
+
+    const growth = this.maybeGrowSpellSkill(client, MONSTER_SUMMONS_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, message };
+  }
+
+  // The Diabolist specialization's own level-15 spell (a later follow-up
+  // ask) — no in-world target, no killed-kind gate: always the same
+  // fixed-stat demon imp (see DEMON_IMP_KIND), reusing
+  // animatedMonsterManager.animate() directly like monster summons
+  // above. "Draw the aggro of monsters the player is attacking" is
+  // handled entirely server-side via setDemonImpCallbacks — nothing
+  // extra needed here.
+  @SubscribeMessage('castSummonDemonImp')
+  handleCastSummonDemonImp(@ConnectedSocket() client: GameSocket): { ok: boolean; message?: string } {
+    if (client.data.skills[SUMMON_DEMON_IMP_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the summon demon imp spell yet." };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    if (this.animatedMonsterManager.countFor(client.data.username) >= animatedMonsterCapFor(client.data.level)) {
+      return { ok: false, message: 'You cannot control any more summoned monsters.' };
+    }
+    const cooldownUntil = client.data.skillCooldowns[SUMMON_DEMON_IMP_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Summon demon imp is still recharging (${secondsLeft}s left).` };
+    }
+    if (client.data.mana < SUMMON_DEMON_IMP_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast summon demon imp (${SUMMON_DEMON_IMP_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= SUMMON_DEMON_IMP_MANA_COST;
+
+    let message: string;
+    if (!this.rollSpellSuccess(client, SUMMON_DEMON_IMP_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else {
+      this.startSkillCooldown(client, SUMMON_DEMON_IMP_SKILL);
+      this.animatedMonsterManager.animate(
+        client.data.username,
+        client.data.level,
+        DEMON_IMP_KIND,
+        'Demon Imp',
+        DEMON_IMP_HP,
+        DEMON_IMP_DAMAGE,
+        client.data.map,
+        client.data.row,
+        client.data.col
+      );
+      message = 'A demon imp tears through a rift in reality, bound to your will.';
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    }
+
+    const growth = this.maybeGrowSpellSkill(client, SUMMON_DEMON_IMP_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, message };
+  }
+
+  // The Illusionist specialization's own level-15 spell (a later
+  // follow-up ask) — a fixed-duration self-buff, same "always ON for its
+  // own duration once cast" shape as scutum/wisp, but with the extra
+  // early-cancel-on-attack rule (see breakInvisibilityIfActive) instead
+  // of a manual recast-to-cancel. Two conflicting mana figures appeared
+  // in the original ask (10, then 15 alongside the cooldown) — using 15,
+  // the more specific one.
+  @SubscribeMessage('castInvisibility')
+  handleCastInvisibility(@ConnectedSocket() client: GameSocket): CastSpellAck {
+    if (client.data.skills[INVISIBILITY_SKILL] === undefined) {
+      const message = "You don't know the invisibility spell yet.";
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      const message = 'You need a wand equipped to cast spells.';
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+    const cooldownUntil = client.data.skillCooldowns[INVISIBILITY_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      const message = `Invisibility is still recharging (${secondsLeft}s left).`;
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+    if (client.data.mana < INVISIBILITY_MANA_COST) {
+      const message = `You don't have enough mana to cast invisibility (${INVISIBILITY_MANA_COST} needed).`;
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+
+    client.data.mana -= INVISIBILITY_MANA_COST;
+    const succeeded = this.rollSpellSuccess(client, INVISIBILITY_SKILL);
+    let message: string;
+    if (succeeded) {
+      this.startSkillCooldown(client, INVISIBILITY_SKILL);
+      client.data.invisibleActive = true;
+      client.data.invisibleActiveUntil = Date.now() + INVISIBILITY_DURATION_MS;
+      // "Monsters... cannot see the player while it's active" — drop
+      // whatever's ALREADY chasing them; setAggro's own invisibility
+      // check (see MonsterManagerService) handles every future attempt.
+      this.monsterManager.clearAllAggroOnto(client.data.username);
+      this.worldManager.updateState(client.data.username, { invisibleActive: true });
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      message = 'You fade from sight.';
+    } else {
+      message = 'You fumble the incantation and nothing happens.';
+    }
+
+    const growth = this.maybeGrowSpellSkill(client, INVISIBILITY_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, active: succeeded, mana: client.data.mana, skills: client.data.skills, message };
+  }
+
+  // The Illusionist specialization's other level-15 spell (a later
+  // follow-up ask) — "similar mechanics to animate dead or pets," reusing
+  // animatedMonsterManager.animate() directly (same cap/command/remove
+  // infrastructure), but with its own FIXED 5-minute lifespan (see
+  // activeDuplicates/checkDuplicateExpiry) rather than "until logged out
+  // or killed." Renders as a copy of the caster's own Race (see
+  // AnimatedMonsterSnapshot's widened monsterKind type). The "ranged or
+  // physical... depending on what's equipped" damage figure is a
+  // SNAPSHOT taken right here at cast time, not live-synced equipment —
+  // no animated monster/pet in this game has real attack-mode combat AI
+  // yet (see this method's own doc comment in shared/skills.ts).
+  @SubscribeMessage('castCreateDuplicate')
+  handleCastCreateDuplicate(@ConnectedSocket() client: GameSocket): { ok: boolean; message?: string } {
+    if (client.data.skills[CREATE_DUPLICATE_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the create duplicate spell yet." };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    if (this.animatedMonsterManager.countFor(client.data.username) >= animatedMonsterCapFor(client.data.level)) {
+      return { ok: false, message: 'You cannot control any more summoned monsters.' };
+    }
+    const cooldownUntil = client.data.skillCooldowns[CREATE_DUPLICATE_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Create duplicate is still recharging (${secondsLeft}s left).` };
+    }
+    if (client.data.mana < CREATE_DUPLICATE_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast create duplicate (${CREATE_DUPLICATE_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= CREATE_DUPLICATE_MANA_COST;
+
+    let message: string;
+    if (!this.rollSpellSuccess(client, CREATE_DUPLICATE_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else {
+      this.startSkillCooldown(client, CREATE_DUPLICATE_SKILL);
+      const duplicateDamage = isWandItem(client.data.equipment.weapon)
+        ? WAND_BOLT_DAMAGE + client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment)
+        : client.data.strength + weaponBonusFor(client.data.equipment, client.data.skills);
+      const duplicate = this.animatedMonsterManager.animate(
+        client.data.username,
+        client.data.level,
+        client.data.race,
+        `${client.data.username}'s duplicate`,
+        Math.round(client.data.maxHp * CREATE_DUPLICATE_HP_MULTIPLIER),
+        duplicateDamage,
+        client.data.map,
+        client.data.row,
+        client.data.col
+      );
+      if (duplicate) {
+        this.activeDuplicates.set(duplicate.id, { ownerUsername: client.data.username, expiresAt: Date.now() + CREATE_DUPLICATE_DURATION_MS });
+      }
+      message = 'A perfect copy of yourself steps out of thin air.';
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    }
+
+    const growth = this.maybeGrowSpellSkill(client, CREATE_DUPLICATE_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, message };
+  }
+
   // Commanding your own animated monster (a later follow-up ask) — same
   // "no reach check, an owner can redirect from anywhere" shape as
   // handlePetCommand.
@@ -4006,6 +5255,206 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     return { ok: true, animatedMonster };
+  }
+
+  // "An option... to 'remove' and get rid of" (a later follow-up ask,
+  // asked for animate dead/monster summons/demon imp/the Illusionist's
+  // duplicate alike) — a dedicated event/method (see
+  // AnimatedMonsterManagerService.remove) rather than a PetCommand,
+  // since a real pet is never removable this way.
+  @SubscribeMessage('removeAnimatedMonster')
+  handleRemoveAnimatedMonster(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): { ok: boolean; message?: string } {
+    const parsed = z.object({ id: z.string() }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid target.' };
+    }
+    if (!this.animatedMonsterManager.remove(client.data.username, parsed.data.id)) {
+      return { ok: false, message: "You don't have that animated monster." };
+    }
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    return { ok: true };
+  }
+
+  // The Utility Classroom's own level-15 spell (a later follow-up ask) —
+  // no arm-then-click flow like murus lapideus/animate dead; the client
+  // opens its own modal (built entirely from myProfile.visitedPois, no
+  // server round trip needed just to list options) and sends the chosen
+  // point of interest directly. Teleports the caster's own pet/animated
+  // monsters along too — "players that are in the player's group will
+  // not be teleported" just means no OTHER real player ever moves, which
+  // is already true by construction (only this owner's own companions are
+  // ever touched).
+  @SubscribeMessage('castRecall')
+  handleCastRecall(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    if (client.data.skills[RECALL_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the recall spell yet." };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    const parsed = z.object({ poiId: z.string() }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid destination.' };
+    }
+    const point = recallPointById(parsed.data.poiId);
+    if (!point || !client.data.visitedPois.includes(point.id)) {
+      return { ok: false, message: "You haven't been there yet." };
+    }
+    if (client.data.mana < RECALL_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast recall (${RECALL_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= RECALL_MANA_COST;
+
+    let message: string;
+    if (!this.rollSpellSuccess(client, RECALL_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else {
+      const previousMap = client.data.map;
+      const spawn = startingPositionFor(point.landingMap);
+      client.data.map = point.landingMap;
+      client.data.row = spawn.row;
+      client.data.col = spawn.col;
+      void client.leave(previousMap);
+      void client.join(point.landingMap);
+      this.worldManager.updateState(client.data.username, { mapName: point.landingMap, row: spawn.row, col: spawn.col });
+      void this.persistPosition(client);
+
+      const changedMaps = new Set<MapName>([previousMap, point.landingMap]);
+      const petPreviousMap = this.petManager.teleportToOwner(client.data.username, point.landingMap, spawn.row, spawn.col);
+      if (petPreviousMap) changedMaps.add(petPreviousMap);
+      for (const m of this.animatedMonsterManager.teleportAllToOwner(client.data.username, point.landingMap, spawn.row, spawn.col)) {
+        changedMaps.add(m);
+      }
+      for (const mapName of changedMaps) {
+        this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
+      }
+      message = `You recall to ${point.label}.`;
+    }
+
+    const growth = this.maybeGrowSpellSkill(client, RECALL_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+  }
+
+  // The Defense Classroom's own level-10 spell (a later follow-up ask) —
+  // unlike every other spell here, casting it again while ALREADY active
+  // just cancels it early (bypassing the cooldown gate entirely); only a
+  // fresh cast (no barrier currently up) is cooldown/mana/success-gated.
+  @SubscribeMessage('castBarrier')
+  handleCastBarrier(@ConnectedSocket() client: GameSocket): CastSpellAck {
+    if (client.data.skills[BARRIER_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the barrier spell yet." };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+
+    if (client.data.barrierActive) {
+      client.data.barrierActive = false;
+      client.data.barrierActiveUntil = null;
+      this.activeBarriers.delete(client.data.username);
+      this.worldManager.updateState(client.data.username, { barrierActive: false });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      const cancelMessage = 'You dispel your barrier.';
+      this.systemMessage(client, cancelMessage);
+      return { ok: true, message: cancelMessage };
+    }
+
+    const cooldownUntil = client.data.skillCooldowns[BARRIER_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Barrier is still recharging (${secondsLeft}s left).` };
+    }
+    if (client.data.mana < BARRIER_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast barrier (${BARRIER_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= BARRIER_MANA_COST;
+
+    let message: string;
+    let barrierOrigin: { row: number; col: number } | undefined;
+    if (!this.rollSpellSuccess(client, BARRIER_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else {
+      this.startSkillCooldown(client, BARRIER_SKILL);
+      client.data.barrierActive = true;
+      client.data.barrierActiveUntil = Date.now() + BARRIER_DURATION_MS;
+      barrierOrigin = { row: client.data.row, col: client.data.col };
+      this.activeBarriers.set(client.data.username, { mapName: client.data.map, ...barrierOrigin });
+      this.worldManager.updateState(client.data.username, { barrierActive: true });
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      message = 'A shimmering yellow dome rises around you.';
+    }
+
+    const barrierGrowth = this.maybeGrowSpellSkill(client, BARRIER_SKILL);
+    if (barrierGrowth) message = `${message} ${barrierGrowth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, mana: client.data.mana, skills: client.data.skills, message, barrierOrigin };
+  }
+
+  // The Shaman specialization's own level-15 spell (a later follow-up
+  // ask) — a fixed-duration self-buff, same "always ON for its own
+  // duration once cast, no manual toggle-off" shape as scutum/barrier.
+  // Its bonus is applied in rollExtraAttacks (physical) and
+  // resolveRangedAutoAttack (wand); no visual and no movement/collision
+  // gate, so unlike barrier it needs no origin tracking.
+  @SubscribeMessage('castEnhanceDamage')
+  handleCastEnhanceDamage(@ConnectedSocket() client: GameSocket): CastSpellAck {
+    if (client.data.skills[SHAMAN_ENHANCE_DAMAGE_SKILL] === undefined) {
+      const message = "You don't know the enhance damage spell yet.";
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      const message = 'You need a wand equipped to cast spells.';
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+    const cooldownUntil = client.data.skillCooldowns[SHAMAN_ENHANCE_DAMAGE_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      const message = `Enhance damage is still recharging (${secondsLeft}s left).`;
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+    if (client.data.mana < SHAMAN_ENHANCE_DAMAGE_MANA_COST) {
+      const message = `You don't have enough mana to cast enhance damage (${SHAMAN_ENHANCE_DAMAGE_MANA_COST} needed).`;
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+
+    client.data.mana -= SHAMAN_ENHANCE_DAMAGE_MANA_COST;
+    const succeeded = this.rollSpellSuccess(client, SHAMAN_ENHANCE_DAMAGE_SKILL);
+    let message: string;
+    if (succeeded) {
+      this.startSkillCooldown(client, SHAMAN_ENHANCE_DAMAGE_SKILL);
+      client.data.enhanceDamageActive = true;
+      client.data.enhanceDamageActiveUntil = Date.now() + SHAMAN_ENHANCE_DAMAGE_DURATION_MS;
+      message = `Your strikes begin to hit harder (+${SHAMAN_ENHANCE_DAMAGE_BONUS} damage).`;
+    } else {
+      message = 'You fumble the incantation and nothing happens.';
+    }
+
+    const growth = this.maybeGrowSpellSkill(client, SHAMAN_ENHANCE_DAMAGE_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, active: succeeded, mana: client.data.mana, skills: client.data.skills, message };
   }
 
   // Drink/pour/irrigo (items 7 & 8's follow-up asks) all act on a single

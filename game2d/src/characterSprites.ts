@@ -107,6 +107,10 @@ const TEXTURE_KEYS: Record<SpriteKind, string> = {
   'wild goblin': 'wild-goblin',
   'wild skeleton': 'wild-skeleton',
   imp: 'imp',
+  // Diabolist's own demon imp summon (a later follow-up ask) — a direct
+  // hellish-red recolor of the wild imp rig (same frames/proportions),
+  // see assets/demon-imp-spritesheet.png.
+  'demon imp': 'demon-imp',
   ogre: 'ogre',
   shopkeeper: 'shopkeeper',
   teacher: 'teacher',
@@ -128,6 +132,7 @@ const SHEET_PATHS: Record<SpriteKind, string> = {
   'wild goblin': '/wild-goblin-spritesheet.png',
   'wild skeleton': '/wild-skeleton-spritesheet.png',
   imp: '/imp-spritesheet.png',
+  'demon imp': '/demon-imp-spritesheet.png',
   ogre: '/ogre-spritesheet.png',
   shopkeeper: '/shopkeeper-spritesheet.png',
   teacher: '/teacher-spritesheet.png',

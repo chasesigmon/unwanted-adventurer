@@ -1,7 +1,26 @@
 import type { MapName } from '../../shared/constants.js';
 import type { TeacherSnapshot } from '../../shared/types.js';
 import { LEARN_SPELLS_QUEST_ID, KILL_IMPS_QUEST_ID, GATHER_MANA_CRYSTALS_QUEST_ID, FIND_THE_MAP_QUEST_ID, CLASSROOM_SPELLS } from '../../shared/quests.js';
-import { ANIMATE_DEAD_SKILL } from '../../shared/skills.js';
+import {
+  ANIMATE_DEAD_SKILL,
+  RECALL_SKILL,
+  BARRIER_SKILL,
+  SHAMAN_ENHANCE_DAMAGE_SKILL,
+  ELEMENTAL_BOLT_SKILLS,
+  LESSER_HEAL_SKILL,
+  ENHANCED_UNDEAD_DAMAGE_SKILL,
+  LESSER_SELF_HEAL_SKILL,
+  WISP_TRANSFORMATION_SKILL,
+  BATTLEMAGE_ENHANCED_ARMOR_SKILL,
+  BATTLEMAGE_ENHANCED_DAMAGE_SKILL,
+  KINETIC_STRIKE_SKILL,
+  SAP_HEALTH_SKILL,
+  MONSTER_SUMMONS_SKILL,
+  SUMMON_DEMON_IMP_SKILL,
+  ENHANCED_HOLY_DAMAGE_SKILL,
+  INVISIBILITY_SKILL,
+  CREATE_DUPLICATE_SKILL,
+} from '../../shared/skills.js';
 
 // Static, permanent classroom occupants (a follow-up ask: "Add teacher
 // NPCs to each classroom and they are behind a desk with collision for
@@ -107,7 +126,18 @@ export const TEACHERS: TeacherSnapshot[] = [
   // through the click-to-learn modal (teachesSkills), reusing the exact
   // same CLASSROOM_SPELLS grouping the Learn Spells quest's objectives
   // already relied on so the two can never drift apart.
-  { id: 'defense-teacher', name: 'Professor Vantor', map: 'Defense Classroom', row: 2, col: 9, teachesSkills: CLASSROOM_SPELLS['Defense Classroom'], robeColorKey: 'steel' },
+  {
+    id: 'defense-teacher',
+    name: 'Professor Vantor',
+    map: 'Defense Classroom',
+    row: 2,
+    col: 9,
+    // Barrier (a later follow-up ask) is a level-10 spell added directly
+    // here rather than into CLASSROOM_SPELLS — same "don't pollute the
+    // Learn Spells quest" reasoning as recall's own addition above.
+    teachesSkills: [...(CLASSROOM_SPELLS['Defense Classroom'] ?? []), BARRIER_SKILL],
+    robeColorKey: 'steel',
+  },
   {
     id: 'summoning-teacher',
     name: 'Professor Nyx',
@@ -123,7 +153,11 @@ export const TEACHERS: TeacherSnapshot[] = [
     map: 'Utility Classroom',
     row: 2,
     col: 9,
-    teachesSkills: CLASSROOM_SPELLS['Utility Classroom'],
+    // Recall (a later follow-up ask) is a level-15 spell added directly
+    // here rather than into CLASSROOM_SPELLS — that map also drives the
+    // Learn Spells quest's own objective list, and recall shouldn't
+    // become a required objective for a starter-level quest.
+    teachesSkills: [...(CLASSROOM_SPELLS['Utility Classroom'] ?? []), RECALL_SKILL],
     robeColorKey: 'olive',
   },
   { id: 'offense-teacher', name: 'Professor Kastellan', map: 'Offense Classroom', row: 2, col: 9, teachesSkills: CLASSROOM_SPELLS['Offense Classroom'], robeColorKey: 'maroon' },
@@ -141,15 +175,95 @@ export const TEACHERS: TeacherSnapshot[] = [
   // a still-later follow-up ask) — the other 9 chamber teachers are still
   // plain tooltip-only for now.
   { id: 'necromancer-teacher', name: 'Professor Voss', map: 'Necromancer Chamber', row: 2, col: 9, teachesSkills: [ANIMATE_DEAD_SKILL], robeColorKey: 'slate' },
-  { id: 'enhancer-teacher', name: 'Professor Brann', map: 'Enhancer Chamber', row: 2, col: 9, robeColorKey: 'olive' },
-  { id: 'elementalist-teacher', name: 'Professor Tempest', map: 'Elementalist Chamber', row: 2, col: 9, robeColorKey: 'teal' },
-  { id: 'summoner-teacher', name: 'Professor Corvin', map: 'Summoner Chamber', row: 2, col: 9, robeColorKey: 'plum' },
-  { id: 'illusionist-teacher', name: 'Professor Mirelle', map: 'Illusionist Chamber', row: 2, col: 9, robeColorKey: 'violet' },
-  { id: 'battlemage-teacher', name: 'Professor Draven', map: 'Battlemage Chamber', row: 2, col: 9, robeColorKey: 'steel' },
-  { id: 'cleric-teacher', name: 'Professor Seraphine', map: 'Cleric Chamber', row: 2, col: 9, robeColorKey: 'amber' },
-  { id: 'druid-teacher', name: 'Professor Thornwood', map: 'Druid Chamber', row: 2, col: 9, robeColorKey: 'forest' },
-  { id: 'diabolist-teacher', name: 'Professor Malphas', map: 'Diabolist Chamber', row: 2, col: 9, robeColorKey: 'maroon' },
-  { id: 'hemomancer-teacher', name: 'Professor Vex', map: 'Hemomancer Chamber', row: 2, col: 9, robeColorKey: 'crimson' },
+  // A later follow-up ask gave the Shaman specialist an actual click
+  // behavior too: "enhance damage" through the same click-to-learn modal
+  // (level 15, shaman-only — see SKILL_SPECIALIZATION_REQUIREMENT).
+  { id: 'shaman-teacher', name: 'Professor Brann', map: 'Shaman Chamber', row: 2, col: 9, teachesSkills: [SHAMAN_ENHANCE_DAMAGE_SKILL], robeColorKey: 'olive' },
+  // A later follow-up ask gave the Elementalist specialist actual click
+  // behavior too: all 4 bolt spells (level 15, elementalist-only).
+  { id: 'elementalist-teacher', name: 'Professor Tempest', map: 'Elementalist Chamber', row: 2, col: 9, teachesSkills: ELEMENTAL_BOLT_SKILLS, robeColorKey: 'teal' },
+  // A later follow-up ask gave the Summoner specialist actual click
+  // behavior too: monster summons (level 15, summoner-only).
+  {
+    id: 'summoner-teacher',
+    name: 'Professor Corvin',
+    map: 'Summoner Chamber',
+    row: 2,
+    col: 9,
+    teachesSkills: [MONSTER_SUMMONS_SKILL],
+    robeColorKey: 'plum',
+  },
+  // A later follow-up ask gave the Illusionist specialist actual click
+  // behavior too: invisibility + create duplicate (both level 15,
+  // illusionist-only).
+  {
+    id: 'illusionist-teacher',
+    name: 'Professor Mirelle',
+    map: 'Illusionist Chamber',
+    row: 2,
+    col: 9,
+    teachesSkills: [INVISIBILITY_SKILL, CREATE_DUPLICATE_SKILL],
+    robeColorKey: 'violet',
+  },
+  // A later follow-up ask gave the Battlemage specialist actual click
+  // behavior too: 2 passives + kinetic strike (all level 15,
+  // battlemage-only).
+  {
+    id: 'battlemage-teacher',
+    name: 'Professor Draven',
+    map: 'Battlemage Chamber',
+    row: 2,
+    col: 9,
+    teachesSkills: [BATTLEMAGE_ENHANCED_ARMOR_SKILL, BATTLEMAGE_ENHANCED_DAMAGE_SKILL, KINETIC_STRIKE_SKILL],
+    robeColorKey: 'steel',
+  },
+  // A later follow-up ask gave the Cleric specialist actual click
+  // behavior too: lesser heal + enhanced undead damage (both level 15,
+  // cleric-only).
+  {
+    id: 'cleric-teacher',
+    name: 'Professor Seraphine',
+    map: 'Cleric Chamber',
+    row: 2,
+    col: 9,
+    teachesSkills: [LESSER_HEAL_SKILL, ENHANCED_UNDEAD_DAMAGE_SKILL],
+    robeColorKey: 'amber',
+  },
+  // A later follow-up ask gave the Druid specialist actual click
+  // behavior too: lesser self heal + wisp transformation (both level 15,
+  // druid-only).
+  {
+    id: 'druid-teacher',
+    name: 'Professor Thornwood',
+    map: 'Druid Chamber',
+    row: 2,
+    col: 9,
+    teachesSkills: [LESSER_SELF_HEAL_SKILL, WISP_TRANSFORMATION_SKILL],
+    robeColorKey: 'forest',
+  },
+  // A later follow-up ask gave the Diabolist specialist actual click
+  // behavior too: summon demon imp + enhanced holy damage (both level
+  // 15, diabolist-only).
+  {
+    id: 'diabolist-teacher',
+    name: 'Professor Malphas',
+    map: 'Diabolist Chamber',
+    row: 2,
+    col: 9,
+    teachesSkills: [SUMMON_DEMON_IMP_SKILL, ENHANCED_HOLY_DAMAGE_SKILL],
+    robeColorKey: 'maroon',
+  },
+  // A later follow-up ask gave the Hemomancer specialist actual click
+  // behavior too: sap health (level 15, hemomancer-only).
+  {
+    id: 'hemomancer-teacher',
+    name: 'Professor Vex',
+    map: 'Hemomancer Chamber',
+    row: 2,
+    col: 9,
+    teachesSkills: [SAP_HEALTH_SKILL],
+    robeColorKey: 'crimson',
+  },
 ];
 
 export function teachersForMap(mapName: MapName): TeacherSnapshot[] {
