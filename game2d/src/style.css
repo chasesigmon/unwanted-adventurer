@@ -945,6 +945,19 @@ body {
   text-align: right;
 }
 
+/* The Help modal (the 'h' hotkey) — plain left-aligned rows, not the
+   label/value .modal-stats grid (see helpModal.ts's own comment on why). */
+.help-command-row {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #ccc;
+}
+
+.help-command-row strong {
+  color: #eee;
+}
+
 /* The character sheet's own stat-point allocation (a later follow-up
    ask) — a small "+" appended right after an allocatable stat's own
    value, only rendered at all while stat points are available. */

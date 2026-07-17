@@ -28,6 +28,12 @@ export type PetCommand = (typeof PET_COMMANDS)[number];
 export const PET_STARTING_HP = 50;
 export const PET_PRICE = 15;
 
+// A follow-up ask's 'z' hotkey ("send the follower to auto attack the
+// target") gave the 'attack' command real teeth — flat, same for every
+// pet kind (no per-kind attack stat exists), same "simplified, no dodge/
+// counter-attack" shape the wand's own ranged auto-attack already uses.
+export const PET_ATTACK_DAMAGE = 5;
+
 export interface PetSnapshot {
   id: string;
   ownerUsername: string;
@@ -41,6 +47,12 @@ export interface PetSnapshot {
   row: number;
   col: number;
   command: PetCommand;
+  // Which live target (a monster or another player) this pet is
+  // approaching/attacking — set together with command==='attack' (see
+  // game.gateway.ts's handleCommandFollowerAttack), cleared whenever the
+  // command changes away from 'attack' or the target's gone.
+  attackTargetKind?: 'monster' | 'player';
+  attackTargetId?: string;
   // False once its hp hits 0 — see this file's own doc comment on
   // resurrection being a future mechanic.
   alive: boolean;
@@ -74,6 +86,10 @@ export interface AnimatedMonsterSnapshot {
   row: number;
   col: number;
   command: PetCommand;
+  // See PetSnapshot's own doc comment on these two — same shape, same
+  // 'z' hotkey.
+  attackTargetKind?: 'monster' | 'player';
+  attackTargetId?: string;
   // "Lasts... until it is killed" — an animated monster has no hp
   // regeneration and no resurrection path at all, unlike a pet.
   alive: boolean;

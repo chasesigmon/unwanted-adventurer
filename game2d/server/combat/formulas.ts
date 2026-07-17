@@ -3,7 +3,7 @@
 // down to this project's smaller scope (one active attack — punch — but
 // now with equipment, resistances, and dodge/parry/shield-block ported
 // from the text game).
-import { type EquipmentSlot, WAND_ITEM } from '../../shared/equipment.js';
+import { type EquipmentSlot, WAND_ITEM, isWandItem } from '../../shared/equipment.js';
 import type { MonsterClass, Race } from '../../shared/constants.js';
 export { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, type EquipmentSlot } from '../../shared/equipment.js';
 import {
@@ -62,7 +62,7 @@ export const STARTING_MV = 200;
 // regens but doesn't gate anything yet (a deliberate first-pass scope,
 // same as a few other "earnable now, inert until wired to something"
 // mechanics already in this project).
-export const MV_COST_PER_TILE = 0.5;
+export const MV_COST_PER_TILE = 0.2;
 export const STARTING_LEVEL = 1;
 // A goblin can't level past this without evolving — matches the text
 // game's own GOBLIN_MAX_LEVEL exactly. (Skeleton/zombie/dragonborn/slime
@@ -399,6 +399,16 @@ export function computeDodgeChance(defender: CombatantStats, defenderSkills: Rec
 // Parrying requires a weapon equipped — bare-handed, there's nothing to
 // parry with (same restriction the text game applies to every race but
 // slime, which this project doesn't have).
+// A later follow-up ask refined this: "a wand can only parry another
+// attack from a wand; a physical weapon can parry attacks from physical
+// or ranged weapons including wands." Every attack that actually reaches
+// resolveDefense today is a melee punch/dagger swing — the ranged
+// wand-bolt path skips defense resolution entirely (see
+// resolveRangedAutoAttack's own doc comment) and never targets a player
+// anyway — so a wand-wielding defender never has anything valid to
+// parry against right now; a physical-weapon defender is unaffected
+// (already unconditional below, since "physical or ranged" covers
+// everything that can reach this check).
 export function computeParryChance(
   defender: CombatantStats,
   defenderSkills: Record<string, number>,
@@ -406,6 +416,7 @@ export function computeParryChance(
   attacker: CombatantStats
 ): number {
   if (!defenderEquipment.weapon) return 0;
+  if (isWandItem(defenderEquipment.weapon)) return 0;
   return avoidChance(defender.level, defender.strength, defenderSkills[PARRY_SKILL] ?? 0, attacker.level, attacker.strength);
 }
 
@@ -582,6 +593,12 @@ export const TRAINING_POINT_LEVEL_INTERVAL = 5;
 // teacher's own click-to-learn modal (see game.gateway.ts's
 // handleLearnSkill), replacing the old podium-reading skill system.
 export const PRACTICE_POINTS_PER_LEVEL = 3;
+// "New players upon creation should start with 3 trains and 5 practices"
+// (a later follow-up ask) — granted once, at character creation (see
+// auth.service.ts's createCharacter), on top of whatever the per-level
+// formulas above grant afterward as the character actually levels up.
+export const STARTING_TRAINING_POINTS = 3;
+export const STARTING_PRACTICE_POINTS = 5;
 // Constitution's own contribution to max hp (a later follow-up ask: "con
 // x 20") — applied incrementally, +HP_PER_CONSTITUTION every time a stat
 // point actually goes into constitution (or subtracted by condeath's own

@@ -1,6 +1,13 @@
 import type { MapName } from '../../shared/constants.js';
 import type { TeacherSnapshot } from '../../shared/types.js';
-import { LEARN_SPELLS_QUEST_ID, KILL_IMPS_QUEST_ID, GATHER_MANA_CRYSTALS_QUEST_ID, FIND_THE_MAP_QUEST_ID, CLASSROOM_SPELLS } from '../../shared/quests.js';
+import {
+  LEARN_SPELLS_QUEST_ID,
+  KILL_IMPS_QUEST_ID,
+  GATHER_MANA_CRYSTALS_QUEST_ID,
+  FIND_THE_MAP_QUEST_ID,
+  CHOOSE_HOUSE_QUEST_ID,
+  CLASSROOM_SPELLS,
+} from '../../shared/quests.js';
 import {
   ANIMATE_DEAD_SKILL,
   RECALL_SKILL,
@@ -45,7 +52,7 @@ export const TEACHERS: TeacherSnapshot[] = [
     map: 'Grimoak Entrance Hall',
     row: 8,
     col: 26,
-    questId: LEARN_SPELLS_QUEST_ID,
+    questIds: [LEARN_SPELLS_QUEST_ID],
     robeColorKey: 'violet',
     longHair: true,
   },
@@ -61,7 +68,7 @@ export const TEACHERS: TeacherSnapshot[] = [
     map: 'Grimoak Entrance Hall',
     row: 8,
     col: 20,
-    questId: KILL_IMPS_QUEST_ID,
+    questIds: [KILL_IMPS_QUEST_ID],
     robeColorKey: 'crimson',
   },
   {
@@ -71,7 +78,7 @@ export const TEACHERS: TeacherSnapshot[] = [
     map: 'Grimoak Entrance Hall',
     row: 8,
     col: 32,
-    questId: GATHER_MANA_CRYSTALS_QUEST_ID,
+    questIds: [GATHER_MANA_CRYSTALS_QUEST_ID],
     robeColorKey: 'teal',
   },
   // A 4th quest-giver (a later follow-up ask) — "in between the
@@ -94,7 +101,10 @@ export const TEACHERS: TeacherSnapshot[] = [
     row: 16,
     col: 14,
     facing: 'right',
-    questId: FIND_THE_MAP_QUEST_ID,
+    // A later follow-up ask gave her a 2nd quest ("choose a house") —
+    // offered only once Find the Map is turned in (see
+    // shared/quests.ts's activeQuestIdFor).
+    questIds: [FIND_THE_MAP_QUEST_ID, CHOOSE_HOUSE_QUEST_ID],
     robeColorKey: 'forest',
     longHair: true,
   },
@@ -164,7 +174,7 @@ export const TEACHERS: TeacherSnapshot[] = [
   // The 10 specialization chambers (a later follow-up ask) — one teacher
   // each, same row/col as every other classroom teacher (their own
   // desk sits one tile south, per deskPositionFor's default). No special
-  // click behavior yet (no questId/specializationGate/houseChoiceGate) —
+  // click behavior yet (no questIds/specializationGate/houseChoiceGate) —
   // "mechanics for the specialization teachers will come later," so they
   // fall back to the same plain generic-tooltip click every classroom
   // teacher without one of those already gets.

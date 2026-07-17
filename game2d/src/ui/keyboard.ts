@@ -14,6 +14,7 @@ import {
   skillsModal,
   spellsModal,
   affectsModal,
+  helpModal,
   questLogModal,
   toggleModal,
 } from './modalCore.js';
@@ -105,12 +106,22 @@ export function initGlobalKeyboardShortcuts(): void {
     } else if (key === 'q') {
       e.preventDefault();
       toggleModal(questLogModal);
+    } else if (key === 'h') {
+      // A later follow-up ask — a Help modal listing every chat-typeable
+      // command and what it does (shared/commands.ts).
+      e.preventDefault();
+      toggleModal(helpModal);
     } else if (key === 'x') {
       // A later follow-up ask: "make the player stop auto attacking" —
       // stops whatever combat session (melee or ranged) is currently
       // armed, without needing a modal open at all.
       e.preventDefault();
       activeScene?.stopAutoAttack();
+    } else if (key === 'z') {
+      // A later follow-up ask: send a pet/animated monster to attack the
+      // currently selected target (see WorldScene.commandFollowerAttack).
+      e.preventDefault();
+      activeScene?.commandFollowerAttack();
     } else {
       // The action bar's own two groups of 10 slots (a follow-up ask) —
       // 1-9 then 0 map onto slots 0-9 in order, Shift+(1-9,0) onto slots

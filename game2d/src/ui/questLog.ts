@@ -17,13 +17,15 @@ const QUEST_GIVER_NAMES: Record<string, string> = {
   'kill-imps': 'Professor Bramwell',
   'gather-mana-crystals': 'Professor Thistlewood',
   'find-the-map': 'Professor Hollowell',
+  'choose-house': 'Professor Hollowell',
 };
 
-// hasFlag objectives (a follow-up ask's "acquire the map" quest) check
-// PlayerSnapshot.mapUnlocked — bundled the same way everywhere this
-// module calls into isObjectiveDone/allObjectivesDone.
-function flagsFor(): { mapUnlocked: boolean | undefined } {
-  return { mapUnlocked: myProfile?.mapUnlocked };
+// hasFlag objectives (a follow-up ask's "acquire the map" quest, and its
+// "choose a house" follow-up) check PlayerSnapshot.mapUnlocked/house —
+// bundled the same way everywhere this module calls into
+// isObjectiveDone/allObjectivesDone.
+function flagsFor(): { mapUnlocked: boolean | undefined; houseChosen: boolean } {
+  return { mapUnlocked: myProfile?.mapUnlocked, houseChosen: Boolean(myProfile?.house) };
 }
 
 // Reset to the list view every time the modal is freshly opened (mapModal's

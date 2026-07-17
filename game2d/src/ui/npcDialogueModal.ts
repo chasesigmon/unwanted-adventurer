@@ -42,7 +42,12 @@ export function openNpcDialogueModal(name: string, questId: string): void {
           if (myProfile) setMyProfile({ ...myProfile, quests: { ...myProfile.quests, [questId]: {} } });
           activeScene?.updateTeacherQuestIcons();
           if (ack.message) showCenterToast(ack.message);
-          npcDialogueActions.innerHTML = '';
+          // Re-render (not just clear the button) — a player who already
+          // satisfied this quest's objective(s) before accepting (e.g.
+          // already holding the map before taking "find the map") should
+          // see the ready-to-turn-in state immediately, not just an
+          // empty button area until something else happens to refresh it.
+          openNpcDialogueModal(name, questId);
         })
         .catch(() => {
           btn.disabled = false;
@@ -51,7 +56,12 @@ export function openNpcDialogueModal(name: string, questId: string): void {
     npcDialogueActions.appendChild(btn);
   } else if (progress.completedAt) {
     npcDialogueText.textContent = quest.completedMessage;
-  } else if (allObjectivesDone(quest, progress, myProfile?.skills ?? {}, myProfile?.inventory ?? [], { mapUnlocked: myProfile?.mapUnlocked })) {
+  } else if (
+    allObjectivesDone(quest, progress, myProfile?.skills ?? {}, myProfile?.inventory ?? [], {
+      mapUnlocked: myProfile?.mapUnlocked,
+      houseChosen: Boolean(myProfile?.house),
+    })
+  ) {
     npcDialogueText.textContent = quest.readyMessage;
     const btn = document.createElement('button');
     btn.type = 'button';

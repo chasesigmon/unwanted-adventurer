@@ -11,6 +11,7 @@ import type {
   LootAck,
   BuyAck,
   PetCommandAck,
+  CommandFollowerAttackAck,
   AnimatedMonsterCommandAck,
   EatBrainsAck,
   SacrificeAck,
@@ -428,6 +429,22 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('petCommand', command, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // The 'z' hotkey (a later follow-up ask) — commands every living pet/
+  // animated monster the caller owns to approach and attack the given
+  // target.
+  commandFollowerAttack(payload: { targetKind: 'monster' | 'player'; targetId: string }): Promise<CommandFollowerAttackAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('commandFollowerAttack', payload, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

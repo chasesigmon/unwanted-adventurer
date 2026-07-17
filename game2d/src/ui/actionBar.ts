@@ -8,6 +8,21 @@ import { createCooldownOverlay, isAttackSkill, skillIconColor, updateCooldownOve
 import { skillIconGlyphUrl } from './skillIcons.js';
 import { attachTooltip } from './tooltip.js';
 
+// A follow-up ask: dragging a skill icon off the action bar (to remove
+// it) shouldn't show the browser's own default "snaps back into place
+// before disappearing" ghost-image animation on an unsuccessful drop.
+// The native drag image is a screenshot of the dragged element by
+// default — swapping it for a fully transparent 1x1 pixel via
+// setDragImage means there's nothing visible left for the browser to
+// animate back, so the icon just vanishes the instant the drop is
+// rejected instead. Shared by both the Skills modal's own drag source
+// (skillsPanel.ts) and the action bar's own slot-to-slot drag below.
+const TRANSPARENT_DRAG_IMAGE = new Image();
+TRANSPARENT_DRAG_IMAGE.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7';
+export function suppressDragGhost(e: DragEvent): void {
+  e.dataTransfer?.setDragImage(TRANSPARENT_DRAG_IMAGE, 0, 0);
+}
+
 export const ACTION_BAR_SLOT_COUNT = 20;
 const actionBarWrapper = document.getElementById('action-bar-wrapper') as HTMLDivElement;
 const actionBar = document.getElementById('action-bar') as HTMLDivElement;
@@ -257,6 +272,7 @@ for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
     }
     e.dataTransfer?.setData('text/plain', skillName);
     e.dataTransfer?.setData(ACTION_SLOT_SOURCE_MIME, String(i));
+    suppressDragGhost(e);
   });
   slot.addEventListener('dragend', (e) => {
     if (e.dataTransfer?.dropEffect === 'none' && actionBarSkills[i] !== null) {

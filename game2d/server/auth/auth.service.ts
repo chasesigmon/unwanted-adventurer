@@ -12,7 +12,7 @@ import { startingPositionFor } from '../../shared/maps.js';
 import { STARTING_MAP, RACE_STARTING_STATS } from '../../shared/constants.js';
 import { WAND_ITEM } from '../../shared/equipment.js';
 import { CANTEEN_ITEM } from '../../shared/items.js';
-import { startingSkills } from '../combat/formulas.js';
+import { startingSkills, STARTING_TRAINING_POINTS, STARTING_PRACTICE_POINTS } from '../combat/formulas.js';
 import type { AppConfig } from '../config/configuration.js';
 import type { CredentialsDto, RegisterAccountDto, CreateCharacterDto } from './dto/credentials.dto.js';
 
@@ -198,6 +198,10 @@ export class AuthService {
       row: spawn.row,
       col: spawn.col,
       skills: startingSkills(race),
+      // "New players upon creation should start with 3 trains and 5
+      // practices" (a later follow-up ask).
+      statPointsAvailable: STARTING_TRAINING_POINTS,
+      practicePointsAvailable: STARTING_PRACTICE_POINTS,
       // Every young witch/wizard also starts with a canteen (item 7) —
       // unequipped in their inventory, like every other consumable.
       inventory: [CANTEEN_ITEM],

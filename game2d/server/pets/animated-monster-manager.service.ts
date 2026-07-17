@@ -18,6 +18,15 @@ export class AnimatedMonsterManagerService {
 
   constructor(private readonly worldManager: WorldManagerService) {}
 
+  // Same shape as PetManagerService's own setTargetLocator — injected by
+  // GameGateway so tickAll below can locate a monster/player target
+  // without a direct dependency on MonsterManagerService.
+  private targetLocator?: (kind: 'monster' | 'player', id: string) => { mapName: MapName; row: number; col: number } | undefined;
+
+  setTargetLocator(locator: (kind: 'monster' | 'player', id: string) => { mapName: MapName; row: number; col: number } | undefined): void {
+    this.targetLocator = locator;
+  }
+
   countFor(ownerUsername: string): number {
     return this.monsters.get(ownerUsername)?.length ?? 0;
   }
@@ -58,6 +67,22 @@ export class AnimatedMonsterManagerService {
     const monster = this.monsters.get(ownerUsername)?.find((m) => m.id === id);
     if (!monster || !monster.alive) return undefined;
     monster.command = command;
+    if (command !== 'attack') {
+      monster.attackTargetKind = undefined;
+      monster.attackTargetId = undefined;
+    }
+    return monster;
+  }
+
+  // The 'z' hotkey (a later follow-up ask) — same shape as
+  // PetManagerService.commandAttack, just needs the specific monster's
+  // own id too since an owner can have more than one at once.
+  commandAttack(ownerUsername: string, id: string, targetKind: 'monster' | 'player', targetId: string): AnimatedMonster | undefined {
+    const monster = this.monsters.get(ownerUsername)?.find((m) => m.id === id);
+    if (!monster || !monster.alive) return undefined;
+    monster.command = 'attack';
+    monster.attackTargetKind = targetKind;
+    monster.attackTargetId = targetId;
     return monster;
   }
 
@@ -72,13 +97,54 @@ export class AnimatedMonsterManagerService {
     return { monster, died };
   }
 
-  // Same follow-toward-owner stepping logic as PetManagerService.tickAll,
-  // just iterating every owner's whole array instead of a single pet.
-  tickAll(): Set<MapName> {
+  // Same follow-toward-owner/attack-toward-target stepping logic as
+  // PetManagerService.tickAll — see that method's own doc comment — just
+  // iterating every owner's whole array instead of a single pet. Each
+  // reported contact also carries the specific animated monster's own id
+  // (unlike a pet, an owner can have more than one) so the caller can
+  // apply its own attackDamage and know which one to credit/update.
+  tickAll(): {
+    changedMaps: Set<MapName>;
+    contacts: Array<{ ownerUsername: string; id: string; targetKind: 'monster' | 'player'; targetId: string }>;
+  } {
     const changedMaps = new Set<MapName>();
+    const contacts: Array<{ ownerUsername: string; id: string; targetKind: 'monster' | 'player'; targetId: string }> = [];
     for (const owned of this.monsters.values()) {
       for (const monster of owned) {
-        if (!monster.alive || monster.command !== 'follow') continue;
+        if (!monster.alive) continue;
+
+        if (monster.command === 'attack' && monster.attackTargetKind && monster.attackTargetId) {
+          const target = this.targetLocator?.(monster.attackTargetKind, monster.attackTargetId);
+          if (!target) {
+            monster.command = 'follow';
+            monster.attackTargetKind = undefined;
+            monster.attackTargetId = undefined;
+            continue;
+          }
+          if (monster.map !== target.mapName) {
+            changedMaps.add(monster.map);
+            monster.map = target.mapName;
+            monster.row = target.row;
+            monster.col = target.col;
+            changedMaps.add(monster.map);
+            continue;
+          }
+          const dRow = target.row - monster.row;
+          const dCol = target.col - monster.col;
+          if (Math.abs(dRow) + Math.abs(dCol) <= 1) {
+            contacts.push({ ownerUsername: monster.ownerUsername, id: monster.id, targetKind: monster.attackTargetKind, targetId: monster.attackTargetId });
+            continue;
+          }
+          if (Math.abs(dRow) >= Math.abs(dCol)) {
+            monster.row += Math.sign(dRow);
+          } else {
+            monster.col += Math.sign(dCol);
+          }
+          changedMaps.add(monster.map);
+          continue;
+        }
+
+        if (monster.command !== 'follow') continue;
         const owner = this.worldManager.getLocation(monster.ownerUsername);
         if (!owner) continue;
         if (monster.map !== owner.mapName) {
@@ -100,7 +166,7 @@ export class AnimatedMonsterManagerService {
         changedMaps.add(monster.map);
       }
     }
-    return changedMaps;
+    return { changedMaps, contacts };
   }
 
   // "Lasts the entire time the player is logged in" — called on

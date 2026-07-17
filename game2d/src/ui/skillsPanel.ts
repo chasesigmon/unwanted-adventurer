@@ -3,7 +3,7 @@ import { myProfile } from '../state.js';
 import { attachTooltip } from './tooltip.js';
 import { SKILL_DESCRIPTIONS, SKILL_CATEGORIES, skillCategory, createCooldownOverlay, isAttackSkill, isUsableSkill, skillIconColor } from './skillMeta.js';
 import { skillIconGlyphUrl } from './skillIcons.js';
-import { actionBarSkills, assignActionSlot, saveActionBar } from './actionBar.js';
+import { actionBarSkills, assignActionSlot, saveActionBar, suppressDragGhost } from './actionBar.js';
 import { logCombatMessage } from './log.js';
 import { registerModalOpenHandler, registerModalRefreshHandler, skillsBody, skillsModal } from './modalCore.js';
 
@@ -29,6 +29,7 @@ function renderSkillRow(skillName: string, valueText: string): void {
     attachTooltip(icon, () => 'Drag to the action bar (or double-click) to use on your selected target');
     icon.addEventListener('dragstart', (e) => {
       e.dataTransfer?.setData('text/plain', skillName);
+      suppressDragGhost(e);
     });
     // Double-click drops it straight into the next free action-bar slot
     // — the same singleton-attack-slot rule the drag-and-drop path uses

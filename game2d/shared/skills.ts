@@ -43,7 +43,15 @@ export const DODGE_SKILL = 'dodge';
 export const PARRY_SKILL = 'parry';
 export const SHIELD_BLOCK_SKILL = 'shield block';
 export const DAGGER_SKILL = 'dagger';
-export const STARTING_SKILLS = [PUNCH_SKILL, DODGE_SKILL, PARRY_SKILL, SHIELD_BLOCK_SKILL, DAGGER_SKILL];
+// A later follow-up ask: "dagger should be removed as a skill" (a fresh
+// character — a Viravis, in the report, but this applied to every race
+// that goes through this starting kit) shouldn't already know it from
+// birth — same "the weapon itself grants the skill" shape the wand's own
+// WAND_BOLT_SKILL already has below, just picked up organically the
+// first time a dagger is actually equipped and swung (see
+// attackGrowthSkill/maybeGrowSkill's own STARTING_SKILL_PERCENT
+// fallback for an unlearned skill), not handed out at creation.
+export const STARTING_SKILLS = [PUNCH_SKILL, DODGE_SKILL, PARRY_SKILL, SHIELD_BLOCK_SKILL];
 
 // A follow-up ask's ranged basic attack — automatic the moment a wand is
 // equipped (no podium/learning needed), the same "the weapon itself

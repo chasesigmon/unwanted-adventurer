@@ -33,6 +33,9 @@ const CHAR_SHEET_STAT_DESCRIPTIONS: Record<string, string> = {
   Deaths: 'Every death (from any cause) counts here. Every 5th costs 1 constitution permanently. At 65, CONDEATH — this character can never be played again.',
   Hunger: 'Drops by 1 every game hour. Eating jerky restores 20. No mechanical effect yet at 0 — reserved for future use.',
   Thirst: 'Drops by 1 every game hour. Drinking from your canteen or a cup of water restores 20. No mechanical effect yet at 0 — reserved for future use.',
+  Movement: 'Costs a fraction of a point per tile moved; regenerates on its own like hp/mana. No mechanical effect yet at 0 — reserved for future use.',
+  'Training Points': 'Gained every 5th level. Spend these on any stat below using its + button.',
+  'Practice Points': 'Gained every level. Spend these with a classroom/specialization teacher to learn new skills and spells.',
 };
 
 // Must match game.gateway.ts's own GameGateway.CONDEATH_LIMIT.
@@ -114,16 +117,17 @@ export function renderCharSheet(): void {
   appendStatRow(charSheetBody, 'Exp', myProfile.exp, CHAR_SHEET_STAT_DESCRIPTIONS.Exp);
   appendStatRow(charSheetBody, 'HP', `${myProfile.hp}/${myProfile.maxHp}`);
   appendStatRow(charSheetBody, 'Mana', `${myProfile.mana}/${myProfile.maxMana}`);
+  // A follow-up ask: "add movement to the character sheet" — same
+  // whole-number-only display the status bar's own MV already uses.
+  appendStatRow(charSheetBody, 'Movement', `${wholeNumber(myProfile.mv)}/${wholeNumber(myProfile.maxMv)}`, CHAR_SHEET_STAT_DESCRIPTIONS.Movement);
   appendStatRow(charSheetBody, 'Hunger', `${wholeNumber(myProfile.hunger ?? 100)}/100`, CHAR_SHEET_STAT_DESCRIPTIONS.Hunger);
   appendStatRow(charSheetBody, 'Thirst', `${wholeNumber(myProfile.thirst ?? 100)}/100`, CHAR_SHEET_STAT_DESCRIPTIONS.Thirst);
-  if (hasPoints) {
-    appendStatRow(
-      charSheetBody,
-      'Stat Points',
-      myProfile.statPointsAvailable,
-      "You've leveled up! Spend these on any stat below using its + button."
-    );
-  }
+  // A follow-up ask: "add the number of trains & practices the player
+  // has to the character sheet" — always visible now (not just while
+  // > 0, unlike the individual stat rows' own + buttons below, which
+  // still only appear while there's actually something to spend).
+  appendStatRow(charSheetBody, 'Training Points', myProfile.statPointsAvailable, CHAR_SHEET_STAT_DESCRIPTIONS['Training Points']);
+  appendStatRow(charSheetBody, 'Practice Points', myProfile.practicePointsAvailable, CHAR_SHEET_STAT_DESCRIPTIONS['Practice Points']);
   for (const { label, stat } of ALLOCATABLE_STATS) {
     appendAllocatableStatRow(label, stat, myProfile[stat], hasPoints);
   }

@@ -382,12 +382,15 @@ export interface TeacherSnapshot {
   // Entrance Hall's own fireplaces, not at a desk) — see
   // server/worlds/teachers.ts's teacherDeskFootprintFor.
   hasDesk?: boolean;
-  // Present only for a teacher who offers a quest on click (a follow-up
-  // ask) — opens a dialogue modal (see src/ui/npcDialogueModal.ts) with
-  // this quest's own description (shared/quests.ts) as the spoken line
-  // and a button to start it, instead of the plain classroom-teacher
-  // tooltip.
-  questId?: string;
+  // Present only for a teacher who offers one or more quests on click (a
+  // follow-up ask) — opens a dialogue modal (see src/ui/npcDialogueModal.ts)
+  // with this quest's own description (shared/quests.ts) as the spoken
+  // line and a button to start it, instead of the plain classroom-teacher
+  // tooltip. Checked in order (see shared/quests.ts's activeQuestIdFor) —
+  // a teacher with more than one (Professor Hollowell's 2nd quest, a
+  // later follow-up ask) offers them one at a time, moving to the next
+  // once the current one is turned in.
+  questIds?: string[];
   // Which way this teacher's own sprite faces — absent means 'down'
   // (every existing teacher, standing at the front of their own room
   // facing the door/players). A follow-up ask's map-quest teacher stands
@@ -472,6 +475,15 @@ export interface PetCommandAck {
 export interface AnimatedMonsterCommandAck {
   ok: boolean;
   animatedMonster?: AnimatedMonsterSnapshot;
+  message?: string;
+}
+
+// The 'z' hotkey (a later follow-up ask): "send the monster [follower]
+// to auto attack the target" — commands every living pet/animated
+// monster the caller owns to approach and attack whichever
+// monster/player they currently have selected.
+export interface CommandFollowerAttackAck {
+  ok: boolean;
   message?: string;
 }
 
@@ -800,6 +812,10 @@ export interface ClientToServerEvents {
   // Commanding your own pet (a later follow-up ask) — "stay by side,
   // attack, sleep" (plus 'follow', the default the moment it's bought).
   petCommand: (command: PetCommand, ack: (res: PetCommandAck) => void) => void;
+  commandFollowerAttack: (
+    payload: { targetKind: 'monster' | 'player'; targetId: string },
+    ack: (res: CommandFollowerAttackAck) => void
+  ) => void;
   // Zombie-only: heals 20% hp/mana, see game.gateway.ts's
   // EAT_BRAINS_COOLDOWN_TICKS for the cooldown this starts.
   eatBrains: (corpseId: string, ack: (res: EatBrainsAck) => void) => void;

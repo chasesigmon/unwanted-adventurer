@@ -61,6 +61,11 @@ export const autopilotStatusEl = document.getElementById('autopilot-status') as 
 // same "doesn't obstruct the map" shape as Skills/Inventory.
 export const affectsModal = document.getElementById('affects-modal') as HTMLDivElement;
 export const affectsBody = document.getElementById('affects-body') as HTMLDivElement;
+// The 'h' hotkey (a later follow-up ask) — a static list of every
+// chat-typeable command and what it does; read-only, same "doesn't
+// obstruct the map" shape as Affects.
+export const helpModal = document.getElementById('help-modal') as HTMLDivElement;
+export const helpBody = document.getElementById('help-body') as HTMLDivElement;
 // The secret room's treasure chest (a follow-up ask) — same "list +
 // click an item" shape as the corpse loot modal, just a single fixed
 // "map" item instead of a corpse's varying drops.
@@ -104,6 +109,7 @@ export const ALL_MODALS = [
   equipmentModal,
   mapModal,
   affectsModal,
+  helpModal,
   corpseModal,
   shopModal,
   targetInfoModal,
@@ -122,7 +128,24 @@ export const ALL_MODALS = [
 // sheet/the map/Affects while still walking around. Every OTHER modal
 // (corpse/shop/target-info/autopilot's own text prompt/the chest) still
 // blocks movement.
-export const MOVEMENT_PASSTHROUGH_MODALS = [inventoryModal, equipmentModal, skillsModal, spellsModal, charSheetModal, mapModal, affectsModal, questLogModal];
+// A later follow-up ask added the teacher dialogue and shop modals to
+// this list too — "a player is able to move while a teacher/shop modal
+// is open." Neither has a text input a WASD keypress could clash with
+// (button-driven click-to-learn/click-to-buy only), same reasoning as
+// every other modal already here.
+export const MOVEMENT_PASSTHROUGH_MODALS = [
+  inventoryModal,
+  equipmentModal,
+  skillsModal,
+  spellsModal,
+  charSheetModal,
+  mapModal,
+  affectsModal,
+  helpModal,
+  questLogModal,
+  npcDialogueModal,
+  shopModal,
+];
 
 export function isMovementBlocked(): boolean {
   return chatInputFocused || ALL_MODALS.some((m) => !m.hidden && !MOVEMENT_PASSTHROUGH_MODALS.includes(m));

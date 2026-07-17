@@ -18,7 +18,8 @@ import { MonsterManagerService } from '../monsters/monster-manager.service.js';
 import { CorpseManagerService, bodyPartLabelFor, raceForBodyPart } from '../worlds/corpse-manager.service.js';
 import { PetManagerService } from '../pets/pet-manager.service.js';
 import { AnimatedMonsterManagerService } from '../pets/animated-monster-manager.service.js';
-import { PET_KINDS, PET_COMMANDS, type PetKind, type PetCommand } from '../../shared/pets.js';
+import { PET_KINDS, PET_COMMANDS, PET_ATTACK_DAMAGE, type PetKind, type PetCommand } from '../../shared/pets.js';
+import { CHAT_COMMANDS } from '../../shared/commands.js';
 import { WorldClockService } from '../worlds/world-clock.service.js';
 import { findVendor } from '../worlds/vendors.js';
 import { MONSTER_SPECIES } from '../monsters/monster.js';
@@ -118,6 +119,7 @@ import type {
   RestState,
   BuyAck,
   PetCommandAck,
+  CommandFollowerAttackAck,
   AnimatedMonsterCommandAck,
   EatBrainsAck,
   SacrificeAck,
@@ -399,7 +401,7 @@ const HOURS_PER_DAY = 24;
 const STAT_TICK_MS = 30_000;
 // "Update the hunger & thirst to lose .4 per stat tick instead" (a later
 // follow-up ask, slowed from a flat 1/tick) — see applyStatTick.
-const HUNGER_THIRST_DECAY_PER_TICK = 0.4;
+const HUNGER_THIRST_DECAY_PER_TICK = 0.3;
 // The Learn Spells quest's own completion reward (a follow-up ask) — see
 // handleCompleteQuest/maybeGrowSpellSkill's own enhancedLearningBonusFor.
 // 20 game hours (a later follow-up ask, up from 12) — 20 stat ticks at
@@ -584,6 +586,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     });
     this.monsterManager.spawnInitial();
 
+    // The 'z' hotkey's own follower-attack movement (a later follow-up
+    // ask) — same callback-injection reasoning as every other cross-
+    // manager lookup above, so PetManagerService/AnimatedMonsterManagerService
+    // don't need a direct dependency on MonsterManagerService just to find
+    // where a monster target currently is.
+    const followerTargetLocator = (kind: 'monster' | 'player', id: string) => this.locateCombatTarget(kind, id);
+    this.petManager.setTargetLocator(followerTargetLocator);
+    this.animatedMonsterManager.setTargetLocator(followerTargetLocator);
+
     setInterval(() => {
       this.combatTickCount += 1;
       this.combatTick();
@@ -592,16 +603,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.monsterManager.wanderAll(this.combatTickCount);
       this.resolveMonsterInitiatedAttack(this.combatTickCount);
       this.monsterManager.respawnBelowMax();
-      // A simple first pass (a later follow-up ask) — 'follow' actually
-      // moves the pet toward its owner every tick; 'attack' is accepted
-      // and stored (see handlePetCommand) but doesn't deal damage of its
-      // own yet, same "stated future mechanic" scope as resurrection
-      // (see PetManagerService's own doc comment) — full pet-vs-monster
-      // combat (and the monster hitting back) is still to come.
-      const petMaps = this.petManager.tickAll();
-      // Same "follow works, attack is stored but not wired to real
-      // damage yet" first-pass scope as pets above.
-      const animatedMonsterMaps = this.animatedMonsterManager.tickAll();
+      // 'follow' steps the pet toward its owner every tick; 'attack' (the
+      // 'z' hotkey, a later follow-up ask) steps it toward its assigned
+      // target instead, reporting a "contact" once adjacent — resolved
+      // right below via resolveFollowerContact (damage + starting the
+      // owner's own auto-attack if they aren't already fighting).
+      const { changedMaps: petMaps, contacts: petContacts } = this.petManager.tickAll();
+      const { changedMaps: animatedMonsterMaps, contacts: animatedMonsterContacts } = this.animatedMonsterManager.tickAll();
+      for (const contact of petContacts) {
+        this.resolveFollowerContact(contact.ownerUsername, contact.targetKind, contact.targetId, 'pet');
+      }
+      for (const contact of animatedMonsterContacts) {
+        this.resolveFollowerContact(contact.ownerUsername, contact.targetKind, contact.targetId, 'animatedMonster', contact.id);
+      }
       const expiredCorpseMaps = this.corpseManager.removeExpired();
       const stoneBlockMaps = this.removeExpiredStoneBlocks();
       const mapsToBroadcast = new Set<MapName>([...ACTIVE_MONSTER_MAPS, ...expiredCorpseMaps, ...stoneBlockMaps, ...petMaps, ...animatedMonsterMaps]);
@@ -1216,7 +1230,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (progress.completedAt) {
       return { ok: false, message: "You've already completed that quest." };
     }
-    if (!allObjectivesDone(quest, progress, client.data.skills, client.data.inventory, { mapUnlocked: client.data.mapUnlocked })) {
+    if (
+      !allObjectivesDone(quest, progress, client.data.skills, client.data.inventory, {
+        mapUnlocked: client.data.mapUnlocked,
+        houseChosen: Boolean(client.data.house),
+      })
+    ) {
       return { ok: false, message: "You haven't finished that quest yet." };
     }
 
@@ -2709,6 +2728,72 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.augueBurns = stillBurning;
   }
 
+  // The 'z' hotkey's own follow-through (a later follow-up ask): once a
+  // commanded pet/animated monster reports contact (see PetManagerService/
+  // AnimatedMonsterManagerService's own tickAll), (1) starts the OWNER's
+  // own auto-attack on the same target if they aren't already fighting
+  // anything, and (2) for a MONSTER target only, has the follower deal its
+  // own flat damage — same "simplified, no dodge/counter-attack" shape
+  // tickAugueBurns/resolveRangedAutoAttack already use. A player target
+  // just gets the escort/engage half (1) — followers don't independently
+  // damage another player, matching this project's existing "PvP wand
+  // bolts aren't part of this ask" scope limit on every other simplified
+  // auto-damage path (see resolveRangedAutoAttack's own doc comment).
+  private resolveFollowerContact(
+    ownerUsername: string,
+    targetKind: 'monster' | 'player',
+    targetId: string,
+    followerType: 'pet' | 'animatedMonster',
+    animatedMonsterId?: string
+  ): void {
+    const socketId = this.activeConnections.getActiveSocketId(ownerUsername);
+    const client = socketId ? (this.server.sockets.sockets.get(socketId) as GameSocket | undefined) : undefined;
+    if (!client) return;
+
+    if (!this.playerCombat.has(ownerUsername)) {
+      this.engageCombat(client, targetKind, targetId, this.attackGrowthSkill(client));
+    }
+
+    if (targetKind !== 'monster') return;
+    const monster = this.monsterManager.getMonster(targetId);
+    if (!monster) return;
+
+    const animatedMonster =
+      followerType === 'animatedMonster' ? this.animatedMonsterManager.getSnapshotsForOwner(ownerUsername).find((m) => m.id === animatedMonsterId) : undefined;
+    const damage = followerType === 'pet' ? PET_ATTACK_DAMAGE : (animatedMonster?.attackDamage ?? 0);
+    if (damage <= 0) return;
+    const followerLabel = followerType === 'pet' ? (this.petManager.getSnapshotForOwner(ownerUsername)?.name ?? 'Your pet') : (animatedMonster?.name ?? 'Your ally');
+
+    const result = this.monsterManager.applyDamage(monster.id, damage);
+    if (!result) return;
+
+    if (result.died) {
+      const rawExpGained = expGainFor(monster.expReward, client.data.level, monster.level);
+      this.grantExp(client, rawExpGained);
+      const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
+      this.corpseManager.spawn(
+        monster.kind,
+        monster.level,
+        items,
+        monster.mapName,
+        monster.row,
+        monster.col,
+        ownerUsername,
+        monster.goldReward,
+        monster.maxHp,
+        monster.attackDamage ?? 0
+      );
+      this.recordMonsterKill(client, monster.kind);
+      this.playerCombat.delete(ownerUsername);
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      this.server.to(client.data.map).emit('combatNotice', `${followerLabel} finishes off the ${monster.kind} for ${damage} damage! (+${rawExpGained} exp)`);
+    } else {
+      this.server.to(client.data.map).emit('combatNotice', `${followerLabel} strikes the ${monster.kind} for ${damage} damage.`);
+    }
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+  }
+
   // The wand's ranged basic attack (a follow-up ask) — flat
   // WAND_BOLT_DAMAGE, no dodge/parry/shield-block, no counter-attack (a
   // bolt fired from up to 7 tiles away doesn't give the target a chance
@@ -3544,6 +3629,39 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     return { ok: true, pet };
+  }
+
+  // The 'z' hotkey (a later follow-up ask): "if the player has a pet/
+  // summon/animated undead (follower) and... a selected target that can
+  // be attacked... send the monster to auto attack the target." Commands
+  // EVERY living follower the caller owns (a pet, plus any/all animated
+  // monsters) at once — the actual approach/contact/damage is resolved
+  // per-tick by tickAll/resolveFollowerContact above.
+  @SubscribeMessage('commandFollowerAttack')
+  handleCommandFollowerAttack(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CommandFollowerAttackAck {
+    const parsed = z.object({ targetKind: z.enum(['monster', 'player']), targetId: z.string() }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid target.' };
+    }
+    const { targetKind, targetId } = parsed.data;
+    if (targetKind === 'player' && targetId === client.data.username) {
+      return { ok: false, message: "You can't send a follower after yourself." };
+    }
+    if (!this.locateCombatTarget(targetKind, targetId)) {
+      return { ok: false, message: "That target isn't here." };
+    }
+
+    const pet = this.petManager.commandAttack(client.data.username, targetKind, targetId);
+    const animatedMonsters = this.animatedMonsterManager
+      .getSnapshotsForOwner(client.data.username)
+      .filter((m) => m.alive)
+      .map((m) => this.animatedMonsterManager.commandAttack(client.data.username, m.id, targetKind, targetId));
+    if (!pet && animatedMonsters.length === 0) {
+      return { ok: false, message: "You don't have a pet or summoned creature to send." };
+    }
+
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    return { ok: true, message: 'Your follower moves to attack.' };
   }
 
   // Zombie-only: heals 20% hp/mana and starts a 4-world-tick
@@ -4942,7 +5060,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!(MONSTER_KINDS as readonly string[]).includes(corpse.kind) || corpse.sourceMaxHp === undefined) {
       return { ok: false, message: 'Only a monster corpse can be animated.' };
     }
-    if (!this.isWithinLootReach(client, corpse.row, corpse.col)) {
+    // A later follow-up ask widened this from adjacent-only (the same
+    // reach every other loot action uses) to the same 7-tile range every
+    // other targeted spell here uses ("doesn't have to be standing right
+    // next to the corpse").
+    if (!isWithinRadius(client.data.row, client.data.col, corpse.row, corpse.col, SPELL_ATTACK_RANGE_TILES)) {
       return { ok: false, message: "You're too far away to reach the corpse." };
     }
     if (this.animatedMonsterManager.countFor(client.data.username) >= animatedMonsterCapFor(client.data.level)) {
@@ -5591,17 +5713,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.emit('chat', { username: 'System', map: client.data.map, message });
   }
 
+  // Derived from shared/commands.ts (a later follow-up ask's Help modal
+  // reuses the exact same list) so the two can never drift apart.
   private static readonly COMMANDS_HELP_TEXT = [
     'Available commands:',
-    '/commands, /help - show this list',
-    "/sleep - lie down and close your eyes, recovering hp/mana faster until you wake up (moving or attacking wakes you)",
-    '/rest, /sit - sit down to rest, recovering a bit faster than standing around',
-    '/wake, /stand - get up from sleeping or resting',
-    '/dance - bust a move (moving cancels it)',
-    '/mimic [race] - slime only: with no argument, lists what you can mimic; with one, shifts your form to it',
-    '/revert - slime only: shift back to your natural slime form',
-    '/time - show the current game hour and whether it is day or night',
-    "/light - toggle your equipped wand's light on or off (requires the light skill)",
+    ...CHAT_COMMANDS.map((c) => `${c.usage} - ${c.description}`),
   ].join('\n');
 
   private handleCommand(client: GameSocket, commandText: string): void {

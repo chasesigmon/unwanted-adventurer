@@ -18,6 +18,17 @@ export class PetManagerService {
 
   constructor(private readonly worldManager: WorldManagerService) {}
 
+  // Injected by GameGateway (same "manager owns state, gateway owns the
+  // interesting logic" shape as MonsterManagerService's own
+  // setDemonImpCallbacks/setBarrierZoneChecker) — lets tickAll below
+  // locate a monster/player target without PetManagerService needing a
+  // direct dependency on MonsterManagerService.
+  private targetLocator?: (kind: 'monster' | 'player', id: string) => { mapName: MapName; row: number; col: number } | undefined;
+
+  setTargetLocator(locator: (kind: 'monster' | 'player', id: string) => { mapName: MapName; row: number; col: number } | undefined): void {
+    this.targetLocator = locator;
+  }
+
   hasPet(ownerUsername: string): boolean {
     return this.pets.has(ownerUsername);
   }
@@ -51,6 +62,27 @@ export class PetManagerService {
     const pet = this.pets.get(ownerUsername);
     if (!pet || !pet.alive) return undefined;
     pet.command = command;
+    // Switching away from 'attack' (follow/stay/sleep) drops whatever
+    // target it had — same "don't leave stale state around" reasoning as
+    // clearing the other 3 mutually-exclusive selection concepts on the
+    // client (see WorldScene.ts's setTarget/setLockTarget/etc.).
+    if (command !== 'attack') {
+      pet.attackTargetKind = undefined;
+      pet.attackTargetId = undefined;
+    }
+    return pet;
+  }
+
+  // The 'z' hotkey (a later follow-up ask: "send the monster to auto
+  // attack the target") — arms the 'attack' command with a concrete
+  // target in one step, since a bare command with no target wouldn't
+  // know what to walk toward (see tickAll below).
+  commandAttack(ownerUsername: string, targetKind: 'monster' | 'player', targetId: string): Pet | undefined {
+    const pet = this.pets.get(ownerUsername);
+    if (!pet || !pet.alive) return undefined;
+    pet.command = 'attack';
+    pet.attackTargetKind = targetKind;
+    pet.attackTargetId = targetId;
     return pet;
   }
 
@@ -82,15 +114,54 @@ export class PetManagerService {
   // Called every wander tick (see MonsterManagerService.wanderAll's own
   // sibling call in game.gateway.ts) — 'follow' steps one tile toward its
   // own owner's CURRENT position (looked up fresh from WorldManagerService
-  // every tick, not cached) when not already adjacent; every other
-  // command holds still (attack's own damage-dealing is resolved
-  // separately, alongside the ordinary player combat tick, since it needs
-  // the owner's current combat target). Returns which maps actually
-  // changed, so the caller only needs to re-broadcast those.
-  tickAll(): Set<MapName> {
+  // every tick, not cached) when not already adjacent; 'attack' (a later
+  // follow-up ask's 'z' hotkey) steps toward its assigned target instead,
+  // reporting a "contact" for any tick it's already adjacent so the
+  // caller (GameGateway) can resolve the actual damage/player-auto-attack
+  // hookup — this method only ever moves things, it doesn't deal damage
+  // itself (see PetManagerService's own file-level doc comment: that's
+  // still resolved alongside the ordinary player combat tick). 'stay'/
+  // 'sleep' hold still, same as before.
+  tickAll(): { changedMaps: Set<MapName>; contacts: Array<{ ownerUsername: string; targetKind: 'monster' | 'player'; targetId: string }> } {
     const changedMaps = new Set<MapName>();
+    const contacts: Array<{ ownerUsername: string; targetKind: 'monster' | 'player'; targetId: string }> = [];
     for (const pet of this.pets.values()) {
-      if (!pet.alive || pet.command !== 'follow') continue;
+      if (!pet.alive) continue;
+
+      if (pet.command === 'attack' && pet.attackTargetKind && pet.attackTargetId) {
+        const target = this.targetLocator?.(pet.attackTargetKind, pet.attackTargetId);
+        if (!target) {
+          // Target's gone (dead/disconnected) — fall back to just
+          // following the owner again rather than standing there stuck.
+          pet.command = 'follow';
+          pet.attackTargetKind = undefined;
+          pet.attackTargetId = undefined;
+          continue;
+        }
+        if (pet.map !== target.mapName) {
+          changedMaps.add(pet.map);
+          pet.map = target.mapName;
+          pet.row = target.row;
+          pet.col = target.col;
+          changedMaps.add(pet.map);
+          continue;
+        }
+        const dRow = target.row - pet.row;
+        const dCol = target.col - pet.col;
+        if (Math.abs(dRow) + Math.abs(dCol) <= 1) {
+          contacts.push({ ownerUsername: pet.ownerUsername, targetKind: pet.attackTargetKind, targetId: pet.attackTargetId });
+          continue;
+        }
+        if (Math.abs(dRow) >= Math.abs(dCol)) {
+          pet.row += Math.sign(dRow);
+        } else {
+          pet.col += Math.sign(dCol);
+        }
+        changedMaps.add(pet.map);
+        continue;
+      }
+
+      if (pet.command !== 'follow') continue;
       const owner = this.worldManager.getLocation(pet.ownerUsername);
       if (!owner) continue;
       if (pet.map !== owner.mapName) {
@@ -114,7 +185,7 @@ export class PetManagerService {
       }
       changedMaps.add(pet.map);
     }
-    return changedMaps;
+    return { changedMaps, contacts };
   }
 
   removePet(ownerUsername: string): void {

@@ -116,7 +116,7 @@ import {
 } from '../../shared/constants.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { WAND_ITEM, isWandItem } from '../../shared/equipment.js';
-import { questIconStateFor } from '../../shared/quests.js';
+import { questIconStateFor, activeQuestIdFor } from '../../shared/quests.js';
 import type { MapName, Race, Direction, MonsterKind, Gender, HairColor, SkinTone } from '../../shared/constants.js';
 import type {
   PlayerSnapshot,
@@ -245,6 +245,7 @@ import { notifyMapChanged } from '../ui/mapModal.js';
 import { openNpcDialogueModal, openSpecializationDialogue, openHouseChoiceDialogue, openTeacherLearnDialogue } from '../ui/npcDialogueModal.js';
 import { hideTargetPanel, updateTargetPanel, updateLockTargetPanel } from '../ui/targetPanel.js';
 import { updateGroupPanel } from '../ui/groupPanel.js';
+import type { PetSnapshot, AnimatedMonsterSnapshot } from '../../shared/pets.js';
 import { openRecallModal } from '../ui/recallModal.js';
 import { openMonsterSummonsModal } from '../ui/monsterSummonsModal.js';
 
@@ -302,15 +303,14 @@ export class WorldScene extends Phaser.Scene {
   // is clicked in the action bar, consumed by the very next left-click
   // anywhere on the map (see handleLeftClick).
   private murusLapideusTargeting = false;
-  // Animate dead (a later follow-up ask: "first activating... and then
-  // clicking on the corpse of a dead monster") — same arm-then-click
-  // shape as murus lapideus above, just consumed by a CORPSE sprite's own
-  // pointerdown handler (see applyMapState) instead of handleLeftClick's
-  // generic tile lookup, since Phaser fires an interactive object's own
-  // listener before the scene-wide one below — the corpse handler always
-  // gets first refusal at this flag, so it never also opens the loot
-  // modal on the same click that casts the spell.
-  private animateDeadTargeting = false;
+  // A corpse "target" (a later follow-up ask replaced animate dead's own
+  // arm-then-click flow with this: "a corpse is selectable... and then
+  // they use the animate dead spell") — same top-left panel a door/
+  // chest's own lockTarget selection uses (no hp bar to show), mutually
+  // exclusive with every other selection concept in the scene. Set by
+  // left-clicking a corpse sprite (see applyMapState); read by
+  // useTargetedSkill's own ANIMATE_DEAD_SKILL branch.
+  private selectedCorpseId: string | null = null;
   // A selected stone block (a later follow-up ask: "so the player can see
   // the health and name 'Blockman'") — same "not a real combat target"
   // reasoning as lockTarget above, purely for the top-left display panel.
@@ -436,6 +436,12 @@ export class WorldScene extends Phaser.Scene {
   // id, same lifetime/cleanup shape as monsterSprites above.
   private petSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private animatedMonsterSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  // The local player's own current pet/animated monsters (a later follow-
+  // up ask's 'z' hotkey needs to know "do I have a follower at all" at
+  // keypress time, not just at render time) — refreshed alongside
+  // updateGroupPanel every applyMapState, same source of truth.
+  private myPet: PetSnapshot | null = null;
+  private myAnimatedMonsters: AnimatedMonsterSnapshot[] = [];
   // Murus lapideus's own summoned stone blocks (a later follow-up ask) —
   // rendered with an hp bar like an NPC/monster, but not player-clickable
   // (not asked for).
@@ -457,7 +463,7 @@ export class WorldScene extends Phaser.Scene {
   // vendorFrontSprites above).
   private teacherDeskSprites = new Map<string, Phaser.GameObjects.Sprite>();
   // A quest-giver's own floating status icon (a later follow-up ask) —
-  // one per teacher WITH a questId, keyed the same as teacherSprites so
+  // one per teacher WITH questIds, keyed the same as teacherSprites so
   // it destroys/rebuilds alongside it; refreshed (frame/visibility) via
   // updateTeacherQuestIcons whenever myProfile.quests can have changed
   // (accepting/completing a quest, a level-up, or any other full 'sync').
@@ -688,7 +694,7 @@ export class WorldScene extends Phaser.Scene {
       // 'help' — clicking her actually DOES something (opens her dialogue
       // and offers a quest), it isn't just an info tooltip.
       const overQuestGiverTeacher =
-        Boolean(hoveredTeacher?.getData('questId')) ||
+        ((hoveredTeacher?.getData('questIds') as string[] | undefined)?.length ?? 0) > 0 ||
         Boolean(hoveredTeacher?.getData('specializationGate')) ||
         Boolean(hoveredTeacher?.getData('houseChoiceGate')) ||
         ((hoveredTeacher?.getData('teachesSkills') as string[] | undefined)?.length ?? 0) > 0;
@@ -1330,10 +1336,14 @@ export class WorldScene extends Phaser.Scene {
   // accept/complete — see npcDialogueModal.ts).
   updateTeacherQuestIcons(): void {
     for (const iconSprite of this.teacherQuestIconSprites.values()) {
-      const questId = iconSprite.getData('questId') as string | undefined;
+      const questIds = iconSprite.getData('questIds') as string[] | undefined;
+      const questId = activeQuestIdFor(questIds, myProfile?.quests ?? {});
       if (!questId) continue;
       const state = myProfile
-        ? questIconStateFor(questId, myProfile.quests ?? {}, myProfile.skills, myProfile.inventory, { mapUnlocked: myProfile.mapUnlocked })
+        ? questIconStateFor(questId, myProfile.quests ?? {}, myProfile.skills, myProfile.inventory, {
+            mapUnlocked: myProfile.mapUnlocked,
+            houseChosen: Boolean(myProfile.house),
+          })
         : 'not-started';
       if (state === null) {
         iconSprite.setVisible(false);
@@ -2366,6 +2376,7 @@ export class WorldScene extends Phaser.Scene {
     this.targetKind = null;
     this.targetId = null;
     this.selectedStoneBlockId = null;
+    this.selectedCorpseId = null;
     updateLockTargetPanel(label);
   }
 
@@ -2388,11 +2399,30 @@ export class WorldScene extends Phaser.Scene {
     this.targetKind = null;
     this.targetId = null;
     this.lockTarget = null;
+    this.selectedCorpseId = null;
     updateTargetPanel('Blockman', 1, hp, maxHp);
   }
 
   private clearBlockmanTarget(): void {
     this.selectedStoneBlockId = null;
+    hideTargetPanel();
+  }
+
+  // A corpse "target" (a later follow-up ask) — see selectedCorpseId's
+  // own doc comment; same top-left panel a door/chest's own lockTarget
+  // uses (no hp bar), mutually exclusive with every other selection
+  // concept in the scene.
+  private setCorpseTarget(id: string, label: string): void {
+    this.selectedCorpseId = id;
+    this.targetKind = null;
+    this.targetId = null;
+    this.lockTarget = null;
+    this.selectedStoneBlockId = null;
+    updateLockTargetPanel(label);
+  }
+
+  private clearCorpseTarget(): void {
+    this.selectedCorpseId = null;
     hideTargetPanel();
   }
 
@@ -2775,10 +2805,9 @@ export class WorldScene extends Phaser.Scene {
     // animate dead spell added a 2nd kind of group member) — a single
     // render call covers "no companions at all" through "a pet plus up
     // to 2 animated monsters".
-    updateGroupPanel(
-      state.pets.find((p) => p.ownerUsername === this.myUsername) ?? null,
-      state.animatedMonsters.filter((m) => m.ownerUsername === this.myUsername)
-    );
+    this.myPet = state.pets.find((p) => p.ownerUsername === this.myUsername) ?? null;
+    this.myAnimatedMonsters = state.animatedMonsters.filter((m) => m.ownerUsername === this.myUsername);
+    updateGroupPanel(this.myPet, this.myAnimatedMonsters);
 
     // Murus lapideus's own stone blocks (a later follow-up ask) — same
     // create-or-update + seen-set cleanup shape as monsters above, since
@@ -2824,24 +2853,13 @@ export class WorldScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
-        // Animate dead's own second click (a later follow-up ask) — takes
-        // priority over the ordinary loot modal, same "consume the flag,
-        // don't fall through" shape murusLapideusTargeting uses in
-        // handleLeftClick.
-        if (this.animateDeadTargeting) {
-          this.animateDeadTargeting = false;
-          if (!this.isWithinLootReach(c.row, c.col)) {
-            logCombatMessage("You're too far away to reach the corpse.");
-            return;
-          }
-          void this.network.castAnimateDead(c.id).then((ack) => {
-            if (ack.message) {
-              showCenterToast(ack.message);
-              logCombatMessage(ack.message);
-            }
-          });
-          return;
-        }
+        // A later follow-up ask: "a corpse is selectable and can be seen
+        // as the selection in the top left" — same top-left panel a
+        // door/chest's own lockTarget selection uses (no hp bar; a
+        // corpse has none to show), regardless of reach — selecting
+        // something and being in range to ACT on it are separate checks,
+        // same as every other target kind here.
+        this.setCorpseTarget(c.id, `${c.kind} corpse`);
         // A follow-up ask: don't even open the modal if the player is
         // too far away — just say so, same reach as actually looting.
         if (!this.isWithinLootReach(c.row, c.col)) {
@@ -2867,6 +2885,7 @@ export class WorldScene extends Phaser.Scene {
       if (!seenCorpses.has(id)) {
         sprite.destroy();
         this.corpseSprites.delete(id);
+        if (this.selectedCorpseId === id) this.clearCorpseTarget();
       }
     }
 
@@ -2949,7 +2968,7 @@ export class WorldScene extends Phaser.Scene {
         .sprite(pos.x, pos.y, textureKeyFor(teacherKind), idleFrameFor(teacherKind, t.facing ?? 'down'))
         .setScale(CHAR_SCALE)
         .setInteractive();
-      sprite.setData('questId', t.questId);
+      sprite.setData('questIds', t.questIds);
       sprite.setData('specializationGate', t.specializationGate);
       sprite.setData('houseChoiceGate', t.houseChoiceGate);
       sprite.setData('teachesSkills', t.teachesSkills);
@@ -2960,12 +2979,13 @@ export class WorldScene extends Phaser.Scene {
         // tooltip, and requires the player be close enough — same reach
         // concept ("must be within [a few] feet... otherwise show a
         // message") as a shop's own SHOP_REACH_TILES.
-        if (t.questId) {
+        const activeQuestId = activeQuestIdFor(t.questIds, myProfile?.quests ?? {});
+        if (activeQuestId) {
           if (!isWithinRadius(this.row, this.col, t.row, t.col, SHOP_REACH_TILES)) {
             logCombatMessage(`You're too far away to talk to ${teacherDisplayName}.`);
             return;
           }
-          openNpcDialogueModal(teacherDisplayName, t.questId);
+          openNpcDialogueModal(teacherDisplayName, activeQuestId);
           return;
         }
         // The Specialization room's own teacher (a later follow-up ask)
@@ -3016,11 +3036,11 @@ export class WorldScene extends Phaser.Scene {
       // A quest-giver's own status icon (a later follow-up ask) — same
       // "above the head" offset HP bars use elsewhere, nudged up a
       // little further since there's no HP bar here to clear.
-      if (t.questId) {
+      if (t.questIds && t.questIds.length > 0) {
         const iconSprite = this.add
           .sprite(pos.x, pos.y + HP_BAR_OFFSET_Y - 8, QUEST_ICON_TEXTURE_KEY, QUEST_ICON_NOT_STARTED_FRAME)
           .setDepth(1);
-        iconSprite.setData('questId', t.questId);
+        iconSprite.setData('questIds', t.questIds);
         this.teacherQuestIconSprites.set(t.id, iconSprite);
       }
     }
@@ -3236,7 +3256,15 @@ export class WorldScene extends Phaser.Scene {
           this.hairColor = ack.player.hairColor;
           this.skinTone = ack.player.skinTone;
           this.mimicForm = ack.player.mimicForm;
-          if (myProfile) setMyProfile({ ...myProfile, map: ack.player.map });
+          // A follow-up bug fix: "movement is not actually being
+          // deducted when the player moves" — this used to only splice
+          // in the new `map` field, silently discarding every OTHER
+          // field the move ack's own snapshot carries (mv chief among
+          // them, since every successful move costs MV_COST_PER_TILE
+          // server-side). ack.player is already a full, authoritative
+          // PlayerSnapshot, so just replace myProfile with it outright.
+          setMyProfile(ack.player);
+          this.updateOwnBars();
           this.renderMap(ack.player.map);
           // A follow-up bug fix: "teachers & desks or training skeletons
           // were visible until I moved" — the server's own room-broadcast
@@ -3257,6 +3285,12 @@ export class WorldScene extends Phaser.Scene {
           return;
         }
 
+        // Same bug fix as the map-transition branch above — every
+        // successful move (not just ones that cross onto a new map)
+        // deducts mv server-side, so myProfile needs the fresh snapshot
+        // every time, not just on a map change.
+        setMyProfile(ack.player);
+        this.updateOwnBars();
         const pos = this.tilePosition(ack.player.row, ack.player.col);
         this.tweens.add({
           targets: this.player,
@@ -3322,6 +3356,26 @@ export class WorldScene extends Phaser.Scene {
     logCombatMessage('You stop attacking.');
   }
 
+  // The 'z' hotkey (a later follow-up ask): "if the player has a pet/
+  // summon/animated undead (follower) and... a selected target that can
+  // be attacked... send the monster to auto attack the target." Requires
+  // both a living follower and a currently selected monster/player target
+  // (not an npc/door/chest/Blockman/corpse — those aren't attackable).
+  commandFollowerAttack(): void {
+    const hasFollower = (this.myPet?.alive ?? false) || this.myAnimatedMonsters.some((m) => m.alive);
+    if (!hasFollower) {
+      logCombatMessage("You don't have a pet or summoned creature to send.");
+      return;
+    }
+    if ((this.targetKind !== 'monster' && this.targetKind !== 'player') || !this.targetId) {
+      logCombatMessage('Select a monster or player to attack first.');
+      return;
+    }
+    void this.network.commandFollowerAttack({ targetKind: this.targetKind, targetId: this.targetId }).then((ack) => {
+      if (ack.message) logCombatMessage(ack.message);
+    });
+  }
+
   // Left click anywhere a player/npc/monster sprite's bounds cover sets
   // it as the current target — deliberately not gated on reach/adjacency
   // the way punch is, since selecting a target you're about to walk
@@ -3365,16 +3419,6 @@ export class WorldScene extends Phaser.Scene {
       });
       return;
     }
-    // Animate dead (a later follow-up ask) — if a corpse's own
-    // pointerdown handler above already consumed this click, the flag is
-    // false by the time we get here (object-specific listeners fire
-    // before this scene-wide one); still true means the player clicked
-    // something other than a corpse, which isn't a valid target.
-    if (this.animateDeadTargeting) {
-      this.animateDeadTargeting = false;
-      logCombatMessage('You must click a monster corpse to animate it.');
-      return;
-    }
     // Clicking anywhere in the game world deselects whatever inventory
     // item was targeted for drink/pour/irrigo (item 10's follow-up ask,
     // "selecting anywhere else") — the same "clicking elsewhere clears
@@ -3416,6 +3460,11 @@ export class WorldScene extends Phaser.Scene {
       // immediately undo it" reasoning for a Blockman selection.
       const hitBlockman = [...this.stoneBlockSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
       if (!hitBlockman && this.selectedStoneBlockId) this.clearBlockmanTarget();
+      // Same "already handled by its own pointerdown handler on this
+      // SAME click, don't immediately undo it" reasoning for a corpse
+      // selection.
+      const hitCorpse = [...this.corpseSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
+      if (!hitCorpse && this.selectedCorpseId) this.clearCorpseTarget();
       return;
     }
     this.setTarget(found.kind, found.id, found.sprite);
@@ -3437,6 +3486,7 @@ export class WorldScene extends Phaser.Scene {
     // time.
     this.lockTarget = null;
     this.selectedStoneBlockId = null;
+    this.selectedCorpseId = null;
     this.targetKind = kind;
     this.targetId = id;
     const label = (sprite.getData('label') as string | undefined) ?? id;
@@ -3464,13 +3514,14 @@ export class WorldScene extends Phaser.Scene {
   // all three covers "is anything selected right now" regardless of
   // which kind it is.
   hasSelection(): boolean {
-    return Boolean(this.targetKind || this.lockTarget || this.selectedStoneBlockId);
+    return Boolean(this.targetKind || this.lockTarget || this.selectedStoneBlockId || this.selectedCorpseId);
   }
 
   clearSelection(): void {
     if (this.targetKind) this.clearTarget();
     if (this.lockTarget) this.clearLockTarget();
     if (this.selectedStoneBlockId) this.clearBlockmanTarget();
+    if (this.selectedCorpseId) this.clearCorpseTarget();
   }
 
   // A wholly separate targeting concept from targetKind/targetId above —
@@ -3651,14 +3702,23 @@ export class WorldScene extends Phaser.Scene {
       logCombatMessage('Click a spot on the map to summon the stone block.');
       return;
     }
-    // Animate dead (a later follow-up ask) targets a monster CORPSE, not
-    // a tile or a live player/npc/monster — same arm-then-click shape as
-    // murus lapideus above, just consumed by a corpse sprite's own
-    // pointerdown handler instead of the generic tile lookup (see
-    // animateDeadTargeting's own doc comment).
+    // Animate dead (a later follow-up ask changed this from an
+    // arm-then-click flow to the same "select first, then cast" shape
+    // every other targeted spell uses) — requires a corpse already
+    // selected (see setCorpseTarget, set by left-clicking a corpse
+    // sprite); the server itself re-validates it's actually a MONSTER
+    // corpse (not a player's) and within range.
     if (skillName === ANIMATE_DEAD_SKILL) {
-      this.animateDeadTargeting = true;
-      logCombatMessage('Click a monster corpse to animate it.');
+      if (!this.selectedCorpseId) {
+        logCombatMessage('Select a monster corpse first (left-click it).');
+        return;
+      }
+      void this.network.castAnimateDead(this.selectedCorpseId).then((ack) => {
+        if (ack.message) {
+          showCenterToast(ack.message);
+          logCombatMessage(ack.message);
+        }
+      });
       return;
     }
     // Recall (a later follow-up ask) opens its own destination-picker
@@ -4129,9 +4189,15 @@ export class WorldScene extends Phaser.Scene {
     if (event.leveledUp && event.attacker === this.myUsername) {
       // A follow-up ask: the level-up line itself should also remind the
       // player to go spend their new stat point(s), not just the separate
-      // toast below (easy to miss/scroll past).
+      // toast below (easy to miss/scroll past) — but ONLY on a level that
+      // actually grants a training point (every 5th: 5, 10, 15, ...),
+      // matching game.gateway.ts's own TRAINING_POINT_LEVEL_INTERVAL (a
+      // server-only constant, so this literal 5 is duplicated here rather
+      // than imported — same "shared/ can't import a server-only
+      // constant" tradeoff several other client-side literals already make).
+      const grantsTrainingPoint = event.attackerLevel % 5 === 0;
       logCombatMessage(
-        `${this.myUsername} reaches level ${event.attackerLevel}! Open your character sheet to allocate your stat points.`,
+        `${this.myUsername} reaches level ${event.attackerLevel}!${grantsTrainingPoint ? ' Open your character sheet to allocate your stat points.' : ''}`,
         'level-up'
       );
       // A later follow-up ask replaced the old automatic per-level

@@ -132,7 +132,7 @@ const GRIMOAK_ASCII_MAP = `
 // <select> renderWorldMapTab now renders above the sketch itself.
 const FLOOR2_ASCII_MAP = `
                     ___________________________________________________________
-                   /  NECROMANCER   ENHANCER   ELEMENTALIST   SUMMONER ILLUSIONIST\\
+                   /  NECROMANCER    SHAMAN    ELEMENTALIST   SUMMONER ILLUSIONIST\\
                   /    CHAMBER      CHAMBER      CHAMBER      CHAMBER    CHAMBER   \\
                   |       ^             ^            ^            ^         ^     |
                   |_______|_____________|____________|____________|_________|_____|

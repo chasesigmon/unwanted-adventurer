@@ -23,6 +23,7 @@ import './ui/mapModal.js';
 import './ui/questLog.js';
 import './ui/autopilotModal.js';
 import './ui/affectsPanel.js';
+import './ui/helpModal.js';
 
 const gameRoot = document.getElementById('game-root') as HTMLDivElement;
 
@@ -59,6 +60,19 @@ function startGame(): void {
     backgroundColor: '#14181a',
     scale: {
       mode: Phaser.Scale.RESIZE,
+    },
+    // A later follow-up ask: cap the render/update loop at 30fps instead
+    // of the browser's own refresh rate (usually 60+). Safe to do outright
+    // here — every animated movement in this game (player/monster/NPC
+    // step tweens, camera follow) is driven by Phaser's own tween/camera
+    // systems, which are time-based (ms elapsed), not frame-count-based,
+    // so nothing moves faster or slower just because fewer frames render
+    // per second; this only reduces how often the GPU actually redraws.
+    fps: {
+      target: 30,
+      // Rely on requestAnimationFrame (throttled by Phaser itself to the
+      // target above) rather than setTimeout — smoother and still capped.
+      forceSetTimeOut: false,
     },
   });
   gameInstance = game;

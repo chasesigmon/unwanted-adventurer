@@ -182,9 +182,10 @@ export function isUsableSkill(skillName: string): boolean {
 // "draggable".
 export const SKILL_DESCRIPTIONS: Record<string, string> = {
   [PUNCH_SKILL]: 'Bare-handed melee damage. Grows with practice; used automatically whenever no weapon is equipped.',
-  [DODGE_SKILL]: 'Chance to fully avoid an incoming hit by evasion. Grows whenever it triggers.',
-  [PARRY_SKILL]: "Chance to fully avoid an incoming hit with your weapon. Requires a weapon equipped; grows whenever it triggers.",
-  [SHIELD_BLOCK_SKILL]: 'Chance to fully avoid an incoming hit with a shield. Requires a bone shield equipped; grows on every attempt.',
+  [DODGE_SKILL]: 'Passive: chance to fully avoid an incoming hit by evasion. Grows whenever it triggers.',
+  [PARRY_SKILL]:
+    "Passive: chance to fully avoid an incoming hit with your weapon. Requires a weapon equipped; a wand can only parry another attack from a wand, while a physical weapon can parry attacks from physical or ranged weapons (including wands). Grows whenever it triggers.",
+  [SHIELD_BLOCK_SKILL]: 'Passive: chance to fully avoid an incoming hit with a shield. Requires a shield equipped; grows on every attempt.',
   [DAGGER_SKILL]: 'Melee damage while a dagger is equipped, replacing punch. Grows with practice.',
   [SECOND_ATTACK_SKILL]: 'Hobgoblin-only: chance of an extra swing on top of your normal attack.',
   [THIRD_ATTACK_SKILL]: 'Hobgoblin-only: chance of a second extra swing on top of your normal attack.',
@@ -220,7 +221,7 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
   [STONE_WALL_SKILL]:
     'Click this, then click a spot on the map within 10 feet — summons a stone block ally there for 30 seconds (or until destroyed) that draws monster aggro and absorbs hits. Costs 10 mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.',
   [ANIMATE_DEAD_SKILL]:
-    "Necromancer-only. Click this, then click a monster's corpse — raises it as an animated ally under your command (follow/stay/sleep/attack), with 2x its hp when alive and the same attack. Lasts until it's slain or you log off; limited to 1 at a time (2 at level 20+). Costs 15 mana; has its own 3-minute cooldown. Success chance scales with skill percent, intelligence, and luck.",
+    "Necromancer-only. Requires a monster's corpse selected first (left-click it — not a player's corpse), then use this to raise it from up to 7 feet away — an animated ally under your command (follow/stay/sleep/attack), with 2x its hp when alive and the same attack. Lasts until it's slain or you log off; limited to 1 at a time (2 at level 20+). Costs 15 mana; has its own 3-minute cooldown. Success chance scales with skill percent, intelligence, and luck.",
   [RECALL_SKILL]: `Opens a list of every major point of interest you've already visited — click one to teleport there instantly, along with your pet/animated monsters. Costs ${RECALL_MANA_COST} mana. Success chance scales with skill percent, intelligence, and luck.`,
   [BARRIER_SKILL]: `No target needed — summons a ${BARRIER_RADIUS_TILES}-tile-radius dome centered on you that fully blocks monster attacks and confines your own movement to its edge for 2 minutes. Cast again anytime (even on cooldown) to cancel it early for free. Costs ${BARRIER_MANA_COST} mana; a fresh cast has its own 4-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
   [SHAMAN_ENHANCE_DAMAGE_SKILL]: `Shaman-only. No target needed — adds +${SHAMAN_ENHANCE_DAMAGE_BONUS} to your basic ranged/physical attack damage for 3 minutes. Costs ${SHAMAN_ENHANCE_DAMAGE_MANA_COST} mana; a fresh cast has its own 4-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,

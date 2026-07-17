@@ -37,6 +37,12 @@ export interface NewPlayerInput {
   // which hands every new human wizard an already-equipped starting
   // wand).
   equipment?: Record<string, string>;
+  // "New players upon creation should start with 3 trains and 5
+  // practices" (a later follow-up ask) — optional only because the
+  // column already defaults to 0, not because auth.service.ts's own
+  // createCharacter omits them.
+  statPointsAvailable?: number;
+  practicePointsAvailable?: number;
 }
 
 export interface PlayerPosition {
