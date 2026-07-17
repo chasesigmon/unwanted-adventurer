@@ -123,6 +123,13 @@ export function initGlobalKeyboardShortcuts(): void {
       // currently selected target (see WorldScene.commandFollowerAttack).
       e.preventDefault();
       activeScene?.commandFollowerAttack();
+    } else if (e.code === 'Space') {
+      // The flight spell's own spacebar burst (a later follow-up ask) —
+      // only meaningful while actually flying; WorldScene's own
+      // triggerFlightBurst no-ops (with a log line) otherwise, same as
+      // any other spell attempted without its prerequisite.
+      e.preventDefault();
+      activeScene?.triggerFlightBurst();
     } else {
       // The action bar's own two groups of 10 slots (a follow-up ask) —
       // 1-9 then 0 map onto slots 0-9 in order, Shift+(1-9,0) onto slots

@@ -32,6 +32,7 @@ import type {
   WorldTimePayload,
   AllocatableStat,
   AllocateStatPointAck,
+  PlayerSnapshot,
 } from '../shared/types.js';
 import type { Direction, Gender, HairColor, SkinTone, HouseName, SpecializationPath, PlayableRace } from '../shared/constants.js';
 import type { EquipmentSlot } from '../shared/equipment.js';
@@ -789,6 +790,32 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('castWispTransformation', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castFlight(): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castFlight', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  flightBurst(direction: Direction): Promise<{ ok: boolean; player: PlayerSnapshot; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('flightBurst', direction, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

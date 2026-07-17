@@ -218,6 +218,21 @@ export interface PlayerSnapshot {
   // xActive boolean since this has no manual early-cancel, purely time-
   // based (see game.gateway.ts's activeDuplicates/checkDuplicateExpiry).
   duplicateActiveUntil?: number | null;
+  // Flight (a later follow-up ask) — same fixed-duration self-buff shape
+  // as scutum/barrier/wisp, threaded through PlayerState/world-manager's
+  // broadcast snapshot (flightActive only — bystanders need to see the
+  // floating visual/wind trail too, see WorldScene's applyMapState) but
+  // flightActiveUntil/flightBurstReadyAt are optional/owning-client-only,
+  // same reasoning as wispActiveUntil/duplicateActiveUntil above.
+  flightActive: boolean;
+  flightActiveUntil?: number | null;
+  flightBurstReadyAt?: number | null;
+  // A minimal player party (a later follow-up ask) — see shared/pvp.ts's
+  // own doc comment. Optional/owning-client-only, same reasoning as
+  // hunger/thirst above — only used for the local player's own PvP-cursor
+  // eligibility check (see WorldScene's pointermove handler), never
+  // rendered for bystanders.
+  party?: string[];
   // Which of the 4 houses this player has chosen (a follow-up ask) —
   // permanent once set (see game.gateway.ts's handleChooseHouse), gates
   // which house's own Common Room/Dorms this player may enter (see
@@ -930,6 +945,14 @@ export interface ClientToServerEvents {
   // no-target.
   castInvisibility: (ack: (res: CastSpellAck) => void) => void;
   castCreateDuplicate: (ack: (res: { ok: boolean; message?: string }) => void) => void;
+  // Flight (a later follow-up ask, "available to every specialization at
+  // level 25") — no-target, same shape as wisp transformation.
+  castFlight: (ack: (res: CastSpellAck) => void) => void;
+  // The flight spell's own spacebar burst — a discrete forward dash in
+  // the caller's current facing direction, same MoveAck-style "always
+  // carries the fresh snapshot, ok or not" shape as `move` above, since
+  // WorldScene needs the resulting position either way.
+  flightBurst: (direction: Direction, ack: (res: { ok: boolean; player: PlayerSnapshot; message?: string }) => void) => void;
   // The wand's ranged auto-attack (a follow-up ask) — arms/refreshes a
   // sustained combat session against this target (resolved automatically
   // every combat tick from here on, see combatTick's own WAND_BOLT_SKILL
@@ -1141,6 +1164,22 @@ export interface SocketData {
   enhancedLearningUntil: number | null;
   // Never persisted — see PlayerSnapshot's own doc comment.
   duplicateActiveUntil: number | null;
+  // Flight (a later follow-up ask) — same never-persisted toggle shape as
+  // wispActive/wispActiveUntil above. flightBurstReadyAt is the spacebar
+  // burst's OWN separate 10-second cooldown clock (epoch-ms it next
+  // becomes usable, or null while ready) — deliberately not folded into
+  // skillCooldowns since it isn't triggered through the ordinary
+  // useSkill/cast flow at all.
+  flightActive: boolean;
+  flightActiveUntil: number | null;
+  flightBurstReadyAt: number | null;
+  // A minimal player party (a later follow-up ask) — see shared/pvp.ts's
+  // own doc comment. Never persisted; rehydrated from GameGateway's own
+  // in-memory `parties` map on every fresh connection (that map is itself
+  // keyed by username, so it survives a reconnect even though this field
+  // doesn't). Other usernames in the caller's own party, excluding
+  // themselves.
+  party: string[];
   // House/specialization choice (a follow-up ask) — persisted; loaded
   // from the player doc on connect, null until chosen (permanent once
   // set). See PlayerSnapshot's own doc comment for what each gates.

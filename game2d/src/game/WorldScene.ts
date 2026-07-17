@@ -78,7 +78,10 @@ import {
   SPELL_ATTACK_RANGE_TILES,
   DRINK_SKILL,
   POUR_SKILL,
+  FLIGHT_SKILL,
+  FLIGHT_MOVE_COOLDOWN_FACTOR,
 } from '../../shared/skills.js';
+import { PVP_MIN_LEVEL, isPvpAllowedMap } from '../../shared/pvp.js';
 import {
   isDarkHour,
   LIGHT_RADIUS_TILES,
@@ -699,7 +702,23 @@ export class WorldScene extends Phaser.Scene {
         this.game.canvas.style.cursor = '';
         return;
       }
+      // A later follow-up ask: "if a player hovers their mouse over
+      // another player that meets the level restriction, is not in their
+      // group, and they are not in Grimoak Castle then the mouse should
+      // become a sword" — same eligibility rules as canAttackPlayer
+      // server-side (see shared/pvp.ts), computed here purely for the
+      // cursor hint; the server re-validates for real at engage time
+      // regardless.
+      const overAttackablePlayer = [...this.otherPlayers.entries()].some(
+        ([username, s]) =>
+          s.getBounds().contains(pointer.worldX, pointer.worldY) &&
+          (myProfile?.level ?? 0) >= PVP_MIN_LEVEL &&
+          ((s.getData('level') as number | undefined) ?? 0) >= PVP_MIN_LEVEL &&
+          isPvpAllowedMap(this.currentMap) &&
+          !(myProfile?.party ?? []).includes(username)
+      );
       const overEnemy =
+        overAttackablePlayer ||
         [...this.monsterSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY)) ||
         [...this.npcSprites.values()].some(
           (s) => s.getData('label') === 'training skeleton' && s.getBounds().contains(pointer.worldX, pointer.worldY)
@@ -1628,8 +1647,16 @@ export class WorldScene extends Phaser.Scene {
     // its real row/col kept advancing server-side. The position tween
     // must always run; only the walk ANIMATION (which would visually
     // fight the punch swing) skips while mid-swing.
+    // Flight (a later follow-up ask: "the player sprite is not walking,
+    // but instead floating/flying along") — a bystander watching another
+    // flying player needs to see the same thing: hold the idle frame
+    // instead of playing the walk cycle, same as attemptMove does for the
+    // local player's own sprite (see effectiveMoveCooldownMs's own
+    // FLIGHT_MOVE_COOLDOWN_FACTOR doc comment).
+    const flying = Boolean(sprite.getData('flightActive'));
     if (!sprite.getData('isPunching')) {
-      sprite.play(walkAnimKey(kind, facing), true);
+      if (flying) sprite.setTexture(textureKeyFor(kind), idleFrameFor(kind, facing));
+      else sprite.play(walkAnimKey(kind, facing), true);
     }
     this.tweens.add({
       targets: sprite,
@@ -2736,6 +2763,8 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('equipment', p.equipment);
       sprite.setData('scutumActive', p.scutumActive);
       sprite.setData('wispActive', p.wispActive);
+      sprite.setData('flightActive', p.flightActive);
+      sprite.setData('specialization', p.specialization ?? null);
       this.ensureHpBar(sprite, p.hp, p.maxHp);
       this.ensureWeaponSprite(sprite, p.equipment.weapon === 'bone dagger', (sprite.getData('facing') as Facing) ?? 'down');
       this.ensureWandSprite(sprite, isWandItem(p.equipment.weapon), (sprite.getData('facing') as Facing) ?? 'down');
@@ -3481,9 +3510,14 @@ export class WorldScene extends Phaser.Scene {
 
   private attemptMove(direction: Direction): void {
     this.facing = facingForDirection(direction);
-    this.player.play(walkAnimKey(this.displayKind(), this.facing), true);
+    // Flight (a later follow-up ask: "the player sprite is not walking,
+    // but instead floating/flying along") — holds the idle frame instead
+    // of the walk cycle; the wind trail (same effect celeritas uses)
+    // doubles as the flying visual cue.
+    if (myProfile?.flightActive) this.player.setTexture(textureKeyFor(this.displayKind()), idleFrameFor(this.displayKind(), this.facing));
+    else this.player.play(walkAnimKey(this.displayKind(), this.facing), true);
     this.isMoving = true;
-    if (myProfile?.celeritasActive) this.spawnWindEffect(direction);
+    if (myProfile?.celeritasActive || myProfile?.flightActive) this.spawnWindEffect(direction);
 
     this.network
       .move(direction)
@@ -3699,6 +3733,33 @@ export class WorldScene extends Phaser.Scene {
     }
     void this.network.commandFollowerAttack({ targetKind: this.targetKind, targetId: this.targetId }).then((ack) => {
       if (ack.message) logCombatMessage(ack.message);
+    });
+  }
+
+  // The flight spell's own spacebar burst (a later follow-up ask): "press
+  // spacebar while flying" to dash forward in the CURRENT facing
+  // direction — converts this.facing (up/down/left/right, the sprite's
+  // own rendering concept) back to the wire Direction, the inverse of
+  // mapRender's own facingForDirection.
+  triggerFlightBurst(): void {
+    if (isInputCaptured() || this.isMoving) return;
+    if (!myProfile?.flightActive) {
+      logCombatMessage('You must be flying to use a flight burst.');
+      return;
+    }
+    const direction: Direction = this.facing === 'up' ? 'north' : this.facing === 'down' ? 'south' : this.facing === 'left' ? 'west' : 'east';
+    void this.network.flightBurst(direction).then((ack) => {
+      if (ack.message) {
+        showCenterToast(ack.message);
+        logCombatMessage(ack.message);
+      }
+      setMyProfile(ack.player);
+      this.updateOwnBars();
+      if (!ack.ok) return;
+      const pos = this.tilePosition(ack.player.row, ack.player.col);
+      this.row = ack.player.row;
+      this.col = ack.player.col;
+      this.tweens.add({ targets: this.player, x: pos.x, y: pos.y, duration: 150 });
     });
   }
 
@@ -3955,6 +4016,11 @@ export class WorldScene extends Phaser.Scene {
     // than their base (including bonuses)" — stacks multiplicatively with
     // celeritas/boots above, same as those stack with each other.
     if (myProfile?.wispActive) base = Math.round(base * WISP_MOVE_COOLDOWN_FACTOR);
+    // Flight (a later follow-up ask: "increase the player's movement speed
+    // similar to the speed of wisp transformation") — reuses wisp's own
+    // factor exactly, stacking multiplicatively with everything above the
+    // same way celeritas/boots/wisp already do with each other.
+    if (myProfile?.flightActive) base = Math.round(base * FLIGHT_MOVE_COOLDOWN_FACTOR);
     // Every character starts at 1 dexterity (server/combat/formulas.ts's
     // STARTING_ATTRIBUTE) — only points ABOVE that baseline speed you up.
     const dexterity = myProfile?.dexterity ?? 1;
@@ -4165,6 +4231,14 @@ export class WorldScene extends Phaser.Scene {
     // castToggleSpell mechanics as scutum/Shaman's enhance damage.
     if (skillName === WISP_TRANSFORMATION_SKILL) {
       this.castToggleSpell(() => this.network.castWispTransformation());
+      return;
+    }
+    // Flight (a later follow-up ask, "available to every specialization at
+    // level 25") is a no-target toggle too — same castToggleSpell shape as
+    // wisp above, but no manual cancel (nothing in the ask mentions one —
+    // the spell just runs its own fixed 3-minute duration).
+    if (skillName === FLIGHT_SKILL) {
+      this.castToggleSpell(() => this.network.castFlight());
       return;
     }
     // Invisibility (a later follow-up ask) is a no-target toggle too —

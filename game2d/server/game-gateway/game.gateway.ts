@@ -245,7 +245,13 @@ import {
   CREATE_DUPLICATE_MANA_COST,
   CREATE_DUPLICATE_HP_MULTIPLIER,
   CREATE_DUPLICATE_DURATION_MS,
+  FLIGHT_SKILL,
+  FLIGHT_MANA_COST,
+  FLIGHT_DURATION_MS,
+  FLIGHT_BURST_TILES,
+  FLIGHT_BURST_COOLDOWN_MS,
 } from '../../shared/skills.js';
+import { PVP_MIN_LEVEL, PARTY_MAX_SIZE, PARTY_INVITE_TTL_MS, isPvpAllowedMap } from '../../shared/pvp.js';
 import {
   CANTEEN_ITEM,
   CANTEEN_CAPACITY,
@@ -772,6 +778,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         this.checkEnhanceDamageExpiry(client);
         this.checkWispTransformationExpiry(client);
         this.checkInvisibilityExpiry(client);
+        this.checkFlightExpiry(client);
       }
     }, MONSTER_TICK_INTERVAL_MS);
 
@@ -1022,6 +1029,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       quests: client.data.quests,
       enhancedLearningUntil: client.data.enhancedLearningUntil,
       duplicateActiveUntil: client.data.duplicateActiveUntil,
+      flightActive: client.data.flightActive,
+      flightActiveUntil: client.data.flightActiveUntil,
+      flightBurstReadyAt: client.data.flightBurstReadyAt,
+      party: client.data.party,
       house: client.data.house ?? undefined,
       specialization: client.data.specialization ?? undefined,
       visitedPois: client.data.visitedPois,
@@ -1070,6 +1081,23 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // every other timed effect here.
   private activeDuplicates = new Map<string, { ownerUsername: string; expiresAt: number }>();
 
+  // A minimal player party (a later follow-up ask: PvP's own "not in
+  // their group" exemption needed an actual multi-player group concept to
+  // exist first — no fuller shared-exp/loot mechanic was asked for, just
+  // enough to answer "is this player in my group"). Keyed by EVERY
+  // member's own username, all pointing at the SAME shared Set instance —
+  // "same party" is then just `partyA === partyB` (or, equivalently,
+  // `this.parties.get(a)?.has(b)`), no separate id/lookup table needed.
+  // In-memory only (never persisted, same tradeoff as every other
+  // ephemeral toggle here) but keyed by USERNAME rather than socket id, so
+  // it survives a reconnect — see the connection handler's own
+  // `client.data.party` rehydration.
+  private parties = new Map<string, Set<string>>();
+  // Invitee username -> who invited them + when it expires. Only one
+  // pending invite per invitee at a time (a fresh /invite overwrites
+  // whatever was there); see handlePartyAcceptCommand/handlePartyDeclineCommand.
+  private pendingPartyInvites = new Map<string, { inviterUsername: string; expiresAt: number }>();
+
   private checkDuplicateExpiry(): void {
     if (this.activeDuplicates.size === 0) return;
     const changedMaps = new Set<MapName>();
@@ -1103,6 +1131,170 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       ownerSocket.data.duplicateActiveUntil = null;
       ownerSocket.emit('sync', { player: this.snapshotFor(ownerSocket) });
     }
+  }
+
+  private getActiveClient(username: string): GameSocket | undefined {
+    const socketId = this.activeConnections.getActiveSocketId(username);
+    return socketId ? (this.server.sockets.sockets.get(socketId) as GameSocket | undefined) : undefined;
+  }
+
+  // Pushes every member's own `party` field (everyone else in the shared
+  // Set, excluding themselves) and syncs whoever's currently online — a
+  // party member who's offline just picks up the fresh list on their next
+  // connect (see the connection handler's own rehydration).
+  private broadcastPartyUpdate(party: Set<string>): void {
+    for (const member of party) {
+      const memberClient = this.getActiveClient(member);
+      if (!memberClient) continue;
+      memberClient.data.party = [...party].filter((m) => m !== member);
+      memberClient.emit('sync', { player: this.snapshotFor(memberClient) });
+    }
+  }
+
+  private handlePartyInviteCommand(client: GameSocket, targetUsernameArg: string): void {
+    const targetUsername = targetUsernameArg.trim();
+    if (!targetUsername) {
+      this.systemMessage(client, 'Usage: /invite <username>');
+      return;
+    }
+    if (targetUsername === client.data.username) {
+      this.systemMessage(client, 'You cannot invite yourself.');
+      return;
+    }
+    const targetClient = this.getActiveClient(targetUsername);
+    if (!targetClient) {
+      this.systemMessage(client, `${targetUsername} is not online.`);
+      return;
+    }
+    const ownParty = this.parties.get(client.data.username);
+    if (ownParty?.has(targetUsername)) {
+      this.systemMessage(client, `${targetUsername} is already in your party.`);
+      return;
+    }
+    if (ownParty && ownParty.size >= PARTY_MAX_SIZE) {
+      this.systemMessage(client, `Your party is full (max ${PARTY_MAX_SIZE}).`);
+      return;
+    }
+    this.pendingPartyInvites.set(targetUsername, { inviterUsername: client.data.username, expiresAt: Date.now() + PARTY_INVITE_TTL_MS });
+    this.systemMessage(client, `You invite ${targetUsername} to your party.`);
+    this.systemMessage(targetClient, `${client.data.username} has invited you to their party. Type /accept or /decline.`);
+  }
+
+  private handlePartyAcceptCommand(client: GameSocket): void {
+    const invite = this.pendingPartyInvites.get(client.data.username);
+    if (!invite || invite.expiresAt < Date.now()) {
+      this.pendingPartyInvites.delete(client.data.username);
+      this.systemMessage(client, 'You have no pending party invite.');
+      return;
+    }
+    const inviterClient = this.getActiveClient(invite.inviterUsername);
+    if (!inviterClient) {
+      this.pendingPartyInvites.delete(client.data.username);
+      this.systemMessage(client, `${invite.inviterUsername} is no longer online.`);
+      return;
+    }
+    if (this.parties.get(client.data.username)) {
+      this.systemMessage(client, 'Leave your current party before joining another (/leave).');
+      return;
+    }
+    let party = this.parties.get(invite.inviterUsername);
+    if (!party) {
+      party = new Set([invite.inviterUsername]);
+      this.parties.set(invite.inviterUsername, party);
+    }
+    if (party.size >= PARTY_MAX_SIZE) {
+      this.pendingPartyInvites.delete(client.data.username);
+      this.systemMessage(client, 'That party is full.');
+      return;
+    }
+    party.add(client.data.username);
+    this.parties.set(client.data.username, party);
+    this.pendingPartyInvites.delete(client.data.username);
+    this.broadcastPartyUpdate(party);
+    this.systemMessage(client, `You join ${invite.inviterUsername}'s party.`);
+    for (const member of party) {
+      if (member === client.data.username) continue;
+      const memberClient = this.getActiveClient(member);
+      if (memberClient) this.systemMessage(memberClient, `${client.data.username} has joined the party.`);
+    }
+  }
+
+  private handlePartyDeclineCommand(client: GameSocket): void {
+    const invite = this.pendingPartyInvites.get(client.data.username);
+    if (!invite) {
+      this.systemMessage(client, 'You have no pending party invite.');
+      return;
+    }
+    this.pendingPartyInvites.delete(client.data.username);
+    this.systemMessage(client, 'You decline the party invite.');
+    const inviterClient = this.getActiveClient(invite.inviterUsername);
+    if (inviterClient) this.systemMessage(inviterClient, `${client.data.username} declines your party invite.`);
+  }
+
+  private handlePartyLeaveCommand(client: GameSocket): void {
+    const party = this.parties.get(client.data.username);
+    if (!party) {
+      this.systemMessage(client, 'You are not in a party.');
+      return;
+    }
+    party.delete(client.data.username);
+    this.parties.delete(client.data.username);
+    client.data.party = [];
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, 'You have left the party.');
+
+    // A 1-member "party" left behind isn't really a party anymore —
+    // dissolve it outright rather than leaving a phantom single-member
+    // group nobody can see the point of.
+    if (party.size <= 1) {
+      for (const remaining of party) {
+        this.parties.delete(remaining);
+        const remainingClient = this.getActiveClient(remaining);
+        if (remainingClient) {
+          remainingClient.data.party = [];
+          remainingClient.emit('sync', { player: this.snapshotFor(remainingClient) });
+          this.systemMessage(remainingClient, 'Your party has disbanded (not enough members left).');
+        }
+      }
+      return;
+    }
+    this.broadcastPartyUpdate(party);
+    for (const member of party) {
+      const memberClient = this.getActiveClient(member);
+      if (memberClient) this.systemMessage(memberClient, `${client.data.username} has left the party.`);
+    }
+  }
+
+  private handlePartyListCommand(client: GameSocket): void {
+    const party = this.parties.get(client.data.username);
+    if (!party || party.size <= 1) {
+      this.systemMessage(client, 'You are not in a party.');
+      return;
+    }
+    this.systemMessage(client, `Your party: ${[...party].join(', ')}`);
+  }
+
+  // Every "attack another player" entry point funnels through here (see
+  // engageInDirection's player branch) — a later follow-up ask: "player
+  // killing is possible, but not until the player is level 10 and... they
+  // can only attack/kill players that are level 10 or higher. Grimoak
+  // Castle is fully non player killing... [not] in their group."
+  private canAttackPlayer(client: GameSocket, targetUsername: string): { ok: boolean; message?: string } {
+    if (!isPvpAllowedMap(client.data.map)) {
+      return { ok: false, message: 'The halls of Grimoak Castle are protected — you cannot attack another player here.' };
+    }
+    if (client.data.level < PVP_MIN_LEVEL) {
+      return { ok: false, message: `You must be at least level ${PVP_MIN_LEVEL} to attack another player.` };
+    }
+    const targetClient = this.getActiveClient(targetUsername);
+    if (!targetClient) return { ok: false };
+    if (targetClient.data.level < PVP_MIN_LEVEL) {
+      return { ok: false, message: `${targetUsername} is not yet eligible to be attacked (below level ${PVP_MIN_LEVEL}).` };
+    }
+    if (this.parties.get(client.data.username)?.has(targetUsername)) {
+      return { ok: false, message: `You cannot attack ${targetUsername} — they're in your party.` };
+    }
+    return { ok: true };
   }
 
   // Every map:state broadcast (25+ call sites) goes through here now
@@ -1485,6 +1677,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (parsed.data.path === 'hemomancer') {
       client.data.bp = MAX_BP;
     }
+    // A later follow-up ask (item 4's "dummy players... of different
+    // specializations" surfaced this gap): specialization was never
+    // threaded through WorldManagerService's own broadcast snapshot at
+    // all, so no OTHER player could ever see it — see PlayerState's own
+    // doc comment and getMapState/addPlayer's matching field.
+    this.worldManager.updateState(client.data.username, { specialization: client.data.specialization });
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     const message = `You have chosen the path of ${parsed.data.path}.`;
@@ -1868,6 +2066,24 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.systemMessage(client, 'You transform back into your regular form.');
   }
 
+  // Flight (a later follow-up ask) — same periodic-expiry shape as wisp
+  // transformation above (DOES need the worldManager thread, since other
+  // nearby players' clients need to stop rendering the floating visual/
+  // wind trail once it ends).
+  private checkFlightExpiry(client: GameSocket): void {
+    if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
+    if (!client.data.flightActive || client.data.flightActiveUntil === null) return;
+    if (Date.now() < client.data.flightActiveUntil) return;
+
+    client.data.flightActive = false;
+    client.data.flightActiveUntil = null;
+    this.worldManager.updateState(client.data.username, { flightActive: false });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    this.systemMessage(client, 'Your flight spell ends and you settle back onto the ground.');
+  }
+
   // Invisibility (a later follow-up ask) — same periodic-expiry shape as
   // wisp transformation above (DOES need the worldManager thread, since
   // other nearby players' clients need to know to start rendering this
@@ -2246,6 +2462,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // Same tradeoff again — invisibility never carries over either.
     client.data.invisibleActive = false;
     client.data.invisibleActiveUntil = null;
+    // Same tradeoff again — flight never carries over either, and its own
+    // spacebar-burst cooldown resets fresh too.
+    client.data.flightActive = false;
+    client.data.flightActiveUntil = null;
+    client.data.flightBurstReadyAt = null;
+    // A minimal player party (a later follow-up ask) — UNLIKE the toggles
+    // above, party membership genuinely does survive a reconnect (see
+    // GameGateway's own in-memory `parties` map, keyed by username rather
+    // than socket), so this rehydrates from it instead of resetting to
+    // empty.
+    client.data.party = [...(this.parties.get(username) ?? [])].filter((m) => m !== username);
     // The secret room system (a follow-up ask) — persisted, unlike the
     // cooldowns above; loaded straight from the player doc, defaulting to
     // false for any character that predates this feature (every existing
@@ -2303,6 +2530,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       wispActive: client.data.wispActive,
       invisibleActive: client.data.invisibleActive,
       dancing: client.data.dancing,
+      flightActive: client.data.flightActive,
+      specialization: client.data.specialization,
     });
     void client.join(client.data.map);
 
@@ -2407,7 +2636,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
     }
 
-    const result = this.worldManager.processMove(username, parsed.data);
+    const result = this.worldManager.processMove(username, parsed.data, client.data.flightActive);
     if (!result) {
       return { ok: false, player: this.snapshotFor(client), message: 'Your session was lost. Please reconnect.' };
     }
@@ -2712,6 +2941,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     const targetUsername = this.worldManager.findPlayerAt(mapName, targetRow, targetCol, client.data.username);
     if (targetUsername) {
+      // A later follow-up ask: level-10 PvP gate, Grimoak Castle
+      // entirely non-PK, and a party exemption — see canAttackPlayer's
+      // own doc comment. A rejected attack still threw the swing
+      // animation above (same as any other miss/rejection), just never
+      // arms a real combat session.
+      const pvpCheck = this.canAttackPlayer(client, targetUsername);
+      if (!pvpCheck.ok) {
+        if (pvpCheck.message) this.systemMessage(client, pvpCheck.message);
+        return;
+      }
       this.engageCombat(client, 'player', targetUsername, skill);
     }
   }
@@ -3493,6 +3732,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // Same skillName dispatch as resolveHitOnMonster/resolveHitOnNpc, for
   // PvP — see resolveHitOnMonster's doc comment for the shared reasoning.
   private async resolveHitOnPlayer(client: GameSocket, targetUsername: string, skillName: string): Promise<void> {
+    // Defense in depth — engageInDirection's own canAttackPlayer gate
+    // already blocks the ENGAGE itself, but this is the one actual
+    // damage-application point, so re-check here too in case eligibility
+    // changed mid-fight (a party forming, someone walking into Grimoak
+    // Castle) rather than trusting a session armed a tick or more ago.
+    if (!this.canAttackPlayer(client, targetUsername).ok) {
+      this.endPlayerCombat(client.data.username);
+      return;
+    }
     if (skillName === GLARE_SKILL) this.startSkillCooldown(client, GLARE_SKILL);
     const targetSocketId = this.activeConnections.getActiveSocketId(targetUsername);
     const targetClient = targetSocketId ? (this.server.sockets.sockets.get(targetSocketId) as GameSocket | undefined) : undefined;
@@ -5281,6 +5529,115 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
   }
 
+  // Flight (a later follow-up ask: "available to every specialization at
+  // level 25") — no SKILL_SPECIALIZATION_REQUIREMENT entry at all, unlike
+  // every level-15 spell above, so handleLearnSkill's own specialization
+  // gate never blocks it. A fixed-duration self-buff like scutum/barrier —
+  // no manual cancel (the ask never mentioned one, unlike wisp
+  // transformation's own explicit "cast again to cancel" follow-up).
+  // Movement itself (water-crossing, the wisp-speed move-cooldown bonus,
+  // the floating/no-walk-animation visual, the wind trail) all live where
+  // ordinary movement is resolved (WorldManagerService.isOccupied's
+  // `flying` param, WorldScene's effectiveMoveCooldownMs/attemptMove) —
+  // this handler only flips the toggle. See handleFlightBurst below for
+  // the spacebar's own separate forward-dash action.
+  @SubscribeMessage('castFlight')
+  handleCastFlight(@ConnectedSocket() client: GameSocket): CastSpellAck {
+    if (client.data.skills[FLIGHT_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the flight spell yet." };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    const cooldownUntil = client.data.skillCooldowns[FLIGHT_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Flight is still recharging (${secondsLeft}s left).` };
+    }
+    if (client.data.mana < FLIGHT_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast flight (${FLIGHT_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= FLIGHT_MANA_COST;
+
+    let message: string;
+    if (!this.rollSpellSuccess(client, FLIGHT_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else {
+      this.startSkillCooldown(client, FLIGHT_SKILL);
+      client.data.flightActive = true;
+      client.data.flightActiveUntil = Date.now() + FLIGHT_DURATION_MS;
+      client.data.flightBurstReadyAt = null;
+      this.worldManager.updateState(client.data.username, { flightActive: true });
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      message = 'You rise into the air, wind whipping around you.';
+    }
+
+    const growth = this.maybeGrowSpellSkill(client, FLIGHT_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+  }
+
+  // The flight spell's own spacebar burst (a later follow-up ask):
+  // "launch the player forward in their current facing direction by 10
+  // feet equivalent... should not be usable again for 10 seconds." Steps
+  // up to FLIGHT_BURST_TILES tiles at a time (bypassing water, same as
+  // ordinary flight movement — see WorldManagerService.canFlyOnto),
+  // stopping at the first blocked tile or map edge rather than requiring
+  // the full distance to be clear. A discrete teleport-style jump, not a
+  // walk — deliberately does NOT resolve map exits/transitions mid-burst
+  // (stays on the current map), so a burst can never accidentally carry a
+  // player through a door.
+  @SubscribeMessage('flightBurst')
+  handleFlightBurst(@ConnectedSocket() client: GameSocket, @MessageBody() rawDirection: unknown): { ok: boolean; player: PlayerSnapshot; message?: string } {
+    if (!client.data.flightActive) {
+      return { ok: false, player: this.snapshotFor(client), message: 'You must be flying to use a flight burst.' };
+    }
+    const parsed = directionSchema.safeParse(rawDirection);
+    if (!parsed.success) {
+      return { ok: false, player: this.snapshotFor(client), message: 'Unknown direction.' };
+    }
+    const now = Date.now();
+    if (client.data.flightBurstReadyAt !== null && client.data.flightBurstReadyAt > now) {
+      const secondsLeft = Math.ceil((client.data.flightBurstReadyAt - now) / 1000);
+      return { ok: false, player: this.snapshotFor(client), message: `Flight burst is still recharging (${secondsLeft}s left).` };
+    }
+
+    const map = getMap(client.data.map);
+    const { dr, dc } = DIRECTION_DELTAS[parsed.data];
+    let row = client.data.row;
+    let col = client.data.col;
+    for (let i = 0; i < FLIGHT_BURST_TILES; i++) {
+      const nextRow = row + dr;
+      const nextCol = col + dc;
+      if (nextRow < 0 || nextRow >= map.rows || nextCol < 0 || nextCol >= map.cols) break;
+      if (!this.worldManager.canFlyOnto(client.data.map, nextRow, nextCol, client.data.username)) break;
+      row = nextRow;
+      col = nextCol;
+    }
+
+    client.data.flightBurstReadyAt = now + FLIGHT_BURST_COOLDOWN_MS;
+    if (row === client.data.row && col === client.data.col) {
+      const player = this.snapshotFor(client);
+      client.emit('sync', { player });
+      return { ok: false, player, message: 'Something blocks your path.' };
+    }
+
+    client.data.row = row;
+    client.data.col = col;
+    this.worldManager.updateState(client.data.username, { row, col });
+    void this.persistPosition(client);
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    const player = this.snapshotFor(client);
+    client.emit('sync', { player });
+    return { ok: true, player };
+  }
+
   // A later follow-up ask removed the podium/spellbook system entirely —
   // see handleLearnSkill for the teacher click-to-learn modal that
   // replaced the stupefaciunt/exarme podium-reading handlers that used
@@ -6334,6 +6691,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const spaceIndex = trimmed.indexOf(' ');
     const rawCommand = spaceIndex === -1 ? trimmed : trimmed.slice(0, spaceIndex);
     const command = rawCommand.toLowerCase();
+    const args = spaceIndex === -1 ? '' : trimmed.slice(spaceIndex + 1).trim();
 
     switch (command) {
       case 'commands':
@@ -6359,6 +6717,21 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         break;
       case 'light':
         this.handleLucemCommand(client);
+        break;
+      case 'invite':
+        this.handlePartyInviteCommand(client, args);
+        break;
+      case 'accept':
+        this.handlePartyAcceptCommand(client);
+        break;
+      case 'decline':
+        this.handlePartyDeclineCommand(client);
+        break;
+      case 'leave':
+        this.handlePartyLeaveCommand(client);
+        break;
+      case 'party':
+        this.handlePartyListCommand(client);
         break;
       default:
         this.systemMessage(client, `Unknown command: /${command}. Try /commands.`);

@@ -15,4 +15,12 @@ export const CHAT_COMMANDS: ChatCommandInfo[] = [
   { usage: '/dance', description: 'bust a move (moving cancels it)' },
   { usage: '/time', description: 'show the current game hour and whether it is day or night' },
   { usage: '/light', description: "toggle your equipped wand's light on or off (requires the light skill)" },
+  // A minimal player party (a later follow-up ask) — exists purely so
+  // PvP combat can check "is this player in my group" (see shared/pvp.ts);
+  // no shared exp/loot or any other party mechanic beyond that exemption.
+  { usage: '/invite <username>', description: 'invite another player to your party' },
+  { usage: '/accept', description: 'accept a pending party invite' },
+  { usage: '/decline', description: 'decline a pending party invite' },
+  { usage: '/leave', description: 'leave your current party' },
+  { usage: '/party', description: 'list your current party members' },
 ];

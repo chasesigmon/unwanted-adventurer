@@ -58,6 +58,7 @@ import {
   ENHANCED_HOLY_DAMAGE_SKILL,
   INVISIBILITY_SKILL,
   CREATE_DUPLICATE_SKILL,
+  FLIGHT_SKILL,
 } from '../../shared/skills.js';
 
 const STROKE = '#f5f0dc';
@@ -178,6 +179,9 @@ const ICONS: Record<string, string> = {
   ),
   [CREATE_DUPLICATE_SKILL]: svgUrl(
     '<circle cx="9" cy="9" r="5" opacity="0.55"/><circle cx="15" cy="15" r="5" fill="' + STROKE + '" opacity="0.85"/>'
+  ),
+  [FLIGHT_SKILL]: svgUrl(
+    '<path d="M3 15 C7 8 13 5 21 4 C17 9 14 12 10 13 C13.5 13 16.5 11.5 19 9 C15 15.5 9 18 3 15 Z" fill="' + STROKE + '" opacity="0.85"/>'
   ),
   [ENHANCED_UNDEAD_DAMAGE_SKILL]: svgUrl(
     '<path d="M12 3 L14 11 L12 10 L13 21 L8 12 L11 13 Z" fill="' +

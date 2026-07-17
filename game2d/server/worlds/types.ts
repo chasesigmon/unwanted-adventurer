@@ -1,4 +1,4 @@
-import type { Gender, HairColor, MapName, MonsterKind, Race, SkinTone } from '../../shared/constants.js';
+import type { Gender, HairColor, MapName, MonsterKind, Race, SkinTone, SpecializationPath } from '../../shared/constants.js';
 import type { RestState } from '../../shared/types.js';
 import type { Attributes } from '../combat/formulas.js';
 
@@ -60,6 +60,16 @@ export interface PlayerState extends Location, Attributes {
   // "other nearby players need to see the sprite swap too" reasoning as
   // scutumActive/barrierActive above.
   wispActive: boolean;
+  // Flight's own toggle (a later follow-up ask) — same "other nearby
+  // players need to see the floating visual/wind trail too" reasoning as
+  // wispActive above.
+  flightActive: boolean;
+  // A later follow-up ask (item 4's dummy players "of different
+  // specializations" surfaced this gap): this was never threaded through
+  // to OTHER players' clients at all before — see PlayerSnapshot's own
+  // specialization field, previously populated only in the OWNING
+  // client's own snapshotFor, never in getMapState's broadcast copy.
+  specialization: SpecializationPath | null;
   // Invisibility's own toggle (a later follow-up ask) — needed here too
   // so getMapState knows which OTHER players to skip rendering entirely
   // client-side (the opposite of scutum/barrier/wisp's own "show a

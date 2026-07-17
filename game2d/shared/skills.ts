@@ -25,6 +25,10 @@ export function skillLevelRequirement(skill: string): number {
 }
 
 export function practicePointCostFor(skill: string): number {
+  // Flight (a later follow-up ask) — "should cost 5 practice points to
+  // learn," its own explicit figure rather than falling out of the
+  // ordinary level-tiered formula below (which tops out at 3).
+  if (skill === FLIGHT_SKILL) return 5;
   const level = skillLevelRequirement(skill);
   if (level >= 15) return 3;
   if (level >= 5) return 2;
@@ -452,6 +456,28 @@ export const CREATE_DUPLICATE_HP_MULTIPLIER = 0.75;
 export const CREATE_DUPLICATE_DURATION_MS = 5 * 60 * 1000;
 export const CREATE_DUPLICATE_COOLDOWN_MS = 6 * 60 * 1000;
 
+// A later follow-up ask: "add a 'flight' spell available to every
+// specialization at level 25" — unlike every level-15 spell above, this
+// has NO SKILL_SPECIALIZATION_REQUIREMENT entry at all (undefined = any
+// specialization, or none), taught from the Utility Classroom alongside
+// haste/recall (see teachers.ts) rather than any one chamber. Same
+// "always ON for its own fixed duration once cast, no manual toggle-off"
+// shape as scutum/barrier/wisp — flying over water (the moat) and the
+// move-speed bonus are handled where movement itself is resolved (see
+// world-manager.service.ts's isOccupied `flying` param and WorldScene's
+// effectiveMoveCooldownMs), not here. "10 feet equivalent" for the
+// spacebar burst matches this project's existing 1-tile-per-foot
+// convention (KINETIC_STRIKE_KNOCKBACK_TILES's own "7 feet", etc.).
+export const FLIGHT_SKILL = 'flight';
+export const FLIGHT_MANA_COST = 30;
+export const FLIGHT_DURATION_MS = 3 * 60 * 1000;
+export const FLIGHT_COOLDOWN_MS = 4 * 60 * 1000;
+// "Increase the player's movement speed similar to the speed of wisp
+// transformation" — reuses wisp's own 20%-faster factor exactly.
+export const FLIGHT_MOVE_COOLDOWN_FACTOR = WISP_MOVE_COOLDOWN_FACTOR;
+export const FLIGHT_BURST_TILES = 10;
+export const FLIGHT_BURST_COOLDOWN_MS = 10 * 1000;
+
 // The small number of skills explicitly stated to start at 100% instead
 // of the ordinary 70% baseline (see STARTING_SKILL_PERCENT above) — both
 // are passive "extra damage vs a classified target" skills belonging to
@@ -495,6 +521,7 @@ export const SKILL_LEVEL_REQUIREMENT: Record<string, number> = {
   [ENHANCED_HOLY_DAMAGE_SKILL]: 15,
   [INVISIBILITY_SKILL]: 15,
   [CREATE_DUPLICATE_SKILL]: 15,
+  [FLIGHT_SKILL]: 25,
 };
 
 // A skill/spell that also requires a specific chosen specialization to
@@ -558,6 +585,7 @@ export const LEARNABLE_SKILLS = [
   ENHANCED_HOLY_DAMAGE_SKILL,
   INVISIBILITY_SKILL,
   CREATE_DUPLICATE_SKILL,
+  FLIGHT_SKILL,
 ];
 
 // A skill with an entry here can't be re-queued until this long (wall-
@@ -615,6 +643,7 @@ export const SKILL_COOLDOWN_MS: Partial<Record<string, number>> = {
   [SUMMON_DEMON_IMP_SKILL]: SUMMON_DEMON_IMP_COOLDOWN_MS,
   [INVISIBILITY_SKILL]: INVISIBILITY_COOLDOWN_MS,
   [CREATE_DUPLICATE_SKILL]: CREATE_DUPLICATE_COOLDOWN_MS,
+  [FLIGHT_SKILL]: FLIGHT_COOLDOWN_MS,
 };
 
 export const RACE_INNATE_SKILLS: Record<Race, string[]> = {

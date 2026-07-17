@@ -136,10 +136,15 @@ export class WorldManagerService {
   // "players and NPCs/monsters/vendors can't walk through each other".
   // Corpses are deliberately NOT occupancy-blocking — you can walk onto
   // (and loot) one.
-  private isOccupied(mapName: MapName, row: number, col: number, excludeUsername: string): boolean {
+  // `flying` (a later follow-up ask: "flight should allow players to fly
+  // over bodies of water like the moat") — the ONE collision check flight
+  // bypasses; every other obstacle (trees, buildings, gates, furniture,
+  // other entities) still blocks a flying player exactly the same as a
+  // walking one.
+  private isOccupied(mapName: MapName, row: number, col: number, excludeUsername: string, flying = false): boolean {
     if (isTreeTile(mapName, row, col)) return true;
     if (isCastleExteriorBlocked(mapName, row, col)) return true;
-    if (isMoatBlocked(mapName, row, col)) return true;
+    if (!flying && isMoatBlocked(mapName, row, col)) return true;
     if (isGateTile(mapName, row, col) && !this.isGateOpen(mapName, row)) return true;
     if (isFireplaceBlocked(mapName, row, col)) return true;
     if (isBenchBlocked(mapName, row, col)) return true;
@@ -183,14 +188,14 @@ export class WorldManagerService {
     return false;
   }
 
-  processMove(username: string, direction: Direction): MoveResult | null {
+  processMove(username: string, direction: Direction, flying = false): MoveResult | null {
     const loc = this.playerLocation.get(username);
     if (!loc) return null;
 
     const result = resolveMove(loc, direction);
     if (!result.ok) return result;
 
-    if (this.isOccupied(result.mapName, result.row, result.col, username)) {
+    if (this.isOccupied(result.mapName, result.row, result.col, username, flying)) {
       return { ok: false, transitioned: false, mapName: loc.mapName, row: loc.row, col: loc.col };
     }
 
@@ -198,6 +203,15 @@ export class WorldManagerService {
     loc.row = result.row;
     loc.col = result.col;
     return result;
+  }
+
+  // The flight spell's own spacebar burst (a later follow-up ask) — same
+  // flying-bypasses-water rule as processMove above, but exposed publicly
+  // since the burst isn't a single-tile directional move (see
+  // game.gateway.ts's handleFlightBurst, which steps this up to
+  // FLIGHT_BURST_TILES times itself and needs its own per-tile check).
+  canFlyOnto(mapName: MapName, row: number, col: number, excludeUsername: string): boolean {
+    return !this.isOccupied(mapName, row, col, excludeUsername, true);
   }
 
   // Contact lookup for the punch/combat system: is there another
@@ -253,6 +267,8 @@ export class WorldManagerService {
         scutumActive: state.scutumActive,
         barrierActive: state.barrierActive,
         wispActive: state.wispActive,
+        flightActive: state.flightActive,
+        specialization: state.specialization ?? undefined,
         invisibleActive: state.invisibleActive,
         dancing: state.dancing,
         gold: state.gold,

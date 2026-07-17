@@ -29,6 +29,13 @@ export function openTargetInfoModal(kind: 'player' | 'npc' | 'monster' | 'pet', 
   appendStatRow(targetInfoBody, 'Level', level);
 
   if (kind === 'player') {
+    // A later follow-up ask (item 4's dummy players "of different
+    // specializations" surfaced this gap) — specialization is now
+    // threaded through the broadcast snapshot (see WorldScene's own
+    // sprite.setData('specialization', ...)), so any other player's
+    // chosen path is visible here too, not just your own char sheet.
+    const specialization = sprite.getData('specialization') as string | null | undefined;
+    appendStatRow(targetInfoBody, 'Specialization', specialization ?? 'None');
     const equipment = (sprite.getData('equipment') as Record<string, string> | undefined) ?? {};
     for (const slot of EQUIPMENT_SLOTS) {
       appendStatRow(targetInfoBody, EQUIPMENT_SLOT_LABELS[slot], equipment[slot] ?? '(none)');

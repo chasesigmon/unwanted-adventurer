@@ -27,6 +27,7 @@ import {
   ENHANCED_HOLY_DAMAGE_SKILL,
   INVISIBILITY_SKILL,
   CREATE_DUPLICATE_SKILL,
+  FLIGHT_SKILL,
 } from '../../shared/skills.js';
 
 // Static, permanent classroom occupants (a follow-up ask: "Add teacher
@@ -168,8 +169,12 @@ export const TEACHERS: TeacherSnapshot[] = [
     // Recall (a later follow-up ask) is a level-15 spell added directly
     // here rather than into CLASSROOM_SPELLS — that map also drives the
     // Learn Spells quest's own objective list, and recall shouldn't
-    // become a required objective for a starter-level quest.
-    teachesSkills: [...(CLASSROOM_SPELLS['Utility Classroom'] ?? []), RECALL_SKILL],
+    // become a required objective for a starter-level quest. Flight (a
+    // still-later follow-up ask, "available to every specialization at
+    // level 25") sits here too for the same reason — it has no
+    // specialization requirement of its own, so the Utility Classroom (no
+    // specialization gate on the room itself either) is the natural home.
+    teachesSkills: [...(CLASSROOM_SPELLS['Utility Classroom'] ?? []), RECALL_SKILL, FLIGHT_SKILL],
     robeColorKey: 'olive',
   },
   { id: 'offense-teacher', name: 'Professor Kastellan', map: 'Offense Classroom', row: 2, col: 9, teachesSkills: CLASSROOM_SPELLS['Offense Classroom'], robeColorKey: 'maroon' },

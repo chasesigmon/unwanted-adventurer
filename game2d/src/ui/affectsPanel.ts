@@ -43,6 +43,17 @@ function activeAffects(): ActiveAffect[] {
   if (myProfile.wispActive && myProfile.wispActiveUntil) {
     affects.push({ label: 'Wisp Transformation', expiresAt: myProfile.wispActiveUntil });
   }
+  if (myProfile.flightActive && myProfile.flightActiveUntil) {
+    affects.push({ label: 'Flight', expiresAt: myProfile.flightActiveUntil });
+  }
+  // The flight spell's own spacebar burst (a later follow-up ask: "show
+  // this secondary 10 second cooldown somewhere relevant so the player
+  // knows when it is done") — only shown WHILE actually on cooldown, same
+  // "appears only when it matters" convention a skill's own SKILL_COOLDOWN_MS
+  // overlay uses, rather than a permanent "ready"/"Xs" row.
+  if (myProfile.flightBurstReadyAt && myProfile.flightBurstReadyAt > Date.now()) {
+    affects.push({ label: 'Flight Burst', expiresAt: myProfile.flightBurstReadyAt });
+  }
   // The Illusionist's own create duplicate (a later follow-up ask) — no
   // separate xActive boolean, purely time-based like enhancedLearningUntil
   // below (no manual early-cancel exists for this one).
