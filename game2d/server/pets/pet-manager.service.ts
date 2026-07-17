@@ -46,8 +46,17 @@ export class PetManagerService {
     this.targetLocator = locator;
   }
 
+  // A later follow-up bug fix: "as I log in to other characters... I can
+  // see dead pets or old lingering pets... it seems like there are more
+  // than there actually should be" — a dead pet used to sit in this map
+  // forever (see this file's own former "future mechanic, not built yet"
+  // note), and since buy() below refused a new purchase for ANY existing
+  // record regardless of alive, a player whose pet died could never own
+  // another one again. Only a currently-ALIVE pet blocks a new purchase
+  // now — a dead one's own corpse (see PetCorpseManagerService) is what
+  // actually needs resolving, not this record.
   hasPet(ownerUsername: string): boolean {
-    return this.pets.has(ownerUsername);
+    return this.pets.get(ownerUsername)?.alive === true;
   }
 
   getPet(ownerUsername: string): Pet | undefined {
@@ -55,7 +64,7 @@ export class PetManagerService {
   }
 
   buy(ownerUsername: string, kind: PetKind, map: MapName, row: number, col: number): Pet | undefined {
-    if (this.pets.has(ownerUsername)) return undefined;
+    if (this.pets.get(ownerUsername)?.alive) return undefined;
     const pet: Pet = {
       id: randomUUID(),
       ownerUsername,
@@ -366,10 +375,18 @@ export class PetManagerService {
     return previousMap;
   }
 
+  // A later follow-up bug fix: "dead pets or old lingering pets... still
+  // there" — a dead pet's own WORLD presence is now a real, TTL-expiring
+  // corpse (see PetCorpseManagerService), spawned the instant it dies
+  // (see game.gateway.ts's setFollowerCallbacks damager), so it no longer
+  // needs to keep rendering here too. getSnapshotForOwner below stays
+  // UNFILTERED — the owner's own group panel still shows a dead pet as
+  // "— fallen" (a still-earlier follow-up ask), just not out in the
+  // world as a lingering sprite everyone else sees forever.
   getSnapshotsForMap(mapName: MapName): PetSnapshot[] {
     const snapshots: PetSnapshot[] = [];
     for (const pet of this.pets.values()) {
-      if (pet.map !== mapName) continue;
+      if (pet.map !== mapName || !pet.alive) continue;
       snapshots.push({ ...pet });
     }
     return snapshots;

@@ -316,18 +316,24 @@ export function whereLabelFor(mapName: MapName): string | null {
   return null;
 }
 
-// Which "town" a map belongs to, for grouping purposes — Floro's street
+// Which "world" a map belongs to, for grouping purposes — Floro's street
 // AND all 7 of its shop interiors count as the same place (item 13: a
 // player inside the Blacksmith should still show up in another Floro
 // visitor's own Where tab, not just people on the exact same map value).
-// Everywhere else is its own town of one.
+// Everywhere else is its own world of one.
+// A later follow-up ask made explicit what this always should have been:
+// "Grimoak grounds is its own world, Grimoak castle and all of its rooms
+// are its own world" — these used to be merged into ONE group (a player
+// on the open Grounds and a player in, say, the Great Hall showed up in
+// each other's Where tab even though they're nowhere near each other),
+// which is now split: the castle (and every room hanging off it) is its
+// own group, and the Grounds — not itself a GRIMOAK_CASTLE_MAPS entry —
+// falls through to the last line below and is its own group of one, same
+// as it already was for Floro/Bramwick's own outdoor street.
 export function townGroupFor(mapName: MapName): MapName {
   if (mapName === 'Floro' || (FLORO_SHOP_MAPS as readonly string[]).includes(mapName)) return 'Floro';
   if (mapName === 'Bramwick' || (BRAMWICK_SHOP_MAPS as readonly string[]).includes(mapName)) return 'Bramwick';
-  // Same idea for the castle — someone in the Great Hall or Emberclaw's
-  // common room still shows up in the Where tab for a player standing
-  // out on the Grounds.
-  if (mapName === 'Grimoak Grounds' || (GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return 'Grimoak Grounds';
+  if ((GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return 'Grimoak Entrance Hall';
   return mapName;
 }
 

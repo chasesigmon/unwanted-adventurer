@@ -328,6 +328,21 @@
           </div>
         </div>
 
+        <!-- A later follow-up ask: "the corpses of pets should be
+             selectable... grab any items or equipment... sacrificable" —
+             same "grab-all/pick-one/sacrifice" shape as #corpse-modal
+             above, its own modal since a pet corpse's owner-only rules
+             don't fit that one's kind/killedBy-driven logic. -->
+        <div id="pet-corpse-modal" class="modal" hidden>
+          <div class="modal-box">
+            <button type="button" class="modal-close">&times;</button>
+            <h2 id="pet-corpse-modal-title">Pet corpse</h2>
+            <ul id="pet-corpse-item-list" class="inventory-list"></ul>
+            <button type="button" id="pet-corpse-grab-all">Grab all</button>
+            <button type="button" id="pet-corpse-sacrifice">Sacrifice Corpse</button>
+          </div>
+        </div>
+
         <div id="target-info-modal" class="modal" hidden>
           <div class="modal-box">
             <button type="button" class="modal-close">&times;</button>

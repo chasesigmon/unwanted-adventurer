@@ -235,7 +235,9 @@ import { logChatMessage, logCombatMessage, noteCombatActivity } from '../ui/log.
 import { showCenterToast } from '../ui/toast.js';
 import { loadActionBarOnce } from '../ui/actionBar.js';
 import { closeAllModals, isInputCaptured, isMovementBlocked, refreshOpenModals, updateMapButtonVisibility } from '../ui/modalCore.js';
+import { refreshCharSheetIfOpen } from '../ui/charSheet.js';
 import { openCorpseModal, stackedItemsLabel, updateEatBrainsButton } from '../ui/corpseModal.js';
+import { openPetCorpseModal } from '../ui/petCorpseModal.js';
 import { openChestModal } from '../ui/chestModal.js';
 import { openBedModal } from '../ui/bedModal.js';
 import { openBenchModal } from '../ui/benchModal.js';
@@ -322,6 +324,14 @@ export class WorldScene extends Phaser.Scene {
   // the health and name 'Blockman'") — same "not a real combat target"
   // reasoning as lockTarget above, purely for the top-left display panel.
   private selectedStoneBlockId: string | null = null;
+  // A selected pet (a later follow-up ask: "make it so other players
+  // pets are selectable... double clicked... to see more details") —
+  // same "not a real combat target, purely informational" reasoning as
+  // every other selection concept above; works for any pet, not just
+  // other players' (the owner's own pet already has full management via
+  // the group panel, but there's no reason world-clicking it shouldn't
+  // also work the same way).
+  private selectedPetId: string | null = null;
   // The decorative shop building standing behind each of Floro's shop
   // doors (item 13) — only populated while rendering the 'Floro' map
   // itself (the shop interiors don't need their own exterior rendered).
@@ -443,6 +453,10 @@ export class WorldScene extends Phaser.Scene {
   // A player's own companion pet (a later follow-up ask) — keyed by pet
   // id, same lifetime/cleanup shape as monsterSprites above.
   private petSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  // A later follow-up ask: "the corpses of pets should be selectable"
+  // — same seen-set create/update/cleanup shape as every other transient
+  // entity here.
+  private petCorpseSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private animatedMonsterSprites = new Map<string, Phaser.GameObjects.Sprite>();
   // The local player's own current pet/animated monsters (a later follow-
   // up ask's 'z' hotkey needs to know "do I have a follower at all" at
@@ -1806,6 +1820,8 @@ export class WorldScene extends Phaser.Scene {
     this.monsterSprites.clear();
     for (const sprite of this.petSprites.values()) this.destroyEntitySprite(sprite);
     this.petSprites.clear();
+    for (const sprite of this.petCorpseSprites.values()) sprite.destroy();
+    this.petCorpseSprites.clear();
     for (const sprite of this.animatedMonsterSprites.values()) this.destroyEntitySprite(sprite);
     this.animatedMonsterSprites.clear();
     for (const sprite of this.stoneBlockSprites.values()) this.destroyEntitySprite(sprite);
@@ -2427,6 +2443,7 @@ export class WorldScene extends Phaser.Scene {
     this.targetId = null;
     this.selectedStoneBlockId = null;
     this.selectedCorpseId = null;
+    this.selectedPetId = null;
     updateLockTargetPanel(label);
   }
 
@@ -2450,6 +2467,7 @@ export class WorldScene extends Phaser.Scene {
     this.targetId = null;
     this.lockTarget = null;
     this.selectedCorpseId = null;
+    this.selectedPetId = null;
     updateTargetPanel('Blockman', 1, hp, maxHp);
   }
 
@@ -2468,11 +2486,35 @@ export class WorldScene extends Phaser.Scene {
     this.targetId = null;
     this.lockTarget = null;
     this.selectedStoneBlockId = null;
+    this.selectedPetId = null;
     updateLockTargetPanel(label);
   }
 
   private clearCorpseTarget(): void {
     this.selectedCorpseId = null;
+    hideTargetPanel();
+  }
+
+  // A pet "target" (a later follow-up ask) — same top-left panel a
+  // monster's own selection uses (name + hp bar), mutually exclusive with
+  // every other selection concept in the scene. Set by left-clicking a
+  // pet sprite (see applyMapState); double-clicking opens the full detail
+  // modal (see handleLeftClick's own double-click precedent for player/
+  // npc/monster targets, mirrored in the pet sprite's own pointerdown
+  // handler since a pet isn't a real combat target findTargetableAt scans
+  // for).
+  private setPetTarget(id: string, label: string, level: number, hp: number, maxHp: number): void {
+    this.selectedPetId = id;
+    this.targetKind = null;
+    this.targetId = null;
+    this.lockTarget = null;
+    this.selectedStoneBlockId = null;
+    this.selectedCorpseId = null;
+    updateTargetPanel(label, level, hp, maxHp);
+  }
+
+  private clearPetTarget(): void {
+    this.selectedPetId = null;
     hideTargetPanel();
   }
 
@@ -2841,10 +2883,37 @@ export class WorldScene extends Phaser.Scene {
         sprite = this.add
           .sprite(pos.x + petOffset.x, pos.y + petOffset.y, PET_TEXTURE_KEYS[pet.kind])
           .setOrigin(0.5, 0.9)
-          .setDepth(-0.4);
+          .setDepth(-0.4)
+          .setInteractive({ useHandCursor: true });
         sprite.setData('row', pet.row);
         sprite.setData('col', pet.col);
         this.petSprites.set(pet.id, sprite);
+        // A later follow-up ask: "make it so other players pets are
+        // selectable and they can be double clicked in order to see more
+        // details including possible equipment" — same click-then-
+        // double-click-within-DOUBLE_CLICK_MS pattern handleLeftClick's
+        // own generic player/npc/monster targeting uses, just driven from
+        // the pet sprite's own pointerdown instead of the scene-wide
+        // findTargetableAt scan (a pet isn't a real combat target).
+        sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+          if (isInputCaptured() || !pointer.leftButtonDown()) return;
+          const petSprite = this.petSprites.get(pet.id);
+          if (!petSprite) return;
+          const label = (petSprite.getData('label') as string | undefined) ?? pet.name;
+          const petLevel = (petSprite.getData('level') as number | undefined) ?? pet.level;
+          const hp = (petSprite.getData('hp') as number | undefined) ?? pet.hp;
+          const maxHp = (petSprite.getData('maxHp') as number | undefined) ?? pet.maxHp;
+          this.setPetTarget(pet.id, label, petLevel, hp, maxHp);
+          const key = `pet:${pet.id}`;
+          const now = Date.now();
+          if (this.lastClickKey === key && now - this.lastClickAt < WorldScene.DOUBLE_CLICK_MS) {
+            this.lastClickKey = null;
+            openTargetInfoModal('pet', pet.id, petSprite);
+          } else {
+            this.lastClickKey = key;
+            this.lastClickAt = now;
+          }
+        });
       } else {
         const prevRow = sprite.getData('row') as number;
         const prevCol = sprite.getData('col') as number;
@@ -2858,8 +2927,15 @@ export class WorldScene extends Phaser.Scene {
         }
       }
       sprite.setData('label', `${pet.name} (Lv ${pet.level})`);
+      sprite.setData('level', pet.level);
       sprite.setData('hp', pet.hp);
       sprite.setData('maxHp', pet.maxHp);
+      // For the pet detail modal (a later follow-up ask) — kept fresh
+      // every tick, same as label/hp/maxHp above, so a click always reads
+      // live data rather than whatever was true at sprite-creation time.
+      sprite.setData('ownerUsername', pet.ownerUsername);
+      sprite.setData('equipment', pet.equipment);
+      sprite.setData('inventory', pet.inventory);
       this.ensureHpBar(sprite, pet.hp, pet.maxHp);
       sprite.setAlpha(pet.alive ? 1 : 0.4);
     }
@@ -2867,6 +2943,7 @@ export class WorldScene extends Phaser.Scene {
       if (!seenPets.has(id)) {
         this.destroyEntitySprite(sprite);
         this.petSprites.delete(id);
+        if (this.selectedPetId === id) this.clearPetTarget();
       }
     }
     // Animated monsters (a later follow-up ask's necromancer spell) —
@@ -2915,6 +2992,54 @@ export class WorldScene extends Phaser.Scene {
         this.animatedMonsterSprites.delete(id);
       }
     }
+
+    // A later follow-up ask: "the corpses of pets should be selectable
+    // and should open a modal so that the player can grab any items or
+    // equipment the pet had and the pet should be sacrificable" — same
+    // create-or-update + seen-set cleanup + click-to-loot shape as the
+    // ordinary corpse loop below, reusing the pet's own sprite (tinted/
+    // faded to read as lifeless) rather than a whole separate asset.
+    const seenPetCorpses = new Set<string>();
+    for (const pc of state.petCorpses) {
+      seenPetCorpses.add(pc.id);
+      if (this.petCorpseSprites.has(pc.id)) continue;
+
+      const pos = this.tilePosition(pc.row, pc.col);
+      const sprite = this.add
+        .sprite(pos.x, pos.y, PET_TEXTURE_KEYS[pc.kind])
+        .setOrigin(0.5, 0.9)
+        .setDepth(-1)
+        .setTint(0x666666)
+        .setAlpha(0.7)
+        .setInteractive({ useHandCursor: true });
+      sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (isInputCaptured() || !pointer.leftButtonDown()) return;
+        this.setCorpseTarget(pc.id, `${pc.name}'s corpse`);
+        if (!this.isWithinLootReach(pc.row, pc.col)) {
+          logCombatMessage("You're too far away to loot that.");
+          return;
+        }
+        // A later follow-up ask: "only the player themself should be
+        // able to sacrifice their own pet's corpse" — same "don't even
+        // open the modal, just say so" shape the monster-corpse
+        // killedBy check above uses, but stricter (no free-for-all case
+        // — a pet corpse always has a real owner).
+        if (pc.ownerUsername !== this.myUsername) {
+          logCombatMessage("That's not your pet.");
+          return;
+        }
+        openPetCorpseModal(pc.id, pc.name, pc.items);
+      });
+      this.petCorpseSprites.set(pc.id, sprite);
+    }
+    for (const [id, sprite] of this.petCorpseSprites) {
+      if (!seenPetCorpses.has(id)) {
+        sprite.destroy();
+        this.petCorpseSprites.delete(id);
+        if (this.selectedCorpseId === id) this.clearCorpseTarget();
+      }
+    }
+
     // The group panel shows both at once now (a later follow-up ask's
     // animate dead spell added a 2nd kind of group member) — a single
     // render call covers "no companions at all" through "a pet plus up
@@ -3444,8 +3569,12 @@ export class WorldScene extends Phaser.Scene {
         // character sheet chief among them, since mv only ever changes
         // on a move) to re-render with the fresh snapshot until some
         // unrelated event (a combat hit, the next statTick) happened to
-        // trigger one.
-        refreshOpenModals();
+        // trigger one. Scoped to just the character sheet (a later
+        // follow-up bug fix: the blanket refreshOpenModals() this used to
+        // call also rebuilt every OTHER open modal on every single move,
+        // including the Skills panel's own icons — see
+        // refreshCharSheetIfOpen's own doc comment).
+        refreshCharSheetIfOpen();
         const pos = this.tilePosition(ack.player.row, ack.player.col);
         this.tweens.add({
           targets: this.player,
@@ -3625,11 +3754,11 @@ export class WorldScene extends Phaser.Scene {
     const found = this.findTargetableAt(pointer.worldX, pointer.worldY);
     if (!found) {
       // Clicking empty ground deselects whatever was targeted — but a
-      // click that actually landed on a corpse or vendor (handled
+      // click that actually landed on a corpse, vendor, or pet (handled
       // entirely by their own pointerdown listeners) isn't "empty
       // ground", just not a combat-targetable entity; leave the
       // COMBAT target alone (unchanged, long-standing behavior).
-      const hitCombatPassthrough = [...this.corpseSprites.values(), ...this.vendorSprites.values()].some((s) =>
+      const hitCombatPassthrough = [...this.corpseSprites.values(), ...this.vendorSprites.values(), ...this.petSprites.values()].some((s) =>
         s.getBounds().contains(pointer.worldX, pointer.worldY)
       );
       if (!hitCombatPassthrough && this.targetKind) this.clearTarget();
@@ -3662,6 +3791,11 @@ export class WorldScene extends Phaser.Scene {
       // selection.
       const hitCorpse = [...this.corpseSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
       if (!hitCorpse && this.selectedCorpseId) this.clearCorpseTarget();
+      // Same "already handled by its own pointerdown handler on this
+      // SAME click, don't immediately undo it" reasoning for a pet
+      // selection (a later follow-up ask).
+      const hitPet = [...this.petSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
+      if (!hitPet && this.selectedPetId) this.clearPetTarget();
       return;
     }
     this.setTarget(found.kind, found.id, found.sprite);
@@ -3684,6 +3818,7 @@ export class WorldScene extends Phaser.Scene {
     this.lockTarget = null;
     this.selectedStoneBlockId = null;
     this.selectedCorpseId = null;
+    this.selectedPetId = null;
     this.targetKind = kind;
     this.targetId = id;
     const label = (sprite.getData('label') as string | undefined) ?? id;
@@ -3712,7 +3847,7 @@ export class WorldScene extends Phaser.Scene {
   // all three covers "is anything selected right now" regardless of
   // which kind it is.
   hasSelection(): boolean {
-    return Boolean(this.targetKind || this.lockTarget || this.selectedStoneBlockId || this.selectedCorpseId);
+    return Boolean(this.targetKind || this.lockTarget || this.selectedStoneBlockId || this.selectedCorpseId || this.selectedPetId);
   }
 
   clearSelection(): void {
@@ -3720,6 +3855,7 @@ export class WorldScene extends Phaser.Scene {
     if (this.lockTarget) this.clearLockTarget();
     if (this.selectedStoneBlockId) this.clearBlockmanTarget();
     if (this.selectedCorpseId) this.clearCorpseTarget();
+    if (this.selectedPetId) this.clearPetTarget();
   }
 
   // A wholly separate targeting concept from targetKind/targetId above —

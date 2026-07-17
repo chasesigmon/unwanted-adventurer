@@ -623,15 +623,34 @@ export function standingTorchPositionsFor(mapName: MapName): Array<{ row: number
   const sideRows = [14, 20, 26];
   const sideCols = [5, 35];
   const edgeRow = { top: 9, bottom: 31 };
-  // Clear of both cottages' own ~7-13/27-33 column footprints (see
+  // Clear of both FRONT shops' own ~7-13/27-33 column footprints (see
   // WorldScene's cottageSprites) — 3 and 37 sit just past each building,
   // 20 (BRAMWICK_MID_COL) is the open gap between them.
   const edgeCols = [3, BRAMWICK_MID_COL, 37];
   return [
     ...sideCols.flatMap((col) => sideRows.map((row) => ({ row, col }))),
-    ...edgeCols.map((col) => ({ row: edgeRow.top, col })),
+    // A later follow-up bug fix: "there is a torch directly on top of the
+    // Pet Shop" — the Pet Shop's own door was added (a still-later
+    // follow-up ask) at (10, BRAMWICK_MID_COL), the exact same column the
+    // reasoning above already claimed was "the open gap" — true for the
+    // two FRONT shops it was written about, but the Pet Shop's own
+    // cottage sprite (8 tiles tall, see WorldScene's cottageSprites/
+    // BRAMWICK_COTTAGE_FRAME_HEIGHT) stands right behind that door,
+    // roofline reaching up to roughly row 2.5. Only this one edge torch
+    // moves further north (row 1, clear of it); the other two (already
+    // clear of any building) keep the shared edgeRow.top.
+    ...edgeCols.map((col) => ({ row: col === BRAMWICK_MID_COL ? 1 : edgeRow.top, col })),
     ...edgeCols.map((col) => ({ row: edgeRow.bottom, col })),
   ];
+}
+
+// A later follow-up ask: "the torches should have collision, so the
+// players have to go around them" — same "solid decorative fixture"
+// treatment isFireplaceBlocked/isBramwickSignBlocked already give every
+// other standing prop, wired into the same occupancy checks (see
+// WorldManagerService.isOccupied/MonsterManagerService's own isFree).
+export function isStandingTorchBlocked(mapName: MapName, row: number, col: number): boolean {
+  return standingTorchPositionsFor(mapName).some((p) => p.row === row && p.col === col);
 }
 
 // Two clickable name signs, one per side of Bramwick's own dirt-road

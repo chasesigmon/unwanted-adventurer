@@ -551,6 +551,48 @@ export class NetworkManager extends EventTarget {
     });
   }
 
+  // A later follow-up ask: pet corpses — same loot/loot-one/sacrifice
+  // shape as the monster-corpse trio above, see shared/types.ts's own
+  // doc comment on why these are separate events.
+  lootPetCorpse(corpseId: string): Promise<LootAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('lootPetCorpse', corpseId, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  lootPetCorpseItem(corpseId: string, itemIndex: number): Promise<LootAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('lootPetCorpseItem', { corpseId, itemIndex }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  sacrificePetCorpse(corpseId: string): Promise<SacrificeAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('sacrificePetCorpse', corpseId, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
   drinkItem(itemIndex: number): Promise<CanteenActionAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {

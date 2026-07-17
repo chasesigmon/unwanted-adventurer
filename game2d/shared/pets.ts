@@ -3,12 +3,13 @@
 // at a time"). A pet is owned by exactly one player, follows/obeys a
 // simple command, and levels up from its own exp — same leveling shape
 // a player uses (see server/combat/formulas.ts's applyExpGain), just a
-// much smaller starting hp pool. Persistence/resurrection ("killed and
-// then have to be resurrected by someone in the school") is a stated
-// future mechanic, not built yet — a dead pet today just stays dead
-// until the player buys a new one is NOT possible (only one at a time),
-// so for now a killed pet simply stops acting until a future
-// resurrection feature exists.
+// much smaller starting hp pool. A later follow-up ask resolved this
+// file's own former "persistence/resurrection... future mechanic, not
+// built yet" note: a dead pet now becomes a real, lootable/sacrificable
+// corpse (see PetCorpseSnapshot below and server/pets/pet-corpse-manager.
+// service.ts) instead of sitting inert forever, and buying a NEW pet no
+// longer requires the old one to have never existed — see
+// PetManagerService's own hasPet/buy, which now only check `alive`.
 import type { MapName, MonsterKind, Race } from './constants.js';
 
 export const PET_KINDS = ['puppy', 'kitten', 'piglet'] as const;
@@ -159,3 +160,44 @@ export interface AnimatedMonsterSnapshot {
   // as 'stay', preserving the existing no-regen design.
   alive: boolean;
 }
+
+// A later follow-up ask: "the corpses of pets should be selectable and
+// should open a modal so that the player can grab any items or equipment
+// the pet had and the pet should be sacrificable. Only the player
+// themself should be able to sacrifice their own pet's corpse." A real,
+// separate object (see server/pets/pet-corpse-manager.service.ts) rather
+// than reusing shared/types.ts's own CorpseSnapshot (that one's `kind` is
+// typed Race | MonsterKind and its rendering/sacrifice/eat-brains
+// conventions are all built around a wild-monster or player death,
+// neither of which a pet's own kind/ownership rules fit). "Summons/
+// animate dead should not get corpses" is unaffected — that's already
+// true today (see AnimatedMonsterManagerService.applyDamage, which
+// removes a dead one from its own array outright, no corpse of any kind).
+export interface PetCorpseSnapshot {
+  id: string;
+  ownerUsername: string;
+  name: string;
+  kind: PetKind;
+  // The pet's own level at the moment it died — same "sacrifice reward
+  // scales with level" convention every other sacrificable corpse in
+  // this game already uses (see game.gateway.ts's handleSacrificeCorpse/
+  // PET_CORPSE_SACRIFICE_GOLD_PER_LEVEL below), captured here since the
+  // pet's own live record may already be gone by the time this corpse
+  // gets sacrificed (its owner could have bought a replacement pet).
+  level: number;
+  map: MapName;
+  row: number;
+  col: number;
+  items: string[];
+}
+
+// Same TTL every OTHER corpse in this game already uses (see
+// server/worlds/corpse-manager.service.ts's CORPSE_TTL_MS) — no reason
+// for a pet's own corpse to linger longer or shorter.
+export const PET_CORPSE_TTL_MS = 10 * 60 * 1000;
+
+// A pet corpse's own sacrifice reward — same per-level gold formula
+// every other sacrificable corpse uses (see game.gateway.ts's
+// SACRIFICE_GOLD_PER_LEVEL), reusing the pet's own level rather than
+// inventing a separate figure.
+export const PET_CORPSE_SACRIFICE_GOLD_PER_LEVEL = 3;

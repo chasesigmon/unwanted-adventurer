@@ -11,6 +11,7 @@ import {
   isGreatHallChairBlocked,
   isPortalBlocked,
   isBramwickSignBlocked,
+  isStandingTorchBlocked,
   isWithinRadius,
 } from '../../shared/lighting.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
@@ -201,6 +202,23 @@ export class MonsterManagerService {
   private locateFollower: FollowerLocator = () => undefined;
   private damageFollower: FollowerDamager = () => undefined;
   private static readonly MONSTER_VS_FOLLOWER_DAMAGE = 5;
+  // A later follow-up bug fix: "the monster... hitting the pet/summon/
+  // animated really fast per millisecond" — chaseAggroTargets/
+  // stepTowardAggroTarget run on the fast per-tile movement tick
+  // (game.gateway.ts's FOLLOWER_STEP_MS, ~220ms) so movement keeps pace
+  // with the player, but the stone-block/follower damage branches below
+  // used to fire EVERY call once adjacent, landing a hit ~14x/sec instead
+  // of the same ~3s cadence every other attack in this game uses (see
+  // game.gateway.ts's own ATTACK_COOLDOWN_MS, which this mirrors — kept
+  // as its own local constant since combat/formulas-style cross-file
+  // duplication is this project's existing tradeoff for values two
+  // otherwise-independent files both need). Reuses Monster's own
+  // lastCounterAttackTick as a SINGLE shared "this monster's next attack
+  // allowed at" clock across all of its attack targets (a player, via
+  // resolveMonsterInitiatedAttack/resolveHitOnMonster's counter, or a
+  // stone block/follower here) — a monster only ever gets one swing per
+  // cooldown window, no matter who it's swinging at.
+  private static readonly ATTACK_COOLDOWN_MS = 3000;
 
   setFollowerCallbacks(locator: FollowerLocator, damager: FollowerDamager): void {
     this.locateFollower = locator;
@@ -321,6 +339,7 @@ export class MonsterManagerService {
     if (studentDeskPositionsFor(mapName).some((p) => p.row === row && p.col === col)) return false;
     if (isGreatHallTableBlocked(mapName, row, col)) return false;
     if (isGreatHallChairBlocked(mapName, row, col)) return false;
+    if (isStandingTorchBlocked(mapName, row, col)) return false;
     // Same "own tile + shopfront tile in front of it" collision shape as
     // WorldManagerService.isOccupied — a wandering/spawning monster
     // shouldn't stand inside the shop stall either.
@@ -579,6 +598,14 @@ export class MonsterManagerService {
       const dRow = target.row - monster.row;
       const dCol = target.col - monster.col;
       if (Math.abs(dRow) <= 1 && Math.abs(dCol) <= 1) {
+        const now = Date.now();
+        // Adjacent and "fighting" either way — just not due for another
+        // swing yet if still on cooldown (see ATTACK_COOLDOWN_MS's own
+        // doc comment above).
+        if (monster.lastCounterAttackTick !== undefined && now - monster.lastCounterAttackTick < MonsterManagerService.ATTACK_COOLDOWN_MS) {
+          return true;
+        }
+        monster.lastCounterAttackTick = now;
         const remainingHp = this.damageStoneBlock(stoneAggro.stoneBlockId, MonsterManagerService.MONSTER_VS_STONE_BLOCK_DAMAGE, monster.kind);
         if (remainingHp === undefined || remainingHp <= 0) this.stoneBlockAggro.delete(monster.id);
         return true;
@@ -611,6 +638,15 @@ export class MonsterManagerService {
       const dRow = target.row - monster.row;
       const dCol = target.col - monster.col;
       if (Math.abs(dRow) <= 1 && Math.abs(dCol) <= 1) {
+        const now = Date.now();
+        // Adjacent and "fighting" either way — just not due for another
+        // swing yet if still on cooldown (see ATTACK_COOLDOWN_MS's own
+        // doc comment above — this is the exact bug fix for "the monster
+        // hitting the pet/summon/animated really fast per millisecond").
+        if (monster.lastCounterAttackTick !== undefined && now - monster.lastCounterAttackTick < MonsterManagerService.ATTACK_COOLDOWN_MS) {
+          return true;
+        }
+        monster.lastCounterAttackTick = now;
         const remainingHp = this.damageFollower(
           followerAggro.ownerUsername,
           followerAggro.followerKind,

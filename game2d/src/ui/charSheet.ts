@@ -148,3 +148,18 @@ export function renderCharSheet(): void {
 
 registerModalOpenHandler(charSheetModal, renderCharSheet);
 registerModalRefreshHandler(charSheetModal, renderCharSheet);
+
+// A later follow-up bug fix: "while moving with the skill modal open the
+// icons are constantly blinking" — the ordinary move-ack handler
+// (WorldScene.ts) used to call the blanket refreshOpenModals() to keep
+// THIS modal's own mv/hp/mana live (see renderCharSheet's own doc
+// comment), but that indiscriminately re-rendered every OTHER open
+// modal too, including the Skills panel, which fully wipes and rebuilds
+// every skill icon from scratch on each call — nothing about a move
+// changes any skill, so multiple times a second while walking that
+// panel's icons kept flashing for no reason. A move only ever needs to
+// keep THIS modal current, so it's called directly and scoped to "only
+// if actually open" instead.
+export function refreshCharSheetIfOpen(): void {
+  if (!charSheetModal.hidden) renderCharSheet();
+}

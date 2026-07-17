@@ -2,7 +2,7 @@ import type { Server, Socket } from 'socket.io';
 import type { Gender, HairColor, MapName, Race, SkinTone, Direction, MonsterKind, MonsterClass, HouseName, SpecializationPath } from './constants.js';
 import type { EquipmentSlot } from './equipment.js';
 import type { QuestProgress } from './quests.js';
-import type { PetSnapshot, PetCommand, AnimatedMonsterSnapshot, FollowerEquipmentSlot } from './pets.js';
+import type { PetSnapshot, PetCommand, AnimatedMonsterSnapshot, FollowerEquipmentSlot, PetCorpseSnapshot } from './pets.js';
 
 // Never persisted across sessions (a fresh connection always starts
 // 'awake') — matches the text game's own restState, which the same
@@ -471,6 +471,11 @@ export interface MapStatePayload {
   // ask's animate dead spell) — same "usually just your own, another
   // player's shows too but only they can command it" shape as pets above.
   animatedMonsters: AnimatedMonsterSnapshot[];
+  // A later follow-up ask: "the corpses of pets should be selectable..."
+  // — a dead pet's own world presence, replacing the live pets array
+  // entry the moment it dies (see PetManagerService.getSnapshotsForMap's
+  // own alive-only filter) so it can expire instead of lingering forever.
+  petCorpses: PetCorpseSnapshot[];
 }
 
 export interface PetCommandAck {
@@ -875,6 +880,14 @@ export interface ClientToServerEvents {
   // Monster-corpse-only "sacrifice it to the gods" — see
   // game.gateway.ts's handleSacrificeCorpse for the gold formula.
   sacrificeCorpse: (corpseId: string, ack: (res: SacrificeAck) => void) => void;
+  // A later follow-up ask: pet corpses — same loot/loot-one/sacrifice
+  // shape as the monster-corpse trio above, just against
+  // PetCorpseManagerService and restricted to the pet's own owner only
+  // (see game.gateway.ts's handleLootPetCorpse/handleLootPetCorpseItem/
+  // handleSacrificePetCorpse).
+  lootPetCorpse: (corpseId: string, ack: (res: LootAck) => void) => void;
+  lootPetCorpseItem: (payload: { corpseId: string; itemIndex: number }, ack: (res: LootAck) => void) => void;
+  sacrificePetCorpse: (corpseId: string, ack: (res: SacrificeAck) => void) => void;
   // The classroom/specialization teacher click-to-learn modal (a later
   // follow-up ask replaced the old podium-reading skill system — every
   // readXBook event above it used to occupy this spot); see

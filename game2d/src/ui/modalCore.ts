@@ -45,6 +45,12 @@ export const corpseItemList = document.getElementById('corpse-item-list') as HTM
 export const corpseGrabAllBtn = document.getElementById('corpse-grab-all') as HTMLButtonElement;
 export const corpseEatBrainsBtn = document.getElementById('corpse-eat-brains') as HTMLButtonElement;
 export const corpseSacrificeBtn = document.getElementById('corpse-sacrifice') as HTMLButtonElement;
+// A later follow-up ask: pet corpses — see petCorpseModal.ts.
+export const petCorpseModal = document.getElementById('pet-corpse-modal') as HTMLDivElement;
+export const petCorpseModalTitle = document.getElementById('pet-corpse-modal-title') as HTMLHeadingElement;
+export const petCorpseItemList = document.getElementById('pet-corpse-item-list') as HTMLUListElement;
+export const petCorpseGrabAllBtn = document.getElementById('pet-corpse-grab-all') as HTMLButtonElement;
+export const petCorpseSacrificeBtn = document.getElementById('pet-corpse-sacrifice') as HTMLButtonElement;
 export const shopModal = document.getElementById('shop-modal') as HTMLDivElement;
 export const shopModalTitle = document.getElementById('shop-modal-title') as HTMLHeadingElement;
 export const shopGreeting = document.getElementById('shop-greeting') as HTMLDivElement;
@@ -112,6 +118,7 @@ export const ALL_MODALS = [
   affectsModal,
   helpModal,
   corpseModal,
+  petCorpseModal,
   shopModal,
   targetInfoModal,
   autopilotModal,

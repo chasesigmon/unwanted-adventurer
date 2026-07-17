@@ -17,6 +17,7 @@ import {
   isGreatHallChairBlocked,
   isPortalBlocked,
   isBramwickSignBlocked,
+  isStandingTorchBlocked,
 } from '../../shared/lighting.js';
 import {
   isCastleExteriorBlocked,
@@ -148,6 +149,7 @@ export class WorldManagerService {
     if (isGreatHallChairBlocked(mapName, row, col)) return true;
     if (isPortalBlocked(mapName, row, col)) return true;
     if (isBramwickSignBlocked(mapName, row, col)) return true;
+    if (isStandingTorchBlocked(mapName, row, col)) return true;
     if (isStairsSideBlocked(mapName, row, col)) return true;
 
     const npcHit = NPCS.some((npc) => npc.map === mapName && npc.row === row && npc.col === col);
@@ -274,6 +276,6 @@ export class WorldManagerService {
     // follow-up asks) live entirely in GameGateway, not here — always
     // empty at this layer; GameGateway's mapStateFor wraps every call
     // site to fill in the real values afterward.
-    return { mapName, players, npcs, monsters, corpses, vendors, teachers, stoneBlocks: [], pets: [], animatedMonsters: [] };
+    return { mapName, players, npcs, monsters, corpses, vendors, teachers, stoneBlocks: [], pets: [], animatedMonsters: [], petCorpses: [] };
   }
 }

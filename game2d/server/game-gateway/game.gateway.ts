@@ -18,12 +18,14 @@ import { MonsterManagerService } from '../monsters/monster-manager.service.js';
 import { CorpseManagerService, bodyPartLabelFor } from '../worlds/corpse-manager.service.js';
 import { PetManagerService } from '../pets/pet-manager.service.js';
 import { AnimatedMonsterManagerService } from '../pets/animated-monster-manager.service.js';
+import { PetCorpseManagerService } from '../pets/pet-corpse-manager.service.js';
 import {
   PET_KINDS,
   PET_COMMANDS,
   PET_ATTACK_DAMAGE,
   FOLLOWER_EQUIPMENT_SLOTS,
   FOLLOWER_WEAPON_DAMAGE_BONUS,
+  PET_CORPSE_SACRIFICE_GOLD_PER_LEVEL,
   type PetKind,
   type PetCommand,
 } from '../../shared/pets.js';
@@ -544,6 +546,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     private readonly corpseManager: CorpseManagerService,
     private readonly petManager: PetManagerService,
     private readonly animatedMonsterManager: AnimatedMonsterManagerService,
+    private readonly petCorpseManager: PetCorpseManagerService,
     private readonly worldClock: WorldClockService,
     private readonly authService: AuthService,
     private readonly sessionStore: SessionStoreService,
@@ -633,10 +636,44 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       },
       (ownerUsername, followerKind, followerId, amount) => {
         if (followerKind === 'animatedMonster') {
+          // "Summons/animate dead should not get corpses and should
+          // disappear on death" — already true (applyDamage splices a
+          // dead one out of its own array outright, see that method's own
+          // doc comment), nothing extra needed here.
           const result = followerId !== undefined ? this.animatedMonsterManager.applyDamage(ownerUsername, followerId, amount) : undefined;
+          // A later follow-up ask: "if all of the Illusionist's duplicates
+          // die then the affect should go away from the affects modal" —
+          // checkDuplicateExpiry already handles this for the natural TTL
+          // timeout, but a duplicate killed early in combat (this path)
+          // never went through that sweep, leaving a stale activeDuplicates
+          // entry and the Affects-panel countdown running until its
+          // original cast-time expiry even though it's already gone.
+          if (result?.died && followerId !== undefined && this.activeDuplicates.has(followerId)) {
+            this.clearExpiredDuplicate(followerId, ownerUsername);
+          }
           return result ? result.monster.hp : undefined;
         }
         const result = this.petManager.applyDamage(ownerUsername, amount);
+        // A later follow-up ask: "the corpses of pets should be
+        // selectable... grab any items or equipment the pet had... the
+        // pet should be sacrificable" — spawned the instant it dies, at
+        // its own current position, carrying both its loose inventory
+        // AND whatever it had equipped (a pet's own weapon/torso slots —
+        // see FOLLOWER_EQUIPMENT_SLOTS). No separate map:state broadcast
+        // needed here — stepTowardAggroTarget's own caller already
+        // broadcasts this exact map right after this callback returns.
+        if (result?.died) {
+          this.petCorpseManager.spawn(
+            ownerUsername,
+            result.pet.name,
+            result.pet.kind,
+            result.pet.level,
+            [...result.pet.inventory, ...Object.values(result.pet.equipment)],
+            result.pet.map,
+            result.pet.row,
+            result.pet.col
+          );
+        }
         return result ? result.pet.hp : undefined;
       }
     );
@@ -712,8 +749,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.monsterManager.checkProximityAggro(this.combatTickCount);
       this.monsterManager.respawnBelowMax();
       const expiredCorpseMaps = this.corpseManager.removeExpired();
+      const expiredPetCorpseMaps = this.petCorpseManager.removeExpired();
       const stoneBlockMaps = this.removeExpiredStoneBlocks();
-      const mapsToBroadcast = new Set<MapName>([...ACTIVE_MONSTER_MAPS, ...expiredCorpseMaps, ...stoneBlockMaps]);
+      const mapsToBroadcast = new Set<MapName>([...ACTIVE_MONSTER_MAPS, ...expiredCorpseMaps, ...expiredPetCorpseMaps, ...stoneBlockMaps]);
       for (const mapName of mapsToBroadcast) {
         this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
       }
@@ -1041,23 +1079,29 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const owner = this.worldManager.getLocation(entry.ownerUsername);
       if (owner) changedMaps.add(owner.mapName);
       this.animatedMonsterManager.remove(entry.ownerUsername, id);
-      this.activeDuplicates.delete(id);
-      // A later follow-up ask's own Affects-panel countdown (see
-      // handleCastCreateDuplicate's own doc comment) — only cleared once
-      // this owner has no OTHER still-active duplicate (the animated-
-      // monster cap technically allows more than one at higher levels).
-      const stillHasAnother = [...this.activeDuplicates.values()].some((e) => e.ownerUsername === entry.ownerUsername);
-      if (!stillHasAnother) {
-        const ownerSocketId = this.activeConnections.getActiveSocketId(entry.ownerUsername);
-        const ownerSocket = ownerSocketId ? (this.server.sockets.sockets.get(ownerSocketId) as GameSocket | undefined) : undefined;
-        if (ownerSocket) {
-          ownerSocket.data.duplicateActiveUntil = null;
-          ownerSocket.emit('sync', { player: this.snapshotFor(ownerSocket) });
-        }
-      }
+      this.clearExpiredDuplicate(id, entry.ownerUsername);
     }
     for (const mapName of changedMaps) {
       this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
+    }
+  }
+
+  // Shared by both the TTL sweep above and a duplicate dying early in
+  // combat (see setFollowerCallbacks' animatedMonster branch) — a later
+  // follow-up ask: "if all of the Illusionist's duplicates die then the
+  // affect should go away from the affects modal." Only clears the
+  // Affects-panel countdown once this owner has no OTHER still-active
+  // duplicate (the animated-monster cap technically allows more than one
+  // at higher levels).
+  private clearExpiredDuplicate(id: string, ownerUsername: string): void {
+    this.activeDuplicates.delete(id);
+    const stillHasAnother = [...this.activeDuplicates.values()].some((e) => e.ownerUsername === ownerUsername);
+    if (stillHasAnother) return;
+    const ownerSocketId = this.activeConnections.getActiveSocketId(ownerUsername);
+    const ownerSocket = ownerSocketId ? (this.server.sockets.sockets.get(ownerSocketId) as GameSocket | undefined) : undefined;
+    if (ownerSocket) {
+      ownerSocket.data.duplicateActiveUntil = null;
+      ownerSocket.emit('sync', { player: this.snapshotFor(ownerSocket) });
     }
   }
 
@@ -1070,6 +1114,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     state.stoneBlocks = this.stoneBlockSnapshotsForMap(mapName);
     state.pets = this.petManager.getSnapshotsForMap(mapName);
     state.animatedMonsters = this.animatedMonsterManager.getSnapshotsForMap(mapName);
+    state.petCorpses = this.petCorpseManager.getSnapshotsForMap(mapName);
     return state;
   }
 
@@ -3760,6 +3805,111 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, inventory: client.data.inventory };
   }
 
+  // A later follow-up ask: "the corpses of pets should be selectable...
+  // grab any items or equipment the pet had... only the player themself
+  // should be able to sacrifice their own pet's corpse." Same shape as
+  // handleLoot/handleLootItem/handleSacrificeCorpse above, just against
+  // PetCorpseManagerService and gated by ownerUsername instead of
+  // killedBy — nobody but the pet's own owner may loot OR sacrifice it at
+  // all (stricter than a monster corpse's own "whoever landed the kill"
+  // rule).
+  @SubscribeMessage('lootPetCorpse')
+  handleLootPetCorpse(
+    @ConnectedSocket() client: GameSocket,
+    @MessageBody() corpseId: unknown
+  ): { ok: boolean; inventory?: string[]; message?: string } {
+    if (typeof corpseId !== 'string') {
+      return { ok: false, message: 'Invalid corpse.' };
+    }
+    const corpse = this.petCorpseManager.get(corpseId);
+    if (!corpse || corpse.map !== client.data.map) {
+      return { ok: false, message: "That's already gone." };
+    }
+    if (!this.isWithinLootReach(client, corpse.row, corpse.col)) {
+      return { ok: false, message: "You're too far away to reach that." };
+    }
+    if (corpse.ownerUsername !== client.data.username) {
+      return { ok: false, message: 'Only the owner can loot their own pet.' };
+    }
+
+    const items = [...corpse.items];
+    this.petCorpseManager.clearItems(corpseId);
+    client.data.inventory = [...client.data.inventory, ...items];
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    void this.persistStats(client);
+
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+
+    return { ok: true, inventory: client.data.inventory };
+  }
+
+  @SubscribeMessage('lootPetCorpseItem')
+  handleLootPetCorpseItem(
+    @ConnectedSocket() client: GameSocket,
+    @MessageBody() payload: unknown
+  ): { ok: boolean; inventory?: string[]; message?: string } {
+    if (
+      typeof payload !== 'object' ||
+      payload === null ||
+      typeof (payload as { corpseId?: unknown }).corpseId !== 'string' ||
+      typeof (payload as { itemIndex?: unknown }).itemIndex !== 'number'
+    ) {
+      return { ok: false, message: 'Invalid request.' };
+    }
+    const { corpseId, itemIndex } = payload as { corpseId: string; itemIndex: number };
+
+    const corpse = this.petCorpseManager.get(corpseId);
+    if (!corpse || corpse.map !== client.data.map) {
+      return { ok: false, message: "That's already gone." };
+    }
+    if (!this.isWithinLootReach(client, corpse.row, corpse.col)) {
+      return { ok: false, message: "You're too far away to reach that." };
+    }
+    if (corpse.ownerUsername !== client.data.username) {
+      return { ok: false, message: 'Only the owner can loot their own pet.' };
+    }
+
+    const item = this.petCorpseManager.removeItem(corpseId, itemIndex);
+    if (item === undefined) {
+      return { ok: false, message: "That's already gone." };
+    }
+
+    client.data.inventory = [...client.data.inventory, item];
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    void this.persistStats(client);
+
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+
+    return { ok: true, inventory: client.data.inventory };
+  }
+
+  @SubscribeMessage('sacrificePetCorpse')
+  handleSacrificePetCorpse(@ConnectedSocket() client: GameSocket, @MessageBody() corpseId: unknown): SacrificeAck {
+    if (typeof corpseId !== 'string') {
+      return { ok: false, message: 'Invalid corpse.' };
+    }
+    const corpse = this.petCorpseManager.get(corpseId);
+    if (!corpse || corpse.map !== client.data.map) {
+      return { ok: false, message: "That's already gone." };
+    }
+    if (!this.isWithinLootReach(client, corpse.row, corpse.col)) {
+      return { ok: false, message: "You're too far away to reach that." };
+    }
+    if (corpse.ownerUsername !== client.data.username) {
+      return { ok: false, message: 'Only the owner can sacrifice their own pet.' };
+    }
+
+    const goldReward = corpse.level * PET_CORPSE_SACRIFICE_GOLD_PER_LEVEL;
+    this.petCorpseManager.remove(corpseId);
+    client.data.gold += goldReward;
+    this.worldManager.updateState(client.data.username, { gold: client.data.gold });
+    void this.persistStats(client);
+
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+
+    return { ok: true, gold: client.data.gold, message: `You sacrifice ${corpse.name}'s corpse to the gods, receiving ${goldReward} gold.` };
+  }
+
   // Buying from a vendor requires standing at or next to it, same reach
   // rule as looting a corpse — vendors never move, so this is really
   // just "walk up to the shop front".
@@ -4982,6 +5132,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         targetClient = candidate;
       }
     }
+    // A later follow-up ask: "every spell has at least a 5 range
+    // equivalent... unless explicitly stated otherwise" — this had NO
+    // range check at all for another player, just same-map, letting a
+    // Cleric heal an ally anywhere on the whole map. Same
+    // SPELL_ATTACK_RANGE_TILES (7) every other targeted spell here uses;
+    // healing yourself obviously needs no reach check at all.
+    if (
+      targetClient !== client &&
+      !isWithinRadius(client.data.row, client.data.col, targetClient.data.row, targetClient.data.col, SPELL_ATTACK_RANGE_TILES)
+    ) {
+      return { ok: false, message: `You're too far away to reach ${targetClient.data.username} with lesser heal.` };
+    }
 
     client.data.mana -= LESSER_HEAL_MANA_COST;
     this.startSkillCooldown(client, LESSER_HEAL_SKILL);
@@ -5056,12 +5218,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   }
 
   // The Druid specialization's other level-15 spell (a later follow-up
-  // ask) — a fixed-duration self-transformation, same "always ON for its
-  // own duration once cast" shape as scutum (no manual cancel, unlike
-  // barrier — nothing in the spec asks for one). No-attack/faster-
-  // movement rules live client-side (WorldScene) and at every attack
-  // entry point (handlePunch/handleUseSkill/handleEngageRangedAttack)
-  // rather than here.
+  // ask) — a fixed-duration self-transformation. A still-later follow-up
+  // ask gave it a real manual cancel (previously "always ON for its own
+  // duration once cast, no manual cancel... nothing in the spec asks for
+  // one"): "cast wisp transformation again in order to cancel... even if
+  // the spell is on cooldown, but to cast the spell again TO TRANSFORM
+  // they need to wait until cooldown is over" — same "cooldown only gates
+  // turning it ON, toggling back OFF is free and bypasses it entirely"
+  // shape as lucem's own handleLucemCommand. No-attack/faster-movement
+  // rules live client-side (WorldScene) and at every attack entry point
+  // (handlePunch/handleUseSkill/handleEngageRangedAttack) rather than here.
   @SubscribeMessage('castWispTransformation')
   handleCastWispTransformation(@ConnectedSocket() client: GameSocket): CastSpellAck {
     if (client.data.skills[WISP_TRANSFORMATION_SKILL] === undefined) {
@@ -5070,6 +5236,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
+
+    if (client.data.wispActive) {
+      client.data.wispActive = false;
+      client.data.wispActiveUntil = null;
+      this.worldManager.updateState(client.data.username, { wispActive: false });
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      client.emit('sync', { player: this.snapshotFor(client) });
+      const message = 'You return to your normal form.';
+      this.systemMessage(client, message);
+      return { ok: true, message };
+    }
+
     const cooldownUntil = client.data.skillCooldowns[WISP_TRANSFORMATION_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
