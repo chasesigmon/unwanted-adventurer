@@ -83,8 +83,6 @@ export const RESISTANCE_SKILLS = [LESSER_NORMAL_MONSTER_RESISTANCE, LESSER_UNDEA
 
 export const INFRAVISION_SKILL = 'infravision'; // goblin: see in the dark, no torch needed
 export const LACERATE_SKILL = 'lacerate'; // dragonborn: chance of an extra "laceration" attack per combat tick
-export const MIMIC_SKILL = 'mimic'; // slime: can transform into a consumed race's form
-export const REVERT_SKILL = 'revert'; // slime: change back to plain slime form
 export const EAT_BRAINS_SKILL = 'eat brains'; // zombie: heal by eating a corpse's brains (own killing blow only)
 export const GLARE_SKILL = 'glare'; // skeleton: paralyze whoever it's fighting for 2 combat rounds
 export const ENHANCED_DURABILITY_SKILL = 'enhanced durability'; // skeleton: +5% armor (armor itself: future work)
@@ -136,6 +134,12 @@ export const UNLOCK_SKILL = 'unlock';
 // AUGUE_RANGE_TILES, deals a flat AUGUE_DAMAGE, and has its own cooldown
 // (see SKILL_COOLDOWN_MS below).
 export const ARCANE_BOLT_SKILL = 'arcane bolt';
+// A later follow-up ask: all "bolt" spells cost 7 mana per cast — split
+// out from the general SPELL_ATTACK_MANA_COST (game.gateway.ts) so this
+// one "bolt"-named spell's cost can move independently of the other
+// spells (stupefaciunt, exarme, scutum, murus lapideus) that constant
+// still covers.
+export const ARCANE_BOLT_MANA_COST = 7;
 
 // Basic actions every human wizard starts knowing outright (item 7) —
 // not practiced up or learned from a podium, just part of the universal
@@ -232,7 +236,9 @@ export const WATER_BOLT_SKILL = 'water bolt';
 export const AIR_BOLT_SKILL = 'air bolt';
 export const EARTH_BOLT_SKILL = 'earth bolt';
 export const ELEMENTAL_BOLT_SKILLS = [FIRE_BOLT_SKILL, WATER_BOLT_SKILL, AIR_BOLT_SKILL, EARTH_BOLT_SKILL];
-export const ELEMENTAL_BOLT_MANA_COST = 10;
+// A later follow-up ask: all "bolt" spells cost 7 mana per cast (see
+// ARCANE_BOLT_MANA_COST below, the other "bolt"-named spell).
+export const ELEMENTAL_BOLT_MANA_COST = 7;
 export const ELEMENTAL_BOLT_DAMAGE = 10;
 // "A cooldown of 1 combat tick" — same literal MONSTER_TICK_INTERVAL_MS
 // reasoning as Arcane Bolt's own cooldown (shared/ can't import a
@@ -616,7 +622,9 @@ export const RACE_INNATE_SKILLS: Record<Race, string[]> = {
   skeleton: [GLARE_SKILL, ENHANCED_DURABILITY_SKILL],
   zombie: [EAT_BRAINS_SKILL],
   dragonborn: [LACERATE_SKILL],
-  slime: [MIMIC_SKILL, REVERT_SKILL],
+  // A follow-up ask removed the /mimic and /revert commands entirely — a
+  // slime has no innate skill of its own now.
+  slime: [],
   // Hobgoblin is evolution-only (never a starting race).
   hobgoblin: [],
   // Drink/pour are basic actions everyone can do from day one (item 7) —

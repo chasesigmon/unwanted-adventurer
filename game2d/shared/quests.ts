@@ -22,7 +22,7 @@ export type QuestObjectiveKind = 'learnSkill' | 'killMonster' | 'haveItem' | 'ha
 // hasFlag's own set of checkable boolean facts about a player (a follow-
 // up ask's "acquire the map" quest) — a bag rather than a single
 // hardcoded boolean so each new quest gated on a different flag (e.g.
-// Professor Hollowell's 2nd quest, "choose a house") doesn't need its
+// Professor Caldwell's 2nd quest, "choose a house") doesn't need its
 // own new objective kind.
 export type QuestFlag = 'mapUnlocked' | 'houseChosen';
 
@@ -160,19 +160,21 @@ export const QUESTS: Record<string, QuestDefinition> = {
     objectives: [{ id: 'acquire-map', label: 'Acquire the map from the Utility Classroom', kind: 'hasFlag', flag: 'mapUnlocked' }],
     rewardExp: 100,
   },
-  // Professor Hollowell's 2nd quest (a later follow-up ask) — offered
-  // after Find the Map is turned in (see activeQuestIdFor below). Same
-  // hasFlag shape as that quest: just checks whatever ALREADY happened
-  // (see game.gateway.ts's handleChooseHouse) rather than needing its
-  // own new event — a player who already picked a house with Professor
-  // Caldwell before accepting this can complete it immediately.
+  // Professor Caldwell's 2nd quest (a later follow-up ask) — offered
+  // alongside Find the Map from the very start (a still-later follow-up
+  // ask: "should be available at the same time... offer both options,"
+  // see npcDialogueModal.ts's own multi-quest render). Same hasFlag
+  // shape as that quest: just checks whatever ALREADY happened (see
+  // game.gateway.ts's handleChooseHouse) rather than needing its own new
+  // event — a player who already picked a house with Professor Hollowell
+  // before accepting this can complete it immediately.
   [CHOOSE_HOUSE_QUEST_ID]: {
     id: CHOOSE_HOUSE_QUEST_ID,
     title: 'Choosing a House',
-    description: 'Every student needs a house to call home. Go and see Professor Caldwell to pick yours. Return to me once you have.',
+    description: 'Every student needs a house to call home. Go and see Professor Hollowell to pick yours. Return to me once you have.',
     readyMessage: "You've chosen a house — wonderful! Click below when you're ready to complete this quest.",
     completedMessage: 'Wear your house colors with pride.',
-    objectives: [{ id: 'choose-house', label: 'Choose a house with Professor Caldwell', kind: 'hasFlag', flag: 'houseChosen' }],
+    objectives: [{ id: 'choose-house', label: 'Choose a house with Professor Hollowell', kind: 'hasFlag', flag: 'houseChosen' }],
     rewardExp: 100,
   },
 };
@@ -231,13 +233,16 @@ export function allObjectivesDone(
 export type QuestIconState = 'not-started' | 'ready' | 'in-progress';
 
 // Which of a teacher's own questIds (server/worlds/teachers.ts) is
-// "current" for a given player — a follow-up ask gave Professor
-// Hollowell a 2nd quest, offered one at a time rather than both at once:
-// the first not-yet-turned-in quest in the list, or the last one (so its
-// completedMessage keeps showing) once every quest in the list is done.
+// "current" for a given player — used only to pick ONE quest's state to
+// drive the teacher's own floating status icon now (a still-later
+// follow-up ask made openNpcDialogueModal itself show every quest at
+// once instead of one at a time, so this no longer decides what the
+// DIALOGUE shows, just the icon): the first not-yet-turned-in quest in
+// the list, or the last one (so its completedMessage-driven "nothing
+// left" icon state keeps showing) once every quest in the list is done.
 // Order-only — doesn't need skills/inventory/flags, since completedAt is
-// the only signal needed to pick which single id to hand off to the
-// existing single-quest logic (questIconStateFor/openNpcDialogueModal).
+// the only signal needed to pick which single id to check via
+// questIconStateFor.
 export function activeQuestIdFor(questIds: string[] | undefined, quests: Record<string, QuestProgress>): string | undefined {
   if (!questIds || questIds.length === 0) return undefined;
   return questIds.find((id) => !quests[id]?.completedAt) ?? questIds[questIds.length - 1];

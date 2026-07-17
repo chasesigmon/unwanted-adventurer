@@ -6,7 +6,7 @@
 // down/up/left/right, 8 columns per row: 4 walk frames then 4 attack
 // frames). No runtime horizontal flip anywhere — "right" is its own real
 // row baked into the PNG (a mirror of "left" applied at generation time).
-import type { Race, MonsterKind, Gender, HairColor, SkinTone } from '../shared/constants.js';
+import type { Race, MonsterKind, Gender, HairColor, SkinTone, PlayableRace } from '../shared/constants.js';
 import { GENDERS, HAIR_COLORS, SKIN_TONES } from '../shared/constants.js';
 import type { TeacherRobeColor } from '../shared/types.js';
 import { TEACHER_ROBE_COLORS } from '../shared/types.js';
@@ -48,11 +48,24 @@ export type DecorativeKind = 'ogre' | 'shopkeeper' | 'teacher' | TeacherVariantK
 // uses. See effectiveSpriteKind, the one place a Race turns into this.
 export type HumanSpriteKind = `human-${Gender}-${SkinTone}-${HairColor}`;
 
+// The 4 non-human playable races' own skin/hair variation (a follow-up
+// bug fix: "the hair color for races is still not working, and skin
+// tones are not working" — each used to have just ONE fixed-look
+// spritesheet, gender/skin/hair collected at creation but never actually
+// applied). No gender axis (unlike human) — these 4 races' own base
+// shape/proportions don't differ by gender, only recolored regions do —
+// 9 baked combinations each (skin x hair, no gender), generated the same
+// flat-color-substitution way human's own sheets were hand-authored,
+// just recoloring the ONE existing plain sheet's own skin/hair regions
+// instead of drawing from scratch.
+export type NonHumanVariantRace = Exclude<PlayableRace, 'human'>;
+export type NonHumanVariantSpriteKind = `${NonHumanVariantRace}-${SkinTone}-${HairColor}`;
+
 // A "kind" is anything with its own spritesheet — a playable race
 // (including the evolved-only hobgoblin and the wizarding-school pivot's
 // 'human'), a wild monster kind, or one of the decorative-only kinds
 // above.
-export type SpriteKind = Race | MonsterKind | DecorativeKind | HumanSpriteKind;
+export type SpriteKind = Race | MonsterKind | DecorativeKind | HumanSpriteKind | NonHumanVariantSpriteKind;
 
 function buildHumanKeyMaps(): { textureKeys: Record<HumanSpriteKind, string>; sheetPaths: Record<HumanSpriteKind, string> } {
   const textureKeys = {} as Record<HumanSpriteKind, string>;
@@ -69,6 +82,27 @@ function buildHumanKeyMaps(): { textureKeys: Record<HumanSpriteKind, string>; sh
   return { textureKeys, sheetPaths };
 }
 const { textureKeys: HUMAN_TEXTURE_KEYS, sheetPaths: HUMAN_SHEET_PATHS } = buildHumanKeyMaps();
+
+const NON_HUMAN_VARIANT_RACES: NonHumanVariantRace[] = ['elf', 'half-elf', 'viravis', 'pixie'];
+
+function buildNonHumanVariantKeyMaps(): {
+  textureKeys: Record<NonHumanVariantSpriteKind, string>;
+  sheetPaths: Record<NonHumanVariantSpriteKind, string>;
+} {
+  const textureKeys = {} as Record<NonHumanVariantSpriteKind, string>;
+  const sheetPaths = {} as Record<NonHumanVariantSpriteKind, string>;
+  for (const race of NON_HUMAN_VARIANT_RACES) {
+    for (const skinTone of SKIN_TONES) {
+      for (const hairColor of HAIR_COLORS) {
+        const key: NonHumanVariantSpriteKind = `${race}-${skinTone}-${hairColor}`;
+        textureKeys[key] = key;
+        sheetPaths[key] = `/${key}-spritesheet.png`;
+      }
+    }
+  }
+  return { textureKeys, sheetPaths };
+}
+const { textureKeys: NON_HUMAN_VARIANT_TEXTURE_KEYS, sheetPaths: NON_HUMAN_VARIANT_SHEET_PATHS } = buildNonHumanVariantKeyMaps();
 
 function buildTeacherVariantKeyMaps(): { textureKeys: Record<TeacherVariantKind, string>; sheetPaths: Record<TeacherVariantKind, string> } {
   const textureKeys = {} as Record<TeacherVariantKind, string>;
@@ -96,14 +130,14 @@ const TEXTURE_KEYS: Record<SpriteKind, string> = {
   // directly — effectiveSpriteKind always resolves the full gender/skin/
   // hair composite key first. Present only to satisfy Record totality.
   human: 'human-male-white-brown',
-  // A later follow-up ask restored race as a real character-creation
-  // choice — these 4 new playable races each get one plain spritesheet
-  // (no gender/skin/hair baking), same "single fixed look" treatment
-  // every non-human race already has.
-  elf: 'elf',
-  'half-elf': 'half-elf',
-  viravis: 'viravis',
-  pixie: 'pixie',
+  // Bare race keys are never used to render directly anymore either —
+  // effectiveSpriteKind always resolves the full skin/hair composite key
+  // first (see NonHumanVariantSpriteKind above). Present only to satisfy
+  // Record totality, same reasoning as bare 'human' above.
+  elf: 'elf-white-blonde',
+  'half-elf': 'half-elf-white-brown',
+  viravis: 'viravis-white-brown',
+  pixie: 'pixie-white-brown',
   'wild goblin': 'wild-goblin',
   'wild skeleton': 'wild-skeleton',
   imp: 'imp',
@@ -116,6 +150,7 @@ const TEXTURE_KEYS: Record<SpriteKind, string> = {
   teacher: 'teacher',
   ...TEACHER_VARIANT_TEXTURE_KEYS,
   ...HUMAN_TEXTURE_KEYS,
+  ...NON_HUMAN_VARIANT_TEXTURE_KEYS,
 };
 const SHEET_PATHS: Record<SpriteKind, string> = {
   goblin: '/goblin-spritesheet.png',
@@ -125,10 +160,10 @@ const SHEET_PATHS: Record<SpriteKind, string> = {
   dragonborn: '/dragon-man-spritesheet.png',
   slime: '/slime-spritesheet.png',
   human: '/human-male-white-brown-spritesheet.png',
-  elf: '/elf-spritesheet.png',
-  'half-elf': '/half-elf-spritesheet.png',
-  viravis: '/viravis-spritesheet.png',
-  pixie: '/pixie-spritesheet.png',
+  elf: '/elf-white-blonde-spritesheet.png',
+  'half-elf': '/half-elf-white-brown-spritesheet.png',
+  viravis: '/viravis-white-brown-spritesheet.png',
+  pixie: '/pixie-white-brown-spritesheet.png',
   'wild goblin': '/wild-goblin-spritesheet.png',
   'wild skeleton': '/wild-skeleton-spritesheet.png',
   imp: '/imp-spritesheet.png',
@@ -138,6 +173,7 @@ const SHEET_PATHS: Record<SpriteKind, string> = {
   teacher: '/teacher-spritesheet.png',
   ...TEACHER_VARIANT_SHEET_PATHS,
   ...HUMAN_SHEET_PATHS,
+  ...NON_HUMAN_VARIANT_SHEET_PATHS,
 };
 
 // The one place a character's Race turns into an actual render kind —
@@ -148,8 +184,17 @@ const SHEET_PATHS: Record<SpriteKind, string> = {
 export function humanSpriteKindFor(gender: Gender | null, skinTone: SkinTone | null, hairColor: HairColor | null): HumanSpriteKind {
   return `human-${gender ?? 'male'}-${skinTone ?? 'white'}-${hairColor ?? 'brown'}`;
 }
+function isNonHumanVariantRace(race: Race): race is NonHumanVariantRace {
+  return (NON_HUMAN_VARIANT_RACES as readonly Race[]).includes(race);
+}
 export function effectiveSpriteKind(race: Race, gender: Gender | null, skinTone: SkinTone | null, hairColor: HairColor | null): SpriteKind {
-  return race === 'human' ? humanSpriteKindFor(gender, skinTone, hairColor) : race;
+  if (race === 'human') return humanSpriteKindFor(gender, skinTone, hairColor);
+  // A follow-up bug fix: "the hair color for races is still not working,
+  // and skin tones are not working" — these 4 races now vary the same
+  // way human does, just without a gender axis (see
+  // NonHumanVariantSpriteKind's own doc comment).
+  if (isNonHumanVariantRace(race)) return `${race}-${skinTone ?? 'white'}-${hairColor ?? 'brown'}`;
+  return race;
 }
 
 // The attack animation is always the same 4 frames (columns 4-7) — only

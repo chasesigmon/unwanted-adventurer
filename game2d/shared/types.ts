@@ -70,11 +70,11 @@ export interface PlayerSnapshot {
   // shared/lighting.ts's emitsLight/hasFullVision.
   hasLight: boolean;
   gold: number;
-  // Slime-only (see shared/skills.ts's MIMIC_SKILL/REVERT_SKILL):
-  // mimicableRaces accumulates every unique race/monster-kind whose body
-  // part this slime has ever consumed; mimicForm is whichever of those
-  // (if any) it's currently disguised as — null means its own plain
-  // slime appearance. No mechanical effect yet, purely cosmetic.
+  // Slime-only leftovers from the since-removed /mimic and /revert
+  // commands (a later follow-up ask) — mimicableRaces/mimicForm can no
+  // longer be set to anything meaningful, kept only because dropping the
+  // columns/fields outright would need a live DB migration for no
+  // functional gain.
   mimicableRaces: (Race | MonsterKind)[];
   mimicForm: (Race | MonsterKind) | null;
   // Whether the celeritas spell is currently active for THIS player
@@ -387,7 +387,7 @@ export interface TeacherSnapshot {
   // with this quest's own description (shared/quests.ts) as the spoken
   // line and a button to start it, instead of the plain classroom-teacher
   // tooltip. Checked in order (see shared/quests.ts's activeQuestIdFor) —
-  // a teacher with more than one (Professor Hollowell's 2nd quest, a
+  // a teacher with more than one (Professor Caldwell's 2nd quest, a
   // later follow-up ask) offers them one at a time, moving to the next
   // once the current one is turned in.
   questIds?: string[];

@@ -288,9 +288,7 @@ export function openChatInput(): void {
   chatInput.focus();
 }
 // Pre-fills arbitrary text instead of leaving the chat box empty — used
-// both by the "/" shortcut (just the slash) and by the action bar's
-// mimic skill ("/mimic " — it needs a target name typed in, unlike
-// revert which takes none and fires immediately).
+// by the "/" shortcut (just the slash).
 export function openChatInputWithText(text: string): void {
   setLogTabVisible('chat', true);
   chatInput.hidden = false;

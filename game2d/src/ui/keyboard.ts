@@ -112,11 +112,12 @@ export function initGlobalKeyboardShortcuts(): void {
       e.preventDefault();
       toggleModal(helpModal);
     } else if (key === 'x') {
-      // A later follow-up ask: "make the player stop auto attacking" —
-      // stops whatever combat session (melee or ranged) is currently
-      // armed, without needing a modal open at all.
+      // A later follow-up ask made this a real toggle: stops whatever
+      // combat session is currently armed (the original ask), or — if
+      // nothing's currently engaged and a monster/player is already
+      // selected — starts attacking it, same as right-clicking would.
       e.preventDefault();
-      activeScene?.stopAutoAttack();
+      activeScene?.toggleAutoAttack();
     } else if (key === 'z') {
       // A later follow-up ask: send a pet/animated monster to attack the
       // currently selected target (see WorldScene.commandFollowerAttack).

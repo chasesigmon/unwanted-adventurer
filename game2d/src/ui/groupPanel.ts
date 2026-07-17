@@ -4,8 +4,9 @@
 // group is a future mechanic); WorldScene's own applyMapState calls
 // updateGroupPanel with fresh data on every map:state, so this always
 // reflects live server state rather than needing its own polling.
-import { myProfile, network } from '../state.js';
+import { network } from '../state.js';
 import { logCombatMessage } from './log.js';
+import { repositionTargetPanel } from './targetPanel.js';
 import { FOLLOWER_EQUIPMENT_SLOTS, type PetSnapshot, type AnimatedMonsterSnapshot, type PetCommand, type FollowerEquipmentSlot } from '../../shared/pets.js';
 
 const groupPanel = document.getElementById('group-panel') as HTMLDivElement;
@@ -81,29 +82,6 @@ function buildFollowerItemsSection(
       row.appendChild(takeBtn);
       section.appendChild(row);
     });
-  }
-
-  // A compact give-item picker — reuses the player's own current
-  // inventory list rather than a whole separate modal.
-  if (alive && myProfile && myProfile.inventory.length > 0) {
-    const giveRow = document.createElement('div');
-    giveRow.className = 'group-member-give-row';
-    const select = document.createElement('select');
-    myProfile.inventory.forEach((item, itemIndex) => {
-      const option = document.createElement('option');
-      option.value = String(itemIndex);
-      option.textContent = item;
-      select.appendChild(option);
-    });
-    giveRow.appendChild(select);
-    const giveBtn = document.createElement('button');
-    giveBtn.type = 'button';
-    giveBtn.textContent = 'Give';
-    giveBtn.addEventListener('click', () =>
-      run(() => network.giveFollowerItem({ followerKind, followerId, itemIndex: Number(select.value) }))
-    );
-    giveRow.appendChild(giveBtn);
-    section.appendChild(giveRow);
   }
 
   return section;
@@ -191,10 +169,26 @@ function buildMemberCard(
   return card;
 }
 
+// Tracks the player's own current followers (a later follow-up ask moved
+// the "give item" picker out of this panel and into the inventory
+// modal, see inventoryEquipment.ts's giveItemToFollower) — this is
+// already the freshest copy of that data anywhere on the client, updated
+// on every map:state, so the inventory modal just reads it rather than
+// WorldScene needing its own separate public getter for the same thing.
+let currentPet: PetSnapshot | null = null;
+let currentAnimatedMonsters: AnimatedMonsterSnapshot[] = [];
+
+export function getFollowers(): { pet: PetSnapshot | null; animatedMonsters: AnimatedMonsterSnapshot[] } {
+  return { pet: currentPet, animatedMonsters: currentAnimatedMonsters };
+}
+
 export function updateGroupPanel(pet: PetSnapshot | null, animatedMonsters: AnimatedMonsterSnapshot[] = []): void {
+  currentPet = pet;
+  currentAnimatedMonsters = animatedMonsters;
   if (!pet && animatedMonsters.length === 0) {
     groupPanel.hidden = true;
     groupMembers.innerHTML = '';
+    repositionTargetPanel();
     return;
   }
   groupPanel.hidden = false;
@@ -240,4 +234,9 @@ export function updateGroupPanel(pet: PetSnapshot | null, animatedMonsters: Anim
       )
     );
   }
+  // A follow-up bug fix: "labels are still overlapping" — the target
+  // panel's own position depends on how tall THIS panel just rendered
+  // (see targetPanel.ts's own repositionTargetPanel), so every content
+  // change here needs to re-trigger it, not just target updates.
+  repositionTargetPanel();
 }

@@ -3,7 +3,7 @@ import { myProfile } from '../state.js';
 import { attachTooltip } from './tooltip.js';
 import { SKILL_DESCRIPTIONS, SKILL_CATEGORIES, skillCategory, createCooldownOverlay, isAttackSkill, isUsableSkill, skillIconColor } from './skillMeta.js';
 import { skillIconGlyphUrl } from './skillIcons.js';
-import { actionBarSkills, assignActionSlot, removeFromActionBar, saveActionBar, suppressDragGhost } from './actionBar.js';
+import { actionBarSkills, assignActionSlot, beginDragVisual, endDragVisual, removeFromActionBar, saveActionBar, updateDragVisual } from './actionBar.js';
 import { logCombatMessage } from './log.js';
 import { registerModalOpenHandler, registerModalRefreshHandler, skillsBody, skillsModal } from './modalCore.js';
 
@@ -29,8 +29,10 @@ function renderSkillRow(skillName: string, valueText: string): void {
     attachTooltip(icon, () => 'Drag to the action bar (or double-click) to use on your selected target — shift-click to pull it back off');
     icon.addEventListener('dragstart', (e) => {
       e.dataTransfer?.setData('text/plain', skillName);
-      suppressDragGhost(e);
+      beginDragVisual(e, icon);
     });
+    icon.addEventListener('drag', updateDragVisual);
+    icon.addEventListener('dragend', endDragVisual);
     icon.addEventListener('click', (e) => {
       // A later follow-up ask: "shift-click a skill to quick-unassign it
       // from the action bar" — complements double-click's own

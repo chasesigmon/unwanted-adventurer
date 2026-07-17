@@ -5,7 +5,7 @@
 // myProfile.visitedPois already contains.
 import { myProfile, network } from '../state.js';
 import { RECALL_POINTS } from '../../shared/recall.js';
-import { closeAllModals, recallModal, recallPoiList, updateInputCaptured } from './modalCore.js';
+import { closeAllModals, hideModal, recallModal, recallPoiList, updateInputCaptured } from './modalCore.js';
 import { logCombatMessage } from './log.js';
 import { showCenterToast } from './toast.js';
 
@@ -35,8 +35,17 @@ export function openRecallModal(): void {
               showCenterToast(ack.message);
               logCombatMessage(ack.message);
             }
-            if (ack.ok) recallModal.hidden = true;
-            else btn.disabled = false;
+            if (ack.ok) {
+              // Same class of bug as monsterSummonsModal's own fix (a
+              // later follow-up ask) — setting `.hidden` directly instead
+              // of going through hideModal + updateInputCaptured leaves
+              // isInputCaptured() stuck true. A successful recall's own
+              // map transition happens to paper over it here (WorldScene's
+              // closeAllModals on map change recomputes it moments later),
+              // but there's no reason to rely on that coincidence.
+              hideModal(recallModal);
+              updateInputCaptured();
+            } else btn.disabled = false;
           })
           .catch(() => {
             btn.disabled = false;

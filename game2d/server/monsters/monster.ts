@@ -339,9 +339,27 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     maxCount: 1,
     isRare: true,
     respawnDelayMs: 60_000,
-    startingHp: 60,
+    // "The rare imp should be level 3 with equivalent stats" (a later
+    // follow-up ask) — it used to have no explicit `level` at all (so it
+    // defaulted to MONSTER_LEVEL, i.e. 1, same as the ordinary imp it's a
+    // rarer/tougher version of), despite already hitting harder/tankier
+    // than a level-1 imp should. Hp/attackDamage rescaled here using the
+    // same per-level growth this file's own wild-goblin-grounds entry
+    // shows for the SAME species-family jump (level 1 hp 24 -> level 7 hp
+    // 130 is ~1.32x per level; 1.32^2 ≈ 1.75x for a level 1->3 jump),
+    // applied on top of the existing rare-vs-ordinary multiplier this
+    // entry already had (2x hp, 1.8x attackDamage over the plain imp's 30
+    // hp/5 dmg). expReward/goldReward deliberately left as-is, matching
+    // that same wild-goblin-grounds precedent (its own level-7 variant
+    // reuses the exact same WILD_GOBLIN_EXP_REWARD/goldReward as the
+    // level-1 one) — expGainFor's own level-ratio formula (see
+    // game.gateway.ts) already scales actual exp payout for a killer's
+    // level vs this monster's now-correct level 3, without needing the
+    // base reward number itself touched.
+    level: 3,
+    startingHp: 105,
     expReward: 90,
-    attackDamage: 9,
+    attackDamage: 16,
     goldReward: 10,
     carriedItemRolls: [
       ...Array.from({ length: 10 }, () => ({ label: 'lesser mana crystal', chance: 1 })),

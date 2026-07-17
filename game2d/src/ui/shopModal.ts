@@ -5,6 +5,7 @@ import { myProfile, network, setMyProfile } from '../state.js';
 import type { VendorSnapshot } from '../../shared/types.js';
 import { logCombatMessage } from './log.js';
 import { closeAllModals, refreshOpenModals, registerModalRefreshHandler, shopGoldLine, shopGreeting, shopItemList, shopModal, shopModalTitle, updateInputCaptured } from './modalCore.js';
+import { updateStatusBar } from './statusBar.js';
 
 let currentVendor: VendorSnapshot | null = null;
 
@@ -77,6 +78,7 @@ function buyVendorItem(itemLabel: string): void {
           canteenDrinks: ack.canteenDrinks ?? myProfile.canteenDrinks,
         });
         refreshOpenModals();
+        updateStatusBar();
       }
       if (ack.message) logCombatMessage(ack.message);
       renderShopModal();
@@ -98,6 +100,12 @@ function sellVendorItem(itemIndex: number): void {
       if (myProfile) {
         setMyProfile({ ...myProfile, inventory: ack.inventory ?? myProfile.inventory, gold: ack.gold ?? myProfile.gold });
         refreshOpenModals();
+        // A later follow-up bug fix: "when I sold items to a vendor it
+        // did not update in the player stat label in the top left
+        // immediately" — setMyProfile alone only updates the in-memory
+        // profile; nothing was re-rendering the plain-DOM status bar
+        // until the next unrelated 'sync' event happened to fire.
+        updateStatusBar();
       }
       if (ack.message) logCombatMessage(ack.message);
       renderShopModal();

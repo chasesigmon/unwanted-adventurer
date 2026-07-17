@@ -3,7 +3,7 @@
 // useTargetedSkill), not an arm-then-click flow. Lists only the monster
 // kinds myProfile.killedMonsterKinds already contains.
 import { myProfile, network } from '../state.js';
-import { closeAllModals, monsterSummonsModal, monsterSummonsList, updateInputCaptured } from './modalCore.js';
+import { closeAllModals, hideModal, monsterSummonsModal, monsterSummonsList, updateInputCaptured } from './modalCore.js';
 import { logCombatMessage } from './log.js';
 import { showCenterToast } from './toast.js';
 
@@ -32,8 +32,22 @@ export function openMonsterSummonsModal(): void {
               showCenterToast(ack.message);
               logCombatMessage(ack.message);
             }
-            if (ack.ok) monsterSummonsModal.hidden = true;
-            else btn.disabled = false;
+            if (ack.ok) {
+              // A later follow-up bug fix: "after summoning an imp, I
+              // wasn't able to click on any other monsters to attack or
+              // do anything... pressing escape and unpressing it seemed
+              // to allow me to select/attack monsters again" — setting
+              // `.hidden` directly here (instead of going through
+              // hideModal + updateInputCaptured, like every other modal
+              // close path does) left the cached isInputCaptured() flag
+              // stuck true forever, since nothing ever recomputed it
+              // after this modal closed. Movement still worked (it
+              // re-derives live off the DOM each time), but click-to-
+              // target stayed blocked until Escape's own closeAllModals
+              // happened to recompute the flag as a side effect.
+              hideModal(monsterSummonsModal);
+              updateInputCaptured();
+            } else btn.disabled = false;
           })
           .catch(() => {
             btn.disabled = false;

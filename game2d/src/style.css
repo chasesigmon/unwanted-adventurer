@@ -621,8 +621,7 @@ body {
 }
 
 .group-member-equip-row,
-.group-member-item-row,
-.group-member-give-row {
+.group-member-item-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -639,8 +638,7 @@ body {
 }
 
 .group-member-equip-row button,
-.group-member-item-row button,
-.group-member-give-row button {
+.group-member-item-row button {
   background: #1e1e2a;
   border: 1px solid #444;
   color: #ccc;
@@ -651,13 +649,38 @@ body {
 }
 
 .group-member-equip-row button:hover,
-.group-member-item-row button:hover,
-.group-member-give-row button:hover {
+.group-member-item-row button:hover {
   background: #2a2a3a;
 }
 
-.group-member-give-row select {
+/* A later follow-up ask relocated the "give item" picker from the
+   follower's own card (above) into each inventory row instead — same
+   compact select+button shape, just living on inventoryList.ts's rows. */
+.inventory-give-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.inventory-give-row button {
+  background: #1e1e2a;
+  border: 1px solid #444;
+  color: #ccc;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.inventory-give-row button:hover {
+  background: #2a2a3a;
+}
+
+.inventory-give-row select {
   flex: 1;
+  max-width: 120px;
   background: #1e1e2a;
   border: 1px solid #444;
   color: #ccc;
@@ -667,10 +690,13 @@ body {
 
 /* A follow-up ask: "selected targets/enemies should appear below any
    other open labels" — pushed down to make room for the group panel
-   above it (a fixed offset, not a dynamic reflow — the group panel is
-   only ever shown/hidden as a whole, never resized). */
+   above it. `top` is recomputed in JS from the group panel's own real
+   rendered height every time either panel changes (see targetPanel.ts's
+   repositionTargetPanel — a follow-up bug fix replaced an earlier fixed
+   guess here, which overlapped once the group panel grew taller than
+   assumed); this is just the sane default before that first runs. */
 #target-panel {
-  top: 100px;
+  top: 50px;
   left: 12px;
   padding: 6px 10px;
   z-index: 60;
@@ -1442,6 +1468,25 @@ body {
   flex-direction: column;
 }
 
+/* A follow-up ask: "offer both options" — a teacher with 2+ quests
+   (Professor Caldwell's Hidden Map + Choosing a House) shows each one as
+   its own fully independent block, stacked with a light divider between
+   them. */
+.quest-offer-row + .quest-offer-row {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #444;
+}
+
+.quest-offer-text {
+  margin: 0 0 6px;
+}
+
+.quest-offer-actions {
+  display: flex;
+  gap: 10px;
+}
+
 /* The teacher click-to-learn modal (a later follow-up ask replaced the
    podium/spellbook system) — one row per offered skill, label + its own
    Learn/Known/locked button. */
@@ -1789,6 +1834,21 @@ body {
 
 .skill-icon.draggable:active {
   cursor: grabbing;
+}
+
+/* A follow-up ask: dragging a skill icon should still visibly follow the
+   cursor like a normal drag, just without the browser's own snap-back
+   animation on an unsuccessful drop — see actionBar.ts's own
+   beginDragVisual/updateDragVisual/endDragVisual. Centered on the
+   cursor, never intercepts the drop itself. */
+.drag-floating-clone {
+  position: fixed;
+  top: 0;
+  left: 0;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.85;
 }
 
 /* ---------- Cooldown overlay (item 23) — a wipe that shrinks from full

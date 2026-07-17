@@ -14,18 +14,19 @@ import { logCombatMessage } from './log.js';
 import { showCenterToast } from './toast.js';
 import { closeAllModals, npcDialogueActions, npcDialogueModal, npcDialogueName, npcDialogueText, updateInputCaptured } from './modalCore.js';
 
-export function openNpcDialogueModal(name: string, questId: string): void {
+// Renders exactly one quest's own current state into a container — its
+// description/ready/completed line plus whichever button (if any)
+// applies — shared by both the single- and multi-quest render paths
+// below so a teacher with 2+ quests (a later follow-up ask: "Choosing a
+// House should be available at the same time as The Hidden Map... offer
+// both options") shows each one fully independently, not one-at-a-time.
+function renderQuestOffer(name: string, questId: string, textEl: HTMLElement, actionsEl: HTMLElement, questIds: string[]): void {
   const quest = QUESTS[questId];
   if (!quest) return;
-
-  closeAllModals();
-  npcDialogueName.textContent = name;
-  npcDialogueActions.innerHTML = '';
-
   const progress = myProfile?.quests?.[questId];
 
   if (!progress) {
-    npcDialogueText.textContent = quest.description;
+    textEl.textContent = quest.description;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = `Quest: ${quest.title}`;
@@ -47,22 +48,22 @@ export function openNpcDialogueModal(name: string, questId: string): void {
           // already holding the map before taking "find the map") should
           // see the ready-to-turn-in state immediately, not just an
           // empty button area until something else happens to refresh it.
-          openNpcDialogueModal(name, questId);
+          openNpcDialogueModal(name, questIds);
         })
         .catch(() => {
           btn.disabled = false;
         });
     });
-    npcDialogueActions.appendChild(btn);
+    actionsEl.appendChild(btn);
   } else if (progress.completedAt) {
-    npcDialogueText.textContent = quest.completedMessage;
+    textEl.textContent = quest.completedMessage;
   } else if (
     allObjectivesDone(quest, progress, myProfile?.skills ?? {}, myProfile?.inventory ?? [], {
       mapUnlocked: myProfile?.mapUnlocked,
       houseChosen: Boolean(myProfile?.house),
     })
   ) {
-    npcDialogueText.textContent = quest.readyMessage;
+    textEl.textContent = quest.readyMessage;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = 'Complete Quest';
@@ -77,16 +78,47 @@ export function openNpcDialogueModal(name: string, questId: string): void {
             return;
           }
           if (ack.message) showCenterToast(ack.message);
-          npcDialogueText.textContent = quest.completedMessage;
-          npcDialogueActions.innerHTML = '';
+          openNpcDialogueModal(name, questIds);
         })
         .catch(() => {
           btn.disabled = false;
         });
     });
-    npcDialogueActions.appendChild(btn);
+    actionsEl.appendChild(btn);
   } else {
-    npcDialogueText.textContent = quest.description;
+    textEl.textContent = quest.description;
+  }
+}
+
+// `questIds` is every quest this teacher offers (a later follow-up ask:
+// "offer both options" simultaneously, rather than one at a time —
+// see shared/quests.ts's now-unused activeQuestIdFor, superseded by
+// this). A single-quest teacher (most of them) renders exactly like
+// before: one greeting line, one button. 2+ quests get their own
+// intro line plus one fully independent block each (own description/
+// ready/completed line, own button) stacked in the same dialogue.
+export function openNpcDialogueModal(name: string, questIds: string[]): void {
+  if (questIds.length === 0) return;
+  closeAllModals();
+  npcDialogueName.textContent = name;
+  npcDialogueActions.innerHTML = '';
+
+  if (questIds.length === 1) {
+    renderQuestOffer(name, questIds[0]!, npcDialogueText, npcDialogueActions, questIds);
+  } else {
+    npcDialogueText.textContent = "I have a couple of things for you today.";
+    for (const questId of questIds) {
+      const row = document.createElement('div');
+      row.className = 'quest-offer-row';
+      const text = document.createElement('p');
+      text.className = 'quest-offer-text';
+      row.appendChild(text);
+      const actions = document.createElement('div');
+      actions.className = 'quest-offer-actions';
+      row.appendChild(actions);
+      renderQuestOffer(name, questId, text, actions, questIds);
+      npcDialogueActions.appendChild(row);
+    }
   }
 
   npcDialogueModal.hidden = false;

@@ -105,12 +105,14 @@ export function renderCharSheet(): void {
   if (!myProfile) return;
   charSheetUsername.textContent = myProfile.username;
   // A later follow-up ask: "a sprite preview on the character sheet" —
-  // same gender/skin/hair -> spritesheet naming convention (and same
-  // first-frame crop) characterSelect.ts's own live preview already uses.
+  // same skin/hair -> spritesheet naming convention (and same first-frame
+  // crop) characterSelect.ts's own live preview already uses. A follow-up
+  // bug fix made the other 4 playable races vary by skin/hair too (just
+  // no gender axis), so this is the same shape for every race now.
   charSheetPreview.style.backgroundImage =
     myProfile.race === 'human'
       ? `url(/human-${myProfile.gender}-${myProfile.skinTone}-${myProfile.hairColor}-spritesheet.png)`
-      : `url(/${myProfile.race}-spritesheet.png)`;
+      : `url(/${myProfile.race}-${myProfile.skinTone}-${myProfile.hairColor}-spritesheet.png)`;
   charSheetPreview.style.backgroundSize = '880px 560px';
   charSheetBody.innerHTML = '';
 

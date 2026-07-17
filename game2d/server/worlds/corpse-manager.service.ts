@@ -48,18 +48,6 @@ export function bodyPartLabelFor(kind: Race | MonsterKind): string {
   return BODY_PART_LABEL[kind];
 }
 
-// The reverse of BODY_PART_LABEL — which race/monster-kind a given
-// consumed item's body part came from, if any (a weapon a corpse also
-// carried, like a wild skeleton's bone dagger, correctly has no entry
-// here). Backs the slime mimic skill (see game.gateway.ts's applyConsume).
-const RACE_FOR_BODY_PART = new Map<string, Race | MonsterKind>(
-  (Object.entries(BODY_PART_LABEL) as Array<[Race | MonsterKind, string]>).map(([kind, label]) => [label, kind])
-);
-
-export function raceForBodyPart(item: string): (Race | MonsterKind) | undefined {
-  return RACE_FOR_BODY_PART.get(item);
-}
-
 // Entirely in-memory, same tradeoff as MonsterManagerService — corpses
 // reset on server restart. Every corpse despawns after CORPSE_TTL_MS
 // regardless of whether it's ever looted (see removeExpired).

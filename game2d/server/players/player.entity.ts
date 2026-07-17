@@ -143,9 +143,9 @@ export class Player {
   @Column({ type: 'int', default: 20 })
   gold!: number;
 
-  // Slime-only mimic/revert tracking (see shared/skills.ts) — every
-  // race/monster-kind name whose body part this slime has ever consumed,
-  // and whichever one (if any) it's currently disguised as.
+  // Leftover columns from the since-removed /mimic and /revert commands
+  // (a later follow-up ask) — no longer populated with anything
+  // meaningful, kept only to avoid a live DB column-drop migration.
   @Column({ name: 'mimicable_races', type: 'jsonb', default: () => "'[]'" })
   mimicableRaces!: string[];
 

@@ -13,8 +13,6 @@ export const CHAT_COMMANDS: ChatCommandInfo[] = [
   { usage: '/rest, /sit', description: 'sit down to rest, recovering a bit faster than standing around' },
   { usage: '/wake, /stand', description: 'get up from sleeping or resting' },
   { usage: '/dance', description: 'bust a move (moving cancels it)' },
-  { usage: '/mimic [race]', description: 'slime only: with no argument, lists what you can mimic; with one, shifts your form to it' },
-  { usage: '/revert', description: 'slime only: shift back to your natural slime form' },
   { usage: '/time', description: 'show the current game hour and whether it is day or night' },
   { usage: '/light', description: "toggle your equipped wand's light on or off (requires the light skill)" },
 ];

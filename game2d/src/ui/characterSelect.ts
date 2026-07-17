@@ -33,23 +33,23 @@ export function hideCharacterSelectScreen(): void {
 // The same gender/skin/hair -> spritesheet naming convention
 // characterSprites.ts's effectiveSpriteKind uses server-side — the first
 // (down-facing idle) frame of that sheet is the live preview, cropped via
-// a plain CSS background-position rather than a canvas. A later follow-up
-// ask restored race as a real choice: only human's own texture varies by
-// gender/skin/hair (the other 4 playable races each have one plain
-// spritesheet, same as every non-human race already did) — the skin/hair
-// pickers are hidden for those, since they'd have no visible effect.
+// a plain CSS background-position rather than a canvas. A follow-up bug
+// fix: "the hair color for races is still not working, and skin tones
+// are not working" — the other 4 playable races now vary by skin/hair
+// too (just no gender axis, unlike human — see characterSprites.ts's
+// NonHumanVariantSpriteKind), so only the GENDER picker hides for them
+// now, not skin/hair.
 function updatePreview(): void {
   const race = raceSelect.value as PlayableRace;
   const isHuman = race === 'human';
-  skinSelect.closest('label')!.hidden = !isHuman;
-  hairSelect.closest('label')!.hidden = !isHuman;
+  genderSelect.closest('label')!.hidden = !isHuman;
+  const skinTone = skinSelect.value as SkinTone;
+  const hairColor = hairSelect.value as HairColor;
   if (isHuman) {
     const gender = genderSelect.value as Gender;
-    const skinTone = skinSelect.value as SkinTone;
-    const hairColor = hairSelect.value as HairColor;
     previewEl.style.backgroundImage = `url(/human-${gender}-${skinTone}-${hairColor}-spritesheet.png)`;
   } else {
-    previewEl.style.backgroundImage = `url(/${race}-spritesheet.png)`;
+    previewEl.style.backgroundImage = `url(/${race}-${skinTone}-${hairColor}-spritesheet.png)`;
   }
   previewEl.style.backgroundSize = '880px 560px';
 }

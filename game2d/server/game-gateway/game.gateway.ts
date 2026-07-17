@@ -15,7 +15,7 @@ import { z } from 'zod';
 import { PlayersService } from '../players/players.service.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
 import { MonsterManagerService } from '../monsters/monster-manager.service.js';
-import { CorpseManagerService, bodyPartLabelFor, raceForBodyPart } from '../worlds/corpse-manager.service.js';
+import { CorpseManagerService, bodyPartLabelFor } from '../worlds/corpse-manager.service.js';
 import { PetManagerService } from '../pets/pet-manager.service.js';
 import { AnimatedMonsterManagerService } from '../pets/animated-monster-manager.service.js';
 import {
@@ -166,6 +166,7 @@ import {
   WATERFILL_SKILL,
   HASTE_SKILL,
   ARCANE_BOLT_SKILL,
+  ARCANE_BOLT_MANA_COST,
   WAND_BOLT_SKILL,
   UNLOCK_SKILL,
   SPELL_ATTACK_RANGE_TILES,
@@ -2485,6 +2486,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (parsed.data.targetKind === 'monster') {
       this.monsterManager.setAggro(parsed.data.targetId, client.data.username, this.combatTickCount);
     }
+    this.syncFollowerAttackTargets(client.data.username, parsed.data.targetKind, parsed.data.targetId);
     return { ok: true };
   }
 
@@ -2513,7 +2515,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // player's own target selection (client-side only).
   @SubscribeMessage('disengage')
   handleDisengage(@ConnectedSocket() client: GameSocket): void {
-    this.playerCombat.delete(client.data.username);
+    this.endPlayerCombat(client.data.username);
   }
 
   // Starts a skill's cooldown (item 22) — only skills with an entry in
@@ -2601,6 +2603,35 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (targetKind === 'monster') {
       this.monsterManager.setAggro(targetId, client.data.username, this.combatTickCount);
     }
+    this.syncFollowerAttackTargets(client.data.username, targetKind, targetId);
+  }
+
+  // A follow-up bug fix: "the follower should auto attack anyone the
+  // player attacks" — 'attack' mode (see shared/pets.ts's own doc
+  // comment) means an 'attack'-commanded follower's target now tracks
+  // whatever the OWNER is currently fighting, refreshed every time they
+  // engage (or re-engage/retarget) — not just a one-shot snapshot from
+  // the 'z' hotkey. A follower NOT in 'attack' mode is untouched (see
+  // PetManagerService/AnimatedMonsterManagerService's own
+  // syncAttackTarget). NPC targets are skipped — followers only ever
+  // attack a monster or a player, never a training dummy.
+  private syncFollowerAttackTargets(ownerUsername: string, targetKind: CombatSession['targetKind'], targetId: string): void {
+    if (targetKind === 'npc') return;
+    this.petManager.syncAttackTarget(ownerUsername, targetKind, targetId);
+    this.animatedMonsterManager.syncAttackTarget(ownerUsername, targetKind, targetId);
+  }
+
+  // The other half of the fix above — every playerCombat.delete(...) call
+  // site now routes through here instead, so an 'attack'-mode follower's
+  // stale target is always cleared the instant the OWNER's own fight
+  // ends (target died, disengaged, or lost track of it), letting it fall
+  // back to plain following (see tickAll's own fallback in both
+  // managers) rather than standing frozen on a target that's no longer
+  // being fought.
+  private endPlayerCombat(username: string): void {
+    this.playerCombat.delete(username);
+    this.petManager.clearAttackTarget(username);
+    this.animatedMonsterManager.clearAttackTargetForOwner(username);
   }
 
   // Where a live target actually is right now, for the adjacency check
@@ -2628,7 +2659,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const socketId = this.activeConnections.getActiveSocketId(username);
       const client = socketId ? (this.server.sockets.sockets.get(socketId) as GameSocket | undefined) : undefined;
       if (!client) {
-        this.playerCombat.delete(username);
+        this.endPlayerCombat(username);
         continue;
       }
       if (this.isParalyzed(`player:${username}`)) continue;
@@ -2658,7 +2689,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         const monsterStillChasing = session.targetKind === 'monster' && this.monsterManager.isAggroedOnto(session.targetId, username);
         if (!monsterStillChasing) {
           session.missedTicks += 1;
-          if (session.missedTicks >= COMBAT_DISENGAGE_TICKS) this.playerCombat.delete(username);
+          if (session.missedTicks >= COMBAT_DISENGAGE_TICKS) this.endPlayerCombat(username);
         }
         continue;
       }
@@ -2675,7 +2706,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // melee's own formula/avoidance/counter-attack rules.
       if (session.skill === WAND_BOLT_SKILL) {
         if (!isWandItem(client.data.equipment.weapon)) {
-          this.playerCombat.delete(username);
+          this.endPlayerCombat(username);
           continue;
         }
         this.resolveRangedAutoAttack(client, session);
@@ -2685,7 +2716,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (session.targetKind === 'monster') {
         const monster = this.monsterManager.getMonster(session.targetId);
         if (!monster) {
-          this.playerCombat.delete(username);
+          this.endPlayerCombat(username);
           continue;
         }
         this.monsterManager.setAggro(monster.id, username, this.combatTickCount);
@@ -2693,7 +2724,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       } else if (session.targetKind === 'npc') {
         const npc = NPCS.find((n) => n.id === session.targetId);
         if (!npc) {
-          this.playerCombat.delete(username);
+          this.endPlayerCombat(username);
           continue;
         }
         this.resolveHitOnNpc(client, npc, session.skill);
@@ -2849,7 +2880,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         monster.attackDamage ?? 0
       );
       this.recordMonsterKill(client, monster.kind);
-      this.playerCombat.delete(ownerUsername);
+      this.endPlayerCombat(ownerUsername);
       void this.persistStats(client);
       client.emit('sync', { player: this.snapshotFor(client) });
       this.server.to(client.data.map).emit('combatNotice', `${followerLabel} finishes off the ${monster.kind} for ${damage} damage! (+${rawExpGained} exp)`);
@@ -2894,7 +2925,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (session.targetKind === 'monster') {
       const monster = this.monsterManager.getMonster(session.targetId);
       if (!monster) {
-        this.playerCombat.delete(client.data.username);
+        this.endPlayerCombat(client.data.username);
         return;
       }
       const wandBoltDamage = baseWandBoltDamage + (monster.monsterClass === 'undead' ? enhancedUndeadDamageBonus : 0);
@@ -2912,7 +2943,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
         this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
         this.recordMonsterKill(client, monster.kind);
-        this.playerCombat.delete(client.data.username);
+        this.endPlayerCombat(client.data.username);
       }
       const message = result.died
         ? `${client.data.username}'s wand bolt strikes the ${monster.kind} for ${wandBoltDamage} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
@@ -2938,7 +2969,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (session.targetKind === 'npc') {
       const npc = NPCS.find((n) => n.id === session.targetId);
       if (!npc) {
-        this.playerCombat.delete(client.data.username);
+        this.endPlayerCombat(client.data.username);
         return;
       }
       const wandBoltDamage = baseWandBoltDamage + (npc.race === 'skeleton' ? enhancedUndeadDamageBonus : 0);
@@ -2967,7 +2998,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         // training skeleton always is) never actually stopped the
         // session, unlike resolveHitOnNpc's own melee path (already
         // fixed the same way). Unconditional now, covering both cases.
-        this.playerCombat.delete(client.data.username);
+        this.endPlayerCombat(client.data.username);
       }
       const message = died
         ? npc.immortal
@@ -2993,7 +3024,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // PvP wand bolts aren't part of this ask ("shoots a little bolt at
     // the imp target") — monster/scarecrow only for now, same scope
     // limit augue's own targetKind guard already has.
-    this.playerCombat.delete(client.data.username);
+    this.endPlayerCombat(client.data.username);
   }
 
   // Resolves exactly one combat tick's worth of hit(s) on a monster —
@@ -3061,7 +3092,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
       this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
       this.recordMonsterKill(client, monster.kind);
-      this.playerCombat.delete(client.data.username);
+      this.endPlayerCombat(client.data.username);
     }
     this.maybeGrowResistanceSkill(client, monster.monsterClass, growthMessages);
 
@@ -3249,7 +3280,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // didn't, so combatTick just kept re-finding the same npc.id (reset
     // to full hp, possibly relocated) and resumed swinging at it
     // unattended.
-    if (died) this.playerCombat.delete(client.data.username);
+    if (died) this.endPlayerCombat(client.data.username);
 
     let message: string;
     if (skillName === BONE_FINGER_STRIKE_SKILL) {
@@ -3312,7 +3343,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // Extremely rare (disconnected between the occupancy check and here) —
     // just no-op rather than crashing on a stats lookup that no longer exists.
     if (!targetClient) {
-      this.playerCombat.delete(client.data.username);
+      this.endPlayerCombat(client.data.username);
       return;
     }
 
@@ -3411,7 +3442,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       );
 
       this.respawnDefeatedPlayer(targetClient);
-      this.playerCombat.delete(client.data.username);
+      this.endPlayerCombat(client.data.username);
     } else {
       this.worldManager.updateState(targetUsername, { hp: targetClient.data.hp });
       if (skillName === GLARE_SKILL) {
@@ -3729,6 +3760,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const pet = this.petManager.setCommand(client.data.username, command as PetCommand);
     if (!pet) {
       return { ok: false, message: "You don't have a pet (or it needs to be resurrected first)." };
+    }
+    // A follow-up bug fix: switching INTO 'attack' mode while the owner
+    // is already mid-fight should track that fight immediately, not wait
+    // for the next fresh engage (see syncFollowerAttackTargets's own doc
+    // comment — it only fires on a NEW/refreshed engage, which an
+    // already-ongoing fight doesn't repeat every tick).
+    if (command === 'attack') {
+      const session = this.playerCombat.get(client.data.username);
+      if (session) this.syncFollowerAttackTargets(client.data.username, session.targetKind, session.targetId);
     }
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     return { ok: true, pet };
@@ -4105,6 +4145,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     } else {
       this.playerCombat.set(client.data.username, { targetKind, targetId, skill: this.attackGrowthSkill(client), missedTicks: 0 });
     }
+    this.syncFollowerAttackTargets(client.data.username, targetKind, targetId);
   }
 
   @SubscribeMessage('castAugue')
@@ -4127,9 +4168,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // A later follow-up bug fix: "Augue doesn't appear to be costing any
     // mana to cast" — this check (and the matching deduction in each
     // branch below) was missing entirely; every other spell here already
-    // costs SPELL_ATTACK_MANA_COST regardless of success or fumble.
-    if (client.data.mana < SPELL_ATTACK_MANA_COST) {
-      return { ok: false, message: `You don't have enough mana to cast augue (${SPELL_ATTACK_MANA_COST} needed).` };
+    // costs mana regardless of success or fumble. Augue is "arcane bolt"
+    // under the hood (see ARCANE_BOLT_SKILL) — a later follow-up ask made
+    // all "bolt" spells cost 7 mana specifically, its own
+    // ARCANE_BOLT_MANA_COST rather than the shared SPELL_ATTACK_MANA_COST
+    // the other non-bolt spells below still use.
+    if (client.data.mana < ARCANE_BOLT_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast augue (${ARCANE_BOLT_MANA_COST} needed).` };
     }
     // A practice scarecrow (or the original Great Plains training dummy)
     // is a valid augue target too (a follow-up ask: "practice their
@@ -4146,7 +4191,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: false, message: "You're too far away to hit that with augue." };
       }
 
-      client.data.mana -= SPELL_ATTACK_MANA_COST;
+      client.data.mana -= ARCANE_BOLT_MANA_COST;
       this.startSkillCooldown(client, ARCANE_BOLT_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
       const label = npc.label ?? 'training dummy';
@@ -4233,7 +4278,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: "You're too far away to hit that with augue." };
     }
 
-    client.data.mana -= SPELL_ATTACK_MANA_COST;
+    client.data.mana -= ARCANE_BOLT_MANA_COST;
     this.startSkillCooldown(client, ARCANE_BOLT_SKILL);
     this.startAutoAttackAfterSpell(client, 'monster', monster.id);
 
@@ -4278,7 +4323,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
       this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
       this.recordMonsterKill(client, monster.kind);
-      this.playerCombat.delete(client.data.username);
+      this.endPlayerCombat(client.data.username);
     }
 
     const message = result.died
@@ -4483,7 +4528,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
       this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
       this.recordMonsterKill(client, monster.kind);
-      this.playerCombat.delete(client.data.username);
+      this.endPlayerCombat(client.data.username);
     }
 
     const message = result.died
@@ -4603,12 +4648,25 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // check is whether BP was ALREADY negative BEFORE this cast's own
     // deduction, not whether this cast happens to push it negative for
     // the first time.
-    const wasAlreadyNegative = client.data.bp < 0;
+    const bpBeforeCast = client.data.bp;
+    const wasAlreadyNegative = bpBeforeCast < 0;
     const applyBpCost = (): string => {
       client.data.bp -= SAP_HEALTH_BP_COST;
       if (!wasAlreadyNegative) return '';
-      client.data.hp = Math.max(0, client.data.hp - SAP_HEALTH_HP_PENALTY);
-      return ` The overdraft costs you ${SAP_HEALTH_HP_PENALTY} hp.`;
+      // A later follow-up ask: "as the hemomancer gets further into the
+      // negative with BP, it should hurt them more to cast spells that
+      // cost blood" — the flat SAP_HEALTH_HP_PENALTY above only ever
+      // charged the same nick no matter how deep the overdraft already
+      // was. Scaled here by how many SAP_HEALTH_BP_COST-sized "casts
+      // deep" into the negative the player already was BEFORE this cast
+      // (the same pre-deduction snapshot wasAlreadyNegative itself
+      // checks) — barely negative (still within the first 10 bp) costs
+      // the same base penalty as before; every further 10 bp overdrawn
+      // adds another full penalty on top.
+      const overdraftDepth = Math.floor(Math.abs(bpBeforeCast) / SAP_HEALTH_BP_COST);
+      const hpPenalty = SAP_HEALTH_HP_PENALTY * (1 + overdraftDepth);
+      client.data.hp = Math.max(0, client.data.hp - hpPenalty);
+      return ` The overdraft costs you ${hpPenalty} hp.`;
     };
 
     if (parsed.data.targetKind === 'npc') {
@@ -4723,7 +4781,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
       this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
       this.recordMonsterKill(client, monster.kind);
-      this.playerCombat.delete(client.data.username);
+      this.endPlayerCombat(client.data.username);
     }
 
     const message = result.died
@@ -5599,6 +5657,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!animatedMonster) {
       return { ok: false, message: "You don't have that animated monster." };
     }
+    // Same follow-up bug fix as handlePetCommand's own — see its comment.
+    if (parsed.data.command === 'attack') {
+      const session = this.playerCombat.get(client.data.username);
+      if (session) this.syncFollowerAttackTargets(client.data.username, session.targetKind, session.targetId);
+    }
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     return { ok: true, animatedMonster };
   }
@@ -5948,7 +6011,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const trimmed = commandText.trim();
     const spaceIndex = trimmed.indexOf(' ');
     const rawCommand = spaceIndex === -1 ? trimmed : trimmed.slice(0, spaceIndex);
-    const arg = spaceIndex === -1 ? '' : trimmed.slice(spaceIndex + 1).trim();
     const command = rawCommand.toLowerCase();
 
     switch (command) {
@@ -5970,12 +6032,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       case 'dance':
         this.handleDanceCommand(client);
         break;
-      case 'mimic':
-        this.handleMimicCommand(client, arg);
-        break;
-      case 'revert':
-        this.handleRevertCommand(client);
-        break;
       case 'time':
         this.handleTimeCommand(client);
         break;
@@ -5985,53 +6041,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       default:
         this.systemMessage(client, `Unknown command: /${command}. Try /commands.`);
     }
-  }
-
-  // Persists/broadcasts a mimic-form change — shared by both /mimic and
-  // /revert (reverting is just setting it back to null).
-  private setMimicForm(client: GameSocket, mimicForm: (Race | MonsterKind) | null): void {
-    client.data.mimicForm = mimicForm;
-    this.worldManager.updateState(client.data.username, { mimicForm });
-    void this.persistStats(client);
-    client.emit('sync', { player: this.snapshotFor(client) });
-    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
-  }
-
-  private handleMimicCommand(client: GameSocket, rawTarget: string): void {
-    if (client.data.race !== 'slime') {
-      this.systemMessage(client, 'Only a slime can mimic another creature.');
-      return;
-    }
-    if (!rawTarget) {
-      this.systemMessage(
-        client,
-        client.data.mimicableRaces.length === 0
-          ? "You haven't consumed any unique body parts to mimic yet."
-          : `You can mimic: ${client.data.mimicableRaces.join(', ')}. Use /mimic <name>.`
-      );
-      return;
-    }
-    const target = rawTarget.toLowerCase();
-    const match = client.data.mimicableRaces.find((r) => r.toLowerCase() === target);
-    if (!match) {
-      this.systemMessage(client, `You haven't learned to mimic "${rawTarget}". Try /mimic to see your options.`);
-      return;
-    }
-    this.setMimicForm(client, match);
-    this.systemMessage(client, `You shift your form to mimic a ${match}.`);
-  }
-
-  private handleRevertCommand(client: GameSocket): void {
-    if (client.data.race !== 'slime') {
-      this.systemMessage(client, 'Only a slime can revert to a mimicked form.');
-      return;
-    }
-    if (client.data.mimicForm === null) {
-      this.systemMessage(client, 'You are already in your natural slime form.');
-      return;
-    }
-    this.setMimicForm(client, null);
-    this.systemMessage(client, 'You revert to your natural slime form.');
   }
 
   // The lucem skill's own no-target toggle — requires both the skill
@@ -6467,17 +6476,6 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         }
       } else {
         messages.push(`You have already learned ${BONE_FINGER_STRIKE_SKILL} from bone daggers!`);
-      }
-    }
-
-    // Slime-only: consuming a body part it's never eaten before teaches
-    // it to mimic that race/monster-kind's appearance (see /mimic and
-    // /revert below) — no mechanical bonus yet, purely cosmetic.
-    if (client.data.race === 'slime') {
-      const learned = raceForBodyPart(item);
-      if (learned && !client.data.mimicableRaces.includes(learned)) {
-        client.data.mimicableRaces = [...client.data.mimicableRaces, learned];
-        messages.push(`You have learned to mimic a ${learned}! (/mimic ${learned})`);
       }
     }
 

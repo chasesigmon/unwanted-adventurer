@@ -95,15 +95,17 @@ export const TEACHERS: TeacherSnapshot[] = [
   // follow-up ask put it back) — only her own sprite faces east.
   {
     id: 'map-quest-teacher',
-    name: 'Professor Hollowell',
+    name: 'Professor Caldwell',
     title: 'Quest Giver',
     map: 'Grimoak Entrance Hall',
     row: 16,
     col: 14,
     facing: 'right',
     // A later follow-up ask gave her a 2nd quest ("choose a house") —
-    // offered only once Find the Map is turned in (see
-    // shared/quests.ts's activeQuestIdFor).
+    // both offered at once from the start (a still-later follow-up ask:
+    // "should be available at the same time... offer both options" —
+    // see npcDialogueModal.ts's own multi-quest render), not one after
+    // the other.
     questIds: [FIND_THE_MAP_QUEST_ID, CHOOSE_HOUSE_QUEST_ID],
     robeColorKey: 'forest',
     longHair: true,
@@ -117,7 +119,7 @@ export const TEACHERS: TeacherSnapshot[] = [
   // the door to greet arriving students face-on.
   {
     id: 'house-teacher',
-    name: 'Professor Caldwell',
+    name: 'Professor Hollowell',
     title: 'House Administrator',
     map: 'Grimoak Entrance Hall',
     row: 25,
@@ -282,8 +284,8 @@ export function teachersForMap(mapName: MapName): TeacherSnapshot[] {
 
 // The desk sits directly in front of (one tile south of) the teacher,
 // regardless of which way their own sprite happens to face — a later
-// follow-up ask made this facing-aware for Professor Hollowell
-// specifically, then reverted it ("put Hollowell's desk back to where it
+// follow-up ask made this facing-aware for Professor Caldwell
+// specifically, then reverted it ("put Caldwell's desk back to where it
 // was") since the rotated desk didn't read well, so this is back to the
 // original fixed offset for every teacher again.
 export function deskPositionFor(teacher: TeacherSnapshot): { row: number; col: number } {

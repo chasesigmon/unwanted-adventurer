@@ -20,6 +20,17 @@ import {
   updateInputCaptured,
 } from './modalCore.js';
 
+// A later follow-up bug fix: "grabbed crystal and grabbed crystal and
+// grabbed crystal" — grabbing a corpse's whole item list used to just
+// join every raw item name with "and", so 3 identical drops read as the
+// same name repeated 3 times in a row instead of a single stacked count.
+// Same "item xN" convention renderInventory's own stacking already uses.
+export function stackedItemsLabel(items: string[]): string {
+  const counts = new Map<string, number>();
+  for (const item of items) counts.set(item, (counts.get(item) ?? 0) + 1);
+  return Array.from(counts, ([item, count]) => (count > 1 ? `${item} x${count}` : item)).join(' and ');
+}
+
 let currentCorpseId: string | null = null;
 let currentCorpseItems: string[] = [];
 let currentCorpseKind: string | undefined;
@@ -214,7 +225,7 @@ corpseGrabAllBtn.addEventListener('click', () => {
         if (ack.message) logCombatMessage(ack.message);
         return;
       }
-      logCombatMessage(`You pick up the ${currentCorpseItems.join(' and ')}.`);
+      logCombatMessage(`You pick up the ${stackedItemsLabel(currentCorpseItems)}.`);
       currentCorpseItems = [];
       if (myProfile && ack.inventory) {
         setMyProfile({ ...myProfile, inventory: ack.inventory });

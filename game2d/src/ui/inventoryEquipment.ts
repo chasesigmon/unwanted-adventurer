@@ -11,8 +11,38 @@ import { logCombatMessage } from './log.js';
 import { showCenterToastLines } from './toast.js';
 import { updateStatusBar } from './statusBar.js';
 import { equipmentBody, equipmentModal, inventoryList, inventoryModal, refreshOpenModals, registerModalOpenHandler, registerModalRefreshHandler } from './modalCore.js';
+import { getFollowers } from './groupPanel.js';
 
 // ---------- Inventory ----------
+
+// A later follow-up ask relocated the "give item" picker from the group
+// panel's own follower cards into here instead — same underlying
+// giveFollowerItem call, just initiated from the item's own row rather
+// than a dropdown living on the follower's card.
+function livingFollowers(): Array<{ followerKind: 'pet' | 'animatedMonster'; followerId: string | undefined; label: string }> {
+  const { pet, animatedMonsters } = getFollowers();
+  const list: Array<{ followerKind: 'pet' | 'animatedMonster'; followerId: string | undefined; label: string }> = [];
+  if (pet?.alive) list.push({ followerKind: 'pet', followerId: undefined, label: pet.name });
+  for (const am of animatedMonsters) {
+    if (am.alive) list.push({ followerKind: 'animatedMonster', followerId: am.id, label: am.name });
+  }
+  return list;
+}
+
+function giveItemToFollower(itemIndex: number, followerKind: 'pet' | 'animatedMonster', followerId: string | undefined): void {
+  // FollowerItemAck carries no updated snapshot of its own (see its own
+  // doc comment) — the player's own updated inventory arrives via the
+  // map:state broadcast this triggers, same as every other follower
+  // action already worked before this ask relocated it here.
+  network
+    .giveFollowerItem({ followerKind, followerId, itemIndex })
+    .then((ack) => {
+      if (ack.message) logCombatMessage(ack.message);
+    })
+    .catch(() => {
+      /* nothing to show */
+    });
+}
 
 export function renderInventory(): void {
   inventoryList.innerHTML = '';
@@ -36,12 +66,15 @@ export function renderInventory(): void {
     else groups.set(item, [index]);
   });
 
+  const followers = livingFollowers();
   for (const [item, indices] of groups) {
     const li = document.createElement('li');
     const baseLabel = indices.length > 1 ? `${item} x${indices.length}` : item;
     // The canteen's own fill level, shown right on its inventory row —
     // there's only ever one, so no need to disambiguate which instance.
-    li.textContent = item === CANTEEN_ITEM ? `${baseLabel} (${myProfile?.canteenDrinks ?? 0}/${CANTEEN_CAPACITY})` : baseLabel;
+    const label = document.createElement('span');
+    label.textContent = item === CANTEEN_ITEM ? `${baseLabel} (${myProfile?.canteenDrinks ?? 0}/${CANTEEN_CAPACITY})` : baseLabel;
+    li.appendChild(label);
     li.className = 'inventory-item';
     if (isFillableItem(item) && activeScene?.getItemTarget() === item) li.classList.add('targeted');
     attachTooltip(li, () => itemTooltip(item));
@@ -86,6 +119,41 @@ export function renderInventory(): void {
       }
       consumeInventoryItem(indices[0]!);
     });
+    // A later follow-up ask: "add a mechanism from the item modal to
+    // give an item to a follower" — relocated from a dropdown that used
+    // to live on the follower's own group-panel card (see groupPanel.ts's
+    // buildFollowerItemsSection). Only shown when there's actually a
+    // living pet/animated monster to give it to; a single follower skips
+    // straight to a plain button, a real choice between two+ gets a
+    // picker first.
+    if (followers.length > 0) {
+      const giveRow = document.createElement('div');
+      giveRow.className = 'inventory-give-row';
+      // Neither the picker nor the button should also trigger the row's
+      // own click(use)/contextmenu(consume) handlers above.
+      giveRow.addEventListener('click', (e) => e.stopPropagation());
+      giveRow.addEventListener('contextmenu', (e) => e.stopPropagation());
+      let select: HTMLSelectElement | null = null;
+      if (followers.length > 1) {
+        select = document.createElement('select');
+        followers.forEach((f, followerIndex) => {
+          const option = document.createElement('option');
+          option.value = String(followerIndex);
+          option.textContent = f.label;
+          select!.appendChild(option);
+        });
+        giveRow.appendChild(select);
+      }
+      const giveBtn = document.createElement('button');
+      giveBtn.type = 'button';
+      giveBtn.textContent = followers.length > 1 ? 'Give' : `Give to ${followers[0]!.label}`;
+      giveBtn.addEventListener('click', () => {
+        const target = followers[select ? Number(select.value) : 0]!;
+        giveItemToFollower(indices[0]!, target.followerKind, target.followerId);
+      });
+      giveRow.appendChild(giveBtn);
+      li.appendChild(giveRow);
+    }
     inventoryList.appendChild(li);
   }
 }

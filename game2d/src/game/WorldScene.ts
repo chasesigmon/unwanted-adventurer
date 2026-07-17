@@ -37,13 +37,13 @@ import {
   GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES,
   CAVERNA_SECRET_DOOR_POSITION,
   CAVERNA_CHEST_POSITION,
+  BRAMWICK_MID_COL,
+  BRAMWICK_ENTRANCE_ROW,
 } from '../../shared/maps.js';
 import { treePositionsFor } from '../../shared/trees.js';
 import {
   PUNCH_SKILL,
   DAGGER_SKILL,
-  MIMIC_SKILL,
-  REVERT_SKILL,
   INFRAVISION_SKILL,
   LIGHT_SKILL,
   WATERFILL_SKILL,
@@ -231,11 +231,11 @@ import {
   updateWorldLabel,
   updateWorldTimeLabel,
 } from '../ui/statusBar.js';
-import { logChatMessage, logCombatMessage, noteCombatActivity, openChatInputWithText } from '../ui/log.js';
+import { logChatMessage, logCombatMessage, noteCombatActivity } from '../ui/log.js';
 import { showCenterToast } from '../ui/toast.js';
 import { loadActionBarOnce } from '../ui/actionBar.js';
-import { isInputCaptured, isMovementBlocked, refreshOpenModals, updateMapButtonVisibility } from '../ui/modalCore.js';
-import { openCorpseModal, updateEatBrainsButton } from '../ui/corpseModal.js';
+import { closeAllModals, isInputCaptured, isMovementBlocked, refreshOpenModals, updateMapButtonVisibility } from '../ui/modalCore.js';
+import { openCorpseModal, stackedItemsLabel, updateEatBrainsButton } from '../ui/corpseModal.js';
 import { openChestModal } from '../ui/chestModal.js';
 import { openBedModal } from '../ui/bedModal.js';
 import { openBenchModal } from '../ui/benchModal.js';
@@ -413,10 +413,11 @@ export class WorldScene extends Phaser.Scene {
   private gender: Gender | null = null;
   private hairColor: HairColor | null = null;
   private skinTone: SkinTone | null = null;
-  // A slime's current mimicked appearance (see shared/skills.ts's
-  // MIMIC_SKILL/REVERT_SKILL) — overrides race for texture/animation
+  // A slime's mimicked appearance — overrides race for texture/animation
   // lookups ONLY (see displayKind); race itself is always the true,
-  // mechanical one.
+  // mechanical one. A later follow-up ask removed the /mimic and /revert
+  // commands entirely, so this can never be set to non-null anymore —
+  // kept only so displayKind/effectiveSpriteKind's fallback stays total.
   private mimicForm: (Race | MonsterKind) | null = null;
   private facing: Facing = 'down';
   private currentMap: MapName = 'Great Plains';
@@ -492,6 +493,10 @@ export class WorldScene extends Phaser.Scene {
   // for the adjacency case, or a ranged cast's network call otherwise.
   private approach: { kind: 'player' | 'npc' | 'monster'; id: string; range?: number; onInRange: () => void } | null = null;
   private lastApproachMoveAt = 0;
+  // Whether the player's own default attack (punch/dagger/wand bolt) is
+  // currently engaged/walking-to-engage — lets the 'x' hotkey act as a
+  // real toggle (a later follow-up ask) instead of only ever stopping.
+  private autoAttacking = false;
   // Great-Plains-only background dressing — server-enforced collision
   // (see shared/trees.ts), but no per-row depth sorting against
   // characters (always drawn behind them; see renderMap).
@@ -1210,6 +1215,11 @@ export class WorldScene extends Phaser.Scene {
     for (const sprite of this.npcSprites.values()) this.repositionBarFor(sprite);
     for (const sprite of this.monsterSprites.values()) this.repositionBarFor(sprite);
     for (const sprite of this.stoneBlockSprites.values()) this.repositionBarFor(sprite);
+    // A follow-up ask: "show the hp bar of the pet/summon/animated" —
+    // same floating world-space bar every other combatant already gets,
+    // just never wired up for these two before now.
+    for (const sprite of this.petSprites.values()) this.repositionBarFor(sprite);
+    for (const sprite of this.animatedMonsterSprites.values()) this.repositionBarFor(sprite);
   }
 
   // Scutum's blue-ish shield sphere (a later follow-up ask) — visible to
@@ -1882,7 +1892,28 @@ export class WorldScene extends Phaser.Scene {
     this.northGateOpen = false;
     this.roadTile?.destroy();
     this.roadTile = null;
-    if (mapName === 'Grimoak Grounds') {
+    if (mapName === 'Bramwick') {
+      // A later follow-up bug fix: "the dirt road to exit Bramwick is
+      // still the same color as the rest of the town" — the reddish
+      // dirt-road patch below already existed on the Grimoak Grounds side
+      // of this same border (see the other branch of this if/else just
+      // below), but nothing mirrored it on Bramwick's own side, so the
+      // short stretch leading up to the exit still showed Bramwick's
+      // plain flat 'dirt' floor texture. Same width/depth/texture as the
+      // Grounds patch, just anchored to Bramwick's south entrance instead
+      // of the castle door.
+      const roadWidthTiles = GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES * 2 + 1;
+      this.roadTile = this.add
+        .tileSprite(
+          (BRAMWICK_MID_COL - GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES) * TILE_SIZE,
+          (BRAMWICK_ENTRANCE_ROW - GRIMOAK_GROUNDS_ROAD_ROWS + 1) * TILE_SIZE,
+          roadWidthTiles * TILE_SIZE,
+          GRIMOAK_GROUNDS_ROAD_ROWS * TILE_SIZE,
+          DIRT_ROAD_TEXTURE_KEY
+        )
+        .setOrigin(0, 0)
+        .setDepth(-0.99);
+    } else if (mapName === 'Grimoak Grounds') {
       // The dirt-road patch leading south from Bramwick's own entrance
       // (a later follow-up ask: "about 10 feet" — GRIMOAK_GROUNDS_ROAD_ROWS
       // is the ~2.5ft/tile conversion of that, see its own doc comment),
@@ -2442,6 +2473,17 @@ export class WorldScene extends Phaser.Scene {
     this.mimicForm = player.mimicForm;
     this.row = player.row;
     this.col = player.col;
+    // A later follow-up bug fix: "when the player goes to the 2nd Floor,
+    // their sprite doesn't actually appear until they move and then it
+    // zooms in from the side of the screen" — renderMap's own
+    // applyCameraBounds (below) sets up the new map's camera bounds/
+    // startFollow using whatever position this.player sprite is CURRENTLY
+    // at; positioning it here, before renderMap runs, means the camera's
+    // very first bounds/follow calculation for the new map already uses
+    // the correct new-map tile instead of wherever the player happened to
+    // be standing on the OLD map a moment ago.
+    const pos = this.tilePosition(player.row, player.col);
+    this.player.setPosition(pos.x, pos.y);
     setMyProfile(player);
     loadActionBarOnce(player.username);
     updateStatusBar();
@@ -2457,11 +2499,14 @@ export class WorldScene extends Phaser.Scene {
     // zero monsters and think it had run out of targets. Only actually
     // tear down and rebuild the map when the map itself changed.
     if (!this.hasRenderedMap || player.map !== this.currentMap) {
+      // A later follow-up ask: close whatever modal's open on any map
+      // change this general 'sync' path catches too (recall, a portal,
+      // stairs, ...), not just the ordinary door-walk case handled in
+      // attemptMove's own move-ack above.
+      closeAllModals();
       this.renderMap(player.map);
       this.hasRenderedMap = true;
     }
-    const pos = this.tilePosition(player.row, player.col);
-    this.player.setPosition(pos.x, pos.y);
     // A later follow-up ask: a new (or respawning) character's spawn
     // point on Grimoak Grounds now sits right at the south bridge's
     // inner end, facing the castle — same MOAT_INNER_BOTTOM - 1 tile
@@ -2762,6 +2807,7 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('label', `${pet.name} (Lv ${pet.level})`);
       sprite.setData('hp', pet.hp);
       sprite.setData('maxHp', pet.maxHp);
+      this.ensureHpBar(sprite, pet.hp, pet.maxHp);
       sprite.setAlpha(pet.alive ? 1 : 0.4);
     }
     for (const [id, sprite] of this.petSprites) {
@@ -2804,6 +2850,7 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('label', am.name);
       sprite.setData('hp', am.hp);
       sprite.setData('maxHp', am.maxHp);
+      this.ensureHpBar(sprite, am.hp, am.maxHp);
       sprite.setAlpha(am.alive ? 1 : 0.4);
     }
     for (const [id, sprite] of this.animatedMonsterSprites) {
@@ -2971,7 +3018,7 @@ export class WorldScene extends Phaser.Scene {
       // own further variant of that same recolored sheet.
       const teacherKind = t.robeColorKey ? (`teacher-${t.robeColorKey}${t.longHair ? '-longhair' : ''}` as const) : 'teacher';
       // A follow-up ask: "update the teacher titles... to be their name
-      // and their position" — e.g. "Professor Caldwell, House
+      // and their position" — e.g. "Professor Hollowell, House
       // Administrator". Falls back to the plain name for every teacher
       // without a distinct role (every classroom/chamber teacher).
       const teacherDisplayName = t.title ? `${t.name}, ${t.title}` : t.name;
@@ -2990,13 +3037,17 @@ export class WorldScene extends Phaser.Scene {
         // tooltip, and requires the player be close enough — same reach
         // concept ("must be within [a few] feet... otherwise show a
         // message") as a shop's own SHOP_REACH_TILES.
-        const activeQuestId = activeQuestIdFor(t.questIds, myProfile?.quests ?? {});
-        if (activeQuestId) {
+        // A later follow-up ask: "Choosing a House should be available at
+        // the same time as The Hidden Map... offer both options" — every
+        // quest this teacher has gets its own fully independent block in
+        // the SAME dialogue now (see openNpcDialogueModal), not one at a
+        // time.
+        if (t.questIds && t.questIds.length > 0) {
           if (!isWithinRadius(this.row, this.col, t.row, t.col, SHOP_REACH_TILES)) {
             logCombatMessage(`You're too far away to talk to ${teacherDisplayName}.`);
             return;
           }
-          openNpcDialogueModal(teacherDisplayName, activeQuestId);
+          openNpcDialogueModal(teacherDisplayName, t.questIds);
           return;
         }
         // The Specialization room's own teacher (a later follow-up ask)
@@ -3170,7 +3221,7 @@ export class WorldScene extends Phaser.Scene {
           setMyProfile({ ...myProfile, inventory: ack.inventory });
           refreshOpenModals();
         }
-        if (items.length > 0) logCombatMessage(`You pick up the ${items.join(' and ')}.`);
+        if (items.length > 0) logCombatMessage(`You pick up the ${stackedItemsLabel(items)}.`);
 
         // Only a real monster corpse can be sacrificed at all — a
         // player/training-dummy corpse is just left as-is.
@@ -3260,6 +3311,13 @@ export class WorldScene extends Phaser.Scene {
         this.col = ack.player.col;
 
         if (ack.player.map !== this.currentMap) {
+          // A later follow-up ask: "when the player goes through a door
+          // and a modal is open, close that modal when they appear in
+          // the next area" — a shop/teacher-dialogue/inventory modal left
+          // open while walking through a door no longer made sense to
+          // still be showing once the player's actually somewhere else
+          // entirely.
+          closeAllModals();
           // A map transition is a load, not a walk — snap straight to the
           // new map rather than tweening across two different worlds.
           this.race = ack.player.race;
@@ -3276,6 +3334,18 @@ export class WorldScene extends Phaser.Scene {
           // PlayerSnapshot, so just replace myProfile with it outright.
           setMyProfile(ack.player);
           this.updateOwnBars();
+          // A later follow-up bug fix: "when the player goes to the 2nd
+          // Floor, their sprite doesn't actually appear until they move
+          // and then it zooms in from the side of the screen" —
+          // renderMap's own applyCameraBounds (below) sets up the new
+          // map's camera bounds/startFollow using whatever position
+          // this.player sprite is CURRENTLY at; positioning it here,
+          // before renderMap runs, means the camera's very first bounds/
+          // follow calculation for the new map already uses the correct
+          // new-map tile instead of wherever the player happened to be
+          // standing on the OLD map a moment ago.
+          const pos = this.tilePosition(ack.player.row, ack.player.col);
+          this.player.setPosition(pos.x, pos.y);
           this.renderMap(ack.player.map);
           // A follow-up bug fix: "teachers & desks or training skeletons
           // were visible until I moved" — the server's own room-broadcast
@@ -3289,8 +3359,6 @@ export class WorldScene extends Phaser.Scene {
           if (ack.mapState) this.applyMapState(ack.mapState);
           updateWorldLabel(ack.player.map);
           notifyMapChanged();
-          const pos = this.tilePosition(ack.player.row, ack.player.col);
-          this.player.setPosition(pos.x, pos.y);
           this.isMoving = false;
           this.setIdle();
           return;
@@ -3331,17 +3399,26 @@ export class WorldScene extends Phaser.Scene {
     if (!found) return;
 
     this.setTarget(found.kind, found.id, found.sprite);
-    // A follow-up ask: right-clicking with a wand equipped fires the
-    // wand's own RANGED auto-attack instead of walking into melee range —
-    // same "right-click initiates, then it's automatic" shape, just no
-    // walking-closer step, since a ranged weapon staying at range is the
-    // whole point.
+    this.engageDefaultAttack(found.kind, found.id);
+  }
+
+  // Shared by right-click and the 'x' hotkey's own "start" side (a later
+  // follow-up ask made 'x' a real toggle rather than only ever stopping)
+  // — whichever default attack the player's currently equipped for
+  // (wand's ranged bolt, or melee punch/dagger).
+  private engageDefaultAttack(kind: 'player' | 'npc' | 'monster', id: string): void {
+    this.autoAttacking = true;
+    // A follow-up ask: right-clicking (or now, toggling on) with a wand
+    // equipped fires the wand's own RANGED auto-attack instead of walking
+    // into melee range — same "engage, then it's automatic" shape, just
+    // no walking-closer step, since a ranged weapon staying at range is
+    // the whole point.
     if (isWandItem(myProfile?.equipment.weapon)) {
-      this.tryRangedEngage(found.kind, found.id);
+      this.tryRangedEngage(kind, id);
       return;
     }
     const defaultSkill = myProfile?.equipment.weapon?.toLowerCase().includes('dagger') ? DAGGER_SKILL : PUNCH_SKILL;
-    this.tryEngage(found.kind, found.id, defaultSkill);
+    this.tryEngage(kind, id, defaultSkill);
   }
 
   // The wand's ranged auto-attack (a follow-up ask) — no walking involved
@@ -3364,7 +3441,26 @@ export class WorldScene extends Phaser.Scene {
   stopAutoAttack(): void {
     this.network.disengage();
     this.approach = null;
+    this.autoAttacking = false;
     logCombatMessage('You stop attacking.');
+  }
+
+  // The 'x' hotkey, now a real toggle (a later follow-up ask: "when I am
+  // not auto attacking and I have a monster selected and I press 'x' it
+  // should make me begin auto attacking, like a toggle") — starts the
+  // same default attack right-click would, using whatever's already
+  // selected, if nothing's currently engaged; stops it (old behavior)
+  // otherwise.
+  toggleAutoAttack(): void {
+    if (this.autoAttacking) {
+      this.stopAutoAttack();
+      return;
+    }
+    if ((this.targetKind !== 'monster' && this.targetKind !== 'player') || !this.targetId) {
+      logCombatMessage('Select a monster or player to attack first.');
+      return;
+    }
+    this.engageDefaultAttack(this.targetKind, this.targetId);
   }
 
   // The 'z' hotkey (a later follow-up ask): "if the player has a pet/
@@ -3510,6 +3606,7 @@ export class WorldScene extends Phaser.Scene {
   private clearTarget(): void {
     this.targetKind = null;
     this.targetId = null;
+    this.autoAttacking = false;
     hideTargetPanel();
   }
 
@@ -3669,19 +3766,6 @@ export class WorldScene extends Phaser.Scene {
   // range, tryEngage starts walking toward it instead of just refusing,
   // same as a right-click does for the default attack.
   useTargetedSkill(skillName: string): void {
-    // Mimic/revert aren't combat actions at all — no target needed, they
-    // just drive the existing /mimic and /revert chat commands. Revert
-    // takes no argument, so it fires immediately; mimic needs a target
-    // race/monster name typed in, so it just pre-fills the command
-    // instead of guessing which one they meant.
-    if (skillName === REVERT_SKILL) {
-      this.network.chat('/revert');
-      return;
-    }
-    if (skillName === MIMIC_SKILL) {
-      openChatInputWithText('/mimic ');
-      return;
-    }
     // Lucem/celeritas are no-target toggles too (item 11: "the
     // player would simply click on it to either create light on the wand
     // or to remove light") — ack-based (a later follow-up ask) rather

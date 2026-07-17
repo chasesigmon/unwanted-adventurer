@@ -16,8 +16,8 @@ const QUEST_GIVER_NAMES: Record<string, string> = {
   'learn-spells': 'Headmistress Elowen',
   'kill-imps': 'Professor Bramwell',
   'gather-mana-crystals': 'Professor Thistlewood',
-  'find-the-map': 'Professor Hollowell',
-  'choose-house': 'Professor Hollowell',
+  'find-the-map': 'Professor Caldwell',
+  'choose-house': 'Professor Caldwell',
 };
 
 // hasFlag objectives (a follow-up ask's "acquire the map" quest, and its

@@ -22,8 +22,6 @@ import {
   LESSER_FIRE_RESISTANCE,
   INFRAVISION_SKILL,
   LACERATE_SKILL,
-  MIMIC_SKILL,
-  REVERT_SKILL,
   EAT_BRAINS_SKILL,
   GLARE_SKILL,
   ENHANCED_DURABILITY_SKILL,
@@ -98,14 +96,6 @@ const ICONS: Record<string, string> = {
   ),
   [INFRAVISION_SKILL]: svgUrl('<path d="M2 12 C5 6 19 6 22 12 C19 18 5 18 2 12 Z"/><circle cx="12" cy="12" r="2.6" fill="' + STROKE + '"/>'),
   [LACERATE_SKILL]: svgUrl('<path d="M5 4 L10 20"/><path d="M10 4 L15 20"/><path d="M15 4 L20 20"/>'),
-  [MIMIC_SKILL]: svgUrl(
-    '<path d="M4 10 C4 6 8 4 12 4 C16 4 20 6 20 10 C20 15 16 18 12 18 C8 18 4 15 4 10 Z"/><circle cx="9" cy="10" r="1.1" fill="' +
-      STROKE +
-      '"/><circle cx="15" cy="10" r="1.1" fill="' +
-      STROKE +
-      '"/><path d="M9 14 q3 2 6 0"/>'
-  ),
-  [REVERT_SKILL]: svgUrl('<path d="M4 12 a8 8 0 1 1 2.3 5.6"/><path d="M4 17 v-5 h5"/>'),
   [EAT_BRAINS_SKILL]: svgUrl(
     '<path d="M9 4 c-3 0 -5 2 -5 5 c-1.5 0.5 -1.5 3 0 3.5 c0 3 2.5 5 5 5 h6 c2.5 0 5 -2 5 -5 c1.5 -0.5 1.5 -3 0 -3.5 c0 -3 -2 -5 -5 -5 Z"/><path d="M9 7 q1.5 2 0 4 q1.5 2 0 4"/><path d="M15 7 q-1.5 2 0 4 q-1.5 2 0 4"/>'
   ),

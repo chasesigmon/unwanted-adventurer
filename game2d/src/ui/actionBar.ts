@@ -10,17 +10,50 @@ import { attachTooltip } from './tooltip.js';
 
 // A follow-up ask: dragging a skill icon off the action bar (to remove
 // it) shouldn't show the browser's own default "snaps back into place
-// before disappearing" ghost-image animation on an unsuccessful drop.
-// The native drag image is a screenshot of the dragged element by
-// default — swapping it for a fully transparent 1x1 pixel via
-// setDragImage means there's nothing visible left for the browser to
-// animate back, so the icon just vanishes the instant the drop is
-// rejected instead. Shared by both the Skills modal's own drag source
-// (skillsPanel.ts) and the action bar's own slot-to-slot drag below.
+// before disappearing" ghost-image animation on an unsuccessful drop —
+// but it SHOULD still look like a normal drag while it's in progress (a
+// fully suppressed/invisible native ghost read as "nothing is
+// happening," a follow-up bug fix). The native ghost image can't be told
+// to do one but not the other — both are the same browser-level image —
+// so this replaces the native ghost with a fully transparent one
+// (nothing for the browser to snap back) and instead drives a separate
+// floating clone of the dragged icon by hand, repositioned on every
+// native 'drag' event and removed OUTRIGHT (no animation) the instant
+// the drag ends, whether it landed somewhere valid or not. Shared by
+// both the Skills modal's own drag source (skillsPanel.ts) and the
+// action bar's own slot-to-slot drag below.
 const TRANSPARENT_DRAG_IMAGE = new Image();
 TRANSPARENT_DRAG_IMAGE.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7';
-export function suppressDragGhost(e: DragEvent): void {
+let floatingDragClone: HTMLElement | null = null;
+
+function positionDragClone(x: number, y: number): void {
+  if (!floatingDragClone) return;
+  floatingDragClone.style.left = `${x}px`;
+  floatingDragClone.style.top = `${y}px`;
+}
+
+export function beginDragVisual(e: DragEvent, sourceEl: HTMLElement): void {
   e.dataTransfer?.setDragImage(TRANSPARENT_DRAG_IMAGE, 0, 0);
+  floatingDragClone?.remove();
+  floatingDragClone = sourceEl.cloneNode(true) as HTMLElement;
+  floatingDragClone.classList.add('drag-floating-clone');
+  document.body.appendChild(floatingDragClone);
+  positionDragClone(e.clientX, e.clientY);
+}
+
+// The native 'drag' event (not 'dragover') fires repeatedly on the
+// SOURCE element throughout the drag with the cursor's own live
+// coordinates — its last firing or two sometimes reports (0, 0) right as
+// the drag ends, which would otherwise snap the clone to the corner for
+// an instant just before removal, hence the guard.
+export function updateDragVisual(e: DragEvent): void {
+  if (e.clientX === 0 && e.clientY === 0) return;
+  positionDragClone(e.clientX, e.clientY);
+}
+
+export function endDragVisual(): void {
+  floatingDragClone?.remove();
+  floatingDragClone = null;
 }
 
 export const ACTION_BAR_SLOT_COUNT = 20;
@@ -290,9 +323,11 @@ for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
     }
     e.dataTransfer?.setData('text/plain', skillName);
     e.dataTransfer?.setData(ACTION_SLOT_SOURCE_MIME, String(i));
-    suppressDragGhost(e);
+    beginDragVisual(e, slot);
   });
+  slot.addEventListener('drag', updateDragVisual);
   slot.addEventListener('dragend', (e) => {
+    endDragVisual();
     if (e.dataTransfer?.dropEffect === 'none' && actionBarSkills[i] !== null) {
       actionBarSkills[i] = null;
       renderActionSlot(i);

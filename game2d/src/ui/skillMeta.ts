@@ -16,8 +16,6 @@ import {
   LESSER_FIRE_RESISTANCE,
   INFRAVISION_SKILL,
   LACERATE_SKILL,
-  MIMIC_SKILL,
-  REVERT_SKILL,
   EAT_BRAINS_SKILL,
   ENHANCED_DURABILITY_SKILL,
   BONE_FINGER_STRIKE_SKILL,
@@ -134,17 +132,13 @@ export function skillIconColor(name: string): string {
 // keys/right-click already do, aimed at whichever target is currently
 // selected; bone finger strike and glare are real separate active skills
 // — glare no longer applies automatically on every hit a skeleton lands,
-// it has to be deliberately queued like this. Mimic/revert are "active"
-// in a different sense — no combat target at all, just a chat command
-// under the hood (see actionBar.ts's useTargetedSkill wiring).
+// it has to be deliberately queued like this.
 export function isUsableSkill(skillName: string): boolean {
   return (
     skillName === PUNCH_SKILL ||
     skillName === DAGGER_SKILL ||
     skillName === BONE_FINGER_STRIKE_SKILL ||
     skillName === GLARE_SKILL ||
-    skillName === MIMIC_SKILL ||
-    skillName === REVERT_SKILL ||
     skillName === LIGHT_SKILL ||
     skillName === WATERFILL_SKILL ||
     skillName === HASTE_SKILL ||
@@ -195,8 +189,6 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
   [LESSER_FIRE_RESISTANCE]: 'A small chance to learn from consuming a torch. No fire-damage mechanic exists yet for it to reduce.',
   [INFRAVISION_SKILL]: 'Goblin-only: see clearly across the whole map regardless of time of day, no torch needed.',
   [LACERATE_SKILL]: 'Dragonborn-only: chance of an extra laceration attack on top of your normal attack.',
-  [MIMIC_SKILL]: "Slime-only: transform into the form of any race/monster whose body part you've consumed.",
-  [REVERT_SKILL]: 'Slime-only: change back to your plain slime form.',
   [EAT_BRAINS_SKILL]: 'Zombie-only: heal a portion of hp/mana/movement by eating the brains of a corpse you personally killed.',
   [GLARE_SKILL]: 'Skeleton-only: paralyze whoever you hit, blocking their counter-attack. Has its own cooldown between casts.',
   [ENHANCED_DURABILITY_SKILL]: 'Skeleton-only: passively tougher armor (future work — no armor system yet).',
@@ -391,8 +383,6 @@ const SKILL_CATEGORY_MAP: Record<string, SkillCategory> = {
   [DRINK_SKILL]: 'Utility',
   [POUR_SKILL]: 'Utility',
   [INFRAVISION_SKILL]: 'Utility',
-  [MIMIC_SKILL]: 'Utility',
-  [REVERT_SKILL]: 'Utility',
   [EAT_BRAINS_SKILL]: 'Utility',
   [STONE_WALL_SKILL]: 'Summoning',
   [ANIMATE_DEAD_SKILL]: 'Summoning',

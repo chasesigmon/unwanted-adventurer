@@ -88,6 +88,28 @@ export class AnimatedMonsterManagerService {
     return monster;
   }
 
+  // Same shape as PetManagerService's own syncAttackTarget/
+  // clearAttackTarget — see that method's own doc comment — applied to
+  // EVERY animated monster this owner has that's currently in 'attack'
+  // mode (unlike a pet, there can be more than one at once).
+  syncAttackTarget(ownerUsername: string, targetKind: 'monster' | 'player', targetId: string): void {
+    for (const monster of this.monsters.get(ownerUsername) ?? []) {
+      if (monster.alive && monster.command === 'attack') {
+        monster.attackTargetKind = targetKind;
+        monster.attackTargetId = targetId;
+      }
+    }
+  }
+
+  clearAttackTargetForOwner(ownerUsername: string): void {
+    for (const monster of this.monsters.get(ownerUsername) ?? []) {
+      if (monster.command === 'attack') {
+        monster.attackTargetKind = undefined;
+        monster.attackTargetId = undefined;
+      }
+    }
+  }
+
   // Phase C's "give/equip" ask — same shape as PetManagerService's own
   // giveItem/takeItem/equipItem/unequipItem, just keyed by id too since an
   // owner can have more than one animated monster at once.
@@ -134,11 +156,24 @@ export class AnimatedMonsterManagerService {
   // Same simplified "just subtract hp" contact-damage shape
   // PetManagerService.applyDamage already uses.
   applyDamage(ownerUsername: string, id: string, amount: number): { monster: AnimatedMonster; died: boolean } | undefined {
-    const monster = this.monsters.get(ownerUsername)?.find((m) => m.id === id);
+    const owned = this.monsters.get(ownerUsername);
+    const monster = owned?.find((m) => m.id === id);
     if (!monster || !monster.alive) return undefined;
     monster.hp = Math.max(0, monster.hp - amount);
     const died = monster.hp <= 0;
-    if (died) monster.alive = false;
+    if (died) {
+      monster.alive = false;
+      // A later follow-up ask: "once a summon/animated dead are killed,
+      // then they should be removed from the group entirely. Only a pet
+      // should remain as 'fallen'... remove the body... don't leave it
+      // there" — unlike a pet (which stays shown, alive: false, as
+      // "— fallen"), a dead animated monster/summon is dropped from the
+      // array outright, same as the player's own manual "Remove" button
+      // (see remove() above). The now-detached `monster` object is still
+      // returned below so the caller can still report its final hp/name.
+      const index = owned!.findIndex((m) => m.id === id);
+      if (index !== -1) owned!.splice(index, 1);
+    }
     return { monster, died };
   }
 
@@ -181,7 +216,10 @@ export class AnimatedMonsterManagerService {
           continue;
         }
 
-        if (monster.command !== 'follow') continue;
+        // A follow-up bug fix — see PetManagerService.tickAll's own doc
+        // comment on why 'attack' with no current target falls through
+        // to plain following instead of standing frozen.
+        if (monster.command !== 'follow' && monster.command !== 'attack') continue;
         const owner = this.worldManager.getLocation(monster.ownerUsername);
         if (!owner) continue;
         if (monster.map !== owner.mapName) {

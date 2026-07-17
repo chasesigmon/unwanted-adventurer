@@ -98,6 +98,34 @@ export class PetManagerService {
     return pet;
   }
 
+  // A follow-up bug fix: "when the 'attack' option is selected, the
+  // follower should auto attack anyone the player attacks" — 'attack' is
+  // a standing MODE now, not just a one-shot target set by 'z'. Called
+  // from game.gateway.ts's own engageCombat/startAutoAttackAfterSpell/
+  // handleEngageRangedAttack every time the OWNER engages a (new or the
+  // same) target — a pet not currently in 'attack' mode is untouched, so
+  // buying a pet or leaving it on follow/stay/sleep never drags it into a
+  // fight it wasn't asked to join.
+  syncAttackTarget(ownerUsername: string, targetKind: 'monster' | 'player', targetId: string): void {
+    const pet = this.pets.get(ownerUsername);
+    if (!pet || !pet.alive || pet.command !== 'attack') return;
+    pet.attackTargetKind = targetKind;
+    pet.attackTargetId = targetId;
+  }
+
+  // The other half of the fix above — once the OWNER's own fight ends
+  // (target died, disengaged, or simply lost), an 'attack'-mode pet's
+  // stale target is cleared so tickAll's own fallback takes over: "it
+  // should still continue to follow the player as normal if not
+  // attacking a monster," rather than standing frozen with nothing to
+  // chase (see tickAll's own attack-branch doc comment).
+  clearAttackTarget(ownerUsername: string): void {
+    const pet = this.pets.get(ownerUsername);
+    if (!pet || pet.command !== 'attack') return;
+    pet.attackTargetKind = undefined;
+    pet.attackTargetId = undefined;
+  }
+
   // Phase C's "give item" ask — moves one item INTO the pet's own
   // inventory (see game.gateway.ts's handleGiveFollowerItem, which
   // removes it from the player's own inventory first).
@@ -237,7 +265,13 @@ export class PetManagerService {
         continue;
       }
 
-      if (pet.command !== 'follow') continue;
+      // A follow-up bug fix: "attack selected but the follower just stood
+      // there" — 'attack' mode with no CURRENT target (nothing to sync
+      // onto yet, see syncAttackTarget) falls through to the exact same
+      // follow-the-owner behavior 'follow' itself uses, rather than being
+      // excluded here and standing frozen — "it should still continue to
+      // follow the player as normal if not attacking a monster."
+      if (pet.command !== 'follow' && pet.command !== 'attack') continue;
       const owner = this.worldManager.getLocation(pet.ownerUsername);
       if (!owner) continue;
       if (pet.map !== owner.mapName) {
