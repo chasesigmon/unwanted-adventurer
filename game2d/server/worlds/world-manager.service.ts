@@ -70,6 +70,18 @@ export class WorldManagerService {
     }));
   }
 
+  // Phase E's own "portal monster aggro radius" ask — every connected
+  // player currently on the given map, with position, so a proximity-
+  // aggro check can scan all of them without needing one lookup per
+  // username (see MonsterManagerService's own setPlayersOnMapLocator).
+  getPlayersOnMap(mapName: MapName): Array<{ username: string; row: number; col: number }> {
+    const result: Array<{ username: string; row: number; col: number }> = [];
+    for (const [username, state] of this.playerLocation) {
+      if (state.mapName === mapName) result.push({ username, row: state.row, col: state.col });
+    }
+    return result;
+  }
+
   // Applies a combat/leveling update (hp, level, exp-derived stat bumps,
   // skill growth, inventory, ...) to a connected player's cached state —
   // the gateway calls this right after resolving a punch/loot, before

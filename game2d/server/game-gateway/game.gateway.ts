@@ -29,7 +29,7 @@ import {
 } from '../../shared/pets.js';
 import { CHAT_COMMANDS } from '../../shared/commands.js';
 import { WorldClockService } from '../worlds/world-clock.service.js';
-import { findVendor } from '../worlds/vendors.js';
+import { findVendor, sellValueFor } from '../worlds/vendors.js';
 import { MONSTER_SPECIES } from '../monsters/monster.js';
 import { NPCS } from '../worlds/npcs.js';
 import { AuthService } from '../auth/auth.service.js';
@@ -126,6 +126,7 @@ import type {
   UseItemAck,
   RestState,
   BuyAck,
+  SellAck,
   PetCommandAck,
   CommandFollowerAttackAck,
   FollowerItemAck,
@@ -537,6 +538,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const loc = this.worldManager.getLocation(username);
       return loc ? { mapName: loc.mapName, row: loc.row, col: loc.col } : undefined;
     });
+    // Phase E's own "aggro radius" ask — same callback-injection
+    // reasoning, so a proximity-aggro check can scan every player on a
+    // map without a circular Monsters<->Worlds dependency.
+    this.monsterManager.setPlayersOnMapLocator((mapName) => this.worldManager.getPlayersOnMap(mapName));
     // Murus lapideus (a later follow-up ask) — same callback-injection
     // reasoning as the two above, since GameGateway (not
     // MonsterManagerService) owns the stone-block registry.
@@ -618,10 +623,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // unaffected, still resolved on the original slower tick below via
     // checkContacts (a read-only adjacency check against wherever this
     // faster loop has already moved the follower to).
+    // Phase D's own "aggro speed" fix reuses this exact same interval —
+    // an aggro'd monster used to close distance at just 2 tiles per WHOLE
+    // 3s combat tick (~0.67 tiles/sec), unable to ever catch a
+    // continuously-moving player; chaseAggroTargets now steps it here
+    // instead, same movement-speeds-up/attack-cadence-doesn't split.
     setInterval(() => {
       const petMaps = this.petManager.tickAll();
       const animatedMonsterMaps = this.animatedMonsterManager.tickAll();
-      for (const mapName of new Set<MapName>([...petMaps, ...animatedMonsterMaps])) {
+      const monsterChaseMaps = this.monsterManager.chaseAggroTargets(this.combatTickCount);
+      for (const mapName of new Set<MapName>([...petMaps, ...animatedMonsterMaps, ...monsterChaseMaps])) {
         this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
       }
     }, FOLLOWER_STEP_MS);
@@ -632,6 +643,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.tickAugueBurns();
       this.checkDuplicateExpiry();
       this.monsterManager.wanderAll(this.combatTickCount);
+      this.monsterManager.checkProximityAggro(this.combatTickCount);
       this.resolveMonsterInitiatedAttack(this.combatTickCount);
       this.monsterManager.respawnBelowMax();
       // Read-only adjacency check against each 'attack'-commanded
@@ -3664,6 +3676,44 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       gold: client.data.gold,
       canteenDrinks: item.label === CANTEEN_ITEM ? client.data.canteenDrinks : undefined,
       message: `You buy ${article}${item.label} for ${item.price} gold.`,
+    };
+  }
+
+  // A later follow-up ask: "sell to vendor" — every vendor buys back
+  // anything a player is carrying, not just what THEY stock (see
+  // vendors.ts's own sellValueFor doc comment for the price formula).
+  // Same reach rule as buying.
+  @SubscribeMessage('sellItem')
+  handleSellItem(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): SellAck {
+    const parsed = z.object({ vendorId: z.string(), itemIndex: z.number().int() }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid request.' };
+    }
+    const { vendorId, itemIndex } = parsed.data;
+
+    const vendor = findVendor(vendorId);
+    if (!vendor || vendor.map !== client.data.map) {
+      return { ok: false, message: "That shop isn't here." };
+    }
+    if (!this.isClientWithinShopReach(client, vendor.row, vendor.col)) {
+      return { ok: false, message: "You're too far away to reach the shop." };
+    }
+    const item = client.data.inventory[itemIndex];
+    if (item === undefined) {
+      return { ok: false, message: "You don't have that." };
+    }
+
+    const price = sellValueFor(item);
+    client.data.inventory = client.data.inventory.filter((_, i) => i !== itemIndex);
+    client.data.gold += price;
+    this.worldManager.updateState(client.data.username, { gold: client.data.gold, inventory: client.data.inventory });
+    void this.persistStats(client);
+
+    return {
+      ok: true,
+      inventory: client.data.inventory,
+      gold: client.data.gold,
+      message: `You sell the ${item} for ${price} gold.`,
     };
   }
 

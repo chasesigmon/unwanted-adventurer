@@ -582,6 +582,15 @@ export interface BuyAck {
   message?: string;
 }
 
+// A later follow-up ask: "sell to vendor" — see server/worlds/vendors.ts's
+// sellValueFor.
+export interface SellAck {
+  ok: boolean;
+  inventory?: string[];
+  gold?: number;
+  message?: string;
+}
+
 export interface EatBrainsAck {
   ok: boolean;
   hp?: number;
@@ -818,6 +827,7 @@ export interface ClientToServerEvents {
   // itself is removed once its last item is taken.
   lootItem: (payload: { corpseId: string; itemIndex: number }, ack: (res: LootAck) => void) => void;
   buyItem: (payload: { vendorId: string; itemLabel: string }, ack: (res: BuyAck) => void) => void;
+  sellItem: (payload: { vendorId: string; itemIndex: number }, ack: (res: SellAck) => void) => void;
   // Commanding your own pet (a later follow-up ask) — "stay by side,
   // attack, sleep" (plus 'follow', the default the moment it's bought).
   petCommand: (command: PetCommand, ack: (res: PetCommandAck) => void) => void;

@@ -8,6 +8,7 @@ import { attachTooltip, hideCustomTooltip } from './tooltip.js';
 
 export const charSheetModal = document.getElementById('char-sheet-modal') as HTMLDivElement;
 export const charSheetUsername = document.getElementById('char-sheet-username') as HTMLHeadingElement;
+export const charSheetPreview = document.getElementById('char-sheet-preview') as HTMLDivElement;
 export const charSheetBody = document.getElementById('char-sheet-body') as HTMLDivElement;
 export const inventoryModal = document.getElementById('inventory-modal') as HTMLDivElement;
 export const inventoryList = document.getElementById('inventory-list') as HTMLUListElement;

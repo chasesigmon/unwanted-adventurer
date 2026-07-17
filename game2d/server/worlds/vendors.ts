@@ -207,6 +207,8 @@ const VENDOR_SEEDS: VendorSeed[] = [
       { label: 'cloth boots', price: 5 },
       { label: 'cloth vambraces', price: 5 },
       { label: 'cloth greaves', price: 5 },
+      // A later follow-up ask — the cloth set's one missing piece.
+      { label: 'cloth gauntlets', price: 5 },
     ],
     greeting: 'Sturdy cloth work, every piece — ready for coin whenever you are.',
   },
@@ -268,4 +270,19 @@ export function vendorsForMap(mapName: MapName): VendorSnapshot[] {
 
 export function findVendor(vendorId: string): VendorSnapshot | undefined {
   return VENDORS.find((v) => v.id === vendorId);
+}
+
+// A later follow-up ask: "sell to vendor" — every vendor buys back
+// anything a player is carrying (not just what THEY happen to stock),
+// same "the shop is happy to take it off your hands" convenience most
+// shops offer. Half of the LOWEST listed buy price anywhere this exact
+// item is actually sold, floored, minimum 1 gold; a flat 1 gold "scrap"
+// value for anything no vendor sells at all (monster drops, quest
+// rewards, ...) so selling junk is still worth something rather than
+// being silently rejected.
+const FALLBACK_SELL_PRICE = 1;
+export function sellValueFor(itemLabel: string): number {
+  const prices = VENDORS.flatMap((v) => v.items.filter((i) => i.label === itemLabel).map((i) => i.price));
+  if (prices.length === 0) return FALLBACK_SELL_PRICE;
+  return Math.max(1, Math.floor(Math.min(...prices) / 2));
 }

@@ -56,6 +56,13 @@ export interface Monster extends CombatantStats {
   // wanderAll doesn't need a species lookup on every tick) — undefined
   // means "wander freely," same as before this feature existed.
   patrolRangeTiles?: number;
+  // Phase E's own "portal monster aggro radius" ask — copied from
+  // MonsterSpecies.aggroRadiusTiles at spawn time. Undefined (every
+  // ordinary monster) means aggro only ever starts from actual combat
+  // contact, same as before this feature existed — only the 4 portal
+  // dungeons' own tougher monsters notice a player approaching before
+  // being hit first (see checkProximityAggro).
+  aggroRadiusTiles?: number;
   // Stupefaciunt (a later follow-up ask) — a combat-tick number; while
   // currentTick is below this, the monster can't move or act at all (see
   // MonsterManagerService.isStunned/stun). Undefined (the common case)
@@ -122,6 +129,10 @@ export interface MonsterSpecies {
   patrolRangeTiles?: number;
   // See Monster.attackDamage's own doc comment.
   attackDamage?: number;
+  // See Monster.aggroRadiusTiles's own doc comment — undefined for every
+  // ordinary species (aggro only from contact); set for the 4 portal
+  // dungeons' own escalating-difficulty monsters.
+  aggroRadiusTiles?: number;
   // Distinguishes two species entries that share the same `kind` (a
   // follow-up ask added a second, tougher "wild skeleton"/"wild goblin"
   // population on Grimoak Grounds, distinct from the original Labyrinth/
@@ -392,6 +403,9 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     expReward: 150,
     attackDamage: 20,
     goldReward: 10,
+    // Phase E's own "aggro radius" ask — notices an approaching
+    // player from a few tiles out, not just on actual contact.
+    aggroRadiusTiles: 5,
     carriedItemRolls: [
       { label: 'wand of frost', chance: 0.15 },
       { label: 'chainmail vambraces', chance: 0.2 },
@@ -408,6 +422,9 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     expReward: 220,
     attackDamage: 28,
     goldReward: 15,
+    // Phase E's own "aggro radius" ask — notices an approaching
+    // player from a few tiles out, not just on actual contact.
+    aggroRadiusTiles: 5,
     carriedItemRolls: [
       { label: 'wand of embers', chance: 0.15 },
       { label: "warlord's greaves", chance: 0.2 },
@@ -424,6 +441,9 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     expReward: 320,
     attackDamage: 38,
     goldReward: 20,
+    // Phase E's own "aggro radius" ask — notices an approaching
+    // player from a few tiles out, not just on actual contact.
+    aggroRadiusTiles: 5,
     carriedItemRolls: [
       { label: 'wand of shadows', chance: 0.12 },
       { label: 'obsidian helm', chance: 0.18 },
@@ -440,6 +460,9 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     expReward: 450,
     attackDamage: 50,
     goldReward: 30,
+    // Phase E's own "aggro radius" ask — notices an approaching
+    // player from a few tiles out, not just on actual contact.
+    aggroRadiusTiles: 5,
     carriedItemRolls: [
       { label: 'wand of the ashen king', chance: 0.1 },
       { label: 'dragon scale armor', chance: 0.15 },

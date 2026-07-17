@@ -45,6 +45,11 @@ export interface CharacterSummary {
   skinTone: string | null;
   level: number;
   map: string;
+  // A later follow-up ask: "show a specialization badge on the character
+  // select screen" — null until level 10 and a path chosen (see
+  // handleChooseSpecialization), same as everywhere else specialization
+  // is surfaced.
+  specialization: string | null;
 }
 
 @Injectable()
@@ -168,6 +173,7 @@ export class AuthService {
       skinTone: c.skinTone,
       level: c.level,
       map: c.map,
+      specialization: c.specialization,
     }));
   }
 
@@ -220,6 +226,7 @@ export class AuthService {
       skinTone: player.skinTone,
       level: player.level,
       map: player.map,
+      specialization: null,
     };
   }
 

@@ -25,6 +25,29 @@ export function renderShopModal(): void {
     li.appendChild(buyBtn);
     shopItemList.appendChild(li);
   }
+
+  // A later follow-up ask: "sell to vendor" — every vendor buys back
+  // anything the player is carrying (see vendors.ts's own sellValueFor),
+  // shown as a second list right below what the shop itself sells.
+  if (myProfile && myProfile.inventory.length > 0) {
+    const divider = document.createElement('li');
+    divider.className = 'shop-item-divider';
+    divider.textContent = 'Your items';
+    shopItemList.appendChild(divider);
+    myProfile.inventory.forEach((item, itemIndex) => {
+      const li = document.createElement('li');
+      li.className = 'shop-item';
+      const label = document.createElement('span');
+      label.textContent = item;
+      const sellBtn = document.createElement('button');
+      sellBtn.type = 'button';
+      sellBtn.textContent = 'Sell';
+      sellBtn.addEventListener('click', () => sellVendorItem(itemIndex));
+      li.appendChild(label);
+      li.appendChild(sellBtn);
+      shopItemList.appendChild(li);
+    });
+  }
 }
 
 export function openShopModal(vendor: VendorSnapshot): void {
@@ -53,6 +76,27 @@ function buyVendorItem(itemLabel: string): void {
           gold: ack.gold ?? myProfile.gold,
           canteenDrinks: ack.canteenDrinks ?? myProfile.canteenDrinks,
         });
+        refreshOpenModals();
+      }
+      if (ack.message) logCombatMessage(ack.message);
+      renderShopModal();
+    })
+    .catch(() => {
+      /* nothing to show */
+    });
+}
+
+function sellVendorItem(itemIndex: number): void {
+  if (!currentVendor) return;
+  network
+    .sellItem(currentVendor.id, itemIndex)
+    .then((ack) => {
+      if (!ack.ok) {
+        if (ack.message) logCombatMessage(ack.message);
+        return;
+      }
+      if (myProfile) {
+        setMyProfile({ ...myProfile, inventory: ack.inventory ?? myProfile.inventory, gold: ack.gold ?? myProfile.gold });
         refreshOpenModals();
       }
       if (ack.message) logCombatMessage(ack.message);

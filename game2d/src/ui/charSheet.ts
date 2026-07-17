@@ -5,6 +5,7 @@ import {
   appendStatRow,
   charSheetBody,
   charSheetModal,
+  charSheetPreview,
   charSheetUsername,
   registerModalOpenHandler,
   registerModalRefreshHandler,
@@ -103,6 +104,14 @@ function appendAllocatableStatRow(label: string, stat: AllocatableStat, value: n
 export function renderCharSheet(): void {
   if (!myProfile) return;
   charSheetUsername.textContent = myProfile.username;
+  // A later follow-up ask: "a sprite preview on the character sheet" —
+  // same gender/skin/hair -> spritesheet naming convention (and same
+  // first-frame crop) characterSelect.ts's own live preview already uses.
+  charSheetPreview.style.backgroundImage =
+    myProfile.race === 'human'
+      ? `url(/human-${myProfile.gender}-${myProfile.skinTone}-${myProfile.hairColor}-spritesheet.png)`
+      : `url(/${myProfile.race}-spritesheet.png)`;
+  charSheetPreview.style.backgroundSize = '880px 560px';
   charSheetBody.innerHTML = '';
 
   const hasPoints = myProfile.statPointsAvailable > 0;

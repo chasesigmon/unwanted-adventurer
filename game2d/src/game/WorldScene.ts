@@ -251,6 +251,13 @@ import { openMonsterSummonsModal } from '../ui/monsterSummonsModal.js';
 
 const autopilotStatusEl = document.getElementById('autopilot-status') as HTMLDivElement;
 
+// A rare monster's own distinguishing tint (a later follow-up ask: the
+// scale bump alone read as "a slightly bigger imp," easy to miss) — a
+// warm gold, applied once at sprite creation since a rare's own sprite is
+// never destroyed/recreated for the life of the map (maxCount: 1, no
+// class of monster besides these 3 ever toggles isRare on/off).
+const RARE_MONSTER_TINT = 0xffd166;
+
 export class WorldScene extends Phaser.Scene {
   private network!: NetworkManager;
   private player!: Phaser.GameObjects.Sprite;
@@ -2687,15 +2694,19 @@ export class WorldScene extends Phaser.Scene {
     for (const m of state.monsters) {
       seenMonsters.add(m.id);
 
+      // A rare variant (a later follow-up ask: "slightly bigger... AND
+      // visually/name distinct, not just bigger") — a golden tint on top
+      // of the existing scale bump, plus a "Rare " label prefix everywhere
+      // its kind is shown (target panel, tooltip) so it doesn't just read
+      // as "a slightly larger imp" at a glance.
+      const displayLabel = m.isRare ? `Rare ${m.kind}` : m.kind;
       let sprite = this.monsterSprites.get(m.id);
       if (!sprite) {
         const pos = this.tilePosition(m.row, m.col);
-        // A rare variant (a later follow-up ask: "slightly bigger than
-        // the other monsters of its kind") — a modest scale bump, not a
-        // whole different sprite.
         sprite = this.add
           .sprite(pos.x, pos.y, textureKeyFor(m.kind), idleFrameFor(m.kind, 'down'))
           .setScale(m.isRare ? CHAR_SCALE * 1.35 : CHAR_SCALE);
+        if (m.isRare) sprite.setTint(RARE_MONSTER_TINT);
         sprite.setData('row', m.row);
         sprite.setData('col', m.col);
         this.monsterSprites.set(m.id, sprite);
@@ -2703,7 +2714,7 @@ export class WorldScene extends Phaser.Scene {
         this.moveOrSnap(sprite, m.kind, m.row, m.col);
       }
       sprite.setData('kind', m.kind);
-      sprite.setData('label', m.kind);
+      sprite.setData('label', displayLabel);
       sprite.setData('hp', m.hp);
       sprite.setData('maxHp', m.maxHp);
       sprite.setData('level', m.level);
@@ -2713,7 +2724,7 @@ export class WorldScene extends Phaser.Scene {
       const hasShield = m.carriedItems.some((item) => item.toLowerCase().includes('shield'));
       this.ensureWeaponSprite(sprite, hasWeapon, (sprite.getData('facing') as Facing) ?? 'down');
       this.ensureShieldSprite(sprite, hasShield, (sprite.getData('facing') as Facing) ?? 'down');
-      if (this.targetKind === 'monster' && this.targetId === m.id) updateTargetPanel(m.kind, m.level, m.hp, m.maxHp);
+      if (this.targetKind === 'monster' && this.targetId === m.id) updateTargetPanel(displayLabel, m.level, m.hp, m.maxHp);
     }
     for (const [id, sprite] of this.monsterSprites) {
       if (!seenMonsters.has(id)) {

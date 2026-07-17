@@ -207,6 +207,24 @@ export function triggerActionSlot(index: number): void {
   if (skillName) activeScene?.useTargetedSkill(skillName);
 }
 
+// A later follow-up ask: "shift-click a skill in the Skills modal to
+// pull it back off the action bar" — a quick-unassign complementing
+// double-click's own quick-assign (renderSkillRow's dblclick handler)
+// without needing to open the action bar and drag it off by hand.
+// Returns whether anything was actually cleared.
+export function removeFromActionBar(skillName: string): boolean {
+  let removed = false;
+  for (let i = 0; i < ACTION_BAR_SLOT_COUNT; i++) {
+    if (actionBarSkills[i] === skillName) {
+      actionBarSkills[i] = null;
+      renderActionSlot(i);
+      removed = true;
+    }
+  }
+  if (removed) saveActionBar();
+  return removed;
+}
+
 export function assignActionSlot(index: number, skillName: string): void {
   // Punch and dagger share one "Attack" slot — dropping either one bumps
   // whichever OTHER slot currently holds the other, rather than allowing

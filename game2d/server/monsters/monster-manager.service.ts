@@ -11,6 +11,7 @@ import {
   isGreatHallChairBlocked,
   isPortalBlocked,
   isBramwickSignBlocked,
+  isWithinRadius,
 } from '../../shared/lighting.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
@@ -85,18 +86,28 @@ export class MonsterManagerService {
     this.locatePlayer = locator;
   }
 
+  // Phase E's own "portal monster aggro radius" ask — same callback-
+  // injection reasoning as locatePlayer above, but for every player on a
+  // map at once (see checkProximityAggro), since a single-username lookup
+  // can't answer "who, if anyone, just wandered close enough to notice."
+  private playersOnMap: (mapName: MapName) => Array<{ username: string; row: number; col: number }> = () => [];
+
+  setPlayersOnMapLocator(locator: (mapName: MapName) => Array<{ username: string; row: number; col: number }>): void {
+    this.playersOnMap = locator;
+  }
+
   // Whoever last landed a hit on this monster (by any means — a tick-
   // resolved attack, a queued skill) — set by GameGateway's combat tick.
   // Aggro persists until it times out from lack of contact, the target
   // logs off/changes map, or the monster dies.
   private aggro = new Map<string, { targetUsername: string; lastContactTick: number }>();
   private static readonly AGGRO_TIMEOUT_TICKS = 10;
-  // "Aggro'd monsters should move a little faster... the default
-  // movement is a little too slow" (a later follow-up ask) — how many
-  // tile-steps a player-aggro chase takes per combat tick, vs. the
-  // ordinary 1 a free wander/patrol step (or the stone-block chase)
-  // takes.
-  private static readonly AGGRO_CHASE_STEPS_PER_TICK = 2;
+  // Incremented once per chaseAggroTargets() call (the fast tick) — used
+  // only to make a slowed monster's chase skip every other fast tick
+  // (see stepTowardAggroTarget's own isSlowed branch), since "how many
+  // steps per call" no longer means anything now that the tick itself is
+  // already fast (see chaseAggroTargets's own doc comment).
+  private fastTickCounter = 0;
 
   setAggro(monsterId: string, targetUsername: string, tick: number): void {
     // Illusionist's own invisibility (a later follow-up ask) — "monsters
@@ -398,6 +409,7 @@ export class MonsterManagerService {
           }
         : {}),
       ...(species.attackDamage !== undefined ? { attackDamage: species.attackDamage } : {}),
+      ...(species.aggroRadiusTiles !== undefined ? { aggroRadiusTiles: species.aggroRadiusTiles } : {}),
     };
     this.monsters.set(monster.id, monster);
   }
@@ -420,6 +432,16 @@ export class MonsterManagerService {
 
   // `currentTick` is GameGateway's own combat/world-tick counter, used
   // purely to expire stale aggro (see AGGRO_TIMEOUT_TICKS).
+  // Ordinary free-roam/patrol wander only now — a later follow-up ask
+  // ("aggro speed" tuning: a chasing monster covering only 2 tiles per
+  // whole 3s combat tick, ~0.67 tiles/sec, could never catch a player
+  // walking continuously at ~4.5 tiles/sec) moved aggro-chase stepping
+  // onto its own much faster dedicated tick instead (see
+  // chaseAggroTargets/game.gateway.ts's FOLLOWER_STEP_MS interval, shared
+  // with the pet/animated-monster follower movement this same fix
+  // pattern was already built for) — an aggro'd monster is skipped here
+  // entirely so the two ticks never fight over the same monster's
+  // position in the same instant.
   wanderAll(currentTick: number): Set<MapName> {
     const deltas = Object.values(DIRECTION_DELTAS);
     const changedMaps = new Set<MapName>();
@@ -427,7 +449,7 @@ export class MonsterManagerService {
       // Stupefaciunt (a later follow-up ask) — stunned monsters don't
       // wander OR chase this tick at all.
       if (monster.stunUntilTick !== undefined && currentTick < monster.stunUntilTick) continue;
-      if (this.stepTowardAggroTarget(monster, currentTick, changedMaps)) continue;
+      if (this.hasActiveAggro(monster)) continue;
 
       if (monster.patrolRangeTiles !== undefined) {
         this.stepPatrol(monster, changedMaps);
@@ -444,6 +466,50 @@ export class MonsterManagerService {
       }
     }
     return changedMaps;
+  }
+
+  private hasActiveAggro(monster: Monster): boolean {
+    return this.stoneBlockAggro.has(monster.id) || this.animatedMonsterAggro.has(monster.id) || this.aggro.has(monster.id);
+  }
+
+  // The "speed-matching" fix's own fast tick (called from game.gateway.ts
+  // alongside pet/animated-monster follower movement) — every monster
+  // currently chasing ANYTHING (a player, a stone block, a demon imp)
+  // steps here instead of on the slower wanderAll tick. Actual attack
+  // resolution (resolveMonsterInitiatedAttack) stays on the original
+  // slower combat tick, same "movement speeds up, attack cadence doesn't"
+  // split Phase C's own follower speed fix already established.
+  chaseAggroTargets(currentTick: number): Set<MapName> {
+    this.fastTickCounter += 1;
+    const changedMaps = new Set<MapName>();
+    for (const monster of this.monsters.values()) {
+      if (monster.stunUntilTick !== undefined && currentTick < monster.stunUntilTick) continue;
+      this.stepTowardAggroTarget(monster, currentTick, changedMaps);
+    }
+    return changedMaps;
+  }
+
+  // Phase E's own "portal monster aggro radius" ask — every OTHER
+  // monster in this game only ever aggroes from actual combat contact
+  // (see setAggro, called from game.gateway.ts's combat resolution); the
+  // 4 portal dungeons' own escalating-difficulty monsters (see
+  // Monster.aggroRadiusTiles) additionally notice a player who's simply
+  // wandered within range, same as a real "detection radius" would. Runs
+  // on the ordinary (slower) wander tick — noticing someone a few tiles
+  // out doesn't need fast-tick precision. Invisibility is already
+  // respected for free (setAggro itself refuses while the target's
+  // invisible), and a monster already aggro'd onto someone is skipped —
+  // this only ever STARTS a fresh aggro, never redirects an active one.
+  checkProximityAggro(currentTick: number): void {
+    for (const monster of this.monsters.values()) {
+      if (monster.aggroRadiusTiles === undefined || this.aggro.has(monster.id)) continue;
+      for (const player of this.playersOnMap(monster.mapName)) {
+        if (isWithinRadius(player.row, player.col, monster.row, monster.col, monster.aggroRadiusTiles)) {
+          this.setAggro(monster.id, player.username, currentTick);
+          break;
+        }
+      }
+    }
   }
 
   // A "back and forth" wander mode (a follow-up ask, imps only) — paces
@@ -578,22 +644,15 @@ export class MonsterManagerService {
       return true;
     }
 
-    // "Aggro'd monsters should move a little faster in getting to the
-    // player — the default movement is a little too slow" (a later
-    // follow-up ask) — a player-aggro chase takes up to
-    // AGGRO_CHASE_STEPS_PER_TICK steps this same tick instead of the
-    // ordinary 1, stopping early the instant it's adjacent rather than
-    // overshooting past the player. Patrol/free wander and the
-    // stone-block chase above are unaffected — only closing in on an
-    // aggro'd PLAYER gets the speed boost.
     // Water bolt (a later follow-up ask) — "slow the monster down for 1
-    // combat tick": a slowed monster still chases, just at the ordinary
-    // 1-step pace even while aggro'd, for as long as slowUntilTick says.
-    const chaseSteps = this.isSlowed(monster.id, currentTick) ? 1 : MonsterManagerService.AGGRO_CHASE_STEPS_PER_TICK;
-    for (let i = 0; i < chaseSteps; i++) {
-      this.stepToward(monster, target.row, target.col, changedMaps);
-      if (Math.abs(target.row - monster.row) <= 1 && Math.abs(target.col - monster.col) <= 1) break;
+    // combat tick": a slowed monster chases at half the ordinary rate —
+    // this method is now called every fast tick (see chaseAggroTargets),
+    // so "half rate" means skipping every other invocation, tracked via
+    // fastTickCounter's own parity rather than a steps-per-call count.
+    if (this.isSlowed(monster.id, currentTick) && this.fastTickCounter % 2 !== 0) {
+      return true;
     }
+    this.stepToward(monster, target.row, target.col, changedMaps);
     return true;
   }
 

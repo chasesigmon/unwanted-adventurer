@@ -10,6 +10,7 @@ import type {
   CombatEventPayload,
   LootAck,
   BuyAck,
+  SellAck,
   PetCommandAck,
   CommandFollowerAttackAck,
   FollowerItemAck,
@@ -47,6 +48,9 @@ export interface CharacterSummary {
   skinTone: SkinTone | null;
   level: number;
   map: string;
+  // A later follow-up ask: a specialization badge on the character-select
+  // screen (see characterSelect.ts) — null until level 10 and chosen.
+  specialization: string | null;
 }
 type CharactersResponse = { ok: true; characters: CharacterSummary[] } | { ok: false; error: string };
 type CharacterResponse = { ok: true; character: CharacterSummary } | { ok: false; error: string };
@@ -417,6 +421,20 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('buyItem', { vendorId, itemLabel }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // A later follow-up ask: "sell to vendor".
+  sellItem(vendorId: string, itemIndex: number): Promise<SellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('sellItem', { vendorId, itemIndex }, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

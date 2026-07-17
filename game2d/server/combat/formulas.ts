@@ -214,6 +214,9 @@ export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
   'cloth boots': 'boots',
   'cloth vambraces': 'vambraces',
   'cloth greaves': 'greaves',
+  // A later follow-up ask — the cloth set covered every OTHER armor slot
+  // already, gauntlets was the one gap.
+  'cloth gauntlets': 'gauntlets',
   'studded armor': 'torso',
   'studded helmet': 'head',
   'boots of quickness': 'boots',
@@ -274,6 +277,7 @@ export const ARMOR_ITEM_AC_BONUS: Record<string, number> = {
   'cloth boots': 4,
   'cloth vambraces': 4,
   'cloth greaves': 4,
+  'cloth gauntlets': 4,
   'studded armor': 8,
   'studded helmet': 8,
   // The 4 portal dungeons' own armor pieces (a later follow-up ask) —

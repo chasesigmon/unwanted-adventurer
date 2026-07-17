@@ -3,7 +3,7 @@ import { myProfile } from '../state.js';
 import { attachTooltip } from './tooltip.js';
 import { SKILL_DESCRIPTIONS, SKILL_CATEGORIES, skillCategory, createCooldownOverlay, isAttackSkill, isUsableSkill, skillIconColor } from './skillMeta.js';
 import { skillIconGlyphUrl } from './skillIcons.js';
-import { actionBarSkills, assignActionSlot, saveActionBar, suppressDragGhost } from './actionBar.js';
+import { actionBarSkills, assignActionSlot, removeFromActionBar, saveActionBar, suppressDragGhost } from './actionBar.js';
 import { logCombatMessage } from './log.js';
 import { registerModalOpenHandler, registerModalRefreshHandler, skillsBody, skillsModal } from './modalCore.js';
 
@@ -26,10 +26,20 @@ function renderSkillRow(skillName: string, valueText: string): void {
   if (usable) {
     icon.draggable = true;
     icon.classList.add('draggable');
-    attachTooltip(icon, () => 'Drag to the action bar (or double-click) to use on your selected target');
+    attachTooltip(icon, () => 'Drag to the action bar (or double-click) to use on your selected target — shift-click to pull it back off');
     icon.addEventListener('dragstart', (e) => {
       e.dataTransfer?.setData('text/plain', skillName);
       suppressDragGhost(e);
+    });
+    icon.addEventListener('click', (e) => {
+      // A later follow-up ask: "shift-click a skill to quick-unassign it
+      // from the action bar" — complements double-click's own
+      // quick-assign below, no need to open the action bar and drag it
+      // off by hand.
+      if (!e.shiftKey) return;
+      if (!removeFromActionBar(skillName)) {
+        logCombatMessage(`${skillName} isn't on your action bar.`);
+      }
     });
     // Double-click drops it straight into the next free action-bar slot
     // — the same singleton-attack-slot rule the drag-and-drop path uses

@@ -2,7 +2,7 @@
 // unequipping, consuming, and using an item all funnel through the same
 // applyUseItemAck reconciliation of myProfile.
 import { activeScene, myProfile, network, setMyProfile } from '../state.js';
-import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, type EquipmentSlot } from '../../shared/equipment.js';
+import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, EQUIPMENT_ITEM_BONUS_LABEL, type EquipmentSlot } from '../../shared/equipment.js';
 import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem } from '../../shared/items.js';
 import type { UseItemAck } from '../../shared/types.js';
 import { attachTooltip } from './tooltip.js';
@@ -189,6 +189,14 @@ function renderEquipmentRow(slot: EquipmentSlot, label: string, item: string | u
   valueEl.className = 'stat-value equipment-value';
   const text = document.createElement('span');
   text.textContent = item ?? '(none)';
+  // A later follow-up ask: "show what bonus a piece of gear actually
+  // gives" — a hover tooltip on the item's own name, same convention
+  // every other tooltip-bearing label in this project already uses.
+  const bonus = item ? EQUIPMENT_ITEM_BONUS_LABEL[item] : undefined;
+  if (bonus) {
+    attachTooltip(text, () => bonus);
+    text.style.cursor = 'help';
+  }
   valueEl.appendChild(text);
 
   if (item) {

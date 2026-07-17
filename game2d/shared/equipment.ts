@@ -42,6 +42,43 @@ export function isWandItem(item: string | undefined): boolean {
   return item === WAND_ITEM || (item?.startsWith('wand of') ?? false);
 }
 
+// A later follow-up ask: "show what bonus a piece of gear actually
+// gives" — the Equipment modal had no way to see this before, just the
+// character sheet's own rolled-up AC total. Plain display strings, kept
+// in sync BY HAND with the real numbers in combat/formulas.ts
+// (ARMOR_ITEM_AC_BONUS/BONE_SHIELD_ARMOR_CLASS_BONUS/WEAPON_DAMAGE_BONUS/
+// JEWELRY_DEXTERITY_BONUS/JEWELRY_INTELLIGENCE_BONUS) — those tables stay
+// server-only (combat/ isn't shared), so this is a deliberate duplicate
+// for display purposes only, same "shared/ can't import a server-only
+// constant" tradeoff already made elsewhere in this project. Absent for
+// anything with no mechanical bonus (a torch, cloth-less slots, ...).
+export const EQUIPMENT_ITEM_BONUS_LABEL: Record<string, string> = {
+  'cloth armor': '+4 armor class',
+  'cloth helmet': '+4 armor class',
+  'cloth boots': '+4 armor class',
+  'cloth vambraces': '+4 armor class',
+  'cloth greaves': '+4 armor class',
+  'cloth gauntlets': '+4 armor class',
+  'studded armor': '+8 armor class',
+  'studded helmet': '+8 armor class',
+  'chainmail vambraces': '+6 armor class',
+  "warlord's greaves": '+10 armor class',
+  'obsidian helm': '+12 armor class',
+  'dragon scale armor': '+16 armor class',
+  'bone shield': '+5 armor class',
+  'bone dagger': '+2 damage',
+  'opal earrings': '+1 dexterity',
+  'opal ring': '+1 dexterity',
+  'opal necklace': '+1 dexterity',
+  'bone ring': '+1 intelligence',
+  'wand of quickness': '+2 dexterity',
+  'wand of intelligence': '+1 intelligence',
+  'wand of frost': '+2 dexterity',
+  'wand of embers': '+2 intelligence',
+  'wand of shadows': '+3 intelligence',
+  'wand of the ashen king': '+2 dexterity, +4 intelligence',
+};
+
 export const EQUIPMENT_SLOT_LABELS: Record<EquipmentSlot, string> = {
   head: 'Head',
   earrings: 'Earrings',

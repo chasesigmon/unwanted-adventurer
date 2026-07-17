@@ -119,6 +119,16 @@ async function refreshCharacterList(): Promise<void> {
       label.addEventListener('click', () => void chooseCharacter(c.name));
       li.appendChild(label);
 
+      // A later follow-up ask: "show a specialization badge on the
+      // character select screen" — absent until level 10 and chosen (see
+      // CharacterSummary's own doc comment).
+      if (c.specialization) {
+        const badge = document.createElement('span');
+        badge.className = 'character-specialization-badge';
+        badge.textContent = c.specialization.charAt(0).toUpperCase() + c.specialization.slice(1);
+        li.appendChild(badge);
+      }
+
       // A follow-up ask: "the ability for people to delete players from
       // their character selection page" — stopPropagation so clicking
       // Delete doesn't ALSO select/play the character underneath it.
