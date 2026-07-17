@@ -3,7 +3,7 @@
 // WorldScene's useTargetedSkill), not an arm-then-click flow like murus
 // lapideus/animate dead. Lists only the points of interest
 // myProfile.visitedPois already contains.
-import { myProfile, network } from '../state.js';
+import { activeScene, myProfile, network } from '../state.js';
 import { RECALL_POINTS } from '../../shared/recall.js';
 import { closeAllModals, hideModal, recallModal, recallPoiList, updateInputCaptured } from './modalCore.js';
 import { logCombatMessage } from './log.js';
@@ -45,6 +45,14 @@ export function openRecallModal(): void {
               // but there's no reason to rely on that coincidence.
               hideModal(recallModal);
               updateInputCaptured();
+              // A later follow-up bug fix: "teachers and benches and
+              // things didn't show up until I moved" — the room-wide
+              // 'map:state' broadcast for the destination can arrive
+              // before WorldScene's own 'sync' handler has updated
+              // currentMap to match, so it gets silently dropped; this
+              // ack's own mapState is guaranteed fresh and for the right
+              // room (see CastSpellAck's own doc comment).
+              if (ack.mapState) activeScene?.applyMapState(ack.mapState);
             } else btn.disabled = false;
           })
           .catch(() => {

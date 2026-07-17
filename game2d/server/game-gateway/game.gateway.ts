@@ -1297,6 +1297,67 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true };
   }
 
+  // A later follow-up ask: "right click on a player... moves in range to
+  // attack but does not attack and won't let me use attack skills/
+  // spells" — canAttackPlayer's own gate only ever wired PvP eligibility
+  // into the MELEE path (resolveHitOnPlayer); the wand's ranged auto-
+  // attack and every ranged spell (augue, stun, disarm, the elemental
+  // bolts, kinetic strike, sap health) still explicitly rejected a
+  // 'player' targetKind outright — which every new character actually
+  // hits first, since a wand is equipped from character creation and
+  // right-clicking with one armed always uses the RANGED path, never
+  // melee. Shared here so every one of those spots gets the exact same
+  // flat-damage/death handling resolveHitOnPlayer's own melee branch
+  // already has (no dodge/parry/counter-attack — same "simplified,
+  // ranged hits can't be avoided" shape those already use against a
+  // monster/npc target), instead of duplicating it in each handler.
+  // Returns undefined if the target isn't currently a valid PvP target at
+  // all (see canAttackPlayer) — callers show ITS OWN rejection message in
+  // that case, same as every other spell's own target-validation flow.
+  private applyPvpRangedDamage(
+    client: GameSocket,
+    targetUsername: string,
+    damage: number
+  ): { died: boolean; hp: number; maxHp: number; expGained?: number; leveledUp: boolean } | undefined {
+    if (!this.canAttackPlayer(client, targetUsername).ok) return undefined;
+    const targetClient = this.getActiveClient(targetUsername);
+    if (!targetClient) return undefined;
+
+    this.wakeIfNeeded(targetClient);
+    let dmg = damage;
+    if (targetClient.data.scutumActive && dmg > 0) {
+      dmg = Math.max(0, dmg - SCUTUM_DAMAGE_REDUCTION);
+    }
+    targetClient.data.hp = Math.max(0, targetClient.data.hp - dmg);
+    const died = targetClient.data.hp <= 0;
+
+    let expGained: number | undefined;
+    let leveledUp = false;
+    if (died) {
+      const rawExpGained = expGainFor(PLAYER_KILL_EXP_REWARD, client.data.level, targetClient.data.level);
+      const grantResult = this.grantExp(client, rawExpGained);
+      leveledUp = grantResult.leveledUp;
+      expGained = grantResult.message ? undefined : rawExpGained;
+      this.corpseManager.spawn(
+        targetClient.data.race,
+        targetClient.data.level,
+        [bodyPartLabelFor(targetClient.data.race)],
+        targetClient.data.map,
+        targetClient.data.row,
+        targetClient.data.col,
+        client.data.username
+      );
+      this.respawnDefeatedPlayer(targetClient);
+      this.endPlayerCombat(client.data.username);
+    } else {
+      this.worldManager.updateState(targetUsername, { hp: targetClient.data.hp });
+    }
+
+    void this.persistPosition(targetClient);
+    void this.persistStats(targetClient);
+    return { died, hp: targetClient.data.hp, maxHp: targetClient.data.maxHp, expGained, leveledUp };
+  }
+
   // Every map:state broadcast (25+ call sites) goes through here now
   // (a later follow-up ask added stone blocks, which
   // WorldManagerService.getMapState has no way to know about) so none of
@@ -2826,6 +2887,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!isWithinRadius(client.data.row, client.data.col, targetLoc.row, targetLoc.col, WAND_BOLT_RANGE_TILES)) {
       return { ok: false, message: "You're too far away to hit that with your wand." };
     }
+    // A later follow-up ask: same PvP eligibility gate the melee path
+    // (engageInDirection) already had — this is the DEFAULT attack for
+    // anyone with a wand equipped (every character starts with one), so
+    // it needs the exact same check at arm time.
+    if (parsed.data.targetKind === 'player') {
+      const pvpCheck = this.canAttackPlayer(client, parsed.data.targetId);
+      if (!pvpCheck.ok) return { ok: false, message: pvpCheck.message };
+    }
 
     this.playerCombat.set(client.data.username, {
       targetKind: parsed.data.targetKind,
@@ -3414,10 +3483,37 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return;
     }
 
-    // PvP wand bolts aren't part of this ask ("shoots a little bolt at
-    // the imp target") — monster/scarecrow only for now, same scope
-    // limit augue's own targetKind guard already has.
-    this.endPlayerCombat(client.data.username);
+    // A later follow-up ask: "right click on a player... does not attack"
+    // — wand bolt against a player now goes through the same shared
+    // applyPvpRangedDamage helper every ranged spell's own player branch
+    // uses (see canAttackPlayer's own eligibility rules).
+    const targetUsername = session.targetId;
+    const wandBoltDamage = baseWandBoltDamage;
+    const result = this.applyPvpRangedDamage(client, targetUsername, wandBoltDamage);
+    if (!result) {
+      const rejection = this.canAttackPlayer(client, targetUsername);
+      if (rejection.message) this.systemMessage(client, rejection.message);
+      this.endPlayerCombat(client.data.username);
+      return;
+    }
+    const message = result.died
+      ? `${client.data.username}'s wand bolt strikes ${targetUsername} for ${wandBoltDamage} damage, defeating them!${result.expGained !== undefined ? ` (+${result.expGained} exp)` : ''}`
+      : `${client.data.username}'s wand bolt strikes ${targetUsername} for ${wandBoltDamage} damage.`;
+    void this.persistStats(client);
+    this.emitCombat(client, {
+      targetKind: 'player',
+      target: targetUsername,
+      targetLabel: targetUsername,
+      damage: wandBoltDamage,
+      targetHp: result.hp,
+      targetMaxHp: result.maxHp,
+      targetDied: result.died,
+      expGained: result.expGained,
+      leveledUp: result.leveledUp,
+      message,
+      skill: WAND_BOLT_SKILL,
+    });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
   }
 
   // Resolves exactly one combat tick's worth of hit(s) on a monster —
@@ -4530,7 +4626,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   @SubscribeMessage('castResera')
   handleCastResera(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastReseraAck {
     if (client.data.skills[UNLOCK_SKILL] === undefined) {
-      return { ok: false, message: "You don't know the resera spell yet." };
+      return { ok: false, message: "You don't know the unlock spell yet." };
     }
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
@@ -4583,7 +4679,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: "You're too far away to reach that." };
     }
     if (client.data.mana < RESERA_CAST_MANA_COST) {
-      return { ok: false, message: `You don't have enough mana to cast resera (${RESERA_CAST_MANA_COST} needed).` };
+      return { ok: false, message: `You don't have enough mana to cast unlock (${RESERA_CAST_MANA_COST} needed).` };
     }
 
     client.data.mana -= RESERA_CAST_MANA_COST;
@@ -4687,7 +4783,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   @SubscribeMessage('castAugue')
   handleCastAugue(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     if (client.data.skills[ARCANE_BOLT_SKILL] === undefined) {
-      return { ok: false, message: "You don't know the augue spell yet." };
+      return { ok: false, message: "You don't know the arcane bolt spell yet." };
     }
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
@@ -4695,7 +4791,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const cooldownUntil = client.data.skillCooldowns[ARCANE_BOLT_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
-      return { ok: false, message: `Augue is still recharging (${secondsLeft}s left).` };
+      return { ok: false, message: `Arcane bolt is still recharging (${secondsLeft}s left).` };
     }
     const parsed = augueTargetSchema.safeParse(payload);
     if (!parsed.success) {
@@ -4704,27 +4800,26 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // A later follow-up bug fix: "Augue doesn't appear to be costing any
     // mana to cast" — this check (and the matching deduction in each
     // branch below) was missing entirely; every other spell here already
-    // costs mana regardless of success or fumble. Augue is "arcane bolt"
-    // under the hood (see ARCANE_BOLT_SKILL) — a later follow-up ask made
-    // all "bolt" spells cost 7 mana specifically, its own
+    // costs mana regardless of success or fumble. A later follow-up ask
+    // made all "bolt" spells cost 7 mana specifically, its own
     // ARCANE_BOLT_MANA_COST rather than the shared SPELL_ATTACK_MANA_COST
     // the other non-bolt spells below still use.
     if (client.data.mana < ARCANE_BOLT_MANA_COST) {
-      return { ok: false, message: `You don't have enough mana to cast augue (${ARCANE_BOLT_MANA_COST} needed).` };
+      return { ok: false, message: `You don't have enough mana to cast arcane bolt (${ARCANE_BOLT_MANA_COST} needed).` };
     }
     // A practice scarecrow (or the original Great Plains training dummy)
-    // is a valid augue target too (a follow-up ask: "practice their
-    // offense spells, like augue, on them") — a much simpler, self-
-    // contained damage path than resolveHitOnNpc's own melee-oriented
-    // dodge/counter-attack resolution, since a ranged spell hit doesn't
-    // give the target a chance to dodge or fight back either way.
+    // is a valid target too (a follow-up ask: "practice their offense
+    // spells, like augue, on them") — a much simpler, self-contained
+    // damage path than resolveHitOnNpc's own melee-oriented dodge/
+    // counter-attack resolution, since a ranged spell hit doesn't give
+    // the target a chance to dodge or fight back either way.
     if (parsed.data.targetKind === 'npc') {
       const npc = NPCS.find((n) => n.id === parsed.data.targetId);
       if (!npc || npc.map !== client.data.map) {
         return { ok: false, message: 'Your target is no longer here.' };
       }
       if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, AUGUE_RANGE_TILES)) {
-        return { ok: false, message: "You're too far away to hit that with augue." };
+        return { ok: false, message: "You're too far away to hit that with arcane bolt." };
       }
 
       client.data.mana -= ARCANE_BOLT_MANA_COST;
@@ -4743,18 +4838,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
       npc.hp = Math.max(0, npc.hp - AUGUE_DAMAGE);
       const died = npc.hp <= 0;
-      if (!died) {
-        // A follow-up ask: a successful hit that DOESN'T finish the
-        // target off leaves it burning for a couple more ticks.
-        this.augueBurns.push({
-          targetKind: 'npc',
-          targetId: npc.id,
-          mapName: npc.map,
-          ticksRemaining: AUGUE_BURN_TICKS,
-          casterUsername: client.data.username,
-          spellLabel: 'augue',
-        });
-      }
+      // A later follow-up ask: "arcane bolt should not have a burning
+      // over time effect" — unlike fire bolt (which keeps its own,
+      // deliberately elemental-flavored, burnOnHit in resolveElementalBolt),
+      // arcane bolt no longer pushes onto augueBurns at all.
       if (died) {
         if (!npc.immortal) {
           this.corpseManager.spawn(npc.race, npc.level, [bodyPartLabelFor(npc.race), 'bone dagger'], npc.map, npc.row, npc.col);
@@ -4776,9 +4863,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
       const message = died
         ? npc.immortal
-          ? `${client.data.username}'s augue engulfs the ${label} in flame for ${AUGUE_DAMAGE} damage — it shrugs off the blow, unharmed.`
-          : `${client.data.username}'s augue engulfs the ${label} in flame for ${AUGUE_DAMAGE} damage, defeating it! It leaves a corpse and reappears elsewhere.`
-        : `${client.data.username}'s augue engulfs the ${label} in flame for ${AUGUE_DAMAGE} damage.`;
+          ? `${client.data.username}'s arcane bolt strikes ${label} for ${AUGUE_DAMAGE} damage — it shrugs off the blow, unharmed.`
+          : `${client.data.username}'s arcane bolt strikes ${label} for ${AUGUE_DAMAGE} damage, defeating it! It leaves a corpse and reappears elsewhere.`
+        : `${client.data.username}'s arcane bolt strikes ${label} for ${AUGUE_DAMAGE} damage.`;
 
       this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
       void this.persistStats(client);
@@ -4803,15 +4890,79 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
       return { ok: true, skills: client.data.skills, message };
     }
+    // A later follow-up ask: "right click on a player... won't let me use
+    // attack skills/spells" — arcane bolt now supports a player target
+    // too, gated by the same PvP eligibility rules as every other attack
+    // (see canAttackPlayer/applyPvpRangedDamage).
+    if (parsed.data.targetKind === 'player') {
+      const targetUsername = parsed.data.targetId;
+      const pvpCheck = this.canAttackPlayer(client, targetUsername);
+      if (!pvpCheck.ok) {
+        return { ok: false, message: pvpCheck.message ?? "You can't use arcane bolt on that target." };
+      }
+      const targetLoc = this.locateCombatTarget('player', targetUsername);
+      if (!targetLoc || targetLoc.mapName !== client.data.map) {
+        return { ok: false, message: 'Your target is no longer here.' };
+      }
+      if (!isWithinRadius(client.data.row, client.data.col, targetLoc.row, targetLoc.col, AUGUE_RANGE_TILES)) {
+        return { ok: false, message: "You're too far away to hit that with arcane bolt." };
+      }
+
+      client.data.mana -= ARCANE_BOLT_MANA_COST;
+      this.startSkillCooldown(client, ARCANE_BOLT_SKILL);
+      this.startAutoAttackAfterSpell(client, 'player', targetUsername);
+
+      if (!this.rollSpellSuccess(client, ARCANE_BOLT_SKILL)) {
+        const growth = this.maybeGrowSpellSkill(client, ARCANE_BOLT_SKILL);
+        const message = `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
+        void this.persistStats(client);
+        client.emit('sync', { player: this.snapshotFor(client) });
+        this.systemMessage(client, message);
+        return { ok: true, skills: client.data.skills, message };
+      }
+
+      const result = this.applyPvpRangedDamage(client, targetUsername, AUGUE_DAMAGE);
+      if (!result) {
+        return { ok: false, message: 'Your target is no longer here.' };
+      }
+
+      const growthMessages: string[] = [];
+      const growth = this.maybeGrowSpellSkill(client, ARCANE_BOLT_SKILL);
+      if (growth) growthMessages.push(growth);
+
+      const message = result.died
+        ? `${client.data.username}'s arcane bolt strikes ${targetUsername} for ${AUGUE_DAMAGE} damage, defeating them!${result.expGained !== undefined ? ` (+${result.expGained} exp)` : ''}`
+        : `${client.data.username}'s arcane bolt strikes ${targetUsername} for ${AUGUE_DAMAGE} damage.`;
+
+      this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      this.emitCombat(client, {
+        targetKind: 'player',
+        target: targetUsername,
+        targetLabel: targetUsername,
+        damage: AUGUE_DAMAGE,
+        targetHp: result.hp,
+        targetMaxHp: result.maxHp,
+        targetDied: result.died,
+        expGained: result.expGained,
+        leveledUp: result.leveledUp,
+        message,
+        growthMessages,
+        skill: ARCANE_BOLT_SKILL,
+      });
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      return { ok: true, skills: client.data.skills, message };
+    }
     if (parsed.data.targetKind !== 'monster') {
-      return { ok: false, message: "Augue can only target a monster or training skeleton right now — that's the only kind of target you can select." };
+      return { ok: false, message: "You can't use arcane bolt on that target." };
     }
     const monster = this.monsterManager.getMonster(parsed.data.targetId);
     if (!monster || monster.mapName !== client.data.map) {
       return { ok: false, message: 'Your target is no longer here.' };
     }
     if (!isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, AUGUE_RANGE_TILES)) {
-      return { ok: false, message: "You're too far away to hit that with augue." };
+      return { ok: false, message: "You're too far away to hit that with arcane bolt." };
     }
 
     client.data.mana -= ARCANE_BOLT_MANA_COST;
@@ -4831,18 +4982,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!result) {
       return { ok: false, message: 'Your target is no longer here.' };
     }
-    if (!result.died) {
-      // A follow-up ask: a successful hit that DOESN'T finish the target
-      // off leaves it burning for a couple more ticks.
-      this.augueBurns.push({
-        targetKind: 'monster',
-        targetId: monster.id,
-        mapName: monster.mapName,
-        ticksRemaining: AUGUE_BURN_TICKS,
-        casterUsername: client.data.username,
-        spellLabel: 'augue',
-      });
-    }
+    // A later follow-up ask: "arcane bolt should not have a burning over
+    // time effect like augue did" — the old augueBurns.push here was
+    // removed entirely; fire bolt keeps its own separate burn (see
+    // resolveElementalBolt's burnOnHit).
 
     const growthMessages: string[] = [];
     const growth = this.maybeGrowSpellSkill(client, ARCANE_BOLT_SKILL);
@@ -4863,8 +5006,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
 
     const message = result.died
-      ? `${client.data.username}'s augue engulfs the ${monster.kind} in flame for ${AUGUE_DAMAGE} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
-      : `${client.data.username}'s augue engulfs the ${monster.kind} in flame for ${AUGUE_DAMAGE} damage.`;
+      ? `${client.data.username}'s arcane bolt strikes the ${monster.kind} for ${AUGUE_DAMAGE} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
+      : `${client.data.username}'s arcane bolt strikes the ${monster.kind} for ${AUGUE_DAMAGE} damage.`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
     void this.persistStats(client);
@@ -5643,16 +5786,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // replaced the stupefaciunt/exarme podium-reading handlers that used
   // to live here.
 
-  // Stupefaciunt (a later follow-up ask) — a targeted stun, same
-  // range/target shape as augue but no damage: 2 combat ticks of
+  // Stun (a later follow-up ask) — a targeted stun, same range/target
+  // shape as arcane bolt but no damage: 2 combat ticks of
   // MonsterManagerService-level stun (can't move OR act — see
   // wanderAll/stepTowardAggroTarget's own early-return) instead. No
-  // success-chance roll (same as augue) — deterministic once in range,
-  // gated only by mana and its own cooldown.
+  // success-chance roll (same as arcane bolt) — deterministic once in
+  // range, gated only by mana and its own cooldown.
   @SubscribeMessage('castStupefaciunt')
   handleCastStupefaciunt(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     if (client.data.skills[STUN_SKILL] === undefined) {
-      return { ok: false, message: "You don't know the stupefaciunt spell yet." };
+      return { ok: false, message: "You don't know the stun spell yet." };
     }
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
@@ -5660,14 +5803,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const cooldownUntil = client.data.skillCooldowns[STUN_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
-      return { ok: false, message: `Stupefaciunt is still recharging (${secondsLeft}s left).` };
+      return { ok: false, message: `Stun is still recharging (${secondsLeft}s left).` };
     }
     const parsed = augueTargetSchema.safeParse(payload);
     if (!parsed.success) {
       return { ok: false, message: 'Invalid target.' };
     }
     if (client.data.mana < SPELL_ATTACK_MANA_COST) {
-      return { ok: false, message: `You don't have enough mana to cast stupefaciunt (${SPELL_ATTACK_MANA_COST} needed).` };
+      return { ok: false, message: `You don't have enough mana to cast stun (${SPELL_ATTACK_MANA_COST} needed).` };
     }
 
     if (parsed.data.targetKind === 'npc') {
@@ -5676,7 +5819,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: false, message: 'Your target is no longer here.' };
       }
       if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, SPELL_ATTACK_RANGE_TILES)) {
-        return { ok: false, message: "You're too far away to hit that with stupefaciunt." };
+        return { ok: false, message: "You're too far away to hit that with stun." };
       }
       client.data.mana -= SPELL_ATTACK_MANA_COST;
       this.startSkillCooldown(client, STUN_SKILL);
@@ -5693,25 +5836,62 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, message);
       return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
     }
+    // A later follow-up ask: stun now supports a player target too, same
+    // PvP-gated shape as arcane bolt — reuses the SAME paralyzedUntilTick
+    // registry glare already uses against a player (see handleMove/
+    // engageInDirection's own isParalyzed checks), just not gated to the
+    // skeleton race the way applyGlare itself is.
+    if (parsed.data.targetKind === 'player') {
+      const targetUsername = parsed.data.targetId;
+      const pvpCheck = this.canAttackPlayer(client, targetUsername);
+      if (!pvpCheck.ok) {
+        return { ok: false, message: pvpCheck.message ?? "You can't use stun on that target." };
+      }
+      const targetLoc = this.locateCombatTarget('player', targetUsername);
+      if (!targetLoc || targetLoc.mapName !== client.data.map) {
+        return { ok: false, message: 'Your target is no longer here.' };
+      }
+      if (!isWithinRadius(client.data.row, client.data.col, targetLoc.row, targetLoc.col, SPELL_ATTACK_RANGE_TILES)) {
+        return { ok: false, message: "You're too far away to hit that with stun." };
+      }
+      client.data.mana -= SPELL_ATTACK_MANA_COST;
+      this.startSkillCooldown(client, STUN_SKILL);
+      this.startAutoAttackAfterSpell(client, 'player', targetUsername);
+      const succeeded = this.rollSpellSuccess(client, STUN_SKILL);
+      if (succeeded) this.paralyzedUntilTick.set(`player:${targetUsername}`, this.combatTickCount + STUPEFACIUNT_STUN_TICKS);
+      const growth = this.maybeGrowSpellSkill(client, STUN_SKILL);
+      const message = succeeded
+        ? `${client.data.username}'s stun freezes ${targetUsername} in place!${growth ? ` ${growth}` : ''}`
+        : `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
+      this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      this.systemMessage(client, message);
+      if (succeeded) {
+        const targetClient = this.getActiveClient(targetUsername);
+        if (targetClient) this.systemMessage(targetClient, `${client.data.username}'s stun freezes you in place!`);
+      }
+      return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+    }
     if (parsed.data.targetKind !== 'monster') {
-      return { ok: false, message: 'Stupefaciunt can only target a monster or training skeleton right now.' };
+      return { ok: false, message: "You can't use stun on that target." };
     }
     const monster = this.monsterManager.getMonster(parsed.data.targetId);
     if (!monster || monster.mapName !== client.data.map) {
       return { ok: false, message: 'Your target is no longer here.' };
     }
     if (!isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, SPELL_ATTACK_RANGE_TILES)) {
-      return { ok: false, message: "You're too far away to hit that with stupefaciunt." };
+      return { ok: false, message: "You're too far away to hit that with stun." };
     }
 
     client.data.mana -= SPELL_ATTACK_MANA_COST;
     this.startSkillCooldown(client, STUN_SKILL);
     this.startAutoAttackAfterSpell(client, 'monster', monster.id);
-    const stupefaciuntSucceeded = this.rollSpellSuccess(client, STUN_SKILL);
-    if (stupefaciuntSucceeded) this.monsterManager.stun(monster.id, this.combatTickCount + STUPEFACIUNT_STUN_TICKS);
+    const stunSucceeded = this.rollSpellSuccess(client, STUN_SKILL);
+    if (stunSucceeded) this.monsterManager.stun(monster.id, this.combatTickCount + STUPEFACIUNT_STUN_TICKS);
     const growth = this.maybeGrowSpellSkill(client, STUN_SKILL);
-    const message = stupefaciuntSucceeded
-      ? `${client.data.username}'s stupefaciunt freezes the ${monster.kind} in place!${growth ? ` ${growth}` : ''}`
+    const message = stunSucceeded
+      ? `${client.data.username}'s stun freezes the ${monster.kind} in place!${growth ? ` ${growth}` : ''}`
       : `You fumble the incantation and nothing happens.${growth ? ` ${growth}` : ''}`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
@@ -5721,16 +5901,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
   }
 
-  // Exarme (a later follow-up ask) — a targeted disarm: a monster
+  // Disarm (a later follow-up ask) — a targeted disarm: a monster
   // carrying a weapon-like item (the same "dagger" heuristic
   // skillsForCarriedItems already uses to grant the dagger skill) loses
   // it into the caster's own inventory and its dagger skill along with
   // it; a monster with nothing to disarm just reports as much. Same
-  // range/no-success-roll shape as stupefaciunt above.
+  // range/no-success-roll shape as stun above.
   @SubscribeMessage('castExarme')
   handleCastExarme(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     if (client.data.skills[DISARM_SKILL] === undefined) {
-      return { ok: false, message: "You don't know the exarme spell yet." };
+      return { ok: false, message: "You don't know the disarm spell yet." };
     }
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
@@ -5738,14 +5918,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const cooldownUntil = client.data.skillCooldowns[DISARM_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
-      return { ok: false, message: `Exarme is still recharging (${secondsLeft}s left).` };
+      return { ok: false, message: `Disarm is still recharging (${secondsLeft}s left).` };
     }
     const parsed = augueTargetSchema.safeParse(payload);
     if (!parsed.success) {
       return { ok: false, message: 'Invalid target.' };
     }
     if (client.data.mana < SPELL_ATTACK_MANA_COST) {
-      return { ok: false, message: `You don't have enough mana to cast exarme (${SPELL_ATTACK_MANA_COST} needed).` };
+      return { ok: false, message: `You don't have enough mana to cast disarm (${SPELL_ATTACK_MANA_COST} needed).` };
     }
     if (parsed.data.targetKind === 'npc') {
       const npc = NPCS.find((n) => n.id === parsed.data.targetId);
@@ -5753,7 +5933,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: false, message: 'Your target is no longer here.' };
       }
       if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, SPELL_ATTACK_RANGE_TILES)) {
-        return { ok: false, message: "You're too far away to hit that with exarme." };
+        return { ok: false, message: "You're too far away to hit that with disarm." };
       }
       client.data.mana -= SPELL_ATTACK_MANA_COST;
       this.startSkillCooldown(client, DISARM_SKILL);
@@ -5778,7 +5958,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           message = `The ${label} isn't wielding a weapon.`;
         } else {
           const [weapon] = npc.carriedItems!.splice(weaponIndex, 1);
-          message = `${client.data.username}'s exarme knocks the ${weapon} from the ${label}'s grip!`;
+          message = `${client.data.username}'s disarm knocks the ${weapon} from the ${label}'s grip!`;
         }
       }
       if (growth) message = `${message} ${growth}`;
@@ -5789,15 +5969,69 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
       return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
     }
+    // A later follow-up ask: disarm now supports a player target too,
+    // same PvP-gated shape as arcane bolt/stun — strips whatever's in
+    // their own weapon equipment slot (a wand included) into the
+    // caster's inventory, same "loses it" shape as a monster's own
+    // dropped dagger below.
+    if (parsed.data.targetKind === 'player') {
+      const targetUsername = parsed.data.targetId;
+      const pvpCheck = this.canAttackPlayer(client, targetUsername);
+      if (!pvpCheck.ok) {
+        return { ok: false, message: pvpCheck.message ?? "You can't use disarm on that target." };
+      }
+      const targetLoc = this.locateCombatTarget('player', targetUsername);
+      if (!targetLoc || targetLoc.mapName !== client.data.map) {
+        return { ok: false, message: 'Your target is no longer here.' };
+      }
+      if (!isWithinRadius(client.data.row, client.data.col, targetLoc.row, targetLoc.col, SPELL_ATTACK_RANGE_TILES)) {
+        return { ok: false, message: "You're too far away to hit that with disarm." };
+      }
+      const targetClient = this.getActiveClient(targetUsername);
+      if (!targetClient) {
+        return { ok: false, message: 'Your target is no longer here.' };
+      }
+      client.data.mana -= SPELL_ATTACK_MANA_COST;
+      this.startSkillCooldown(client, DISARM_SKILL);
+      this.startAutoAttackAfterSpell(client, 'player', targetUsername);
+      let message: string;
+      if (!this.rollSpellSuccess(client, DISARM_SKILL)) {
+        message = 'You fumble the incantation and nothing happens.';
+      } else {
+        const weapon = targetClient.data.equipment.weapon;
+        if (!weapon) {
+          message = `${targetUsername} isn't wielding a weapon.`;
+        } else {
+          const { weapon: _removed, ...restEquipment } = targetClient.data.equipment;
+          targetClient.data.equipment = restEquipment;
+          targetClient.data.inventory = [...targetClient.data.inventory, weapon];
+          this.worldManager.updateState(targetUsername, { equipment: targetClient.data.equipment });
+          void this.persistStats(targetClient);
+          client.data.inventory = [...client.data.inventory, weapon];
+          message = `${client.data.username}'s disarm knocks the ${weapon} from ${targetUsername}'s grip!`;
+          const targetSync = this.snapshotFor(targetClient);
+          targetClient.emit('sync', { player: targetSync });
+          this.systemMessage(targetClient, `${client.data.username}'s disarm knocks the ${weapon} from your grip!`);
+        }
+      }
+      const growth = this.maybeGrowSpellSkill(client, DISARM_SKILL);
+      if (growth) message = `${message} ${growth}`;
+      this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills, inventory: client.data.inventory });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      this.systemMessage(client, message);
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+    }
     if (parsed.data.targetKind !== 'monster') {
-      return { ok: false, message: 'Exarme can only target a monster or training skeleton right now.' };
+      return { ok: false, message: "You can't use disarm on that target." };
     }
     const monster = this.monsterManager.getMonster(parsed.data.targetId);
     if (!monster || monster.mapName !== client.data.map) {
       return { ok: false, message: 'Your target is no longer here.' };
     }
     if (!isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, SPELL_ATTACK_RANGE_TILES)) {
-      return { ok: false, message: "You're too far away to hit that with exarme." };
+      return { ok: false, message: "You're too far away to hit that with disarm." };
     }
 
     client.data.mana -= SPELL_ATTACK_MANA_COST;
@@ -5815,7 +6049,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         delete monster.skills[DAGGER_SKILL];
         client.data.inventory = [...client.data.inventory, weapon!];
         this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
-        message = `${client.data.username}'s exarme knocks the ${weapon} from the ${monster.kind}'s grip!`;
+        message = `${client.data.username}'s disarm knocks the ${weapon} from the ${monster.kind}'s grip!`;
       }
     }
     const growth = this.maybeGrowSpellSkill(client, DISARM_SKILL);
@@ -5910,7 +6144,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   @SubscribeMessage('castMurusLapideus')
   handleCastMurusLapideus(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     if (client.data.skills[STONE_WALL_SKILL] === undefined) {
-      return { ok: false, message: "You don't know the murus lapideus spell yet." };
+      return { ok: false, message: "You don't know the stone wall spell yet." };
     }
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
@@ -5918,7 +6152,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const cooldownUntil = client.data.skillCooldowns[STONE_WALL_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
-      return { ok: false, message: `Murus lapideus is still recharging (${secondsLeft}s left).` };
+      return { ok: false, message: `Stone wall is still recharging (${secondsLeft}s left).` };
     }
     const parsed = z.object({ row: z.number(), col: z.number() }).safeParse(payload);
     if (!parsed.success) {
@@ -5941,7 +6175,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: "There's already something there." };
     }
     if (client.data.mana < SPELL_ATTACK_MANA_COST) {
-      return { ok: false, message: `You don't have enough mana to cast murus lapideus (${SPELL_ATTACK_MANA_COST} needed).` };
+      return { ok: false, message: `You don't have enough mana to cast stone wall (${SPELL_ATTACK_MANA_COST} needed).` };
     }
 
     client.data.mana -= SPELL_ATTACK_MANA_COST;
@@ -6395,6 +6629,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.mana -= RECALL_MANA_COST;
 
     let message: string;
+    let newMapState: MapStatePayload | undefined;
     if (!this.rollSpellSuccess(client, RECALL_SKILL)) {
       message = 'You fumble the incantation and nothing happens.';
     } else {
@@ -6417,6 +6652,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       for (const mapName of changedMaps) {
         this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
       }
+      // A later follow-up bug fix: "teachers and benches and things
+      // didn't show up until I moved" — same race MoveAck's own
+      // `mapState` field already fixed for ordinary transitions (see
+      // CastSpellAck's own doc comment). Computed AFTER the pet/animated-
+      // monster teleports above, so it reflects their arrival too.
+      newMapState = this.mapStateFor(point.landingMap);
       message = `You recall to ${point.label}.`;
     }
 
@@ -6427,7 +6668,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     this.systemMessage(client, message);
-    return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+    return { ok: true, mana: client.data.mana, skills: client.data.skills, message, mapState: newMapState };
   }
 
   // The Defense Classroom's own level-10 spell (a later follow-up ask) —

@@ -182,6 +182,17 @@ export const GREAT_HALL_STAGE_TEXTURE_KEY = 'great-hall-stage';
 // The castle's 4th floor own 4 decorative "swirling light blue" portals
 // (a later follow-up ask) — see shared/lighting.ts's portalPositionsFor.
 export const PORTAL_TEXTURE_KEY = 'portal';
+// The flight spell's own ground-hugging cloud (a later follow-up ask:
+// "put a small cloudy looking sphere under the character's feet... it
+// should be swirling like the portals and be cloudy") — same tween-driven
+// rotation convention as PORTAL_TEXTURE_KEY above, just a soft wispy puff
+// instead of a hard-edged spiral.
+export const FLIGHT_CLOUD_TEXTURE_KEY = 'flight-cloud';
+// How far below the character sprite's own anchor the cloud sits — a
+// positive y offset (down), roughly symmetric with HP_BAR_OFFSET_Y's own
+// upward offset, landing it at the character's visual feet rather than
+// their waist/head.
+export const FLIGHT_CLOUD_FEET_OFFSET_Y = 20;
 // Bramwick's own clickable name sign (a later follow-up ask) — see
 // shared/lighting.ts's BRAMWICK_SIGN_POSITION.
 export const SIGN_TEXTURE_KEY = 'sign';

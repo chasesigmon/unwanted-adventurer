@@ -370,10 +370,24 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     patrolRangeTiles: 3,
   },
   {
+    // A later follow-up ask: "the rare wild skeleton and rare wild
+    // goblin were nowhere to be found. They should exist, check the
+    // previous rule about spawning" — this (and rare-wild-goblin below)
+    // were left on their OLD, pre-wizarding-pivot homeMap ('Labyrinth')
+    // when the ordinary wild skeleton population migrated to Grimoak
+    // Grounds' own eastern extension strip (see wild-skeleton-grounds
+    // above, and shared/maps.ts's GRIMOAK_GROUNDS_EXTENSION_MIN_COL) —
+    // rare-imp got that same migration, these two never did, so they
+    // were spawning on a map nobody can reach anymore. Same minSpawnCol
+    // restriction as their ordinary counterpart, so a rare one turns up
+    // in the same eastern area a player is already fighting the regular
+    // population in, not scattered across the whole grounds (imp
+    // territory).
     id: 'rare-wild-skeleton',
     kind: 'wild skeleton',
     monsterClass: 'undead',
-    homeMap: 'Labyrinth',
+    homeMap: 'Grimoak Grounds',
+    minSpawnCol: GRIMOAK_GROUNDS_EXTENSION_MIN_COL,
     maxCount: 1,
     isRare: true,
     respawnDelayMs: 60_000,
@@ -388,10 +402,12 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     ],
   },
   {
+    // Same fix/reasoning as rare-wild-skeleton above.
     id: 'rare-wild-goblin',
     kind: 'wild goblin',
     monsterClass: 'normal',
-    homeMap: 'Great Plains',
+    homeMap: 'Grimoak Grounds',
+    minSpawnCol: GRIMOAK_GROUNDS_EXTENSION_MIN_COL,
     maxCount: 1,
     isRare: true,
     respawnDelayMs: 60_000,

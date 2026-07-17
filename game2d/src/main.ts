@@ -74,6 +74,21 @@ function startGame(): void {
       // target above) rather than setTimeout — smoother and still capped.
       forceSetTimeOut: false,
     },
+    // A later follow-up bug fix: "select the treasure chest... click
+    // unlock... automatically reverts my selection to the Utility door" —
+    // Phaser's MouseManager defaults to ALSO listening for mousedown on
+    // `window` (not just the canvas), and dispatches a real pointerdown
+    // (using the click's own screen position) for ANY click whose target
+    // isn't the canvas — including a DOM button/overlay (the action bar,
+    // corner buttons, dock controls) sitting on top of it. Whatever world
+    // sprite happens to render underneath that DOM element then silently
+    // receives its own pointerdown first, stealing the current selection,
+    // before the DOM element's own click handler ever runs. Disabling
+    // window-level input listening confines Phaser's pointer events to
+    // actual clicks ON the canvas, the same as any other DOM element.
+    input: {
+      windowEvents: false,
+    },
   });
   gameInstance = game;
 

@@ -167,6 +167,8 @@ import {
   HEAD_CHAIR_TEXTURE_KEY,
   GREAT_HALL_STAGE_TEXTURE_KEY,
   PORTAL_TEXTURE_KEY,
+  FLIGHT_CLOUD_TEXTURE_KEY,
+  FLIGHT_CLOUD_FEET_OFFSET_Y,
   SIGN_TEXTURE_KEY,
   DIRT_ROAD_TEXTURE_KEY,
   STANDING_TORCH_TEXTURE_KEY,
@@ -297,6 +299,11 @@ export class WorldScene extends Phaser.Scene {
   // hides the underlying character sprite while its own wisp sprite is
   // shown.
   private wispSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  // Flight's own ground-hugging cloud (a later follow-up ask) — unlike
+  // wisp's sprite-replacing shape, this is an ADDITIONAL effect layered
+  // under the normal character sprite (same "layered on top/under, not a
+  // replacement" shape as updateScutumGlow), keyed the same way.
+  private flightCloudSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private floorTile!: Phaser.GameObjects.TileSprite;
   private doorSprites: Phaser.GameObjects.Sprite[] = [];
   // Classroom door symbols (a follow-up ask) — recreated alongside
@@ -628,6 +635,7 @@ export class WorldScene extends Phaser.Scene {
     this.load.image(GREAT_HALL_STAGE_TEXTURE_KEY, '/great-hall-stage.png');
     this.load.image(BED_TEXTURE_KEY, '/bed.png');
     this.load.image(PORTAL_TEXTURE_KEY, '/portal.png');
+    this.load.image(FLIGHT_CLOUD_TEXTURE_KEY, '/flight-cloud.png');
     this.load.image(SIGN_TEXTURE_KEY, '/sign.png');
     createWallTorchTexture(this);
     preloadCharacterSprites(this);
@@ -1247,6 +1255,7 @@ export class WorldScene extends Phaser.Scene {
     this.updateScutumGlow('self', this.player, Boolean(myProfile?.scutumActive));
     this.updateBarrierVisual();
     this.updateWispVisual('self', this.player, Boolean(myProfile?.wispActive));
+    this.updateFlightVisual('self', this.player, Boolean(myProfile?.flightActive));
     // Invisibility (a later follow-up ask) — "make the player's sprite
     // slightly faded while the spell is active," for the CASTER'S OWN
     // view of themselves only; other players don't even get a faded
@@ -1256,6 +1265,7 @@ export class WorldScene extends Phaser.Scene {
       this.repositionBarFor(sprite);
       this.updateScutumGlow(username, sprite, Boolean(sprite.getData('scutumActive')));
       this.updateWispVisual(username, sprite, Boolean(sprite.getData('wispActive')));
+      this.updateFlightVisual(username, sprite, Boolean(sprite.getData('flightActive')));
     }
     for (const sprite of this.npcSprites.values()) this.repositionBarFor(sprite);
     for (const sprite of this.monsterSprites.values()) this.repositionBarFor(sprite);
@@ -1317,6 +1327,28 @@ export class WorldScene extends Phaser.Scene {
     }
     wisp.setVisible(true);
     wisp.setPosition(sprite.x, sprite.y);
+  }
+
+  // Flight's own ground-hugging cloud (a later follow-up ask: "put a
+  // small cloudy looking sphere under the character's feet that moves
+  // with the character... swirling like the portals"). Unlike wisp's
+  // sprite-REPLACING shape, this sits UNDER the ordinary character sprite
+  // (lower depth) and never hides it — the player still looks like
+  // themselves, just floating over a wisp of cloud. Keyed the same way
+  // updateWispVisual/updateScutumGlow are (username, or 'self').
+  private updateFlightVisual(key: string, sprite: Phaser.GameObjects.Sprite, active: boolean): void {
+    let cloud = this.flightCloudSprites.get(key);
+    if (!active) {
+      cloud?.setVisible(false);
+      return;
+    }
+    if (!cloud) {
+      cloud = this.add.sprite(sprite.x, sprite.y, FLIGHT_CLOUD_TEXTURE_KEY).setDepth(sprite.depth - 0.01).setAlpha(0.85);
+      this.tweens.add({ targets: cloud, angle: 360, duration: 4000, repeat: -1, ease: 'Linear' });
+      this.flightCloudSprites.set(key, cloud);
+    }
+    cloud.setVisible(true);
+    cloud.setPosition(sprite.x, sprite.y + FLIGHT_CLOUD_FEET_OFFSET_Y);
   }
 
   // Barrier's own yellow dome (a later follow-up ask) — deliberately
@@ -1841,6 +1873,8 @@ export class WorldScene extends Phaser.Scene {
     this.scutumGlows.clear();
     for (const sprite of this.wispSprites.values()) sprite.destroy();
     this.wispSprites.clear();
+    for (const sprite of this.flightCloudSprites.values()) sprite.destroy();
+    this.flightCloudSprites.clear();
     for (const sprite of this.npcSprites.values()) this.destroyEntitySprite(sprite);
     this.npcSprites.clear();
     for (const sprite of this.monsterSprites.values()) this.destroyEntitySprite(sprite);
@@ -2685,7 +2719,14 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
-  private applyMapState(state: MapStatePayload): void {
+  // Public (a later follow-up bug fix: "teachers and benches... didn't
+  // show up until I moved" after recall) — recallModal.ts isn't part of
+  // WorldScene, so it needs a way to apply the `mapState` its own
+  // castRecall ack now carries (see CastSpellAck's own doc comment)
+  // instead of relying on the racy room-wide 'map:state' broadcast that
+  // used to be the only source and could arrive before `currentMap` had
+  // actually updated to the new room.
+  applyMapState(state: MapStatePayload): void {
     // We don't know our own (server-canonical, exact-case) username until
     // the 'sync' event sets it — without this guard, a map:state that
     // somehow arrived first would fail to filter "us" out of the roster
@@ -2725,6 +2766,8 @@ export class WorldScene extends Phaser.Scene {
           this.scutumGlows.delete(p.username);
           this.wispSprites.get(p.username)?.destroy();
           this.wispSprites.delete(p.username);
+          this.flightCloudSprites.get(p.username)?.destroy();
+          this.flightCloudSprites.delete(p.username);
         }
         continue;
       }
@@ -2782,6 +2825,8 @@ export class WorldScene extends Phaser.Scene {
         this.scutumGlows.delete(username);
         this.wispSprites.get(username)?.destroy();
         this.wispSprites.delete(username);
+        this.flightCloudSprites.get(username)?.destroy();
+        this.flightCloudSprites.delete(username);
       }
     }
 

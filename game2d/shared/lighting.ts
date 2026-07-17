@@ -574,14 +574,17 @@ export function emitsLight(equipment: Record<string, string>): boolean {
   return equipment.shield === TORCH_ITEM;
 }
 
-// The castle's 4th floor — 4 decorative "swirling light blue" portals,
-// one per wall (a later follow-up ask), positioned clear of the floor's
-// own real down-stairs (see shared/maps.ts's floorLandingDefinition —
-// the down-stairs sits at col FLOOR_LANDING_DOWN_STAIRS_COL, this file
-// doesn't need that one). Deliberately NOT a MapExit (see maps.ts's own
-// comment on why) — these are pure client-side props, solid (see
-// isPortalBlocked below) so walking "into" one that goes nowhere reads as
-// a wall, not a bug, until their real mechanics arrive later.
+// The castle's 4th floor — 4 "swirling light blue" portals, one per wall
+// (a later follow-up ask), positioned clear of the floor's own real
+// down-stairs (see shared/maps.ts's floorLandingDefinition — the
+// down-stairs sits at col FLOOR_LANDING_DOWN_STAIRS_COL, this file
+// doesn't need that one). Each one IS a real MapExit now (a later
+// follow-up ask: "add some places the portals will take the player" —
+// see maps.ts's own FLOOR4_LANDING.exits/portalDungeonDefinition), so a
+// player has to be able to stand ON this exact tile to trigger it (see
+// isPortalBlocked's own doc comment for why player movement no longer
+// treats it as solid) — only a monster still can't use one (see
+// MonsterManagerService.isFree).
 export function portalPositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
   if (mapName !== 'Grimoak Castle 4th Floor') return [];
   const midCol = Math.floor(FLOOR_LANDING_COLS / 2);
@@ -598,6 +601,11 @@ export function portalPositionsFor(mapName: MapName): Array<{ row: number; col: 
   ];
 }
 
+// Still used by MonsterManagerService.isFree (monsters never use a
+// portal) — a still-later follow-up ask removed the equivalent check from
+// WorldManagerService's own player-movement isOccupied, since blocking
+// this exact tile made every portal's real exit (see this function's own
+// doc comment above) permanently unreachable for a player.
 export function isPortalBlocked(mapName: MapName, row: number, col: number): boolean {
   return portalPositionsFor(mapName).some((p) => p.row === row && p.col === col);
 }

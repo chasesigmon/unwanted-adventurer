@@ -673,6 +673,15 @@ export interface CastSpellAck {
   // can draw the dome centered on the exact server-authoritative cast
   // tile rather than assuming its own (possibly stale) local position.
   barrierOrigin?: { row: number; col: number };
+  // Recall's own destination room state (a later follow-up bug fix:
+  // "teachers and benches and things didn't show up until I moved" —
+  // same race MoveAck's own `mapState` field already fixed for ordinary
+  // door/stairs/portal transitions: the room-wide 'map:state' broadcast
+  // for the new map can arrive before the client's own 'sync' handler has
+  // updated `currentMap` to match, so applyMapState's "wrong map" guard
+  // silently drops it. Present only on a successful recall — see
+  // game.gateway.ts's handleCastRecall.
+  mapState?: MapStatePayload;
 }
 
 // Augue's own target (a follow-up ask) — the only kind of target this

@@ -15,7 +15,6 @@ import {
   studentDeskPositionsFor,
   isGreatHallTableBlocked,
   isGreatHallChairBlocked,
-  isPortalBlocked,
   isBramwickSignBlocked,
   isStandingTorchBlocked,
 } from '../../shared/lighting.js';
@@ -152,7 +151,16 @@ export class WorldManagerService {
     if (studentDeskPositionsFor(mapName).some((p) => p.row === row && p.col === col)) return true;
     if (isGreatHallTableBlocked(mapName, row, col)) return true;
     if (isGreatHallChairBlocked(mapName, row, col)) return true;
-    if (isPortalBlocked(mapName, row, col)) return true;
+    // Portals used to be purely decorative (solid, no real exit) — a
+    // later follow-up ask gave each one a real MapExit (see shared/maps.ts's
+    // portalDungeonDefinition/FLOOR4_LANDING.exits), which a player has to
+    // physically stand ON to then step further and trigger (same "the
+    // exit tile itself" shape every door/stairs in this game already
+    // uses). Blocking that same tile here made every portal permanently
+    // unreachable — a still-later follow-up ask ("I still am not able to
+    // go through the Portals") removed this for players; monsters still
+    // can't use them at all (see MonsterManagerService.isFree, which kept
+    // its own isPortalBlocked check).
     if (isBramwickSignBlocked(mapName, row, col)) return true;
     if (isStandingTorchBlocked(mapName, row, col)) return true;
     if (isStairsSideBlocked(mapName, row, col)) return true;
