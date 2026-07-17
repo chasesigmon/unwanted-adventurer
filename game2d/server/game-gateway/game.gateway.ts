@@ -281,9 +281,18 @@ interface CombatSession {
   targetKind: 'monster' | 'npc' | 'player';
   targetId: string;
   skill: string;
-  // Consecutive combatTicks the target's been out of reach — see
-  // COMBAT_DISENGAGE_TICKS.
+  // Consecutive fast-tick checks the target's been out of reach — see
+  // COMBAT_DISENGAGE_FAST_TICKS.
   missedTicks: number;
+  // Real-clock timestamp (ms) this session is next allowed to resolve a
+  // hit — a later follow-up bug fix: "any contact should immediately
+  // resolve the queued attack" instead of waiting for combatTick's own
+  // periodic sweep to happen to land on a moment the target was in range.
+  // Defaults to 0 (attack immediately, no artificial wait) on every fresh
+  // engage; bumped to now + ATTACK_COOLDOWN_MS after each resolved hit so
+  // overall attack cadence is unchanged, just no longer held hostage to a
+  // single shared clock (see combatTick's own doc comment).
+  nextAttackAt: number;
   // Undefined means "melee" — the exact adjacency-1 check every skill has
   // always used. Set (a follow-up ask's ranged wand-bolt auto-attack,
   // WAND_BOLT_RANGE_TILES) for a square-radius reach instead, checked in
@@ -291,11 +300,19 @@ interface CombatSession {
   range?: number;
 }
 const MONSTER_TICK_INTERVAL_MS = 3000;
-// Phase C's "speed-matching" ask — close to but slightly slower than the
-// player's own MOVE_COOLDOWN_MS (220ms, src/game/mapRender.ts) so a
-// following pet/animated monster visibly keeps pace without ever
-// outrunning the player it's following.
-const FOLLOWER_STEP_MS = 300;
+// Phase C's "speed-matching" ask, tightened again by a later follow-up
+// bug fix: "the follower is still not as fast as the player... constantly
+// able to go faster and leave the follower way behind" — the previous
+// 300ms (deliberately a bit slower than the player's own move rate, "so
+// it never outruns the player") was still a real, compounding 36% speed
+// deficit against MOVE_COOLDOWN_MS (220ms, src/game/mapRender.ts): over
+// any real distance the gap kept growing, never closing. Matched exactly
+// instead — a following pet/animated monster that's briefly behind still
+// closes the SAME distance per real second the player does, so the gap
+// stops growing without needing the follower to ever be genuinely faster
+// (which would risk the exact overshoot the original 300ms was guarding
+// against).
+const FOLLOWER_STEP_MS = 220;
 // Zombie-only "Eat Brains" (see handleEatBrains) — "a 4 tick cooldown"
 // measured in the game's actual world tick: the same randomized 30-40s
 // global stat tick that advances worldHour (see globalStatTick/
@@ -398,11 +415,26 @@ const MURUS_LAPIDEUS_DAMAGE_REDUCTION = 1;
 // was cast, so staying locked down requires re-casting it, not just
 // throwing ordinary punches.
 const GLARE_PARALYSIS_ROUNDS = 2;
-// How many consecutive combat ticks a player's target is allowed to be
-// out of reach before that combat session quietly ends — long enough to
-// survive a monster's own greedy chase catching up, short enough that a
-// target who's genuinely fled doesn't stay "in combat" forever.
-const COMBAT_DISENGAGE_TICKS = 3;
+// A later follow-up bug fix: "as soon as a player/follower/monster come
+// into contact with the enemy they should make a hit" — combatTick,
+// resolveMonsterInitiatedAttack, and the follower checkContacts path all
+// used to only ever resolve a hit once per shared MONSTER_TICK_INTERVAL_MS
+// tick, so contact made just after that tick fired could sit fully in
+// range doing nothing for up to ~3s before the next tick happened to
+// notice. Each attacker (a player's own CombatSession, a follower, a
+// monster) now tracks its OWN "next attack allowed at" real-clock
+// timestamp instead, checked on the much faster FOLLOWER_STEP_MS tick —
+// contact resolves within one fast tick of actually being in range, while
+// this same ~3s value keeps the actual attack CADENCE identical to
+// before once a fight is under way.
+const ATTACK_COOLDOWN_MS = MONSTER_TICK_INTERVAL_MS;
+// How many consecutive FAST ticks (see FOLLOWER_STEP_MS) a player's
+// target is allowed to be out of reach before that combat session
+// quietly ends — scaled up from the original "3 consecutive combat
+// ticks" (COMBAT_DISENGAGE_TICKS, back when this was checked on the slow
+// MONSTER_TICK_INTERVAL_MS tick) so the real-world timeout is unchanged
+// even though it's now checked far more often.
+const COMBAT_DISENGAGE_FAST_TICKS = 3 * (MONSTER_TICK_INTERVAL_MS / FOLLOWER_STEP_MS);
 // A torch's total burn time, real-world — ticks down only while actually
 // equipped (see lightTorch/pauseTorch/checkTorchBurnout), pausing (not
 // resetting) whenever it's taken off. Checked once per global stat tick
@@ -581,18 +613,31 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // as the stone-block callbacks above, since GameGateway (not
     // MonsterManagerService) owns the activeBarriers registry.
     this.monsterManager.setBarrierZoneChecker((mapName, row, col) => this.isWithinBarrierZone(mapName, row, col));
-    // Diabolist's own demon imp (a later follow-up ask) — same
-    // callback-injection reasoning as the stone-block callbacks above,
-    // since GameGateway (not MonsterManagerService) owns
-    // AnimatedMonsterManagerService.
-    this.monsterManager.setDemonImpCallbacks(
+    // A later follow-up ask generalized this from the Diabolist's demon
+    // imp-only version into "the follower should draw the aggro of the
+    // monster... and the monster should then go to attack the follower"
+    // for ANY pet/animated monster — same callback-injection reasoning as
+    // the stone-block callbacks above, since GameGateway (not
+    // MonsterManagerService) owns both PetManagerService and
+    // AnimatedMonsterManagerService. An animated monster is preferred
+    // over a pet when an owner has both (matching the demon imp's own
+    // original "summoned specifically to tank" flavor), but either alone
+    // is enough.
+    this.monsterManager.setFollowerCallbacks(
       (ownerUsername) => {
-        const imp = this.animatedMonsterManager.getSnapshotsForOwner(ownerUsername).find((m) => m.monsterKind === DEMON_IMP_KIND && m.alive);
-        return imp ? { id: imp.id, mapName: imp.map, row: imp.row, col: imp.col } : undefined;
+        const animated = this.animatedMonsterManager.getSnapshotsForOwner(ownerUsername).find((m) => m.alive);
+        if (animated) return { followerKind: 'animatedMonster', followerId: animated.id, mapName: animated.map, row: animated.row, col: animated.col };
+        const pet = this.petManager.getSnapshotForOwner(ownerUsername);
+        if (pet?.alive) return { followerKind: 'pet', followerId: undefined, mapName: pet.map, row: pet.row, col: pet.col };
+        return undefined;
       },
-      (ownerUsername, id, amount) => {
-        const result = this.animatedMonsterManager.applyDamage(ownerUsername, id, amount);
-        return result ? result.monster.hp : undefined;
+      (ownerUsername, followerKind, followerId, amount) => {
+        if (followerKind === 'animatedMonster') {
+          const result = followerId !== undefined ? this.animatedMonsterManager.applyDamage(ownerUsername, followerId, amount) : undefined;
+          return result ? result.monster.hp : undefined;
+        }
+        const result = this.petManager.applyDamage(ownerUsername, amount);
+        return result ? result.pet.hp : undefined;
       }
     );
     // Illusionist's own invisibility (a later follow-up ask) — same
@@ -619,16 +664,21 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // only step once per MONSTER_TICK_INTERVAL_MS (3s, the same tick
     // combat/wandering runs on), falling miles behind a player who moves
     // every MOVE_COOLDOWN_MS (220ms, src/game/mapRender.ts) at ordinary
-    // walking speed. This dedicated, faster interval handles ONLY
-    // follower movement (tickAll) — attack cadence/damage output is
-    // unaffected, still resolved on the original slower tick below via
-    // checkContacts (a read-only adjacency check against wherever this
-    // faster loop has already moved the follower to).
+    // walking speed. This dedicated, faster interval handles follower
+    // movement (tickAll).
     // Phase D's own "aggro speed" fix reuses this exact same interval —
     // an aggro'd monster used to close distance at just 2 tiles per WHOLE
     // 3s combat tick (~0.67 tiles/sec), unable to ever catch a
     // continuously-moving player; chaseAggroTargets now steps it here
     // instead, same movement-speeds-up/attack-cadence-doesn't split.
+    // A later follow-up bug fix moved every actual COMBAT resolution path
+    // here too (combatTick, resolveMonsterInitiatedAttack, and the
+    // follower checkContacts/resolveFollowerContact pair below) — see
+    // ATTACK_COOLDOWN_MS's own doc comment. Each attacker's own cooldown
+    // (not this tick's own frequency) still governs how often they
+    // actually land a hit, so moving this here only removes the up-to-3s
+    // "contact happened but nothing checked for it yet" gap; it doesn't
+    // change anyone's actual attack cadence.
     setInterval(() => {
       const petMaps = this.petManager.tickAll();
       const animatedMonsterMaps = this.animatedMonsterManager.tickAll();
@@ -636,28 +686,31 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       for (const mapName of new Set<MapName>([...petMaps, ...animatedMonsterMaps, ...monsterChaseMaps])) {
         this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
       }
-    }, FOLLOWER_STEP_MS);
 
-    setInterval(() => {
-      this.combatTickCount += 1;
       this.combatTick();
-      this.tickAugueBurns();
-      this.checkDuplicateExpiry();
-      this.monsterManager.wanderAll(this.combatTickCount);
-      this.monsterManager.checkProximityAggro(this.combatTickCount);
-      this.resolveMonsterInitiatedAttack(this.combatTickCount);
-      this.monsterManager.respawnBelowMax();
+      this.resolveMonsterInitiatedAttack();
       // Read-only adjacency check against each 'attack'-commanded
-      // follower's CURRENT position (already moved by the faster
-      // interval above) — resolveFollowerContact deals the actual damage
-      // and starts the owner's own auto-attack if they aren't already
-      // fighting.
+      // follower's CURRENT position (already moved by tickAll above) —
+      // resolveFollowerContact deals the actual damage and starts the
+      // owner's own auto-attack if they aren't already fighting. Each
+      // follower's own cooldown (checked inside checkContacts itself) is
+      // what actually gates hit frequency now, not this tick's own
+      // frequency — see PetManagerService.checkContacts's own doc comment.
       for (const contact of this.petManager.checkContacts()) {
         this.resolveFollowerContact(contact.ownerUsername, contact.targetKind, contact.targetId, 'pet');
       }
       for (const contact of this.animatedMonsterManager.checkContacts()) {
         this.resolveFollowerContact(contact.ownerUsername, contact.targetKind, contact.targetId, 'animatedMonster', contact.id);
       }
+    }, FOLLOWER_STEP_MS);
+
+    setInterval(() => {
+      this.combatTickCount += 1;
+      this.tickAugueBurns();
+      this.checkDuplicateExpiry();
+      this.monsterManager.wanderAll(this.combatTickCount);
+      this.monsterManager.checkProximityAggro(this.combatTickCount);
+      this.monsterManager.respawnBelowMax();
       const expiredCorpseMaps = this.corpseManager.removeExpired();
       const stoneBlockMaps = this.removeExpiredStoneBlocks();
       const mapsToBroadcast = new Set<MapName>([...ACTIVE_MONSTER_MAPS, ...expiredCorpseMaps, ...stoneBlockMaps]);
@@ -930,6 +983,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       thirst: client.data.thirst,
       quests: client.data.quests,
       enhancedLearningUntil: client.data.enhancedLearningUntil,
+      duplicateActiveUntil: client.data.duplicateActiveUntil,
       house: client.data.house ?? undefined,
       specialization: client.data.specialization ?? undefined,
       visitedPois: client.data.visitedPois,
@@ -988,6 +1042,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (owner) changedMaps.add(owner.mapName);
       this.animatedMonsterManager.remove(entry.ownerUsername, id);
       this.activeDuplicates.delete(id);
+      // A later follow-up ask's own Affects-panel countdown (see
+      // handleCastCreateDuplicate's own doc comment) — only cleared once
+      // this owner has no OTHER still-active duplicate (the animated-
+      // monster cap technically allows more than one at higher levels).
+      const stillHasAnother = [...this.activeDuplicates.values()].some((e) => e.ownerUsername === entry.ownerUsername);
+      if (!stillHasAnother) {
+        const ownerSocketId = this.activeConnections.getActiveSocketId(entry.ownerUsername);
+        const ownerSocket = ownerSocketId ? (this.server.sockets.sockets.get(ownerSocketId) as GameSocket | undefined) : undefined;
+        if (ownerSocket) {
+          ownerSocket.data.duplicateActiveUntil = null;
+          ownerSocket.emit('sync', { player: this.snapshotFor(ownerSocket) });
+        }
+      }
     }
     for (const mapName of changedMaps) {
       this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
@@ -1895,17 +1962,22 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // PLAYER'S own swing landed that same tick; an aggro'd monster just
   // standing adjacent while the player ISN'T attacking (fled, or simply
   // hasn't swung yet) never did anything back. This is the proactive
-  // half: every combat tick, any monster with an aggro'd player target
-  // AND a species-level attackDamage (only imps today — see monster.ts's
-  // own doc comment) that's adjacent to that exact player throws its own
-  // hit, independent of whether the player attacked this tick. Skips a
-  // monster that already resolved a reactive counter this same tick (see
-  // Monster.lastCounterAttackTick) so it can't hit the same player twice
-  // in one tick.
-  private resolveMonsterInitiatedAttack(currentTick: number): void {
+  // half: every fast tick (moved off the shared slow combat tick — a
+  // later follow-up bug fix, see ATTACK_COOLDOWN_MS's own doc comment),
+  // any monster with an aggro'd player target AND a species-level
+  // attackDamage (only imps today — see monster.ts's own doc comment)
+  // that's adjacent to that exact player throws its own hit, independent
+  // of whether the player attacked this tick — gated by its own
+  // Monster.lastCounterAttackTick, now a real-clock timestamp shared with
+  // resolveHitOnMonster's own reactive counter-attack (see that call
+  // site's doc comment) so a monster can't land two hits within the same
+  // ~3s attack cooldown, whichever path (reactive or proactive) fires
+  // first.
+  private resolveMonsterInitiatedAttack(): void {
+    const now = Date.now();
     for (const { monster, targetUsername } of this.monsterManager.getAggroedMonsters()) {
       if (monster.attackDamage === undefined) continue;
-      if (monster.lastCounterAttackTick === currentTick) continue;
+      if (monster.lastCounterAttackTick !== undefined && now - monster.lastCounterAttackTick < ATTACK_COOLDOWN_MS) continue;
       if (this.isParalyzed(`monster:${monster.id}`)) continue;
 
       const socketId = this.activeConnections.getActiveSocketId(targetUsername);
@@ -1916,7 +1988,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // throw a punch from range.
       if (Math.abs(client.data.row - monster.row) + Math.abs(client.data.col - monster.col) !== 1) continue;
 
-      monster.lastCounterAttackTick = currentTick;
+      monster.lastCounterAttackTick = now;
       const growthMessages: string[] = [];
       const message = this.resolveMonsterCounterAttack(client, monster, monster.kind, monster.monsterClass, growthMessages, monster);
       void this.persistStats(client);
@@ -2078,6 +2150,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // tradeoff as wandLitUntil/celeritasActiveUntil (a fresh connection
     // always starts with it off, even mid-buff).
     client.data.enhancedLearningUntil = null;
+    // The Illusionist's own create duplicate spell — never persisted,
+    // same tradeoff as everything else here (a duplicate summoned before
+    // a reconnect is gone anyway, per animatedMonsterManager's own
+    // per-owner removal on disconnect).
+    client.data.duplicateActiveUntil = null;
     // Stacks across levels if never spent (a later follow-up ask) — see
     // handleAllocateStatPoint.
     client.data.statPointsAvailable = doc?.statPointsAvailable ?? 0;
@@ -2481,6 +2558,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       targetId: parsed.data.targetId,
       skill: WAND_BOLT_SKILL,
       missedTicks: 0,
+      nextAttackAt: 0,
       range: WAND_BOLT_RANGE_TILES,
     });
     if (parsed.data.targetKind === 'monster') {
@@ -2599,7 +2677,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // tick's hit lands), refreshed again every tick contact continues (see
   // combatTick/resolveHitOnMonster).
   private engageCombat(client: GameSocket, targetKind: CombatSession['targetKind'], targetId: string, skill: string): void {
-    this.playerCombat.set(client.data.username, { targetKind, targetId, skill, missedTicks: 0 });
+    this.playerCombat.set(client.data.username, { targetKind, targetId, skill, missedTicks: 0, nextAttackAt: 0 });
     if (targetKind === 'monster') {
       this.monsterManager.setAggro(targetId, client.data.username, this.combatTickCount);
     }
@@ -2649,12 +2727,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return loc ? { mapName: loc.mapName, row: loc.row, col: loc.col } : undefined;
   }
 
-  // Fired once per shared MONSTER_TICK_INTERVAL_MS (~3s) — the only place
-  // that ever resolves actual combat damage now (item 6). Each active
-  // session gets at most one resolved hit per tick, only if its target is
-  // still alive/connected and adjacent; otherwise its miss streak grows
-  // until it quietly disengages (COMBAT_DISENGAGE_TICKS).
+  // Fired once per FOLLOWER_STEP_MS fast tick (moved off the slow
+  // MONSTER_TICK_INTERVAL_MS tick — a later follow-up bug fix, see
+  // ATTACK_COOLDOWN_MS's own doc comment) — the only place that ever
+  // resolves actual combat damage now (item 6). Each active session gets
+  // at most one resolved hit per its OWN nextAttackAt cooldown, only if
+  // its target is still alive/connected and adjacent; otherwise its miss
+  // streak grows until it quietly disengages (COMBAT_DISENGAGE_FAST_TICKS).
   private combatTick(): void {
+    const now = Date.now();
     for (const [username, session] of this.playerCombat) {
       const socketId = this.activeConnections.getActiveSocketId(username);
       const client = socketId ? (this.server.sockets.sockets.get(socketId) as GameSocket | undefined) : undefined;
@@ -2683,17 +2764,35 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         // player (see MonsterManagerService.wanderAll's own aggro-based
         // stepping) is a fight still in progress, not a lapsed one — its
         // own AGGRO_TIMEOUT_TICKS already governs how long it keeps
-        // trying, so COMBAT_DISENGAGE_TICKS only applies here for
+        // trying, so COMBAT_DISENGAGE_FAST_TICKS only applies here for
         // npc/player targets (nothing chases you back) or once the
         // monster itself gives up.
         const monsterStillChasing = session.targetKind === 'monster' && this.monsterManager.isAggroedOnto(session.targetId, username);
         if (!monsterStillChasing) {
           session.missedTicks += 1;
-          if (session.missedTicks >= COMBAT_DISENGAGE_TICKS) this.endPlayerCombat(username);
+          if (session.missedTicks >= COMBAT_DISENGAGE_FAST_TICKS) this.endPlayerCombat(username);
         }
         continue;
       }
       session.missedTicks = 0;
+      // In range but this session's own cooldown hasn't elapsed yet —
+      // still an active fight, just not due for another swing this
+      // instant (checked far more often than the old shared tick ever
+      // was, so this fires within one fast tick of actually being able
+      // to land a hit rather than waiting on an unrelated shared clock).
+      if (now < session.nextAttackAt) continue;
+      session.nextAttackAt = now + ATTACK_COOLDOWN_MS;
+      // A later follow-up ask: "when the player goes invisible and then
+      // attacks again for any reason (auto attack or manual click), they
+      // should become visible once they make the first hit." Manual
+      // punch/useSkill/engageRangedAttack already break it the instant
+      // they're THROWN (see their own breakInvisibilityIfActive calls),
+      // but nothing caught the case where invisibility gets cast WHILE a
+      // combat session is already running (handleCastInvisibility doesn't
+      // require disengaging first) — every subsequent auto-attack hit
+      // kept landing invisibly forever. Checked here, right where a hit
+      // is actually about to resolve, covers both origins uniformly.
+      this.breakInvisibilityIfActive(client);
 
       // The wand's own ranged auto-attack (a follow-up ask) resolves
       // through its own self-contained path — flat damage, no dodge/
@@ -2828,6 +2927,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     if (!this.playerCombat.has(ownerUsername)) {
       this.engageCombat(client, targetKind, targetId, this.attackGrowthSkill(client));
+      // A later follow-up ask: "when the follower goes and attacks a
+      // target the player should begin to auto attack or auto move
+      // toward the monster and auto attack, similar to right clicking" —
+      // engageCombat above already arms the SERVER-side session (so the
+      // player's own hits land the instant they happen to be in range),
+      // but nothing told the CLIENT to actually walk over/select the
+      // target the way a real right-click does. Private to this one
+      // owner (like combatNotice's own targeted uses) — nobody else's
+      // screen should react to someone else's follower engaging.
+      client.emit('followerEngaged', { targetKind, targetId });
     }
 
     if (targetKind !== 'monster') return;
@@ -3121,10 +3230,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         counterMessage = `The ${monster.kind} is paralyzed by your glare and cannot counter-attack!`;
       } else {
         counterMessage = this.resolveMonsterCounterAttack(client, monster, monster.kind, monster.monsterClass, growthMessages, monster);
-        // So resolveMonsterInitiatedAttack's own tick doesn't ALSO hit
-        // this same monster's target again a moment later — this counter
-        // already covers this tick's exchange.
-        monster.lastCounterAttackTick = this.combatTickCount;
+        // So resolveMonsterInitiatedAttack's own fast-tick pass doesn't
+        // ALSO hit this same monster's target again moments later — this
+        // counter already covers this attack-cooldown's worth of exchange
+        // (see ATTACK_COOLDOWN_MS's own doc comment on why this is now a
+        // real-clock timestamp shared between both paths).
+        monster.lastCounterAttackTick = Date.now();
       }
       message += ` ${counterMessage}`;
     }
@@ -3526,6 +3637,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!this.isWithinLootReach(client, corpse.row, corpse.col)) {
       return { ok: false, message: "You're too far away to reach that." };
     }
+    if (!this.canLootCorpse(client, corpse)) {
+      return { ok: false, message: 'You cannot loot that corpse — it was killed by another player.' };
+    }
 
     // Captured BEFORE clearItems — `corpse` is a live reference into the
     // corpse manager's own map, so clearing it in place would otherwise
@@ -3586,6 +3700,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return Math.abs(row - client.data.row) <= 1 && Math.abs(col - client.data.col) <= 1;
   }
 
+  // A later follow-up ask: "if a player clicks on a corpse that they did
+  // not kill then show a message that they cannot loot that corpse
+  // because it was killed by another player." killedBy is undefined for
+  // a corpse nobody specifically "earned" (the training dummy — see its
+  // own doc comment), which stays free-for-all; a real kill locks looting
+  // to whoever actually landed it.
+  private canLootCorpse(client: GameSocket, corpse: { killedBy?: string }): boolean {
+    return corpse.killedBy === undefined || corpse.killedBy === client.data.username;
+  }
+
   // A shop's reach is more generous than looting a corpse — "within about
   // 10 feet" of the shopkeeper (shared/lighting.ts's own SHOP_REACH_TILES,
   // deliberately independent of LIGHT_RADIUS_TILES), not basically
@@ -3617,6 +3741,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (!this.isWithinLootReach(client, corpse.row, corpse.col)) {
       return { ok: false, message: "You're too far away to reach that." };
+    }
+    if (!this.canLootCorpse(client, corpse)) {
+      return { ok: false, message: 'You cannot loot that corpse — it was killed by another player.' };
     }
 
     const item = this.corpseManager.removeItem(corpseId, itemIndex);
@@ -3827,6 +3954,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     const item = client.data.inventory[itemIndex];
     if (item === undefined) return { ok: false, message: "You don't have that." };
+    // A later follow-up ask: "only be able to be given to the follower if
+    // it can wear that piece of equipment... shouldn't be able to be
+    // given mana crystals, etc." — a follower is limited to
+    // FOLLOWER_EQUIPMENT_SLOTS (weapon/torso only), so anything not
+    // equippable at all or that fills some OTHER slot never even reaches
+    // its inventory.
+    const itemSlot = EQUIPMENT_SLOT_FOR_ITEM[item];
+    if (itemSlot === undefined || !(FOLLOWER_EQUIPMENT_SLOTS as readonly string[]).includes(itemSlot)) {
+      return { ok: false, message: `A follower can't wear a ${item}.` };
+    }
 
     const gaveTo =
       followerKind === 'pet'
@@ -4140,10 +4277,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         targetId,
         skill: WAND_BOLT_SKILL,
         missedTicks: 0,
+        nextAttackAt: 0,
         range: WAND_BOLT_RANGE_TILES,
       });
     } else {
-      this.playerCombat.set(client.data.username, { targetKind, targetId, skill: this.attackGrowthSkill(client), missedTicks: 0 });
+      this.playerCombat.set(client.data.username, { targetKind, targetId, skill: this.attackGrowthSkill(client), missedTicks: 0, nextAttackAt: 0 });
     }
     this.syncFollowerAttackTargets(client.data.username, targetKind, targetId);
   }
@@ -5461,8 +5599,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // fixed-stat demon imp (see DEMON_IMP_KIND), reusing
   // animatedMonsterManager.animate() directly like monster summons
   // above. "Draw the aggro of monsters the player is attacking" is
-  // handled entirely server-side via setDemonImpCallbacks — nothing
-  // extra needed here.
+  // handled entirely server-side via the general follower-tanking system
+  // every other follower now shares too (see setFollowerCallbacks) —
+  // nothing extra needed here.
   @SubscribeMessage('castSummonDemonImp')
   handleCastSummonDemonImp(@ConnectedSocket() client: GameSocket): { ok: boolean; message?: string } {
     if (client.data.skills[SUMMON_DEMON_IMP_SKILL] === undefined) {
@@ -5628,7 +5767,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         client.data.col
       );
       if (duplicate) {
-        this.activeDuplicates.set(duplicate.id, { ownerUsername: client.data.username, expiresAt: Date.now() + CREATE_DUPLICATE_DURATION_MS });
+        const expiresAt = Date.now() + CREATE_DUPLICATE_DURATION_MS;
+        this.activeDuplicates.set(duplicate.id, { ownerUsername: client.data.username, expiresAt });
+        // A later follow-up ask: "have an affect while create duplicate
+        // is active so they know when it will end" — see
+        // checkDuplicateExpiry's own clearing side of this.
+        client.data.duplicateActiveUntil = expiresAt;
       }
       message = 'A perfect copy of yourself steps out of thin air.';
       this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));

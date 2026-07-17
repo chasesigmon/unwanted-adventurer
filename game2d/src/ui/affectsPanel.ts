@@ -43,6 +43,12 @@ function activeAffects(): ActiveAffect[] {
   if (myProfile.wispActive && myProfile.wispActiveUntil) {
     affects.push({ label: 'Wisp Transformation', expiresAt: myProfile.wispActiveUntil });
   }
+  // The Illusionist's own create duplicate (a later follow-up ask) — no
+  // separate xActive boolean, purely time-based like enhancedLearningUntil
+  // below (no manual early-cancel exists for this one).
+  if (myProfile.duplicateActiveUntil && myProfile.duplicateActiveUntil > Date.now()) {
+    affects.push({ label: 'Duplicate', expiresAt: myProfile.duplicateActiveUntil });
+  }
   // A later follow-up ask — restState has no fixed duration at all (the
   // player wakes/stands up whenever they choose), so these never carry an
   // expiresAt.

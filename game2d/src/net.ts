@@ -228,6 +228,7 @@ export class NetworkManager extends EventTarget {
     );
     socket.on('chat', (data: ChatPayload) => this.dispatchEvent(new CustomEvent<ChatPayload>('chat', { detail: data })));
     socket.on('combatNotice', (message: string) => this.dispatchEvent(new CustomEvent<string>('combatNotice', { detail: message })));
+    socket.on('followerEngaged', (data) => this.dispatchEvent(new CustomEvent<{ targetKind: 'monster' | 'player'; targetId: string }>('followerEngaged', { detail: data })));
     socket.on('statTick', (data: StatTickPayload) =>
       this.dispatchEvent(new CustomEvent<StatTickPayload>('statTick', { detail: data }))
     );

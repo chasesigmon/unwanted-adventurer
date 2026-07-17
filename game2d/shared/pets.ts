@@ -34,6 +34,16 @@ export const PET_PRICE = 15;
 // counter-attack" shape the wand's own ranged auto-attack already uses.
 export const PET_ATTACK_DAMAGE = 5;
 
+// A later follow-up bug fix: "as soon as a follower comes into contact
+// with the enemy they should make a hit" — a follower's own attack
+// cooldown, shared with game.gateway.ts's own player-side
+// ATTACK_COOLDOWN_MS (same ~3s cadence every other attack in this game
+// already uses) so contact resolves the instant it's actually earned
+// (checked on the fast per-tile movement tick, see PetManagerService/
+// AnimatedMonsterManagerService's own checkContacts) without changing how
+// often a follower actually lands a hit.
+export const FOLLOWER_ATTACK_COOLDOWN_MS = 3000;
+
 // Phase C's own "sleep/wake" ask gave 'sleep' a real distinguishing
 // effect (until now it was functionally identical to 'stay') — modeled
 // on the player's own /sleep bonus (see game.gateway.ts's applyStatTick/

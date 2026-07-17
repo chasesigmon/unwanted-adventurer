@@ -26,9 +26,9 @@ export const EQUIPMENT_SLOTS = [
 export type EquipmentSlot = (typeof EQUIPMENT_SLOTS)[number];
 
 // A wand fills the same 'weapon' slot a bone dagger would (see
-// combat/formulas.ts's EQUIPMENT_SLOT_FOR_ITEM) — mutually exclusive with
-// carrying a dagger, matching a wizard's actual hand. Every new character
-// starts with one (see auth.service.ts's createCharacter).
+// EQUIPMENT_SLOT_FOR_ITEM below) — mutually exclusive with carrying a
+// dagger, matching a wizard's actual hand. Every new character starts
+// with one (see auth.service.ts's createCharacter).
 export const WAND_ITEM = 'wand';
 
 // A later follow-up ask's Bramwick Weapons shop sells named variant
@@ -92,4 +92,61 @@ export const EQUIPMENT_SLOT_LABELS: Record<EquipmentSlot, string> = {
   necklace: 'Necklace',
   greaves: 'Greaves',
   boots: 'Boots',
+};
+
+// Which equipment slot an item goes into, if any — items not listed here
+// aren't equippable at all, just consumable body parts. Rings are a
+// special case (see server/combat/formulas.ts's isRingItem/
+// resolveRingSlot) — both ring items still need an entry here so
+// handleUseItem's "is this even equippable" check passes, but the actual
+// slot (left vs right) is resolved dynamically at equip time, not read
+// from this fixed map. Moved here from server/combat/formulas.ts (a
+// later follow-up ask) so the client can also tell whether an item is
+// equippable at all — see pets.ts's FOLLOWER_EQUIPMENT_SLOTS and
+// inventoryEquipment.ts's own "only offer Give if the follower could
+// actually wear it" check.
+export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
+  'bone dagger': 'weapon',
+  'bone shield': 'shield',
+  // Carried in the off-hand, same slot a shield would use — a light
+  // source, not armor, but this project only has the one off-hand slot.
+  torch: 'shield',
+  // Same slot a bone dagger would use — a wand and a dagger are mutually
+  // exclusive, matching a wizard's actual hand.
+  [WAND_ITEM]: 'weapon',
+  // Monster-dropped armor (a later follow-up ask: imp/wild
+  // skeleton/goblin loot tables — see server/monsters/monster.ts).
+  'cloth armor': 'torso',
+  'cloth helmet': 'head',
+  'cloth boots': 'boots',
+  'cloth vambraces': 'vambraces',
+  'cloth greaves': 'greaves',
+  // A later follow-up ask — the cloth set covered every OTHER armor slot
+  // already, gauntlets was the one gap.
+  'cloth gauntlets': 'gauntlets',
+  'studded armor': 'torso',
+  'studded helmet': 'head',
+  'boots of quickness': 'boots',
+  'opal earrings': 'earrings',
+  'opal necklace': 'necklace',
+  // Placeholder slot only — see isRingItem/resolveRingSlot below, which
+  // actually decides left vs right at equip time.
+  'opal ring': 'leftRing',
+  'bone ring': 'leftRing',
+  // Weapon-slot wands sold by Bramwick's own Weapons shop (a later
+  // follow-up ask) — same slot an ordinary wand/dagger would use.
+  'wand of intelligence': 'weapon',
+  'wand of quickness': 'weapon',
+  // The 4th floor's own 4 portal dungeons (a later follow-up ask) —
+  // "rare wands not available in the shop" plus a matching armor piece,
+  // one tier per dungeon (see server/monsters/monster.ts's own
+  // PORTAL_DUNGEON_MAPS species entries).
+  'wand of frost': 'weapon',
+  'chainmail vambraces': 'vambraces',
+  'wand of embers': 'weapon',
+  "warlord's greaves": 'greaves',
+  'wand of shadows': 'weapon',
+  'obsidian helm': 'head',
+  'wand of the ashen king': 'weapon',
+  'dragon scale armor': 'torso',
 };

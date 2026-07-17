@@ -11,12 +11,19 @@ import {
   PET_EVOLVED_NAME,
   PET_EVOLUTION_HP_BONUS,
   PET_EVOLUTION_ATTACK_BONUS,
+  FOLLOWER_ATTACK_COOLDOWN_MS,
   type FollowerEquipmentSlot,
 } from '../../shared/pets.js';
 import { applyExpGain } from '../combat/formulas.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
 
-interface Pet extends PetSnapshot {}
+interface Pet extends PetSnapshot {
+  // Server-only — a later follow-up bug fix (see checkContacts below and
+  // FOLLOWER_ATTACK_COOLDOWN_MS's own doc comment). Not part of the
+  // client-visible PetSnapshot shape; rides along harmlessly on any
+  // snapshot spread since nothing reads it client-side.
+  nextAttackAt?: number;
+}
 
 // One pet per owner, entirely in-memory (same tradeoff MonsterManagerService/
 // CorpseManagerService already make — resets on server restart). Keyed by
@@ -298,20 +305,26 @@ export class PetManagerService {
     return changedMaps;
   }
 
-  // Called from the slower, original combat tick (unchanged cadence, see
-  // game.gateway.ts) — a read-only adjacency check (no movement) against
-  // each 'attack'-commanded pet's current position, so damage/player-
-  // auto-attack keeps resolving at the ORIGINAL rate even though tickAll
-  // above now moves the pet toward its target much faster.
+  // A later follow-up bug fix moved this onto the SAME fast per-tile
+  // movement tick as tickAll (see game.gateway.ts's own doc comment on
+  // ATTACK_COOLDOWN_MS) — checked far more often now so contact resolves
+  // within one fast tick of actually happening, but each pet's own
+  // nextAttackAt cooldown (set right here, the instant a contact is
+  // reported) is what actually keeps hit FREQUENCY unchanged at
+  // FOLLOWER_ATTACK_COOLDOWN_MS, independent of how often this itself is
+  // called.
   checkContacts(): Array<{ ownerUsername: string; targetKind: 'monster' | 'player'; targetId: string }> {
     const contacts: Array<{ ownerUsername: string; targetKind: 'monster' | 'player'; targetId: string }> = [];
+    const now = Date.now();
     for (const pet of this.pets.values()) {
       if (!pet.alive || pet.command !== 'attack' || !pet.attackTargetKind || !pet.attackTargetId) continue;
+      if (now < (pet.nextAttackAt ?? 0)) continue;
       const target = this.targetLocator?.(pet.attackTargetKind, pet.attackTargetId);
       if (!target || target.mapName !== pet.map) continue;
       const dRow = target.row - pet.row;
       const dCol = target.col - pet.col;
       if (Math.abs(dRow) + Math.abs(dCol) <= 1) {
+        pet.nextAttackAt = now + FOLLOWER_ATTACK_COOLDOWN_MS;
         contacts.push({ ownerUsername: pet.ownerUsername, targetKind: pet.attackTargetKind, targetId: pet.attackTargetId });
       }
     }

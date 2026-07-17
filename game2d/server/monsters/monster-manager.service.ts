@@ -31,16 +31,23 @@ export type StoneBlockLocator = (id: string) => { mapName: MapName; row: number;
 // it no longer exists (already destroyed/expired) — lets
 // stepTowardAggroTarget know whether to keep chasing it.
 export type StoneBlockDamager = (id: string, amount: number, attackerLabel: string) => number | undefined;
-// The Diabolist's demon imp (a later follow-up ask): "draw the aggro of
-// monsters the player is attacking" — locates the OWNER's own active
-// demon imp (if any), keyed by owner username since setAggro only ever
-// knows the attacking player's username, not an animated-monster id.
-// Set by GameGateway (which owns AnimatedMonsterManagerService), same
+// A later follow-up ask generalized what started as the Diabolist's demon
+// imp-only "draw the aggro of monsters the player is attacking" into a
+// real "the follower tanks" mechanic for ANY pet/animated monster: "the
+// follower should draw the aggro of the monster that either they attack
+// first or that the player attacks, and the monster should then go to
+// attack the follower." Locates whichever ONE follower (pet or animated
+// monster) this owner has actively fighting, if any — keyed by owner
+// username since setAggro only ever knows the attacking player's
+// username, not a specific follower id. Set by GameGateway (which owns
+// both PetManagerService and AnimatedMonsterManagerService), same
 // callback-injection reasoning as StoneBlockLocator above.
-export type DemonImpLocator = (ownerUsername: string) => { id: string; mapName: MapName; row: number; col: number } | undefined;
-// Returns the imp's REMAINING hp after the hit, or undefined if it no
-// longer exists (already killed/removed).
-export type DemonImpDamager = (ownerUsername: string, id: string, amount: number) => number | undefined;
+export type FollowerLocator = (
+  ownerUsername: string
+) => { followerKind: 'pet' | 'animatedMonster'; followerId?: string; mapName: MapName; row: number; col: number } | undefined;
+// Returns the follower's REMAINING hp after the hit, or undefined if it
+// no longer exists (already killed/removed/unsummoned).
+export type FollowerDamager = (ownerUsername: string, followerKind: 'pet' | 'animatedMonster', followerId: string | undefined, amount: number) => number | undefined;
 
 // A much smaller version of the text game's own monster-manager.service.ts
 // — no engaged-in-combat tracking (a punch here is a single instant
@@ -117,16 +124,21 @@ export class MonsterManagerService {
     // instant invisibility actually activates (see clearAllAggroOnto,
     // called from game.gateway.ts's handleCastInvisibility).
     if (this.isInvisible(targetUsername)) return;
-    // Diabolist's own demon imp (a later follow-up ask) — "draw the
-    // aggro of monsters the player is attacking": unlike murus
-    // lapideus's own one-time redirect at cast time, this checks on
-    // EVERY setAggro call, so every monster this owner subsequently
-    // attacks goes after the imp instead of them for as long as it's
-    // alive, not just whatever happened to be aggro'd the instant it
-    // was summoned.
-    const demonImp = this.locateDemonImp(targetUsername);
-    if (demonImp) {
-      this.animatedMonsterAggro.set(monsterId, { ownerUsername: targetUsername, animatedMonsterId: demonImp.id, lastContactTick: tick });
+    // A later follow-up ask generalized what started as the Diabolist's
+    // demon imp-only redirect into "the follower should draw the aggro of
+    // the monster... that the player attacks": unlike murus lapideus's
+    // own one-time redirect at cast time, this checks on EVERY setAggro
+    // call, so every monster this owner subsequently attacks goes after
+    // their active follower instead of them for as long as it's alive,
+    // not just whatever happened to be aggro'd the instant it engaged.
+    const follower = this.locateFollower(targetUsername);
+    if (follower) {
+      this.followerAggro.set(monsterId, {
+        ownerUsername: targetUsername,
+        followerKind: follower.followerKind,
+        followerId: follower.followerId,
+        lastContactTick: tick,
+      });
       this.aggro.delete(monsterId);
       return;
     }
@@ -177,19 +189,22 @@ export class MonsterManagerService {
     this.damageStoneBlock = damager;
   }
 
-  // Diabolist's own demon imp (a later follow-up ask) — same callback-
-  // injection reasoning as the stone-block callbacks above, since
-  // GameGateway (not MonsterManagerService) owns
-  // AnimatedMonsterManagerService. Keyed by monsterId (which monster is
-  // aggro'd onto which owner's imp), mirroring stoneBlockAggro's own shape.
-  private animatedMonsterAggro = new Map<string, { ownerUsername: string; animatedMonsterId: string; lastContactTick: number }>();
-  private locateDemonImp: DemonImpLocator = () => undefined;
-  private damageDemonImp: DemonImpDamager = () => undefined;
-  private static readonly MONSTER_VS_DEMON_IMP_DAMAGE = 5;
+  // A later follow-up ask generalized this from the Diabolist's demon
+  // imp-only version into "the follower should draw the aggro... and the
+  // monster should then go to attack the follower" for ANY pet/animated
+  // monster — same callback-injection reasoning as the stone-block
+  // callbacks above, since GameGateway (not MonsterManagerService) owns
+  // both PetManagerService and AnimatedMonsterManagerService. Keyed by
+  // monsterId (which monster is aggro'd onto which owner's follower),
+  // mirroring stoneBlockAggro's own shape.
+  private followerAggro = new Map<string, { ownerUsername: string; followerKind: 'pet' | 'animatedMonster'; followerId?: string; lastContactTick: number }>();
+  private locateFollower: FollowerLocator = () => undefined;
+  private damageFollower: FollowerDamager = () => undefined;
+  private static readonly MONSTER_VS_FOLLOWER_DAMAGE = 5;
 
-  setDemonImpCallbacks(locator: DemonImpLocator, damager: DemonImpDamager): void {
-    this.locateDemonImp = locator;
-    this.damageDemonImp = damager;
+  setFollowerCallbacks(locator: FollowerLocator, damager: FollowerDamager): void {
+    this.locateFollower = locator;
+    this.damageFollower = damager;
   }
 
   // Illusionist's own invisibility (a later follow-up ask) — same
@@ -469,7 +484,7 @@ export class MonsterManagerService {
   }
 
   private hasActiveAggro(monster: Monster): boolean {
-    return this.stoneBlockAggro.has(monster.id) || this.animatedMonsterAggro.has(monster.id) || this.aggro.has(monster.id);
+    return this.stoneBlockAggro.has(monster.id) || this.followerAggro.has(monster.id) || this.aggro.has(monster.id);
   }
 
   // The "speed-matching" fix's own fast tick (called from game.gateway.ts
@@ -574,28 +589,45 @@ export class MonsterManagerService {
       return true;
     }
 
-    // Diabolist's own demon imp (a later follow-up ask) — same
-    // "redirect takes priority, chase-then-chip-away" shape as the
-    // stone-block branch above; redirected automatically in setAggro
-    // (not a one-time snapshot like murus lapideus), so this covers
-    // every monster the owner has ATTACKED since the imp went up, not
+    // A later follow-up ask generalized this from the Diabolist's demon
+    // imp-only version — same "redirect takes priority, chase-then-chip-
+    // away" shape as the stone-block branch above; redirected
+    // automatically in setAggro (not a one-time snapshot like murus
+    // lapideus), so this covers every monster the owner has ATTACKED (or
+    // whose follower attacked it first) since the follower engaged, not
     // just whatever happened to already be aggro'd.
-    const demonImpAggro = this.animatedMonsterAggro.get(monster.id);
-    if (demonImpAggro) {
-      const target = this.locateDemonImp(demonImpAggro.ownerUsername);
-      if (!target || target.id !== demonImpAggro.animatedMonsterId || target.mapName !== monster.mapName) {
-        this.animatedMonsterAggro.delete(monster.id);
+    const followerAggro = this.followerAggro.get(monster.id);
+    if (followerAggro) {
+      const target = this.locateFollower(followerAggro.ownerUsername);
+      if (
+        !target ||
+        target.followerKind !== followerAggro.followerKind ||
+        target.followerId !== followerAggro.followerId ||
+        target.mapName !== monster.mapName
+      ) {
+        this.followerAggro.delete(monster.id);
         return false;
       }
       const dRow = target.row - monster.row;
       const dCol = target.col - monster.col;
       if (Math.abs(dRow) <= 1 && Math.abs(dCol) <= 1) {
-        const remainingHp = this.damageDemonImp(demonImpAggro.ownerUsername, demonImpAggro.animatedMonsterId, MonsterManagerService.MONSTER_VS_DEMON_IMP_DAMAGE);
-        if (remainingHp === undefined || remainingHp <= 0) this.animatedMonsterAggro.delete(monster.id);
+        const remainingHp = this.damageFollower(
+          followerAggro.ownerUsername,
+          followerAggro.followerKind,
+          followerAggro.followerId,
+          MonsterManagerService.MONSTER_VS_FOLLOWER_DAMAGE
+        );
+        // A follower taking a hit is a real state change nobody would
+        // otherwise see — chaseAggroTargets's own map:state broadcast is
+        // keyed entirely off actual MOVEMENT (see stepToward's own
+        // changedMaps.add calls), so standing still and pounding on a
+        // follower needs its own explicit add here too.
+        changedMaps.add(monster.mapName);
+        if (remainingHp === undefined || remainingHp <= 0) this.followerAggro.delete(monster.id);
         return true;
       }
       if (this.stepToward(monster, target.row, target.col, changedMaps)) {
-        demonImpAggro.lastContactTick = currentTick;
+        followerAggro.lastContactTick = currentTick;
       }
       return true;
     }

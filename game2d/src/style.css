@@ -550,6 +550,24 @@ body {
   min-width: 140px;
 }
 
+/* A later follow-up ask: "give the ability to reposition the group/
+   follower window" — a thin grabbable strip along the top, same
+   convention a real window's own title bar uses, rather than making the
+   WHOLE panel draggable (which would fight every follow/stay/attack/
+   equip/give button already living inside it). */
+.panel-drag-handle {
+  height: 10px;
+  margin: -6px -10px 6px -10px;
+  border-radius: 4px 4px 0 0;
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid #333;
+  cursor: move;
+}
+
+.panel-drag-handle:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 /* A member card (a later follow-up ask's animate dead spell added a 2nd
    kind of group member alongside a pet, so the panel now renders a LIST
    of cards, one per companion, instead of one fixed pet-only block). */

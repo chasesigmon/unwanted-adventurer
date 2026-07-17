@@ -3,9 +3,9 @@
 // down to this project's smaller scope (one active attack — punch — but
 // now with equipment, resistances, and dodge/parry/shield-block ported
 // from the text game).
-import { type EquipmentSlot, WAND_ITEM, isWandItem } from '../../shared/equipment.js';
+import { isWandItem } from '../../shared/equipment.js';
 import type { MonsterClass, Race } from '../../shared/constants.js';
-export { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, type EquipmentSlot } from '../../shared/equipment.js';
+export { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, EQUIPMENT_SLOT_FOR_ITEM, type EquipmentSlot } from '../../shared/equipment.js';
 import {
   STARTING_SKILL_PERCENT,
   MAX_SKILL_PERCENT,
@@ -189,58 +189,6 @@ export function punchDamage(
   const raw = baseDamage(attacker.strength, attacker.level) + attributeBonus(attacker, defender) + skillBonus(punchSkillPercent) + weaponBonus;
   return Math.max(0, raw - armorDamageReduction(defenderArmorClass));
 }
-
-// Which equipment slot an item goes into, if any — items not listed here
-// aren't equippable at all, just consumable body parts. Rings are a
-// special case (see EquipRingSlot below) — both ring items still need an
-// entry here so handleUseItem's "is this even equippable" check passes,
-// but the actual slot (left vs right) is resolved dynamically at equip
-// time, not read from this fixed map.
-export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
-  'bone dagger': 'weapon',
-  'bone shield': 'shield',
-  // Carried in the off-hand, same slot a shield would use — a light
-  // source, not armor, but this project only has the one off-hand slot.
-  torch: 'shield',
-  // Same slot a bone dagger would use — a wand and a dagger are mutually
-  // exclusive, matching a wizard's actual hand.
-  [WAND_ITEM]: 'weapon',
-  // Monster-dropped armor (a later follow-up ask: imp/wild
-  // skeleton/goblin loot tables — see server/monsters/monster.ts).
-  'cloth armor': 'torso',
-  'cloth helmet': 'head',
-  'cloth boots': 'boots',
-  'cloth vambraces': 'vambraces',
-  'cloth greaves': 'greaves',
-  // A later follow-up ask — the cloth set covered every OTHER armor slot
-  // already, gauntlets was the one gap.
-  'cloth gauntlets': 'gauntlets',
-  'studded armor': 'torso',
-  'studded helmet': 'head',
-  'boots of quickness': 'boots',
-  'opal earrings': 'earrings',
-  'opal necklace': 'necklace',
-  // Placeholder slot only — see isRingItem/resolveRingSlot below, which
-  // actually decides left vs right at equip time.
-  'opal ring': 'leftRing',
-  'bone ring': 'leftRing',
-  // Weapon-slot wands sold by Bramwick's own Weapons shop (a later
-  // follow-up ask) — same slot an ordinary wand/dagger would use.
-  'wand of intelligence': 'weapon',
-  'wand of quickness': 'weapon',
-  // The 4th floor's own 4 portal dungeons (a later follow-up ask) —
-  // "rare wands not available in the shop" plus a matching armor piece,
-  // one tier per dungeon (see server/monsters/monster.ts's own
-  // PORTAL_DUNGEON_MAPS species entries).
-  'wand of frost': 'weapon',
-  'chainmail vambraces': 'vambraces',
-  'wand of embers': 'weapon',
-  "warlord's greaves": 'greaves',
-  'wand of shadows': 'weapon',
-  'obsidian helm': 'head',
-  'wand of the ashen king': 'weapon',
-  'dragon scale armor': 'torso',
-};
 
 // Flat damage bonus while a given item is equipped in its slot — matches
 // the text game's own BONE_DAGGER_EQUIPMENT.attackBonus (+2), not a

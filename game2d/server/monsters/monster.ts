@@ -84,12 +84,14 @@ export interface Monster extends CombatantStats {
   // species has no proactive attack at all, only its existing reactive
   // counter-attack when hit.
   attackDamage?: number;
-  // The combat tick resolveMonsterInitiatedAttack (or the ordinary
-  // reactive counter-attack in resolveHitOnMonster) last actually landed
-  // a hit for this monster — lets resolveMonsterInitiatedAttack skip a
-  // monster that already counter-attacked reactively THIS SAME tick
-  // (because the player happened to also be attacking it), so it never
-  // gets hit twice in one tick.
+  // Real-clock timestamp (Date.now()) the last hit actually landed for
+  // this monster, whether resolveMonsterInitiatedAttack's own proactive
+  // fast-tick pass or the ordinary reactive counter-attack in
+  // resolveHitOnMonster fired it — lets resolveMonsterInitiatedAttack
+  // skip a monster that's already within its own ATTACK_COOLDOWN_MS
+  // window (a later follow-up fix moved this off tick-count equality, so
+  // it's a real cooldown rather than only ever suppressing a double-hit
+  // within the exact same tick).
   lastCounterAttackTick?: number;
   // Which MonsterSpecies entry spawned this instance (see
   // MonsterSpecies.id's own doc comment) — copied at spawn time so

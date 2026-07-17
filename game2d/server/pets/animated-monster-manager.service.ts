@@ -2,10 +2,16 @@ import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import type { MapName, MonsterKind, Race } from '../../shared/constants.js';
 import type { PetCommand, AnimatedMonsterSnapshot, FollowerEquipmentSlot } from '../../shared/pets.js';
+import { FOLLOWER_ATTACK_COOLDOWN_MS } from '../../shared/pets.js';
 import { animatedMonsterCapFor } from '../../shared/skills.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
 
-interface AnimatedMonster extends AnimatedMonsterSnapshot {}
+interface AnimatedMonster extends AnimatedMonsterSnapshot {
+  // Server-only — a later follow-up bug fix (see checkContacts below and
+  // FOLLOWER_ATTACK_COOLDOWN_MS's own doc comment). Not part of the
+  // client-visible AnimatedMonsterSnapshot shape.
+  nextAttackAt?: number;
+}
 
 // The Necromancer's own animate dead spell (a later follow-up ask) — up
 // to 1 or 2 animated monsters per owner (see animatedMonsterCapFor),
@@ -244,21 +250,27 @@ export class AnimatedMonsterManagerService {
     return changedMaps;
   }
 
-  // Called from the slower, original combat tick — same read-only
-  // adjacency check as PetManagerService.checkContacts, just over every
-  // owner's whole array (each reported contact also carries the specific
-  // animated monster's own id, unlike a pet, since an owner can have more
-  // than one, so the caller knows which one to credit/update).
+  // A later follow-up bug fix moved this onto the SAME fast per-tile
+  // movement tick as tickAll (see game.gateway.ts's own doc comment on
+  // ATTACK_COOLDOWN_MS/PetManagerService.checkContacts) — each animated
+  // monster's own nextAttackAt cooldown (set right here) keeps hit
+  // FREQUENCY unchanged at FOLLOWER_ATTACK_COOLDOWN_MS regardless of how
+  // often this itself is now called. Each reported contact also carries
+  // the specific animated monster's own id, unlike a pet, since an owner
+  // can have more than one, so the caller knows which one to credit/update.
   checkContacts(): Array<{ ownerUsername: string; id: string; targetKind: 'monster' | 'player'; targetId: string }> {
     const contacts: Array<{ ownerUsername: string; id: string; targetKind: 'monster' | 'player'; targetId: string }> = [];
+    const now = Date.now();
     for (const owned of this.monsters.values()) {
       for (const monster of owned) {
         if (!monster.alive || monster.command !== 'attack' || !monster.attackTargetKind || !monster.attackTargetId) continue;
+        if (now < (monster.nextAttackAt ?? 0)) continue;
         const target = this.targetLocator?.(monster.attackTargetKind, monster.attackTargetId);
         if (!target || target.mapName !== monster.map) continue;
         const dRow = target.row - monster.row;
         const dCol = target.col - monster.col;
         if (Math.abs(dRow) + Math.abs(dCol) <= 1) {
+          monster.nextAttackAt = now + FOLLOWER_ATTACK_COOLDOWN_MS;
           contacts.push({ ownerUsername: monster.ownerUsername, id: monster.id, targetKind: monster.attackTargetKind, targetId: monster.attackTargetId });
         }
       }

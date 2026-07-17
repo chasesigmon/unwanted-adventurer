@@ -22,7 +22,7 @@ export type QuestObjectiveKind = 'learnSkill' | 'killMonster' | 'haveItem' | 'ha
 // hasFlag's own set of checkable boolean facts about a player (a follow-
 // up ask's "acquire the map" quest) — a bag rather than a single
 // hardcoded boolean so each new quest gated on a different flag (e.g.
-// Professor Caldwell's 2nd quest, "choose a house") doesn't need its
+// Professor Hollowell's 2nd quest, "choose a house") doesn't need its
 // own new objective kind.
 export type QuestFlag = 'mapUnlocked' | 'houseChosen';
 
@@ -160,21 +160,21 @@ export const QUESTS: Record<string, QuestDefinition> = {
     objectives: [{ id: 'acquire-map', label: 'Acquire the map from the Utility Classroom', kind: 'hasFlag', flag: 'mapUnlocked' }],
     rewardExp: 100,
   },
-  // Professor Caldwell's 2nd quest (a later follow-up ask) — offered
+  // Professor Hollowell's 2nd quest (a later follow-up ask) — offered
   // alongside Find the Map from the very start (a still-later follow-up
   // ask: "should be available at the same time... offer both options,"
   // see npcDialogueModal.ts's own multi-quest render). Same hasFlag
   // shape as that quest: just checks whatever ALREADY happened (see
   // game.gateway.ts's handleChooseHouse) rather than needing its own new
-  // event — a player who already picked a house with Professor Hollowell
+  // event — a player who already picked a house with Professor Caldwell
   // before accepting this can complete it immediately.
   [CHOOSE_HOUSE_QUEST_ID]: {
     id: CHOOSE_HOUSE_QUEST_ID,
     title: 'Choosing a House',
-    description: 'Every student needs a house to call home. Go and see Professor Hollowell to pick yours. Return to me once you have.',
+    description: 'Every student needs a house to call home. Go and see Professor Caldwell to pick yours. Return to me once you have.',
     readyMessage: "You've chosen a house — wonderful! Click below when you're ready to complete this quest.",
     completedMessage: 'Wear your house colors with pride.',
-    objectives: [{ id: 'choose-house', label: 'Choose a house with Professor Hollowell', kind: 'hasFlag', flag: 'houseChosen' }],
+    objectives: [{ id: 'choose-house', label: 'Choose a house with Professor Caldwell', kind: 'hasFlag', flag: 'houseChosen' }],
     rewardExp: 100,
   },
 };

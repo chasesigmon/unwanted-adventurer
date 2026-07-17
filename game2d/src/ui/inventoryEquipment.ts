@@ -2,8 +2,9 @@
 // unequipping, consuming, and using an item all funnel through the same
 // applyUseItemAck reconciliation of myProfile.
 import { activeScene, myProfile, network, setMyProfile } from '../state.js';
-import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, EQUIPMENT_ITEM_BONUS_LABEL, type EquipmentSlot } from '../../shared/equipment.js';
+import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, EQUIPMENT_ITEM_BONUS_LABEL, EQUIPMENT_SLOT_FOR_ITEM, type EquipmentSlot } from '../../shared/equipment.js';
 import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem } from '../../shared/items.js';
+import { FOLLOWER_EQUIPMENT_SLOTS } from '../../shared/pets.js';
 import type { UseItemAck } from '../../shared/types.js';
 import { attachTooltip } from './tooltip.js';
 import { itemTooltip } from './skillMeta.js';
@@ -27,6 +28,17 @@ function livingFollowers(): Array<{ followerKind: 'pet' | 'animatedMonster'; fol
     if (am.alive) list.push({ followerKind: 'animatedMonster', followerId: am.id, label: am.name });
   }
   return list;
+}
+
+// A later follow-up ask: "only be able to be given to the follower if it
+// can wear that piece of equipment... they shouldn't be able to be given
+// mana crystals, etc." — a follower is limited to FOLLOWER_EQUIPMENT_SLOTS
+// (weapon/torso only, see shared/pets.ts), so an item that isn't
+// equippable AT ALL (a mana crystal) or that fills some OTHER slot a
+// follower has no use for (a helmet, a ring) never gets the option.
+function isFollowerEquippableItem(item: string): boolean {
+  const slot = EQUIPMENT_SLOT_FOR_ITEM[item];
+  return slot !== undefined && (FOLLOWER_EQUIPMENT_SLOTS as readonly string[]).includes(slot);
 }
 
 function giveItemToFollower(itemIndex: number, followerKind: 'pet' | 'animatedMonster', followerId: string | undefined): void {
@@ -123,10 +135,12 @@ export function renderInventory(): void {
     // give an item to a follower" — relocated from a dropdown that used
     // to live on the follower's own group-panel card (see groupPanel.ts's
     // buildFollowerItemsSection). Only shown when there's actually a
-    // living pet/animated monster to give it to; a single follower skips
-    // straight to a plain button, a real choice between two+ gets a
+    // living pet/animated monster to give it to AND the item is
+    // something a follower could actually wear (see
+    // isFollowerEquippableItem's own doc comment); a single follower
+    // skips straight to a plain button, a real choice between two+ gets a
     // picker first.
-    if (followers.length > 0) {
+    if (followers.length > 0 && isFollowerEquippableItem(item)) {
       const giveRow = document.createElement('div');
       giveRow.className = 'inventory-give-row';
       // Neither the picker nor the button should also trigger the row's

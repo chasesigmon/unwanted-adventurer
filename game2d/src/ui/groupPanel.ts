@@ -11,8 +11,44 @@ import { FOLLOWER_EQUIPMENT_SLOTS, type PetSnapshot, type AnimatedMonsterSnapsho
 
 const groupPanel = document.getElementById('group-panel') as HTMLDivElement;
 const groupMembers = document.getElementById('group-members') as HTMLDivElement;
+const groupPanelHandle = document.getElementById('group-panel-handle') as HTMLDivElement;
 
 let sendingCommand = false;
+
+// A later follow-up ask: "give the ability to reposition the group/
+// follower window" — plain pointer-capture drag off the handle strip
+// above (see its own CSS comment on why not the whole panel), clamped to
+// stay fully on-screen. repositionTargetPanel() re-runs on every move
+// since the target panel's own position is derived from wherever this
+// panel currently sits (see targetPanel.ts).
+let dragPointerId: number | null = null;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+
+groupPanelHandle.addEventListener('pointerdown', (e) => {
+  dragPointerId = e.pointerId;
+  const rect = groupPanel.getBoundingClientRect();
+  dragOffsetX = e.clientX - rect.left;
+  dragOffsetY = e.clientY - rect.top;
+  groupPanelHandle.setPointerCapture(e.pointerId);
+});
+
+groupPanelHandle.addEventListener('pointermove', (e) => {
+  if (dragPointerId !== e.pointerId) return;
+  const maxLeft = window.innerWidth - groupPanel.offsetWidth;
+  const maxTop = window.innerHeight - groupPanel.offsetHeight;
+  const left = Math.min(Math.max(0, e.clientX - dragOffsetX), Math.max(0, maxLeft));
+  const top = Math.min(Math.max(0, e.clientY - dragOffsetY), Math.max(0, maxTop));
+  groupPanel.style.left = `${left}px`;
+  groupPanel.style.top = `${top}px`;
+  repositionTargetPanel();
+});
+
+groupPanelHandle.addEventListener('pointerup', (e) => {
+  if (dragPointerId !== e.pointerId) return;
+  groupPanelHandle.releasePointerCapture(e.pointerId);
+  dragPointerId = null;
+});
 
 // A follower's own carried items + weapon/torso equipment (Phase C's
 // "give/equip" ask) — followerId is undefined for a pet (one per owner,

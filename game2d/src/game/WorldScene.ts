@@ -773,6 +773,18 @@ export class WorldScene extends Phaser.Scene {
     // types.ts's combatNotice), used for things that don't fit the
     // ordinary player-vs-target 'combat' broadcast shape.
     this.network.addEventListener('combatNotice', ((e: CustomEvent<string>) => logCombatMessage(e.detail)) as EventListener);
+    // A later follow-up ask: "when the follower goes and attacks a
+    // target the player should begin to auto attack or auto move toward
+    // the monster... similar to right clicking" — private-to-this-owner
+    // signal (see shared/types.ts's own doc comment) fired the instant
+    // the follower's contact starts a brand new server-side combat
+    // session, i.e. only ever when the player wasn't already fighting
+    // anything, so this never interrupts an existing fight.
+    this.network.addEventListener(
+      'followerEngaged',
+      ((e: CustomEvent<{ targetKind: 'monster' | 'player'; targetId: string }>) =>
+        this.handleFollowerEngaged(e.detail.targetKind, e.detail.targetId)) as EventListener
+    );
     this.network.addEventListener('statTick', ((e: CustomEvent<StatTickPayload>) => this.applyOwnStats(e.detail)) as EventListener);
     this.network.addEventListener('worldTime', ((e: CustomEvent<WorldTimePayload>) => this.handleWorldTime(e.detail.hour, e.detail.tick)) as EventListener);
     this.network.addEventListener('kicked', ((e: CustomEvent<KickedPayload>) => {
@@ -2779,6 +2791,41 @@ export class WorldScene extends Phaser.Scene {
       }
     }
 
+    // A later follow-up bug fix: "multiple followers/summons do not
+    // appear on top of each other... you couldn't even see the pet" — a
+    // pet and an animated monster both walk toward their OWNER's own
+    // exact tile server-side (unchanged), so with more than one follower
+    // they can end up on the identical tile, rendering as one
+    // indistinguishable sprite. Purely a client-side visual fix: each of
+    // a given owner's own followers gets a small, stable pixel nudge in
+    // a different direction, keyed by its own place in a combined
+    // pet-then-animated-monsters ordering per owner (computed fresh every
+    // map:state, so it's naturally stable frame to frame) — the first
+    // one for any owner (their pet, if they have one) stays exactly
+    // centered, matching how a lone follower always looked before this.
+    const FOLLOWER_FAN_OFFSETS_PX: ReadonlyArray<{ x: number; y: number }> = [
+      { x: 0, y: 0 },
+      { x: -10, y: 6 },
+      { x: 10, y: 6 },
+      { x: -10, y: -6 },
+      { x: 10, y: -6 },
+    ];
+    const followerIndexByKey = new Map<string, number>();
+    {
+      const perOwnerCount = new Map<string, number>();
+      const assignFollowerIndex = (ownerUsername: string, key: string) => {
+        const idx = perOwnerCount.get(ownerUsername) ?? 0;
+        perOwnerCount.set(ownerUsername, idx + 1);
+        followerIndexByKey.set(key, idx);
+      };
+      for (const p of state.pets) assignFollowerIndex(p.ownerUsername, `pet:${p.id}`);
+      for (const m of state.animatedMonsters) assignFollowerIndex(m.ownerUsername, `am:${m.id}`);
+    }
+    const followerFanOffsetFor = (key: string): { x: number; y: number } => {
+      const idx = followerIndexByKey.get(key) ?? 0;
+      return FOLLOWER_FAN_OFFSETS_PX[idx % FOLLOWER_FAN_OFFSETS_PX.length]!;
+    };
+
     // Companion pets (a later follow-up ask) — same create-or-update +
     // seen-set cleanup shape as monsters above, just a single static
     // frame (no directional walk cycle — see mapRender.ts's own
@@ -2787,10 +2834,14 @@ export class WorldScene extends Phaser.Scene {
     const seenPets = new Set<string>();
     for (const pet of state.pets) {
       seenPets.add(pet.id);
+      const petOffset = followerFanOffsetFor(`pet:${pet.id}`);
       let sprite = this.petSprites.get(pet.id);
       if (!sprite) {
         const pos = this.tilePosition(pet.row, pet.col);
-        sprite = this.add.sprite(pos.x, pos.y, PET_TEXTURE_KEYS[pet.kind]).setOrigin(0.5, 0.9).setDepth(-0.4);
+        sprite = this.add
+          .sprite(pos.x + petOffset.x, pos.y + petOffset.y, PET_TEXTURE_KEYS[pet.kind])
+          .setOrigin(0.5, 0.9)
+          .setDepth(-0.4);
         sprite.setData('row', pet.row);
         sprite.setData('col', pet.col);
         this.petSprites.set(pet.id, sprite);
@@ -2801,6 +2852,8 @@ export class WorldScene extends Phaser.Scene {
           sprite.setData('row', pet.row);
           sprite.setData('col', pet.col);
           const pos = this.tilePosition(pet.row, pet.col);
+          pos.x += petOffset.x;
+          pos.y += petOffset.y;
           this.tweens.add({ targets: sprite, x: pos.x, y: pos.y, duration: REMOTE_STEP_TWEEN_MS, ease: 'Linear' });
         }
       }
@@ -2824,11 +2877,12 @@ export class WorldScene extends Phaser.Scene {
     const seenAnimatedMonsters = new Set<string>();
     for (const am of state.animatedMonsters) {
       seenAnimatedMonsters.add(am.id);
+      const amOffset = followerFanOffsetFor(`am:${am.id}`);
       let sprite = this.animatedMonsterSprites.get(am.id);
       if (!sprite) {
         const pos = this.tilePosition(am.row, am.col);
         sprite = this.add
-          .sprite(pos.x, pos.y, textureKeyFor(am.monsterKind), idleFrameFor(am.monsterKind, 'down'))
+          .sprite(pos.x + amOffset.x, pos.y + amOffset.y, textureKeyFor(am.monsterKind), idleFrameFor(am.monsterKind, 'down'))
           // Diabolist's own demon imp (a later follow-up ask) — "a
           // little smaller than the imps on Grimoak Grounds," same
           // shape as the rare-monster upscale below just downward.
@@ -2844,6 +2898,8 @@ export class WorldScene extends Phaser.Scene {
           sprite.setData('row', am.row);
           sprite.setData('col', am.col);
           const pos = this.tilePosition(am.row, am.col);
+          pos.x += amOffset.x;
+          pos.y += amOffset.y;
           this.tweens.add({ targets: sprite, x: pos.x, y: pos.y, duration: REMOTE_STEP_TWEEN_MS, ease: 'Linear' });
         }
       }
@@ -2922,6 +2978,17 @@ export class WorldScene extends Phaser.Scene {
         // too far away — just say so, same reach as actually looting.
         if (!this.isWithinLootReach(c.row, c.col)) {
           logCombatMessage("You're too far away to loot that.");
+          return;
+        }
+        // A later follow-up ask: "if a player clicks on a corpse that
+        // they did not kill then show a message that they cannot loot
+        // that corpse" — same "don't even open the modal, just say so"
+        // shape as the reach check above. killedBy undefined (the
+        // training dummy — see corpse-manager.service.ts's own doc
+        // comment) stays free-for-all, matching the server's own
+        // canLootCorpse check.
+        if (c.killedBy !== undefined && c.killedBy !== this.myUsername) {
+          logCombatMessage('You cannot loot that corpse — it was killed by another player.');
           return;
         }
         // Every corpse (player, training dummy, or monster) opens the
@@ -3018,7 +3085,7 @@ export class WorldScene extends Phaser.Scene {
       // own further variant of that same recolored sheet.
       const teacherKind = t.robeColorKey ? (`teacher-${t.robeColorKey}${t.longHair ? '-longhair' : ''}` as const) : 'teacher';
       // A follow-up ask: "update the teacher titles... to be their name
-      // and their position" — e.g. "Professor Hollowell, House
+      // and their position" — e.g. "Professor Caldwell, House
       // Administrator". Falls back to the plain name for every teacher
       // without a distinct role (every classroom/chamber teacher).
       const teacherDisplayName = t.title ? `${t.name}, ${t.title}` : t.name;
@@ -3370,6 +3437,15 @@ export class WorldScene extends Phaser.Scene {
         // every time, not just on a map change.
         setMyProfile(ack.player);
         this.updateOwnBars();
+        // A later follow-up ask: "the character sheet even while open
+        // [should] automatically update with hp/mana/movement/hunger/
+        // thirst changes" — updateOwnBars only ever refreshed the top-
+        // left status bar; nothing here told an already-OPEN modal (the
+        // character sheet chief among them, since mv only ever changes
+        // on a move) to re-render with the fresh snapshot until some
+        // unrelated event (a combat hit, the next statTick) happened to
+        // trigger one.
+        refreshOpenModals();
         const pos = this.tilePosition(ack.player.row, ack.player.col);
         this.tweens.add({
           targets: this.player,
@@ -3400,6 +3476,20 @@ export class WorldScene extends Phaser.Scene {
 
     this.setTarget(found.kind, found.id, found.sprite);
     this.engageDefaultAttack(found.kind, found.id);
+  }
+
+  // A later follow-up ask: "when the follower goes and attacks a target
+  // the player should begin to auto attack or auto move toward the
+  // monster... similar to right clicking" — this IS right-click's own
+  // engage logic, just triggered by the server's followerEngaged signal
+  // instead of a mouse click, so the follower actually gets backup
+  // instead of fighting alone while the player stands there.
+  private handleFollowerEngaged(targetKind: 'monster' | 'player', targetId: string): void {
+    if (this.isMoving || this.isPunching) return;
+    const sprite = this.spriteMapFor(targetKind).get(targetId);
+    if (!sprite) return;
+    this.setTarget(targetKind, targetId, sprite);
+    this.engageDefaultAttack(targetKind, targetId);
   }
 
   // Shared by right-click and the 'x' hotkey's own "start" side (a later

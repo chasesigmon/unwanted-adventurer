@@ -211,6 +211,13 @@ export interface PlayerSnapshot {
   // wandLitUntil/celeritasActiveUntil. Never persisted (resets on
   // reconnect, same tradeoff as those).
   enhancedLearningUntil?: number | null;
+  // The Illusionist's own create duplicate spell (a later follow-up ask:
+  // "have an affect while create duplicate is active so they know when
+  // it will end") — same "absolute epoch-ms expiry, optional, owning-
+  // client-only" shape as enhancedLearningUntil above; no separate
+  // xActive boolean since this has no manual early-cancel, purely time-
+  // based (see game.gateway.ts's activeDuplicates/checkDuplicateExpiry).
+  duplicateActiveUntil?: number | null;
   // Which of the 4 houses this player has chosen (a follow-up ask) —
   // permanent once set (see game.gateway.ts's handleChooseHouse), gates
   // which house's own Common Room/Dorms this player may enter (see
@@ -387,7 +394,7 @@ export interface TeacherSnapshot {
   // with this quest's own description (shared/quests.ts) as the spoken
   // line and a button to start it, instead of the plain classroom-teacher
   // tooltip. Checked in order (see shared/quests.ts's activeQuestIdFor) —
-  // a teacher with more than one (Professor Caldwell's 2nd quest, a
+  // a teacher with more than one (Professor Hollowell's 2nd quest, a
   // later follow-up ask) offers them one at a time, moving to the next
   // once the current one is turned in.
   questIds?: string[];
@@ -805,6 +812,14 @@ export interface ServerToClientEvents {
   // the player's OWN summoned stone block, which isn't a player/npc/
   // monster attacker at all).
   combatNotice: (message: string) => void;
+  // A later follow-up ask: "when the follower goes and attacks a target
+  // the player should begin to auto attack or auto move toward the
+  // monster... similar to right clicking" — private to the follower's
+  // OWNER (same one-client shape as combatNotice above), telling the
+  // client to engage this target the same way a right-click would,
+  // fired the moment the follower's own contact starts a brand new
+  // player-combat session server-side (see resolveFollowerContact).
+  followerEngaged: (data: { targetKind: 'monster' | 'player'; targetId: string }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -1111,6 +1126,8 @@ export interface SocketData {
   quests: Record<string, QuestProgress>;
   // Never persisted — see PlayerSnapshot's own doc comment.
   enhancedLearningUntil: number | null;
+  // Never persisted — see PlayerSnapshot's own doc comment.
+  duplicateActiveUntil: number | null;
   // House/specialization choice (a follow-up ask) — persisted; loaded
   // from the player doc on connect, null until chosen (permanent once
   // set). See PlayerSnapshot's own doc comment for what each gates.
