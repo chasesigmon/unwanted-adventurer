@@ -18,7 +18,15 @@ import { MonsterManagerService } from '../monsters/monster-manager.service.js';
 import { CorpseManagerService, bodyPartLabelFor, raceForBodyPart } from '../worlds/corpse-manager.service.js';
 import { PetManagerService } from '../pets/pet-manager.service.js';
 import { AnimatedMonsterManagerService } from '../pets/animated-monster-manager.service.js';
-import { PET_KINDS, PET_COMMANDS, PET_ATTACK_DAMAGE, type PetKind, type PetCommand } from '../../shared/pets.js';
+import {
+  PET_KINDS,
+  PET_COMMANDS,
+  PET_ATTACK_DAMAGE,
+  FOLLOWER_EQUIPMENT_SLOTS,
+  FOLLOWER_WEAPON_DAMAGE_BONUS,
+  type PetKind,
+  type PetCommand,
+} from '../../shared/pets.js';
 import { CHAT_COMMANDS } from '../../shared/commands.js';
 import { WorldClockService } from '../worlds/world-clock.service.js';
 import { findVendor } from '../worlds/vendors.js';
@@ -120,6 +128,7 @@ import type {
   BuyAck,
   PetCommandAck,
   CommandFollowerAttackAck,
+  FollowerItemAck,
   AnimatedMonsterCommandAck,
   EatBrainsAck,
   SacrificeAck,
@@ -280,6 +289,11 @@ interface CombatSession {
   range?: number;
 }
 const MONSTER_TICK_INTERVAL_MS = 3000;
+// Phase C's "speed-matching" ask — close to but slightly slower than the
+// player's own MOVE_COOLDOWN_MS (220ms, src/game/mapRender.ts) so a
+// following pet/animated monster visibly keeps pace without ever
+// outrunning the player it's following.
+const FOLLOWER_STEP_MS = 300;
 // Zombie-only "Eat Brains" (see handleEatBrains) — "a 4 tick cooldown"
 // measured in the game's actual world tick: the same randomized 30-40s
 // global stat tick that advances worldHour (see globalStatTick/
@@ -595,6 +609,23 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.petManager.setTargetLocator(followerTargetLocator);
     this.animatedMonsterManager.setTargetLocator(followerTargetLocator);
 
+    // Phase C's own "speed-matching" ask — a pet/animated monster used to
+    // only step once per MONSTER_TICK_INTERVAL_MS (3s, the same tick
+    // combat/wandering runs on), falling miles behind a player who moves
+    // every MOVE_COOLDOWN_MS (220ms, src/game/mapRender.ts) at ordinary
+    // walking speed. This dedicated, faster interval handles ONLY
+    // follower movement (tickAll) — attack cadence/damage output is
+    // unaffected, still resolved on the original slower tick below via
+    // checkContacts (a read-only adjacency check against wherever this
+    // faster loop has already moved the follower to).
+    setInterval(() => {
+      const petMaps = this.petManager.tickAll();
+      const animatedMonsterMaps = this.animatedMonsterManager.tickAll();
+      for (const mapName of new Set<MapName>([...petMaps, ...animatedMonsterMaps])) {
+        this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
+      }
+    }, FOLLOWER_STEP_MS);
+
     setInterval(() => {
       this.combatTickCount += 1;
       this.combatTick();
@@ -603,22 +634,20 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.monsterManager.wanderAll(this.combatTickCount);
       this.resolveMonsterInitiatedAttack(this.combatTickCount);
       this.monsterManager.respawnBelowMax();
-      // 'follow' steps the pet toward its owner every tick; 'attack' (the
-      // 'z' hotkey, a later follow-up ask) steps it toward its assigned
-      // target instead, reporting a "contact" once adjacent — resolved
-      // right below via resolveFollowerContact (damage + starting the
-      // owner's own auto-attack if they aren't already fighting).
-      const { changedMaps: petMaps, contacts: petContacts } = this.petManager.tickAll();
-      const { changedMaps: animatedMonsterMaps, contacts: animatedMonsterContacts } = this.animatedMonsterManager.tickAll();
-      for (const contact of petContacts) {
+      // Read-only adjacency check against each 'attack'-commanded
+      // follower's CURRENT position (already moved by the faster
+      // interval above) — resolveFollowerContact deals the actual damage
+      // and starts the owner's own auto-attack if they aren't already
+      // fighting.
+      for (const contact of this.petManager.checkContacts()) {
         this.resolveFollowerContact(contact.ownerUsername, contact.targetKind, contact.targetId, 'pet');
       }
-      for (const contact of animatedMonsterContacts) {
+      for (const contact of this.animatedMonsterManager.checkContacts()) {
         this.resolveFollowerContact(contact.ownerUsername, contact.targetKind, contact.targetId, 'animatedMonster', contact.id);
       }
       const expiredCorpseMaps = this.corpseManager.removeExpired();
       const stoneBlockMaps = this.removeExpiredStoneBlocks();
-      const mapsToBroadcast = new Set<MapName>([...ACTIVE_MONSTER_MAPS, ...expiredCorpseMaps, ...stoneBlockMaps, ...petMaps, ...animatedMonsterMaps]);
+      const mapsToBroadcast = new Set<MapName>([...ACTIVE_MONSTER_MAPS, ...expiredCorpseMaps, ...stoneBlockMaps]);
       for (const mapName of mapsToBroadcast) {
         this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
       }
@@ -703,6 +732,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // combat-tick interval (see its own setInterval above) — a bug fix
       // for scutum's shield lingering up to this whole 30-40s tick past
       // its own countdown hitting 0.
+    }
+    // Phase C's "sleep/wake" ask — same cadence players regen on.
+    for (const mapName of this.petManager.regenAll()) {
+      this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
     }
     this.scheduleStatTick();
   }
@@ -2758,11 +2791,21 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const monster = this.monsterManager.getMonster(targetId);
     if (!monster) return;
 
+    const pet = followerType === 'pet' ? this.petManager.getSnapshotForOwner(ownerUsername) : undefined;
     const animatedMonster =
       followerType === 'animatedMonster' ? this.animatedMonsterManager.getSnapshotsForOwner(ownerUsername).find((m) => m.id === animatedMonsterId) : undefined;
-    const damage = followerType === 'pet' ? PET_ATTACK_DAMAGE : (animatedMonster?.attackDamage ?? 0);
+    // Phase C's "give/equip" ask — a weapon equipped on a follower (see
+    // shared/pets.ts's FOLLOWER_EQUIPMENT_SLOTS) adds a flat damage bonus
+    // on top of its own base attack. Armor sits in equipment too but has
+    // no effect here — no monster in this game currently damages a
+    // follower back at all (applyDamage on either manager is never called
+    // from any monster-attack path), so there's nothing for armor to
+    // reduce yet; wiring monster-vs-follower retaliation is a separate,
+    // materially bigger combat-AI feature this ask didn't cover.
+    const weaponBonus = (pet?.equipment.weapon ?? animatedMonster?.equipment.weapon) ? FOLLOWER_WEAPON_DAMAGE_BONUS : 0;
+    const damage = (followerType === 'pet' ? PET_ATTACK_DAMAGE + (pet?.attackDamageBonus ?? 0) : (animatedMonster?.attackDamage ?? 0)) + weaponBonus;
     if (damage <= 0) return;
-    const followerLabel = followerType === 'pet' ? (this.petManager.getSnapshotForOwner(ownerUsername)?.name ?? 'Your pet') : (animatedMonster?.name ?? 'Your ally');
+    const followerLabel = followerType === 'pet' ? (pet?.name ?? 'Your pet') : (animatedMonster?.name ?? 'Your ally');
 
     const result = this.monsterManager.applyDamage(monster.id, damage);
     if (!result) return;
@@ -2770,6 +2813,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (result.died) {
       const rawExpGained = expGainFor(monster.expReward, client.data.level, monster.level);
       this.grantExp(client, rawExpGained);
+      // Phase C's "pet evolution" ask — the pet earns its own exp from
+      // its own kills, on the same curve/level-up path as the player
+      // (see PetManagerService.grantExp), evolving once it crosses
+      // PET_EVOLUTION_LEVEL.
+      if (followerType === 'pet') {
+        const petGrant = this.petManager.grantExp(ownerUsername, rawExpGained);
+        if (petGrant?.evolved) {
+          this.server.to(client.data.map).emit('combatNotice', `${followerLabel} has evolved into a ${petGrant.pet.name}!`);
+        }
+      }
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
       this.corpseManager.spawn(
         monster.kind,
@@ -3662,6 +3715,127 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     return { ok: true, message: 'Your follower moves to attack.' };
+  }
+
+  // Phase C's own "give/equip" ask — every one of the 4 handlers below
+  // shares this same "which follower did the client mean" resolution: a
+  // pet needs no id (one per owner), an animated monster needs its own
+  // (an owner can have more than one at once).
+  private followerRefSchema = z.object({
+    followerKind: z.enum(['pet', 'animatedMonster']),
+    followerId: z.string().optional(),
+  });
+
+  // The Inventory modal's own "give to follower" action (a later
+  // follow-up ask) — moves one item out of the PLAYER's own inventory
+  // into the named follower's.
+  @SubscribeMessage('giveFollowerItem')
+  handleGiveFollowerItem(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): FollowerItemAck {
+    const parsed = this.followerRefSchema.extend({ itemIndex: z.number().int() }).safeParse(payload);
+    if (!parsed.success) return { ok: false, message: 'Invalid request.' };
+    const { followerKind, followerId, itemIndex } = parsed.data;
+
+    const item = client.data.inventory[itemIndex];
+    if (item === undefined) return { ok: false, message: "You don't have that." };
+
+    const gaveTo =
+      followerKind === 'pet'
+        ? this.petManager.giveItem(client.data.username, item)
+        : followerId
+          ? this.animatedMonsterManager.giveItem(client.data.username, followerId, item)
+          : undefined;
+    if (!gaveTo) return { ok: false, message: "You don't have that follower." };
+
+    client.data.inventory = client.data.inventory.filter((_, i) => i !== itemIndex);
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    return { ok: true, message: `You give the ${item} to ${gaveTo.name}.` };
+  }
+
+  // The reverse — takes an item back out of a follower's own inventory
+  // and returns it to the player's.
+  @SubscribeMessage('takeFollowerItem')
+  handleTakeFollowerItem(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): FollowerItemAck {
+    const parsed = this.followerRefSchema.extend({ itemIndex: z.number().int() }).safeParse(payload);
+    if (!parsed.success) return { ok: false, message: 'Invalid request.' };
+    const { followerKind, followerId, itemIndex } = parsed.data;
+
+    const result =
+      followerKind === 'pet'
+        ? this.petManager.takeItem(client.data.username, itemIndex)
+        : followerId
+          ? this.animatedMonsterManager.takeItem(client.data.username, followerId, itemIndex)
+          : undefined;
+    if (!result) return { ok: false, message: "Your follower isn't holding that." };
+
+    client.data.inventory = [...client.data.inventory, result.item];
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    const name = 'monster' in result ? result.monster.name : result.pet.name;
+    return { ok: true, message: `You take the ${result.item} back from ${name}.` };
+  }
+
+  // Moves an item already sitting in a follower's own inventory into its
+  // equipment — weapon or torso-armor only (see shared/pets.ts's
+  // FOLLOWER_EQUIPMENT_SLOTS); anything else (rings, jewelry, boots, ...)
+  // doesn't make sense on a pet/animated monster and is rejected. A
+  // weapon actually boosts its own attack damage (see
+  // resolveFollowerContact's own FOLLOWER_WEAPON_DAMAGE_BONUS check);
+  // torso-armor is stored/displayed only for now (see that method's own
+  // doc comment on why armor has no live effect yet).
+  @SubscribeMessage('equipFollowerItem')
+  handleEquipFollowerItem(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): FollowerItemAck {
+    const parsed = this.followerRefSchema.extend({ itemIndex: z.number().int() }).safeParse(payload);
+    if (!parsed.success) return { ok: false, message: 'Invalid request.' };
+    const { followerKind, followerId, itemIndex } = parsed.data;
+
+    const inventory =
+      followerKind === 'pet' ? this.petManager.getPet(client.data.username)?.inventory : followerId
+        ? this.animatedMonsterManager.getSnapshotsForOwner(client.data.username).find((m) => m.id === followerId)?.inventory
+        : undefined;
+    const item = inventory?.[itemIndex];
+    if (item === undefined) return { ok: false, message: "Your follower isn't holding that." };
+
+    const slot = EQUIPMENT_SLOT_FOR_ITEM[item];
+    if (slot !== 'weapon' && slot !== 'torso') {
+      return { ok: false, message: "That can't be equipped on a follower." };
+    }
+
+    const equippedOn =
+      followerKind === 'pet'
+        ? this.petManager.equipItem(client.data.username, itemIndex, slot)
+        : followerId
+          ? this.animatedMonsterManager.equipItem(client.data.username, followerId, itemIndex, slot)
+          : undefined;
+    if (!equippedOn) return { ok: false, message: "You don't have that follower." };
+
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    return { ok: true, message: `${equippedOn.name} equips the ${item}.` };
+  }
+
+  // Takes whatever's equipped in the given slot back off a follower,
+  // returning it to that follower's OWN inventory (not the player's —
+  // use takeFollowerItem afterward to bring it back).
+  @SubscribeMessage('unequipFollowerItem')
+  handleUnequipFollowerItem(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): FollowerItemAck {
+    const parsed = this.followerRefSchema.extend({ slot: z.enum(FOLLOWER_EQUIPMENT_SLOTS) }).safeParse(payload);
+    if (!parsed.success) return { ok: false, message: 'Invalid request.' };
+    const { followerKind, followerId, slot } = parsed.data;
+
+    const unequippedFrom =
+      followerKind === 'pet'
+        ? this.petManager.unequipItem(client.data.username, slot)
+        : followerId
+          ? this.animatedMonsterManager.unequipItem(client.data.username, followerId, slot)
+          : undefined;
+    if (!unequippedFrom) return { ok: false, message: "That follower doesn't have anything equipped there." };
+
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    return { ok: true, message: `${unequippedFrom.name} unequips its ${slot}.` };
   }
 
   // Zombie-only: heals 20% hp/mana and starts a 4-world-tick
@@ -6097,11 +6271,36 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // deliberate departure from the text game, which only wakes on an
   // explicit command — but a screen actually blacked out during a live
   // 2D session needs a way back that isn't "type a slash command blind").
+  // Phase C's own "sleep/wake" ask extends this to the player's own
+  // followers too — every call site here (handleMove, engageInDirection,
+  // ...) means the player is clearly back in action, so any sleeping pet/
+  // animated monster wakes right along with them, same reasoning.
   private wakeIfNeeded(client: GameSocket): void {
+    this.wakeFollowersIfNeeded(client);
     if (client.data.restState === 'awake') return;
     const was = client.data.restState;
     this.setRestState(client, 'awake');
     this.systemMessage(client, was === 'sleeping' ? 'You wake up.' : 'You stand up.');
+  }
+
+  // Flips any of the caller's own sleeping followers back to 'follow' —
+  // unconditional (unlike the player's own wake check above), since the
+  // PLAYER can already be awake while their pet is still asleep.
+  private wakeFollowersIfNeeded(client: GameSocket): void {
+    const { username } = client.data;
+    let changed = false;
+    const pet = this.petManager.getPet(username);
+    if (pet?.alive && pet.command === 'sleep') {
+      this.petManager.setCommand(username, 'follow');
+      changed = true;
+    }
+    for (const m of this.animatedMonsterManager.getSnapshotsForOwner(username)) {
+      if (m.alive && m.command === 'sleep') {
+        this.animatedMonsterManager.setCommand(username, m.id, 'follow');
+        changed = true;
+      }
+    }
+    if (changed) this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
   }
 
   // The /dance command (a later follow-up ask) — a toggle, same shape as

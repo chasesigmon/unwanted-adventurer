@@ -223,18 +223,17 @@ const VENDOR_SEEDS: VendorSeed[] = [
     ],
     greeting: "The cauldron's always brewing something — fresh hp and mp potions, bottled and ready.",
   },
-  // A later follow-up ask — standing right on Bramwick's own street
-  // (not its own shop interior, unlike the 4 above) at the exact spot
-  // the town's own middle standing torch used to sit before being
-  // removed (see shared/lighting.ts's standingTorchPositionsFor).
-  // Buying one is special-cased in handleBuyItem (creates a real Pet,
-  // not an inventory item) — these labels double as PetKind values.
+  // Phase C's "pet shop cottage" ask gave this one its own shop interior
+  // too, same hub-and-spoke shape as the 4 Bramwick shops above (it used
+  // to stand bare on the open street instead). Buying one is
+  // special-cased in handleBuyItem (creates a real Pet, not an inventory
+  // item) — these labels double as PetKind values.
   {
     id: 'bramwick-pet-shop',
     name: 'Pet Shop',
-    map: 'Bramwick',
-    row: 20,
-    col: 20,
+    map: 'Bramwick Pet Shop',
+    row: 2,
+    col: 5,
     items: [
       { label: 'puppy', price: 15 },
       { label: 'kitten', price: 15 },

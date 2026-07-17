@@ -2,7 +2,7 @@ import type { Server, Socket } from 'socket.io';
 import type { Gender, HairColor, MapName, Race, SkinTone, Direction, MonsterKind, MonsterClass, HouseName, SpecializationPath } from './constants.js';
 import type { EquipmentSlot } from './equipment.js';
 import type { QuestProgress } from './quests.js';
-import type { PetSnapshot, PetCommand, AnimatedMonsterSnapshot } from './pets.js';
+import type { PetSnapshot, PetCommand, AnimatedMonsterSnapshot, FollowerEquipmentSlot } from './pets.js';
 
 // Never persisted across sessions (a fresh connection always starts
 // 'awake') — matches the text game's own restState, which the same
@@ -487,6 +487,15 @@ export interface CommandFollowerAttackAck {
   message?: string;
 }
 
+// Phase C's "give/equip" ask — shared by giveFollowerItem/takeFollowerItem/
+// equipFollowerItem/unequipFollowerItem, all of which just need a plain
+// ok/message result (the actual updated follower state arrives via the
+// map:state broadcast every one of them also triggers).
+export interface FollowerItemAck {
+  ok: boolean;
+  message?: string;
+}
+
 // Broadcast to a map's room whenever a punch actually lands on a target
 // (an NPC/monster/other player standing exactly one tile ahead, in the
 // direction thrown) — carries enough to update everyone's view of the
@@ -815,6 +824,25 @@ export interface ClientToServerEvents {
   commandFollowerAttack: (
     payload: { targetKind: 'monster' | 'player'; targetId: string },
     ack: (res: CommandFollowerAttackAck) => void
+  ) => void;
+  // Phase C's own "give/equip" ask — followerId is only needed for an
+  // animated monster (an owner can have more than one); a pet needs none
+  // (one per owner).
+  giveFollowerItem: (
+    payload: { followerKind: 'pet' | 'animatedMonster'; followerId?: string; itemIndex: number },
+    ack: (res: FollowerItemAck) => void
+  ) => void;
+  takeFollowerItem: (
+    payload: { followerKind: 'pet' | 'animatedMonster'; followerId?: string; itemIndex: number },
+    ack: (res: FollowerItemAck) => void
+  ) => void;
+  equipFollowerItem: (
+    payload: { followerKind: 'pet' | 'animatedMonster'; followerId?: string; itemIndex: number },
+    ack: (res: FollowerItemAck) => void
+  ) => void;
+  unequipFollowerItem: (
+    payload: { followerKind: 'pet' | 'animatedMonster'; followerId?: string; slot: FollowerEquipmentSlot },
+    ack: (res: FollowerItemAck) => void
   ) => void;
   // Zombie-only: heals 20% hp/mana, see game.gateway.ts's
   // EAT_BRAINS_COOLDOWN_TICKS for the cooldown this starts.

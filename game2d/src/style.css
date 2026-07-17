@@ -585,6 +585,60 @@ body {
   color: #f0c040;
 }
 
+/* Phase C's own "give/equip" ask — a follower's own weapon/torso slots
+   plus whatever it's carrying, same compact card-row shape as the rest
+   of this panel. */
+.group-member-items {
+  margin-top: 6px;
+  font-size: 10px;
+  color: #999;
+}
+
+.group-member-equip-row,
+.group-member-item-row,
+.group-member-give-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.group-member-equip-row span,
+.group-member-item-row span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-member-equip-row button,
+.group-member-item-row button,
+.group-member-give-row button {
+  background: #1e1e2a;
+  border: 1px solid #444;
+  color: #ccc;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.group-member-equip-row button:hover,
+.group-member-item-row button:hover,
+.group-member-give-row button:hover {
+  background: #2a2a3a;
+}
+
+.group-member-give-row select {
+  flex: 1;
+  background: #1e1e2a;
+  border: 1px solid #444;
+  color: #ccc;
+  font-size: 10px;
+  border-radius: 3px;
+}
+
 /* A follow-up ask: "selected targets/enemies should appear below any
    other open labels" — pushed down to make room for the group panel
    above it (a fixed offset, not a dynamic reflow — the group panel is

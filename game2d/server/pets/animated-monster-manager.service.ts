@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import type { MapName, MonsterKind, Race } from '../../shared/constants.js';
-import type { PetCommand, AnimatedMonsterSnapshot } from '../../shared/pets.js';
+import type { PetCommand, AnimatedMonsterSnapshot, FollowerEquipmentSlot } from '../../shared/pets.js';
 import { animatedMonsterCapFor } from '../../shared/skills.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
 
@@ -56,6 +56,8 @@ export class AnimatedMonsterManagerService {
       row,
       col,
       command: 'follow',
+      inventory: [],
+      equipment: {},
       alive: true,
     };
     owned.push(monster);
@@ -86,6 +88,49 @@ export class AnimatedMonsterManagerService {
     return monster;
   }
 
+  // Phase C's "give/equip" ask — same shape as PetManagerService's own
+  // giveItem/takeItem/equipItem/unequipItem, just keyed by id too since an
+  // owner can have more than one animated monster at once.
+  giveItem(ownerUsername: string, id: string, item: string): AnimatedMonster | undefined {
+    const monster = this.monsters.get(ownerUsername)?.find((m) => m.id === id);
+    if (!monster || !monster.alive) return undefined;
+    monster.inventory = [...monster.inventory, item];
+    return monster;
+  }
+
+  takeItem(ownerUsername: string, id: string, itemIndex: number): { monster: AnimatedMonster; item: string } | undefined {
+    const monster = this.monsters.get(ownerUsername)?.find((m) => m.id === id);
+    if (!monster || !monster.alive) return undefined;
+    const item = monster.inventory[itemIndex];
+    if (item === undefined) return undefined;
+    monster.inventory = monster.inventory.filter((_, i) => i !== itemIndex);
+    return { monster, item };
+  }
+
+  equipItem(ownerUsername: string, id: string, itemIndex: number, slot: FollowerEquipmentSlot): AnimatedMonster | undefined {
+    const monster = this.monsters.get(ownerUsername)?.find((m) => m.id === id);
+    if (!monster || !monster.alive) return undefined;
+    const item = monster.inventory[itemIndex];
+    if (item === undefined) return undefined;
+    const inventory = monster.inventory.filter((_, i) => i !== itemIndex);
+    const previous = monster.equipment[slot];
+    if (previous) inventory.push(previous);
+    monster.inventory = inventory;
+    monster.equipment = { ...monster.equipment, [slot]: item };
+    return monster;
+  }
+
+  unequipItem(ownerUsername: string, id: string, slot: FollowerEquipmentSlot): AnimatedMonster | undefined {
+    const monster = this.monsters.get(ownerUsername)?.find((m) => m.id === id);
+    if (!monster || !monster.alive) return undefined;
+    const item = monster.equipment[slot];
+    if (!item) return undefined;
+    const { [slot]: _removed, ...rest } = monster.equipment;
+    monster.equipment = rest;
+    monster.inventory = [...monster.inventory, item];
+    return monster;
+  }
+
   // Same simplified "just subtract hp" contact-damage shape
   // PetManagerService.applyDamage already uses.
   applyDamage(ownerUsername: string, id: string, amount: number): { monster: AnimatedMonster; died: boolean } | undefined {
@@ -98,17 +143,12 @@ export class AnimatedMonsterManagerService {
   }
 
   // Same follow-toward-owner/attack-toward-target stepping logic as
-  // PetManagerService.tickAll — see that method's own doc comment — just
-  // iterating every owner's whole array instead of a single pet. Each
-  // reported contact also carries the specific animated monster's own id
-  // (unlike a pet, an owner can have more than one) so the caller can
-  // apply its own attackDamage and know which one to credit/update.
-  tickAll(): {
-    changedMaps: Set<MapName>;
-    contacts: Array<{ ownerUsername: string; id: string; targetKind: 'monster' | 'player'; targetId: string }>;
-  } {
+  // PetManagerService.tickAll — see that method's own doc comment (now on
+  // a faster FOLLOWER_STEP_MS cadence, movement only, no contact
+  // reporting — see checkContacts below) — just iterating every owner's
+  // whole array instead of a single pet.
+  tickAll(): Set<MapName> {
     const changedMaps = new Set<MapName>();
-    const contacts: Array<{ ownerUsername: string; id: string; targetKind: 'monster' | 'player'; targetId: string }> = [];
     for (const owned of this.monsters.values()) {
       for (const monster of owned) {
         if (!monster.alive) continue;
@@ -131,10 +171,7 @@ export class AnimatedMonsterManagerService {
           }
           const dRow = target.row - monster.row;
           const dCol = target.col - monster.col;
-          if (Math.abs(dRow) + Math.abs(dCol) <= 1) {
-            contacts.push({ ownerUsername: monster.ownerUsername, id: monster.id, targetKind: monster.attackTargetKind, targetId: monster.attackTargetId });
-            continue;
-          }
+          if (Math.abs(dRow) + Math.abs(dCol) <= 1) continue; // already adjacent — checkContacts handles this
           if (Math.abs(dRow) >= Math.abs(dCol)) {
             monster.row += Math.sign(dRow);
           } else {
@@ -166,7 +203,29 @@ export class AnimatedMonsterManagerService {
         changedMaps.add(monster.map);
       }
     }
-    return { changedMaps, contacts };
+    return changedMaps;
+  }
+
+  // Called from the slower, original combat tick — same read-only
+  // adjacency check as PetManagerService.checkContacts, just over every
+  // owner's whole array (each reported contact also carries the specific
+  // animated monster's own id, unlike a pet, since an owner can have more
+  // than one, so the caller knows which one to credit/update).
+  checkContacts(): Array<{ ownerUsername: string; id: string; targetKind: 'monster' | 'player'; targetId: string }> {
+    const contacts: Array<{ ownerUsername: string; id: string; targetKind: 'monster' | 'player'; targetId: string }> = [];
+    for (const owned of this.monsters.values()) {
+      for (const monster of owned) {
+        if (!monster.alive || monster.command !== 'attack' || !monster.attackTargetKind || !monster.attackTargetId) continue;
+        const target = this.targetLocator?.(monster.attackTargetKind, monster.attackTargetId);
+        if (!target || target.mapName !== monster.map) continue;
+        const dRow = target.row - monster.row;
+        const dCol = target.col - monster.col;
+        if (Math.abs(dRow) + Math.abs(dCol) <= 1) {
+          contacts.push({ ownerUsername: monster.ownerUsername, id: monster.id, targetKind: monster.attackTargetKind, targetId: monster.attackTargetId });
+        }
+      }
+    }
+    return contacts;
   }
 
   // "Lasts the entire time the player is logged in" — called on

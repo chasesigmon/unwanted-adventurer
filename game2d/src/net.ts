@@ -12,6 +12,7 @@ import type {
   BuyAck,
   PetCommandAck,
   CommandFollowerAttackAck,
+  FollowerItemAck,
   AnimatedMonsterCommandAck,
   EatBrainsAck,
   SacrificeAck,
@@ -33,7 +34,7 @@ import type {
 } from '../shared/types.js';
 import type { Direction, Gender, HairColor, SkinTone, HouseName, SpecializationPath, PlayableRace } from '../shared/constants.js';
 import type { EquipmentSlot } from '../shared/equipment.js';
-import type { PetCommand } from '../shared/pets.js';
+import type { PetCommand, FollowerEquipmentSlot } from '../shared/pets.js';
 
 type GameClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 type AuthResponse = { ok: true; token: string } | { ok: false; error: string };
@@ -445,6 +446,60 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('commandFollowerAttack', payload, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // Phase C's "give/equip" ask — followerId is only needed for an
+  // animated monster (an owner can have more than one); a pet needs none.
+  giveFollowerItem(payload: { followerKind: 'pet' | 'animatedMonster'; followerId?: string; itemIndex: number }): Promise<FollowerItemAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('giveFollowerItem', payload, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  takeFollowerItem(payload: { followerKind: 'pet' | 'animatedMonster'; followerId?: string; itemIndex: number }): Promise<FollowerItemAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('takeFollowerItem', payload, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  equipFollowerItem(payload: { followerKind: 'pet' | 'animatedMonster'; followerId?: string; itemIndex: number }): Promise<FollowerItemAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('equipFollowerItem', payload, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  unequipFollowerItem(payload: { followerKind: 'pet' | 'animatedMonster'; followerId?: string; slot: FollowerEquipmentSlot }): Promise<FollowerItemAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('unequipFollowerItem', payload, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

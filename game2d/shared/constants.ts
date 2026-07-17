@@ -80,7 +80,10 @@ export const FLORO_SHOP_MAPS = [
 // A later follow-up ask renamed the wand shop to "Weapons" — wands are
 // still sold there (see server/worlds/items.ts), just alongside other
 // weapon-slot gear now, not the shop's whole identity.
-export const BRAMWICK_SHOP_MAPS = ['Bramwick General Shop', 'Bramwick Weapons', 'Bramwick Armor', 'Bramwick Potions'] as const;
+// Phase C's own "pet shop cottage" ask — the pet vendor used to stand
+// bare on Bramwick's open street (see server/worlds/vendors.ts); it gets
+// its own 5th cottage now, same hub-and-spoke shape as the 4 above.
+export const BRAMWICK_SHOP_MAPS = ['Bramwick General Shop', 'Bramwick Weapons', 'Bramwick Armor', 'Bramwick Potions', 'Bramwick Pet Shop'] as const;
 
 // The 3 upper-floor landings (a later follow-up ask) — each a small hub
 // room reached by stairs, hanging 5 specialization chambers off its own

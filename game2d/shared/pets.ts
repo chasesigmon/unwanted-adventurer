@@ -34,6 +34,48 @@ export const PET_PRICE = 15;
 // counter-attack" shape the wand's own ranged auto-attack already uses.
 export const PET_ATTACK_DAMAGE = 5;
 
+// Phase C's own "sleep/wake" ask gave 'sleep' a real distinguishing
+// effect (until now it was functionally identical to 'stay') — modeled
+// on the player's own /sleep bonus (see game.gateway.ts's applyStatTick/
+// HEAL_PERCENT_RANGE): a modest baseline regen while follow/stay/attack
+// (pets never regenerated at ALL before this), a bigger one while
+// actually asleep. Pets only — animated monsters explicitly have no hp
+// regeneration at all (see AnimatedMonsterSnapshot's own doc comment
+// below); their own 'sleep' stays a plain do-nothing state like 'stay'.
+export const PET_AWAKE_HEAL_PERCENT = 6;
+export const PET_SLEEP_HEAL_PERCENT = 14;
+
+// Phase C's "pet evolution" ask — this project explicitly removed the
+// text-game's old consume-to-evolve mechanic ("there is no evolution
+// through consuming in the wizard world," see game.gateway.ts), so this
+// is level-based instead: a one-time name/stat upgrade the moment a pet
+// reaches PET_EVOLUTION_LEVEL, reusing its EXISTING spritesheet/kind (no
+// new art) rather than becoming a different creature outright — the same
+// "arts-generation is its own large task" scope-down this session already
+// made once for the new race sprites.
+export const PET_EVOLUTION_LEVEL = 5;
+export const PET_EVOLVED_NAME: Record<PetKind, string> = {
+  puppy: 'Dog',
+  kitten: 'Cat',
+  piglet: 'Boar',
+};
+export const PET_EVOLUTION_HP_BONUS = 25;
+export const PET_EVOLUTION_ATTACK_BONUS = 3;
+
+// Phase C's own "give/equip UI" ask — a follower can now hold items given
+// to it (see game.gateway.ts's handleGiveFollowerItem/handleTakeFollowerItem)
+// and equip a weapon/torso-armor item out of its own inventory (see
+// handleEquipFollowerItem/handleUnequipFollowerItem). Restricted to just
+// those 2 slots (out of shared/equipment.ts's full 12) — nothing else
+// (rings, jewelry, boots, ...) makes sense on a pet/animated monster, and
+// only a weapon actually does anything today (see FOLLOWER_WEAPON_DAMAGE_BONUS
+// below) — an equipped torso-armor item is stored/displayed but has no
+// live effect, since no monster in this game currently damages a
+// follower at all (see resolveFollowerContact's own doc comment).
+export const FOLLOWER_EQUIPMENT_SLOTS = ['weapon', 'torso'] as const;
+export type FollowerEquipmentSlot = (typeof FOLLOWER_EQUIPMENT_SLOTS)[number];
+export const FOLLOWER_WEAPON_DAMAGE_BONUS = 4;
+
 export interface PetSnapshot {
   id: string;
   ownerUsername: string;
@@ -43,6 +85,9 @@ export interface PetSnapshot {
   exp: number;
   hp: number;
   maxHp: number;
+  // Set once, the moment this pet evolves (see PET_EVOLUTION_LEVEL) — a
+  // flat bonus on top of PET_ATTACK_DAMAGE, undefined/0 until then.
+  attackDamageBonus?: number;
   map: MapName;
   row: number;
   col: number;
@@ -53,6 +98,9 @@ export interface PetSnapshot {
   // command changes away from 'attack' or the target's gone.
   attackTargetKind?: 'monster' | 'player';
   attackTargetId?: string;
+  // Phase C's "give/equip" ask — see FOLLOWER_EQUIPMENT_SLOTS above.
+  inventory: string[];
+  equipment: Partial<Record<FollowerEquipmentSlot, string>>;
   // False once its hp hits 0 — see this file's own doc comment on
   // resurrection being a future mechanic.
   alive: boolean;
@@ -90,7 +138,14 @@ export interface AnimatedMonsterSnapshot {
   // 'z' hotkey.
   attackTargetKind?: 'monster' | 'player';
   attackTargetId?: string;
+  // Phase C's "give/equip" ask — see FOLLOWER_EQUIPMENT_SLOTS above.
+  inventory: string[];
+  equipment: Partial<Record<FollowerEquipmentSlot, string>>;
   // "Lasts... until it is killed" — an animated monster has no hp
-  // regeneration and no resurrection path at all, unlike a pet.
+  // regeneration and no resurrection path at all, unlike a pet. Phase C's
+  // "sleep/wake" ask gave pets a real regen-while-sleeping bonus (see
+  // PET_AWAKE_HEAL_PERCENT/PET_SLEEP_HEAL_PERCENT above) but deliberately
+  // left this alone — 'sleep' stays a plain do-nothing state here, same
+  // as 'stay', preserving the existing no-regen design.
   alive: boolean;
 }

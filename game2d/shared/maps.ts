@@ -872,6 +872,9 @@ const BRAMWICK_SHOP_DOORS: Record<(typeof BRAMWICK_SHOP_MAPS)[number], { row: nu
   'Bramwick Weapons': { row: 10, col: 30 },
   'Bramwick Armor': { row: 28, col: 10 },
   'Bramwick Potions': { row: 28, col: 30 },
+  // Phase C's "pet shop cottage" — centered on the top row, between the
+  // two existing front shops, with plenty of clearance on both sides.
+  'Bramwick Pet Shop': { row: 10, col: BRAMWICK_MID_COL },
 };
 
 function bramwickShopInteriorDefinition(name: (typeof BRAMWICK_SHOP_MAPS)[number]): MapDefinition {
@@ -1078,6 +1081,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Bramwick Weapons': bramwickShopInteriorDefinition('Bramwick Weapons'),
   'Bramwick Armor': bramwickShopInteriorDefinition('Bramwick Armor'),
   'Bramwick Potions': bramwickShopInteriorDefinition('Bramwick Potions'),
+  'Bramwick Pet Shop': bramwickShopInteriorDefinition('Bramwick Pet Shop'),
   'Grimoak Grounds': {
     name: 'Grimoak Grounds',
     rows: GRIMOAK_GROUNDS_SIZE,
