@@ -92,6 +92,7 @@ import {
   armorEquipmentBonus,
   dexterityEquipmentBonus,
   intelligenceEquipmentBonus,
+  intelligenceScaledSpellDamage,
   isRingItem,
   resolveRingSlot,
   startingSkills,
@@ -1338,15 +1339,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const grantResult = this.grantExp(client, rawExpGained);
       leveledUp = grantResult.leveledUp;
       expGained = grantResult.message ? undefined : rawExpGained;
-      this.corpseManager.spawn(
-        targetClient.data.race,
-        targetClient.data.level,
-        [bodyPartLabelFor(targetClient.data.race)],
-        targetClient.data.map,
-        targetClient.data.row,
-        targetClient.data.col,
-        client.data.username
-      );
+      this.spawnPlayerCorpseAndStripGear(targetClient, client.data.username);
       this.respawnDefeatedPlayer(targetClient);
       this.endPlayerCombat(client.data.username);
     } else {
@@ -1356,6 +1349,34 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     void this.persistPosition(targetClient);
     void this.persistStats(targetClient);
     return { died, hp: targetClient.data.hp, maxHp: targetClient.data.maxHp, expGained, leveledUp };
+  }
+
+  // Shared by both PvP death paths (this and resolveHitOnPlayer's own
+  // melee branch) — a later follow-up ask: "Players on death should have
+  // their inventory and equipment fully in the corpse" (replacing the
+  // old single guaranteed "body part" drop entirely — a separate
+  // follow-up ask: "remove all body part references and logic as well as
+  // consume" for a player kill specifically; wild monster/NPC corpses
+  // keep their own body-part drop untouched, see bodyPartLabelFor's own
+  // remaining call sites). A REAL transfer, not a free duplicate copy —
+  // the defeated player's own inventory/equipment are cleared here, same
+  // "lose your gear on death" stakes PvP kills should actually carry;
+  // only reached on a PLAYER kill (a monster killing a player still just
+  // respawns them with nothing lost, unchanged).
+  private spawnPlayerCorpseAndStripGear(targetClient: GameSocket, killedByUsername: string): void {
+    const items = [...targetClient.data.inventory, ...Object.values(targetClient.data.equipment)];
+    this.corpseManager.spawn(
+      targetClient.data.race,
+      targetClient.data.level,
+      items,
+      targetClient.data.map,
+      targetClient.data.row,
+      targetClient.data.col,
+      killedByUsername
+    );
+    targetClient.data.inventory = [];
+    targetClient.data.equipment = {};
+    this.worldManager.updateState(targetClient.data.username, { inventory: [], equipment: {} });
   }
 
   // Every map:state broadcast (25+ call sites) goes through here now
@@ -3221,7 +3242,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
             this.recordMonsterKill(casterSocket, monster.kind);
           }
           const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
-          this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, burn.casterUsername, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
+          this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, burn.casterUsername, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0, monster.isRare);
         }
       } else {
         const npc = NPCS.find((n) => n.id === burn.targetId && n.map === burn.mapName);
@@ -3370,13 +3391,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         battlemageDamageBonus = BATTLEMAGE_ENHANCED_DAMAGE_BONUS;
       }
     }
-    // A follow-up ask: "every point into intelligence also increases
-    // ranged damage with a wand" — a flat +1 damage per point on top of
-    // the base WAND_BOLT_DAMAGE.
+    // A later follow-up ask replaced the old flat "+1 damage per
+    // intelligence point" wand-bolt bonus with the same compounding
+    // formula every other offensive spell's own base damage now uses
+    // (see intelligenceScaledSpellDamage's own doc comment) — Shaman's
+    // enhance-damage buff and Battlemage's own chance-based bonus stay
+    // flat additions on top, unrelated sources rather than part of the
+    // spell's own base figure.
     const baseWandBoltDamage =
-      WAND_BOLT_DAMAGE +
-      client.data.intelligence +
-      intelligenceEquipmentBonus(client.data.equipment) +
+      intelligenceScaledSpellDamage(WAND_BOLT_DAMAGE, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment)) +
       (client.data.enhanceDamageActive ? SHAMAN_ENHANCE_DAMAGE_BONUS : 0) +
       battlemageDamageBonus;
     // Cleric's own "enhanced undead damage" (a later follow-up ask) — the
@@ -3403,7 +3426,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         leveledUp = grantResult.leveledUp;
         expGained = grantResult.message ? undefined : rawExpGained;
         const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
-        this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
+        this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0, monster.isRare);
         this.recordMonsterKill(client, monster.kind);
         this.endPlayerCombat(client.data.username);
       }
@@ -3579,7 +3602,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // scaled to the monster's own level (see manaCrystalForLevel);
       // lootable, no mechanical use yet.
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
-      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
+      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0, monster.isRare);
       this.recordMonsterKill(client, monster.kind);
       this.endPlayerCombat(client.data.username);
     }
@@ -3931,15 +3954,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       leveledUp = grantResult.leveledUp;
       expGained = grantResult.message ? undefined : rawExpGained;
       if (grantResult.message) growthMessages.push(grantResult.message);
-      this.corpseManager.spawn(
-        targetClient.data.race,
-        targetClient.data.level,
-        [bodyPartLabelFor(targetClient.data.race)],
-        targetClient.data.map,
-        targetClient.data.row,
-        targetClient.data.col,
-        client.data.username
-      );
+      this.spawnPlayerCorpseAndStripGear(targetClient, client.data.username);
 
       this.respawnDefeatedPlayer(targetClient);
       this.endPlayerCombat(client.data.username);
@@ -4807,6 +4822,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.mana < ARCANE_BOLT_MANA_COST) {
       return { ok: false, message: `You don't have enough mana to cast arcane bolt (${ARCANE_BOLT_MANA_COST} needed).` };
     }
+    // "The base damage... for all offensive spells should increase by
+    // 10% of its max for every point of intelligence" (a later follow-up
+    // ask) — a COMPOUNDING multiplier (20 base, 1 int -> 22, 2 int ->
+    // 24.2, ...), computed once per cast from the caster's own effective
+    // intelligence (base + equipment) and reused for every branch below,
+    // in place of the flat AUGUE_DAMAGE constant.
+    const augueDamage = intelligenceScaledSpellDamage(AUGUE_DAMAGE, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment));
     // A practice scarecrow (or the original Great Plains training dummy)
     // is a valid target too (a follow-up ask: "practice their offense
     // spells, like augue, on them") — a much simpler, self-contained
@@ -4836,7 +4858,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: true, skills: client.data.skills, message };
       }
 
-      npc.hp = Math.max(0, npc.hp - AUGUE_DAMAGE);
+      npc.hp = Math.max(0, npc.hp - augueDamage);
       const died = npc.hp <= 0;
       // A later follow-up ask: "arcane bolt should not have a burning
       // over time effect" — unlike fire bolt (which keeps its own,
@@ -4863,9 +4885,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
       const message = died
         ? npc.immortal
-          ? `${client.data.username}'s arcane bolt strikes ${label} for ${AUGUE_DAMAGE} damage — it shrugs off the blow, unharmed.`
-          : `${client.data.username}'s arcane bolt strikes ${label} for ${AUGUE_DAMAGE} damage, defeating it! It leaves a corpse and reappears elsewhere.`
-        : `${client.data.username}'s arcane bolt strikes ${label} for ${AUGUE_DAMAGE} damage.`;
+          ? `${client.data.username}'s arcane bolt strikes ${label} for ${augueDamage} damage — it shrugs off the blow, unharmed.`
+          : `${client.data.username}'s arcane bolt strikes ${label} for ${augueDamage} damage, defeating it! It leaves a corpse and reappears elsewhere.`
+        : `${client.data.username}'s arcane bolt strikes ${label} for ${augueDamage} damage.`;
 
       this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
       void this.persistStats(client);
@@ -4879,7 +4901,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         targetKind: 'npc',
         target: npc.id,
         targetLabel: label,
-        damage: AUGUE_DAMAGE,
+        damage: augueDamage,
         targetHp: npc.hp,
         targetMaxHp: npc.maxHp,
         targetDied: died,
@@ -4921,7 +4943,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: true, skills: client.data.skills, message };
       }
 
-      const result = this.applyPvpRangedDamage(client, targetUsername, AUGUE_DAMAGE);
+      const result = this.applyPvpRangedDamage(client, targetUsername, augueDamage);
       if (!result) {
         return { ok: false, message: 'Your target is no longer here.' };
       }
@@ -4931,8 +4953,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (growth) growthMessages.push(growth);
 
       const message = result.died
-        ? `${client.data.username}'s arcane bolt strikes ${targetUsername} for ${AUGUE_DAMAGE} damage, defeating them!${result.expGained !== undefined ? ` (+${result.expGained} exp)` : ''}`
-        : `${client.data.username}'s arcane bolt strikes ${targetUsername} for ${AUGUE_DAMAGE} damage.`;
+        ? `${client.data.username}'s arcane bolt strikes ${targetUsername} for ${augueDamage} damage, defeating them!${result.expGained !== undefined ? ` (+${result.expGained} exp)` : ''}`
+        : `${client.data.username}'s arcane bolt strikes ${targetUsername} for ${augueDamage} damage.`;
 
       this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
       void this.persistStats(client);
@@ -4941,7 +4963,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         targetKind: 'player',
         target: targetUsername,
         targetLabel: targetUsername,
-        damage: AUGUE_DAMAGE,
+        damage: augueDamage,
         targetHp: result.hp,
         targetMaxHp: result.maxHp,
         targetDied: result.died,
@@ -4978,7 +5000,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: true, skills: client.data.skills, message };
     }
 
-    const result = this.monsterManager.applyDamage(monster.id, AUGUE_DAMAGE);
+    const result = this.monsterManager.applyDamage(monster.id, augueDamage);
     if (!result) {
       return { ok: false, message: 'Your target is no longer here.' };
     }
@@ -5000,14 +5022,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       expGained = grantResult.message ? undefined : rawExpGained;
       if (grantResult.message) growthMessages.push(grantResult.message);
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
-      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
+      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0, monster.isRare);
       this.recordMonsterKill(client, monster.kind);
       this.endPlayerCombat(client.data.username);
     }
 
     const message = result.died
-      ? `${client.data.username}'s arcane bolt strikes the ${monster.kind} for ${AUGUE_DAMAGE} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
-      : `${client.data.username}'s arcane bolt strikes the ${monster.kind} for ${AUGUE_DAMAGE} damage.`;
+      ? `${client.data.username}'s arcane bolt strikes the ${monster.kind} for ${augueDamage} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
+      : `${client.data.username}'s arcane bolt strikes the ${monster.kind} for ${augueDamage} damage.`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
     void this.persistStats(client);
@@ -5018,7 +5040,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       targetKind: 'monster',
       target: monster.id,
       targetLabel: monster.kind,
-      damage: AUGUE_DAMAGE,
+      damage: augueDamage,
       targetHp: result.monster.hp,
       targetMaxHp: monster.maxHp,
       targetDied: result.died,
@@ -5044,7 +5066,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     payload: unknown,
     config: {
       skill: string;
-      describeHit: (label: string) => string;
+      // `damage` (a later follow-up ask: the intelligence-scaled actual
+      // figure, not the flat base constant) rides along so each spell's
+      // own describeHit can embed the real number in its message instead
+      // of hardcoding its base constant.
+      describeHit: (label: string, damage: number) => string;
       onMonsterHit?: (monster: Monster) => void;
       burnOnHit?: boolean;
       // Kinetic strike (a later follow-up ask, Battlemage) reuses this
@@ -5056,7 +5082,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   ): CastSpellAck {
     const { skill } = config;
     const manaCost = config.manaCost ?? ELEMENTAL_BOLT_MANA_COST;
-    const damage = config.damage ?? ELEMENTAL_BOLT_DAMAGE;
+    // "The base damage... for all offensive spells should increase by
+    // 10% of its max for every point of intelligence" (a later follow-up
+    // ask) — see intelligenceScaledSpellDamage's own doc comment.
+    const damage = intelligenceScaledSpellDamage(
+      config.damage ?? ELEMENTAL_BOLT_DAMAGE,
+      client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment)
+    );
     const displayName = skill.charAt(0).toUpperCase() + skill.slice(1);
     if (client.data.skills[skill] === undefined) {
       return { ok: false, message: `You don't know the ${skill} spell yet.` };
@@ -5127,9 +5159,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
       const message = died
         ? npc.immortal
-          ? `${client.data.username}'s ${config.describeHit(label)} — it shrugs off the blow, unharmed.`
-          : `${client.data.username}'s ${config.describeHit(label)}, defeating it! It leaves a corpse and reappears elsewhere.`
-        : `${client.data.username}'s ${config.describeHit(label)}.`;
+          ? `${client.data.username}'s ${config.describeHit(label, damage)} — it shrugs off the blow, unharmed.`
+          : `${client.data.username}'s ${config.describeHit(label, damage)}, defeating it! It leaves a corpse and reappears elsewhere.`
+        : `${client.data.username}'s ${config.describeHit(label, damage)}.`;
 
       this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
       void this.persistStats(client);
@@ -5205,14 +5237,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       expGained = grantResult.message ? undefined : rawExpGained;
       if (grantResult.message) growthMessages.push(grantResult.message);
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
-      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
+      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0, monster.isRare);
       this.recordMonsterKill(client, monster.kind);
       this.endPlayerCombat(client.data.username);
     }
 
     const message = result.died
-      ? `${client.data.username}'s ${config.describeHit(monster.kind)}, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
-      : `${client.data.username}'s ${config.describeHit(monster.kind)}.`;
+      ? `${client.data.username}'s ${config.describeHit(monster.kind, damage)}, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}`
+      : `${client.data.username}'s ${config.describeHit(monster.kind, damage)}.`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
     void this.persistStats(client);
@@ -5240,7 +5272,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleCastFireBolt(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     return this.resolveElementalBolt(client, payload, {
       skill: FIRE_BOLT_SKILL,
-      describeHit: (label) => `fire bolt engulfs the ${label} in flame for ${ELEMENTAL_BOLT_DAMAGE} damage`,
+      describeHit: (label, damage) => `fire bolt engulfs the ${label} in flame for ${damage} damage`,
       burnOnHit: true,
     });
   }
@@ -5249,7 +5281,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleCastWaterBolt(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     return this.resolveElementalBolt(client, payload, {
       skill: WATER_BOLT_SKILL,
-      describeHit: (label) => `water bolt drenches the ${label} for ${ELEMENTAL_BOLT_DAMAGE} damage`,
+      describeHit: (label, damage) => `water bolt drenches the ${label} for ${damage} damage`,
       onMonsterHit: (monster) => this.monsterManager.slow(monster.id, this.combatTickCount + WATER_BOLT_SLOW_TICKS),
     });
   }
@@ -5258,7 +5290,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleCastAirBolt(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     return this.resolveElementalBolt(client, payload, {
       skill: AIR_BOLT_SKILL,
-      describeHit: (label) => `air bolt slams into the ${label} for ${ELEMENTAL_BOLT_DAMAGE} damage`,
+      describeHit: (label, damage) => `air bolt slams into the ${label} for ${damage} damage`,
       onMonsterHit: (monster) => this.monsterManager.knockback(monster.id, client.data.row, client.data.col, AIR_BOLT_KNOCKBACK_TILES),
     });
   }
@@ -5267,7 +5299,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleCastEarthBolt(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     return this.resolveElementalBolt(client, payload, {
       skill: EARTH_BOLT_SKILL,
-      describeHit: (label) => `earth bolt pelts the ${label} with stone for ${ELEMENTAL_BOLT_DAMAGE} damage`,
+      describeHit: (label, damage) => `earth bolt pelts the ${label} with stone for ${damage} damage`,
       onMonsterHit: (monster) => this.monsterManager.stun(monster.id, this.combatTickCount + EARTH_BOLT_STUN_TICKS),
     });
   }
@@ -5287,7 +5319,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       skill: KINETIC_STRIKE_SKILL,
       manaCost: KINETIC_STRIKE_MANA_COST,
       damage: KINETIC_STRIKE_DAMAGE,
-      describeHit: (label) => `kinetic strike slams into the ${label} for ${KINETIC_STRIKE_DAMAGE} damage`,
+      describeHit: (label, damage) => `kinetic strike slams into the ${label} for ${damage} damage`,
       onMonsterHit: (monster) => this.monsterManager.knockback(monster.id, client.data.row, client.data.col, KINETIC_STRIKE_KNOCKBACK_TILES),
     });
   }
@@ -5319,6 +5351,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!parsed.success) {
       return { ok: false, message: 'Invalid target.' };
     }
+    // "The base damage... for all offensive spells should increase by
+    // 10% of its max for every point of intelligence" (a later follow-up
+    // ask) — sap health drains (and heals the caster) this same scaled
+    // figure instead of the flat SAP_HEALTH_AMOUNT.
+    const sapHealthAmount = intelligenceScaledSpellDamage(SAP_HEALTH_AMOUNT, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment));
 
     // "The player should be able to continue using BP even when they
     // reach 0 or below" — no insufficient-BP rejection at all, unlike
@@ -5371,9 +5408,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: true, skills: client.data.skills, message };
       }
 
-      npc.hp = Math.max(0, npc.hp - SAP_HEALTH_AMOUNT);
+      npc.hp = Math.max(0, npc.hp - sapHealthAmount);
       const died = npc.hp <= 0;
-      client.data.hp = Math.min(client.data.maxHp, client.data.hp + SAP_HEALTH_AMOUNT);
+      client.data.hp = Math.min(client.data.maxHp, client.data.hp + sapHealthAmount);
       if (died) {
         if (!npc.immortal) {
           this.corpseManager.spawn(npc.race, npc.level, [bodyPartLabelFor(npc.race), 'bone dagger'], npc.map, npc.row, npc.col);
@@ -5392,9 +5429,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
       const message = died
         ? npc.immortal
-          ? `${client.data.username}'s sap health drains the ${label} for ${SAP_HEALTH_AMOUNT} damage — it shrugs off the blow, unharmed.${overdraftMessage}`
-          : `${client.data.username}'s sap health drains the ${label} for ${SAP_HEALTH_AMOUNT} damage, defeating it! It leaves a corpse and reappears elsewhere.${overdraftMessage}`
-        : `${client.data.username}'s sap health drains the ${label} for ${SAP_HEALTH_AMOUNT} damage.${overdraftMessage}`;
+          ? `${client.data.username}'s sap health drains the ${label} for ${sapHealthAmount} damage — it shrugs off the blow, unharmed.${overdraftMessage}`
+          : `${client.data.username}'s sap health drains the ${label} for ${sapHealthAmount} damage, defeating it! It leaves a corpse and reappears elsewhere.${overdraftMessage}`
+        : `${client.data.username}'s sap health drains the ${label} for ${sapHealthAmount} damage.${overdraftMessage}`;
 
       this.worldManager.updateState(client.data.username, { hp: client.data.hp, bp: client.data.bp, skills: client.data.skills });
       void this.persistStats(client);
@@ -5403,7 +5440,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         targetKind: 'npc',
         target: npc.id,
         targetLabel: label,
-        damage: SAP_HEALTH_AMOUNT,
+        damage: sapHealthAmount,
         targetHp: npc.hp,
         targetMaxHp: npc.maxHp,
         targetDied: died,
@@ -5439,11 +5476,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: true, skills: client.data.skills, message };
     }
 
-    const result = this.monsterManager.applyDamage(monster.id, SAP_HEALTH_AMOUNT);
+    const result = this.monsterManager.applyDamage(monster.id, sapHealthAmount);
     if (!result) {
       return { ok: false, message: 'Your target is no longer here.' };
     }
-    client.data.hp = Math.min(client.data.maxHp, client.data.hp + SAP_HEALTH_AMOUNT);
+    client.data.hp = Math.min(client.data.maxHp, client.data.hp + sapHealthAmount);
 
     const growthMessages: string[] = [];
     const growth = this.maybeGrowSpellSkill(client, SAP_HEALTH_SKILL);
@@ -5458,14 +5495,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       expGained = grantResult.message ? undefined : rawExpGained;
       if (grantResult.message) growthMessages.push(grantResult.message);
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
-      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0);
+      this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0, monster.isRare);
       this.recordMonsterKill(client, monster.kind);
       this.endPlayerCombat(client.data.username);
     }
 
     const message = result.died
-      ? `${client.data.username}'s sap health drains the ${monster.kind} for ${SAP_HEALTH_AMOUNT} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}${overdraftMessage}`
-      : `${client.data.username}'s sap health drains the ${monster.kind} for ${SAP_HEALTH_AMOUNT} damage.${overdraftMessage}`;
+      ? `${client.data.username}'s sap health drains the ${monster.kind} for ${sapHealthAmount} damage, defeating it!${expGained !== undefined ? ` (+${expGained} exp)` : ''}${overdraftMessage}`
+      : `${client.data.username}'s sap health drains the ${monster.kind} for ${sapHealthAmount} damage.${overdraftMessage}`;
 
     this.worldManager.updateState(client.data.username, { hp: client.data.hp, bp: client.data.bp, skills: client.data.skills });
     void this.persistStats(client);
@@ -5474,7 +5511,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       targetKind: 'monster',
       target: monster.id,
       targetLabel: monster.kind,
-      damage: SAP_HEALTH_AMOUNT,
+      damage: sapHealthAmount,
       targetHp: result.monster.hp,
       targetMaxHp: monster.maxHp,
       targetDied: result.died,
@@ -6270,16 +6307,24 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       message = 'You fumble the incantation and nothing happens.';
     } else {
       this.startSkillCooldown(client, ANIMATE_DEAD_SKILL);
+      // A later follow-up ask: "it should reflect what they were before...
+      // if animating a rare wild goblin then the animated dead should
+      // have the title Animated rare wild goblin" — corpse.isRare (set
+      // when the source monster died — see the corpseManager.spawn call
+      // sites) now rides along onto the animated monster's own snapshot
+      // too, driving WorldScene's bigger-sprite-scale rendering the same
+      // way a live rare monster gets.
       this.animatedMonsterManager.animate(
         client.data.username,
         client.data.level,
         corpse.kind as MonsterKind,
-        `Animated ${corpse.kind}`,
+        `Animated ${corpse.isRare ? 'rare ' : ''}${corpse.kind}`,
         corpse.sourceMaxHp * ANIMATE_DEAD_HP_MULTIPLIER,
         corpse.sourceAttackDamage ?? 0,
         client.data.map,
         corpse.row,
-        corpse.col
+        corpse.col,
+        corpse.isRare
       );
       this.corpseManager.remove(corpse.id);
       message = `The ${corpse.kind}'s corpse shudders and rises, bound to your will.`;
@@ -6622,6 +6667,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!point || !client.data.visitedPois.includes(point.id)) {
       return { ok: false, message: "You haven't been there yet." };
     }
+    const cooldownUntil = client.data.skillCooldowns[RECALL_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Recall is still recharging (${secondsLeft}s left).` };
+    }
     if (client.data.mana < RECALL_MANA_COST) {
       return { ok: false, message: `You don't have enough mana to cast recall (${RECALL_MANA_COST} needed).` };
     }
@@ -6633,6 +6683,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!this.rollSpellSuccess(client, RECALL_SKILL)) {
       message = 'You fumble the incantation and nothing happens.';
     } else {
+      this.startSkillCooldown(client, RECALL_SKILL);
       const previousMap = client.data.map;
       const spawn = startingPositionFor(point.landingMap);
       client.data.map = point.landingMap;

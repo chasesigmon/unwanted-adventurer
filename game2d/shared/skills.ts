@@ -202,6 +202,11 @@ export const ANIMATE_DEAD_HP_MULTIPLIER = 2;
 // monsters along with them.
 export const RECALL_SKILL = 'recall';
 export const RECALL_MANA_COST = 30;
+// "Recall on successful cast should have a 2 minute cooldown" (a later
+// follow-up ask) — same "only starts on an actual success, a fumble
+// still costs mana but doesn't lock the player out of trying again right
+// away" shape every other spell's own cooldown already uses here.
+export const RECALL_COOLDOWN_MS = 2 * 60 * 1000;
 
 // The Defense Classroom's own level-10 spell (a later follow-up ask) —
 // a fixed-position dome around the caster's cast location: they can't
@@ -644,6 +649,7 @@ export const SKILL_COOLDOWN_MS: Partial<Record<string, number>> = {
   [INVISIBILITY_SKILL]: INVISIBILITY_COOLDOWN_MS,
   [CREATE_DUPLICATE_SKILL]: CREATE_DUPLICATE_COOLDOWN_MS,
   [FLIGHT_SKILL]: FLIGHT_COOLDOWN_MS,
+  [RECALL_SKILL]: RECALL_COOLDOWN_MS,
 };
 
 export const RACE_INNATE_SKILLS: Record<Race, string[]> = {

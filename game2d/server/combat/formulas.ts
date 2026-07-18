@@ -585,6 +585,26 @@ export function intelligenceSpellBonus(intelligence: number): number {
   return intelligence;
 }
 
+// "The base damage that I have given for all offensive spells should
+// increase by 10% of its max for every point of intelligence. So a spell
+// with base damage of 20 for the first point of intelligence goes up to
+// 22 damage, and then weigh in the next point of intelligence, which
+// would b[r]ing the max to 24.2, and then the next point of intelligence
+// is weighed against that new max of 24.2 on and on" (a later follow-up
+// ask) — a COMPOUNDING multiplier (baseDamage * 1.1^intelligence), not a
+// flat per-point bonus (20 + 2 + 2.2 + ... would NOT match "weighed
+// against the NEW max" each time). Applied to every damage-dealing
+// spell's own base figure (arcane bolt, the 4 elemental bolts, kinetic
+// strike, sap health, the wand's own basic ranged bolt — see each of
+// their own call sites in game.gateway.ts) — deliberately NOT melee
+// punch/counter-attack damage, which isn't spellcasting. Uses the
+// caster's TOTAL effective intelligence (base + equipment, same
+// intelligenceEquipmentBonus every other intelligence-driven formula
+// here already folds in), rounded once at the end rather than per step.
+export function intelligenceScaledSpellDamage(baseDamage: number, intelligence: number): number {
+  return Math.round(baseDamage * Math.pow(1.1, intelligence));
+}
+
 // "Luck should give a player extra chance to succeed at casting. Luck x
 // 10 is the chance that any spell being cast has an extra 10% chance to
 // succeed." A nested roll, not a flat bonus: luck*10 is itself a percent

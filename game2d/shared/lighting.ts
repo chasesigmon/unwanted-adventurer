@@ -21,6 +21,13 @@ import {
   FLOOR_LANDING_MID_ROW,
   BRAMWICK_MID_COL,
   BRAMWICK_ENTRANCE_ROW,
+  PORTAL_DUNGEON_MAPS,
+  PORTAL_DUNGEON_SIZE_ROWS,
+  PORTAL_DUNGEON_MID_COL,
+  GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW,
+  GRIMOAK_GROUNDS_COLS,
+  ROAD_TO_KORTHO_MID_ROW,
+  ROAD_TO_KORTHO_COLS,
 } from './maps.js';
 
 // "Late hours of night and early hours of morning" — a narrower, darker
@@ -586,19 +593,31 @@ export function emitsLight(equipment: Record<string, string>): boolean {
 // treats it as solid) — only a monster still can't use one (see
 // MonsterManagerService.isFree).
 export function portalPositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
-  if (mapName !== 'Grimoak Castle 4th Floor') return [];
-  const midCol = Math.floor(FLOOR_LANDING_COLS / 2);
-  return [
-    { row: 0, col: midCol }, // north wall
-    // A later follow-up ask moved this off the (unused) up-stairs slot
-    // and onto the wall's own center, clear of the real down-stairs
-    // (FLOOR_LANDING_DOWN_STAIRS_COL) — see torchWallPositionsFor's own
-    // floor-4-specific torch layout, nudged apart to make room for both
-    // this and the north portal sharing the same center column.
-    { row: FLOOR_LANDING_ROWS - 1, col: midCol }, // south wall
-    { row: FLOOR_LANDING_MID_ROW, col: FLOOR_LANDING_COLS - 1 }, // east wall
-    { row: FLOOR_LANDING_MID_ROW, col: 0 }, // west wall
-  ];
+  if (mapName === 'Grimoak Castle 4th Floor') {
+    const midCol = Math.floor(FLOOR_LANDING_COLS / 2);
+    return [
+      { row: 0, col: midCol }, // north wall
+      // A later follow-up ask moved this off the (unused) up-stairs slot
+      // and onto the wall's own center, clear of the real down-stairs
+      // (FLOOR_LANDING_DOWN_STAIRS_COL) — see torchWallPositionsFor's own
+      // floor-4-specific torch layout, nudged apart to make room for both
+      // this and the north portal sharing the same center column.
+      { row: FLOOR_LANDING_ROWS - 1, col: midCol }, // south wall
+      { row: FLOOR_LANDING_MID_ROW, col: FLOOR_LANDING_COLS - 1 }, // east wall
+      { row: FLOOR_LANDING_MID_ROW, col: 0 }, // west wall
+    ];
+  }
+  // A later follow-up ask: "there is no exit portal in the worlds you
+  // created that the portals take you to. Fix this so that way the
+  // player can get back" — each of the 4 dungeon maps gets its own
+  // single return portal, rendered exactly on top of its own south-edge
+  // MapExit tile (see shared/maps.ts's portalDungeonDefinition), same
+  // "decorative swirl over an ordinary edge exit" shape the 4th floor's
+  // own 4 portals already use.
+  if ((PORTAL_DUNGEON_MAPS as readonly string[]).includes(mapName)) {
+    return [{ row: PORTAL_DUNGEON_SIZE_ROWS - 1, col: PORTAL_DUNGEON_MID_COL }];
+  }
+  return [];
 }
 
 // Still used by MonsterManagerService.isFree (monsters never use a
@@ -671,8 +690,28 @@ export function isStandingTorchBlocked(mapName: MapName, row: number, col: numbe
 export const BRAMWICK_SIGN_POSITION = { row: BRAMWICK_ENTRANCE_ROW - 2, col: BRAMWICK_MID_COL + 4 };
 export const GRIMOAK_GROUNDS_SIGN_POSITION = { row: 2, col: CASTLE_DOOR_ON_GROUNDS.col + 4 };
 
+// Same pair-of-signs convention for the new NE "Road to Kortho" exit (a
+// later follow-up ask) — one sign on each side of the shared entrance,
+// each naming the destination the road leads TO. Offset to the side
+// (row, since this road runs east-west) so neither sits on the road tile
+// itself, same "a couple tiles in from the edge, off to the side" shape
+// as the Bramwick pair above.
+export const GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION = {
+  row: GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW + 4,
+  col: GRIMOAK_GROUNDS_COLS - 3,
+};
+export const ROAD_TO_KORTHO_SIGN_POSITION = { row: ROAD_TO_KORTHO_MID_ROW + 4, col: ROAD_TO_KORTHO_COLS - 3 };
+
 export function isBramwickSignBlocked(mapName: MapName, row: number, col: number): boolean {
   if (mapName === 'Bramwick') return row === BRAMWICK_SIGN_POSITION.row && col === BRAMWICK_SIGN_POSITION.col;
-  if (mapName === 'Grimoak Grounds') return row === GRIMOAK_GROUNDS_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_SIGN_POSITION.col;
+  if (mapName === 'Grimoak Grounds') {
+    return (
+      (row === GRIMOAK_GROUNDS_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_SIGN_POSITION.col) ||
+      (row === GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION.col)
+    );
+  }
+  if (mapName === 'Road to Kortho') {
+    return row === ROAD_TO_KORTHO_SIGN_POSITION.row && col === ROAD_TO_KORTHO_SIGN_POSITION.col;
+  }
   return false;
 }

@@ -346,6 +346,14 @@ export interface CorpseSnapshot {
   // player/training-dummy corpse, which animate dead can't target anyway.
   sourceMaxHp?: number;
   sourceAttackDamage?: number;
+  // Whether the monster that died was a "rare" variant (a later follow-up
+  // ask: "when the necromancer animates a corpse, it should reflect what
+  // they were before... if animating a rare wild goblin then the
+  // animated dead should have the title Animated rare wild goblin and
+  // should be the same size" — see AnimatedMonsterSnapshot's own isRare
+  // and game.gateway.ts's handleCastAnimateDead). Absent/false for
+  // anything that isn't a rare monster's corpse.
+  isRare?: boolean;
 }
 
 export interface SyncPayload {

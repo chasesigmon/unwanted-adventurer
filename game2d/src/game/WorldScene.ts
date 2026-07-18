@@ -39,6 +39,12 @@ import {
   CAVERNA_CHEST_POSITION,
   BRAMWICK_MID_COL,
   BRAMWICK_ENTRANCE_ROW,
+  GRIMOAK_GROUNDS_COLS,
+  GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW,
+  ROAD_TO_KORTHO_COLS,
+  ROAD_TO_KORTHO_MID_ROW,
+  ROAD_TO_KORTHO_HALF_WIDTH_TILES,
+  ROAD_TO_KORTHO_STONE_COLS,
 } from '../../shared/maps.js';
 import { treePositionsFor } from '../../shared/trees.js';
 import {
@@ -105,6 +111,8 @@ import {
   portalPositionsFor,
   BRAMWICK_SIGN_POSITION,
   GRIMOAK_GROUNDS_SIGN_POSITION,
+  GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION,
+  ROAD_TO_KORTHO_SIGN_POSITION,
   standingTorchPositionsFor,
 } from '../../shared/lighting.js';
 import {
@@ -379,7 +387,11 @@ export class WorldScene extends Phaser.Scene {
   // follow-up ask) — a TileSprite overlay, same "on top of the base
   // floor" technique as the moat/bridge above, only populated on
   // 'Grimoak Grounds'.
-  private roadTile: Phaser.GameObjects.TileSprite | null = null;
+  // Array now instead of a single field — Grimoak Grounds carries TWO
+  // simultaneous road patches (the existing Bramwick one plus the new
+  // Road to Kortho one), and "Road to Kortho" itself carries a dirt
+  // stretch + a stone stretch near Kortho.
+  private roadTiles: Phaser.GameObjects.TileSprite[] = [];
   // The castle gate at the bridge's own outer end (a later follow-up
   // ask) — two leaf sprites (the right one just the same texture
   // flipped) that slide apart when open, only populated on 'Grimoak
@@ -1979,8 +1991,8 @@ export class WorldScene extends Phaser.Scene {
     this.northGateRightSprite?.destroy();
     this.northGateRightSprite = null;
     this.northGateOpen = false;
-    this.roadTile?.destroy();
-    this.roadTile = null;
+    for (const tile of this.roadTiles) tile.destroy();
+    this.roadTiles = [];
     if (mapName === 'Bramwick') {
       // A later follow-up bug fix: "the dirt road to exit Bramwick is
       // still the same color as the rest of the town" — the reddish
@@ -1992,16 +2004,18 @@ export class WorldScene extends Phaser.Scene {
       // Grounds patch, just anchored to Bramwick's south entrance instead
       // of the castle door.
       const roadWidthTiles = GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES * 2 + 1;
-      this.roadTile = this.add
-        .tileSprite(
-          (BRAMWICK_MID_COL - GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES) * TILE_SIZE,
-          (BRAMWICK_ENTRANCE_ROW - GRIMOAK_GROUNDS_ROAD_ROWS + 1) * TILE_SIZE,
-          roadWidthTiles * TILE_SIZE,
-          GRIMOAK_GROUNDS_ROAD_ROWS * TILE_SIZE,
-          DIRT_ROAD_TEXTURE_KEY
-        )
-        .setOrigin(0, 0)
-        .setDepth(-0.99);
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            (BRAMWICK_MID_COL - GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES) * TILE_SIZE,
+            (BRAMWICK_ENTRANCE_ROW - GRIMOAK_GROUNDS_ROAD_ROWS + 1) * TILE_SIZE,
+            roadWidthTiles * TILE_SIZE,
+            GRIMOAK_GROUNDS_ROAD_ROWS * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
     } else if (mapName === 'Grimoak Grounds') {
       // The dirt-road patch leading south from Bramwick's own entrance
       // (a later follow-up ask: "about 10 feet" — GRIMOAK_GROUNDS_ROAD_ROWS
@@ -2010,16 +2024,36 @@ export class WorldScene extends Phaser.Scene {
       // "road" feel. Sits just above the base grass (-1) but below the
       // moat/bridge graphics below, which don't overlap it anyway.
       const roadWidthTiles = GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES * 2 + 1;
-      this.roadTile = this.add
-        .tileSprite(
-          (CASTLE_DOOR_ON_GROUNDS.col - GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES) * TILE_SIZE,
-          0,
-          roadWidthTiles * TILE_SIZE,
-          GRIMOAK_GROUNDS_ROAD_ROWS * TILE_SIZE,
-          DIRT_ROAD_TEXTURE_KEY
-        )
-        .setOrigin(0, 0)
-        .setDepth(-0.99);
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            (CASTLE_DOOR_ON_GROUNDS.col - GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES) * TILE_SIZE,
+            0,
+            roadWidthTiles * TILE_SIZE,
+            GRIMOAK_GROUNDS_ROAD_ROWS * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+
+      // The dirt-road patch leading out the NE exit toward "Road to
+      // Kortho" (a later follow-up ask) — same depth convention as the
+      // Bramwick patch above, just horizontal (running east) instead of
+      // vertical, centered on GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW.
+      const korthoRoadHeightTiles = ROAD_TO_KORTHO_HALF_WIDTH_TILES * 2 + 1;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            (GRIMOAK_GROUNDS_COLS - GRIMOAK_GROUNDS_ROAD_ROWS) * TILE_SIZE,
+            (GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW - ROAD_TO_KORTHO_HALF_WIDTH_TILES) * TILE_SIZE,
+            GRIMOAK_GROUNDS_ROAD_ROWS * TILE_SIZE,
+            korthoRoadHeightTiles * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
 
       const WATER = 0x2f6fa8;
       const fillTileBand = (
@@ -2097,6 +2131,34 @@ export class WorldScene extends Phaser.Scene {
         .setOrigin(1, 0)
         .setFlipX(true)
         .setDepth(-0.85);
+    } else if (mapName === 'Road to Kortho') {
+      // A later follow-up ask: "a dirt road of the same size... with
+      // grass surrounding it on either side. At the end... there should
+      // be a stone road that leads into Kortho." Same width convention as
+      // the Grimoak Grounds <-> Bramwick road; the last STONE_COLS columns
+      // (nearest Kortho, at the map's east edge) reuse the already-loaded
+      // 'concrete' texture instead of dirt.
+      const korthoRoadHeightTiles = ROAD_TO_KORTHO_HALF_WIDTH_TILES * 2 + 1;
+      const roadTopY = (ROAD_TO_KORTHO_MID_ROW - ROAD_TO_KORTHO_HALF_WIDTH_TILES) * TILE_SIZE;
+      const dirtCols = ROAD_TO_KORTHO_COLS - ROAD_TO_KORTHO_STONE_COLS;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(0, roadTopY, dirtCols * TILE_SIZE, korthoRoadHeightTiles * TILE_SIZE, DIRT_ROAD_TEXTURE_KEY)
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            dirtCols * TILE_SIZE,
+            roadTopY,
+            ROAD_TO_KORTHO_STONE_COLS * TILE_SIZE,
+            korthoRoadHeightTiles * TILE_SIZE,
+            'concrete'
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
     }
 
     // Grimoak Castle's exterior + flying crows (item 4) — only on the
@@ -2345,7 +2407,11 @@ export class WorldScene extends Phaser.Scene {
       const pos = this.tilePosition(row, col);
       const sprite = this.add.sprite(pos.x, pos.y, PORTAL_TEXTURE_KEY).setOrigin(0.5, 0.5).setDepth(-0.5).setInteractive();
       this.tweens.add({ targets: sprite, angle: 360, duration: 5000, repeat: -1, ease: 'Linear' });
-      const label = `Portal ${index + 1}`;
+      // A later follow-up ask's own return portal (each dungeon has just
+      // the one) reads better labeled by where it actually goes than a
+      // numbered "Portal 1" — the 4th floor's own 4 still need the
+      // number since all 4 look identical and lead to different places.
+      const label = mapName === 'Grimoak Castle 4th Floor' ? `Portal ${index + 1}` : 'Portal to Grimoak Castle';
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
         this.setLockTarget({ kind: 'door', map: mapName, row, col }, label);
@@ -2364,6 +2430,11 @@ export class WorldScene extends Phaser.Scene {
     const signDefs: Array<{ map: MapName; position: { row: number; col: number }; label: string }> = [
       { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_SIGN_POSITION, label: 'Bramwick' },
       { map: 'Bramwick', position: BRAMWICK_SIGN_POSITION, label: 'Grimoak Grounds' },
+      // The new NE "Road to Kortho" exit's own pair (a later follow-up
+      // ask: "a sign like the others that will say 'Road to Kortho'"...
+      // "at the end... a sign that will say 'Kortho'").
+      { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION, label: 'Road to Kortho' },
+      { map: 'Road to Kortho', position: ROAD_TO_KORTHO_SIGN_POSITION, label: 'Kortho' },
     ];
     this.signSprites = signDefs
       .filter((def) => def.map === mapName)
@@ -3037,7 +3108,12 @@ export class WorldScene extends Phaser.Scene {
           // Diabolist's own demon imp (a later follow-up ask) — "a
           // little smaller than the imps on Grimoak Grounds," same
           // shape as the rare-monster upscale below just downward.
-          .setScale(am.monsterKind === DEMON_IMP_KIND ? CHAR_SCALE * 0.85 : CHAR_SCALE)
+          // A later follow-up ask: an animated rare monster "should be
+          // the same size as the [live monster] was" — same 1.35x bump
+          // the live monster loop above gives isRare (see CorpseSnapshot/
+          // AnimatedMonsterSnapshot's own isRare, carried from the source
+          // corpse at animate-dead cast time).
+          .setScale(am.monsterKind === DEMON_IMP_KIND ? CHAR_SCALE * 0.85 : am.isRare ? CHAR_SCALE * 1.35 : CHAR_SCALE)
           .setTint(0x9a7bd6);
         sprite.setData('row', am.row);
         sprite.setData('col', am.col);

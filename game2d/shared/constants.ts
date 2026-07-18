@@ -71,6 +71,23 @@ export const FLORO_SHOP_MAPS = [
   'Floro Jobs Office',
 ] as const;
 
+// Kortho (a later follow-up ask: "add the town of Kortho back... same
+// size and rules and shops as when it was being used before") — Floro's
+// own rival-town twin (see shared/maps.ts's own Kortho MapDefinition,
+// which already existed with the right size/terrain but no shops of its
+// own, and TOWN_MAPS below, which already gated it the same way Floro
+// is). Same 7-shop lineup as Floro, mirrored rather than shared, so
+// either town's own roster can diverge independently later.
+export const KORTHO_SHOP_MAPS = [
+  'Kortho Blacksmith',
+  'Kortho General Store',
+  'Kortho Inn',
+  'Kortho Bank',
+  'Kortho Armorer',
+  'Kortho Pet Salesman',
+  'Kortho Jobs Office',
+] as const;
+
 // Bramwick (a later follow-up ask) — a small village just north of
 // Grimoak Grounds, dirt-road street with 4 shop cottages (same "real
 // separate map, entered through a door on the street" shape as Floro's
@@ -275,9 +292,15 @@ export const MAP_NAMES = [
   'Floro',
   'Kortho',
   ...FLORO_SHOP_MAPS,
+  ...KORTHO_SHOP_MAPS,
   'Bramwick',
   ...BRAMWICK_SHOP_MAPS,
   'Grimoak Grounds',
+  // A later follow-up ask: "add a dirt road going east out of Grimoak
+  // grounds... Create 'Road to Kortho'" — the connecting corridor between
+  // Grimoak Grounds and Kortho, same "real separate map" shape as every
+  // other exit here.
+  'Road to Kortho',
   ...GRIMOAK_CASTLE_MAPS,
   ...PORTAL_DUNGEON_MAPS,
 ] as const;
@@ -304,6 +327,10 @@ export const TOWN_MAPS: MapName[] = ['Floro', 'Kortho'];
 export function whereLabelFor(mapName: MapName): string | null {
   const prefix = 'Floro ';
   if (mapName.startsWith(prefix) && (FLORO_SHOP_MAPS as readonly string[]).includes(mapName)) return mapName.slice(prefix.length);
+  // Kortho's own 7 shops (a later follow-up ask) — same "<name> -
+  // Building" convention as Floro's own shops above.
+  const korthoPrefix = 'Kortho ';
+  if (mapName.startsWith(korthoPrefix) && (KORTHO_SHOP_MAPS as readonly string[]).includes(mapName)) return mapName.slice(korthoPrefix.length);
   // Bramwick's own 4 shops (a later follow-up ask) — same "<name> -
   // Building" convention as Floro's own shops above.
   const bramwickPrefix = 'Bramwick ';
@@ -332,6 +359,7 @@ export function whereLabelFor(mapName: MapName): string | null {
 // as it already was for Floro/Bramwick's own outdoor street.
 export function townGroupFor(mapName: MapName): MapName {
   if (mapName === 'Floro' || (FLORO_SHOP_MAPS as readonly string[]).includes(mapName)) return 'Floro';
+  if (mapName === 'Kortho' || (KORTHO_SHOP_MAPS as readonly string[]).includes(mapName)) return 'Kortho';
   if (mapName === 'Bramwick' || (BRAMWICK_SHOP_MAPS as readonly string[]).includes(mapName)) return 'Bramwick';
   if ((GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return 'Grimoak Entrance Hall';
   return mapName;

@@ -46,7 +46,8 @@ export class AnimatedMonsterManagerService {
     attackDamage: number,
     map: MapName,
     row: number,
-    col: number
+    col: number,
+    isRare?: boolean
   ): AnimatedMonster | undefined {
     const owned = this.monsters.get(ownerUsername) ?? [];
     if (owned.length >= animatedMonsterCapFor(ownerLevel)) return undefined;
@@ -65,6 +66,7 @@ export class AnimatedMonsterManagerService {
       inventory: [],
       equipment: {},
       alive: true,
+      isRare,
     };
     owned.push(monster);
     this.monsters.set(ownerUsername, owned);

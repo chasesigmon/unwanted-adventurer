@@ -383,6 +383,19 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     // in the same eastern area a player is already fighting the regular
     // population in, not scattered across the whole grounds (imp
     // territory).
+    // "The rare wild skeleton should be level 7... with stats that
+    // resemble that level" (a later follow-up ask) — same rescaling
+    // methodology rare-imp's own level fix above already used: the
+    // hp/attackDamage this entry had before (70/12, implicitly level 1)
+    // already encodes its own rare-vs-ordinary multiplier, so that pair
+    // is treated as the level-1 baseline and grown by the same ~1.33x-
+    // per-level compounding rate wild-skeleton-grounds' own level-1->5
+    // jump (32hp -> 100hp) implies, raised to the 6th power for a
+    // level 1->7 jump (1.33^6 ≈ 5.53). expReward/goldReward deliberately
+    // left as-is, matching wild-goblin-grounds' own precedent (a species'
+    // higher-level variant reuses the same base reward numbers — expGainFor's
+    // level-ratio formula already scales the actual payout for the
+    // killer's level vs this monster's now-correct one).
     id: 'rare-wild-skeleton',
     kind: 'wild skeleton',
     monsterClass: 'undead',
@@ -391,9 +404,10 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     maxCount: 1,
     isRare: true,
     respawnDelayMs: 60_000,
-    startingHp: 70,
+    level: 7,
+    startingHp: 388,
     expReward: 130,
-    attackDamage: 12,
+    attackDamage: 66,
     goldReward: 15,
     carriedItemRolls: [
       ...Array.from({ length: 10 }, () => ({ label: 'superior mana crystal', chance: 1 })),
@@ -402,7 +416,11 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     ],
   },
   {
-    // Same fix/reasoning as rare-wild-skeleton above.
+    // Same fix/reasoning as rare-wild-skeleton above, "the rare wild
+    // goblin should be level 9" — its own 55/10 hp/attackDamage baseline
+    // grown by wild-goblin-grounds' own implied ~1.33x-per-level rate
+    // (24hp level 1 -> 130hp level 7), raised to the 8th power for a
+    // level 1->9 jump (1.33^8 ≈ 9.79).
     id: 'rare-wild-goblin',
     kind: 'wild goblin',
     monsterClass: 'normal',
@@ -411,9 +429,10 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     maxCount: 1,
     isRare: true,
     respawnDelayMs: 60_000,
-    startingHp: 55,
+    level: 9,
+    startingHp: 538,
     expReward: 110,
-    attackDamage: 10,
+    attackDamage: 98,
     goldReward: 20,
     carriedItemRolls: [
       ...Array.from({ length: 20 }, () => ({ label: 'superior mana crystal', chance: 1 })),

@@ -66,7 +66,8 @@ export class CorpseManagerService {
     killedBy?: string,
     gold?: number,
     sourceMaxHp?: number,
-    sourceAttackDamage?: number
+    sourceAttackDamage?: number,
+    isRare?: boolean
   ): CorpseSnapshot {
     const corpse: CorpseSnapshot = {
       id: randomUUID(),
@@ -80,6 +81,7 @@ export class CorpseManagerService {
       killedBy,
       sourceMaxHp,
       sourceAttackDamage,
+      isRare,
     };
     this.corpses.set(corpse.id, corpse);
     this.expiresAt.set(corpse.id, Date.now() + CORPSE_TTL_MS);

@@ -159,6 +159,14 @@ export interface AnimatedMonsterSnapshot {
   // left this alone — 'sleep' stays a plain do-nothing state here, same
   // as 'stay', preserving the existing no-regen design.
   alive: boolean;
+  // A later follow-up ask: "when the necromancer animates a corpse, it
+  // should reflect what they were before... if animating a rare wild
+  // goblin then the animated dead should have the title Animated rare
+  // wild goblin and should be the same size" — carried over from the
+  // source corpse's own CorpseSnapshot.isRare (see game.gateway.ts's
+  // handleCastAnimateDead), drives both the display name and WorldScene's
+  // own bigger-sprite-scale rendering, same as a live rare monster.
+  isRare?: boolean;
 }
 
 // A later follow-up ask: "the corpses of pets should be selectable and

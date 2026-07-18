@@ -159,6 +159,74 @@ const VENDOR_SEEDS: VendorSeed[] = [
     items: [],
     greeting: 'No postings on the board today — check back another time.',
   },
+  // --- Kortho, Floro's own rival-town twin (a later follow-up ask: "add
+  // the town of Kortho back... same size and rules and shops as when it
+  // was being used before") — same "one shopkeeper just inside the door"
+  // shape and item roster as Floro's own 7 shops above, mirrored rather
+  // than shared so either town's stock can diverge independently later. ---
+  {
+    id: 'kortho-blacksmith',
+    name: 'Blacksmith',
+    map: 'Kortho Blacksmith',
+    row: 2,
+    col: 5,
+    items: [{ label: 'bone dagger', price: 5 }],
+    greeting: "Kortho steel — well, bone, same difference. Sharp enough to earn its keep.",
+  },
+  {
+    id: 'kortho-armorer',
+    name: 'Armorer',
+    map: 'Kortho Armorer',
+    row: 2,
+    col: 5,
+    items: [{ label: 'bone shield', price: 6 }],
+    greeting: "A shield's worth more than a sword out here. This one's sturdy.",
+  },
+  {
+    id: 'kortho-general-store',
+    name: 'General Store',
+    map: 'Kortho General Store',
+    row: 2,
+    col: 5,
+    items: [{ label: 'torch', price: 3 }],
+    greeting: 'Bit of everything in here. Torches sell well this time of year.',
+  },
+  {
+    id: 'kortho-inn',
+    name: 'Innkeeper',
+    map: 'Kortho Inn',
+    row: 2,
+    col: 5,
+    items: [],
+    greeting: 'Rooms and rest, soon enough — for now, just warm yourself by the fire.',
+  },
+  {
+    id: 'kortho-bank',
+    name: 'Banker',
+    map: 'Kortho Bank',
+    row: 2,
+    col: 5,
+    items: [],
+    greeting: "Your gold's safest in your own pocket, for now — vaults are still being built.",
+  },
+  {
+    id: 'kortho-pet-salesman',
+    name: 'Pet Salesman',
+    map: 'Kortho Pet Salesman',
+    row: 2,
+    col: 5,
+    items: [],
+    greeting: "No creatures for sale just yet, but I'm always looking for stock.",
+  },
+  {
+    id: 'kortho-jobs-office',
+    name: 'Clerk',
+    map: 'Kortho Jobs Office',
+    row: 2,
+    col: 5,
+    items: [],
+    greeting: 'No postings on the board today — check back another time.',
+  },
   // --- Bramwick, the small village north of Grimoak Grounds (a later
   // follow-up ask) — same "one shopkeeper just inside the door" shape as
   // Floro's own shops above. Greeting-only for now ("mechanics for the

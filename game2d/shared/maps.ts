@@ -1,5 +1,5 @@
 import type { MapName, Direction } from './constants.js';
-import { FLORO_SHOP_MAPS, BRAMWICK_SHOP_MAPS } from './constants.js';
+import { FLORO_SHOP_MAPS, KORTHO_SHOP_MAPS, BRAMWICK_SHOP_MAPS } from './constants.js';
 
 // A single source of truth for both the server (movement resolution) and
 // the client (rendering the floor/door) — no need to duplicate these
@@ -107,6 +107,56 @@ function floroShopDoorExits(): MapExit[] {
   });
 }
 
+// Kortho (a later follow-up ask: "add the town of Kortho back... same
+// size and rules and shops as when it was being used before") — Floro's
+// own rival-town twin, same hub-and-spoke shop shape mirrored rather than
+// shared (see shared/constants.ts's own KORTHO_SHOP_MAPS doc comment).
+// Door layout is Floro's own layout, unchanged — a real town-square feel
+// without needing a bespoke arrangement.
+const KORTHO_SHOP_DOORS: Record<(typeof KORTHO_SHOP_MAPS)[number], { row: number; col: number }> = {
+  'Kortho Blacksmith': { row: 10, col: 15 },
+  'Kortho General Store': { row: 10, col: 35 },
+  'Kortho Inn': { row: 20, col: 8 },
+  'Kortho Bank': { row: 20, col: 42 },
+  'Kortho Armorer': { row: 32, col: 15 },
+  'Kortho Pet Salesman': { row: 32, col: 35 },
+  'Kortho Jobs Office': { row: 42, col: 25 },
+};
+
+function korthoShopInteriorDefinition(name: (typeof KORTHO_SHOP_MAPS)[number]): MapDefinition {
+  const door = KORTHO_SHOP_DOORS[name];
+  return {
+    name,
+    rows: SHOP_INTERIOR_SIZE,
+    cols: SHOP_INTERIOR_SIZE,
+    terrain: 'stone',
+    exits: [
+      {
+        row: SHOP_INTERIOR_DOOR_ROW,
+        col: SHOP_INTERIOR_MID_COL,
+        direction: 'south',
+        toMap: 'Kortho',
+        toRow: door.row,
+        toCol: door.col,
+      },
+    ],
+  };
+}
+
+function korthoShopDoorExits(): MapExit[] {
+  return KORTHO_SHOP_MAPS.map((name) => {
+    const door = KORTHO_SHOP_DOORS[name];
+    return {
+      row: door.row,
+      col: door.col,
+      direction: 'north',
+      toMap: name,
+      toRow: SHOP_INTERIOR_DOOR_ROW,
+      toCol: SHOP_INTERIOR_MID_COL,
+    };
+  });
+}
+
 // ---------- Grimoak Academy (the wizarding-school pivot) ----------
 // Same hub-and-spoke shape Floro's shops already established: every real
 // room is its own small interior map, connected by a reciprocal exit
@@ -133,6 +183,33 @@ export const GRIMOAK_GROUNDS_COLS = Math.round(GRIMOAK_GROUNDS_SIZE * 1.25);
 // skeleton/goblin populations (server/monsters/monster.ts) only spawn at
 // or past this column.
 export const GRIMOAK_GROUNDS_EXTENSION_MIN_COL = GRIMOAK_GROUNDS_SIZE;
+
+// ---------- Road to Kortho (a later follow-up ask: "at the northeast of
+// Grimoak grounds add a dirt road going east... Create 'Road to Kortho'
+// which should be a dirt road... with grass surrounding it on either
+// side. The map should be the same width as grimoak grounds, but 25% of
+// its height... at the end... a stone road that leads into Kortho") —
+// the connecting corridor reviving Kortho (see the Kortho MapDefinition
+// below), same "own separate map, exits reciprocate" shape as every
+// other room here. Sits well north of the moat (rows 0-26 are the same
+// open band the rare monsters/dummy players already use), so its own
+// east-edge exit at row GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW never
+// conflicts with the castle/moat rectangle. ----------
+export const ROAD_TO_KORTHO_COLS = GRIMOAK_GROUNDS_COLS;
+export const ROAD_TO_KORTHO_ROWS = Math.round(GRIMOAK_GROUNDS_SIZE * 0.25);
+export const ROAD_TO_KORTHO_MID_ROW = Math.floor(ROAD_TO_KORTHO_ROWS / 2);
+// Same 5-tile-wide (2*halfWidth+1) band convention as the existing
+// Grimoak Grounds <-> Bramwick dirt road (see
+// GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES below) — "a dirt road of the
+// same size as the ones leading out of Grimoak grounds."
+export const ROAD_TO_KORTHO_HALF_WIDTH_TILES = 2;
+// How far the STONE stretch (the "stone road that leads into Kortho")
+// extends back from the eastern Kortho-facing edge.
+export const ROAD_TO_KORTHO_STONE_COLS = 20;
+// Where Grimoak Grounds' own new northeast exit sits — well clear of the
+// moat/castle (rows 0-26 are open ground), a fixed row near the top of
+// the map's own new 25%-wider eastern strip.
+export const GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW = 10;
 // Centered horizontally; positioned to leave enough headroom north of the
 // castle (and south of it, for the moat + bridge + a spawn point OUTSIDE
 // the moat) — see GRIMOAK_GROUNDS_SPAWN/startingPositionFor below.
@@ -770,11 +847,22 @@ const FLOOR4_LANDING = floorLandingDefinition('Grimoak Castle 4th Floor', [], {
 // constants so the two can never actually drift apart. Portal 1-4 order
 // (see WorldScene's own portalPositionsFor().map/index) is north, south,
 // east, west. ----------
-const PORTAL_DUNGEON_SIZE_ROWS = 40;
-const PORTAL_DUNGEON_SIZE_COLS = 50;
-const PORTAL_DUNGEON_MID_COL = Math.floor(PORTAL_DUNGEON_SIZE_COLS / 2);
+// Exported (a later follow-up ask: "there is no exit portal in the
+// worlds you created that the portals take you to") — shared/lighting.ts's
+// portalPositionsFor needs these same figures to render each dungeon's
+// own return portal at the exact tile its exit sits on.
+export const PORTAL_DUNGEON_SIZE_ROWS = 40;
+export const PORTAL_DUNGEON_SIZE_COLS = 50;
+export const PORTAL_DUNGEON_MID_COL = Math.floor(PORTAL_DUNGEON_SIZE_COLS / 2);
+export const PORTAL_DUNGEON_MAPS = ['Sunken Crypt', 'Goblin Warcamp', 'Imp Hollow', 'Ashen Wastes'] as const;
 
-function portalDungeonDefinition(name: MapName): MapDefinition {
+// `returnRow`/`returnCol` (a later follow-up ask: "the exit portal should
+// take you back next to the portal you had originally gone into") — each
+// of the 4 dungeons now returns to the ONE TILE INSIDE its own specific
+// 4th-floor portal (not a shared central point every dungeon used to
+// dump the player back at), same "arrival one tile in from the edge"
+// convention FLOOR_LANDING_STAIRS_ARRIVAL_ROW already uses for stairs.
+function portalDungeonDefinition(name: MapName, returnRow: number, returnCol: number): MapDefinition {
   return {
     name,
     rows: PORTAL_DUNGEON_SIZE_ROWS,
@@ -786,8 +874,8 @@ function portalDungeonDefinition(name: MapName): MapDefinition {
         col: PORTAL_DUNGEON_MID_COL,
         direction: 'south',
         toMap: 'Grimoak Castle 4th Floor',
-        toRow: FLOOR_LANDING_MID_ROW,
-        toCol: Math.floor(FLOOR_LANDING_COLS / 2),
+        toRow: returnRow,
+        toCol: returnCol,
         kind: 'open',
       },
     ],
@@ -1056,13 +1144,54 @@ export const MAPS: Record<MapName, MapDefinition> = {
     // Same reasoning as Floro above.
     terrain: 'stone',
     exits: [
+      // A later follow-up ask ("add the town of Kortho back... connect it
+      // to the Road to Kortho") replaced the old (long-orphaned, since
+      // Great Plains isn't reachable from anywhere in the current
+      // Grimoak-centric world) exit back to Great Plains with the real
+      // new connection.
       {
         row: TOWN_MID_ROW,
         col: 0,
         direction: 'west',
-        toMap: 'Great Plains',
-        toRow: GREAT_PLAINS_MID_ROW,
-        toCol: GREAT_PLAINS_SIZE - 1,
+        toMap: 'Road to Kortho',
+        toRow: ROAD_TO_KORTHO_MID_ROW,
+        toCol: ROAD_TO_KORTHO_COLS - 2,
+      },
+      ...korthoShopDoorExits(),
+    ],
+  },
+  'Kortho Blacksmith': korthoShopInteriorDefinition('Kortho Blacksmith'),
+  'Kortho General Store': korthoShopInteriorDefinition('Kortho General Store'),
+  'Kortho Inn': korthoShopInteriorDefinition('Kortho Inn'),
+  'Kortho Bank': korthoShopInteriorDefinition('Kortho Bank'),
+  'Kortho Armorer': korthoShopInteriorDefinition('Kortho Armorer'),
+  'Kortho Pet Salesman': korthoShopInteriorDefinition('Kortho Pet Salesman'),
+  'Kortho Jobs Office': korthoShopInteriorDefinition('Kortho Jobs Office'),
+  'Road to Kortho': {
+    name: 'Road to Kortho',
+    rows: ROAD_TO_KORTHO_ROWS,
+    cols: ROAD_TO_KORTHO_COLS,
+    // The dirt/stone road itself is a client-side TileSprite overlay (see
+    // WorldScene's own renderMap, same technique as the Grimoak Grounds
+    // <-> Bramwick road) — the base terrain underneath is grass, matching
+    // "a dirt road... with grass surrounding it on either side."
+    terrain: 'grass',
+    exits: [
+      {
+        row: ROAD_TO_KORTHO_MID_ROW,
+        col: 0,
+        direction: 'west',
+        toMap: 'Grimoak Grounds',
+        toRow: GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW,
+        toCol: GRIMOAK_GROUNDS_COLS - 2,
+      },
+      {
+        row: ROAD_TO_KORTHO_MID_ROW,
+        col: ROAD_TO_KORTHO_COLS - 1,
+        direction: 'east',
+        toMap: 'Kortho',
+        toRow: TOWN_MID_ROW,
+        toCol: 1,
       },
     ],
   },
@@ -1110,6 +1239,17 @@ export const MAPS: Record<MapName, MapDefinition> = {
       // door, straight up the open ground north of the moat (a later
       // follow-up ask: "a dirt road leading north").
       ...bramwickGroundsEntranceExits('north'),
+      // A later follow-up ask: "at the northeast of Grimoak grounds add a
+      // dirt road going east... Create 'Road to Kortho'" — well clear of
+      // the moat/castle rectangle (rows 0-26 are open ground).
+      {
+        row: GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW,
+        col: GRIMOAK_GROUNDS_COLS - 1,
+        direction: 'east',
+        toMap: 'Road to Kortho',
+        toRow: ROAD_TO_KORTHO_MID_ROW,
+        toCol: 1,
+      },
     ],
   },
   'Grimoak Entrance Hall': ENTRANCE_HALL,
@@ -1141,10 +1281,13 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Druid Chamber': DRUID_CHAMBER,
   'Diabolist Chamber': DIABOLIST_CHAMBER,
   'Hemomancer Chamber': HEMOMANCER_CHAMBER,
-  'Sunken Crypt': portalDungeonDefinition('Sunken Crypt'),
-  'Goblin Warcamp': portalDungeonDefinition('Goblin Warcamp'),
-  'Imp Hollow': portalDungeonDefinition('Imp Hollow'),
-  'Ashen Wastes': portalDungeonDefinition('Ashen Wastes'),
+  // Each dungeon's own return arrival — one tile IN from its own specific
+  // 4th-floor portal (north/south/east/west, matching FLOOR4_LANDING's
+  // own 4 pushed exits above), not a shared central point.
+  'Sunken Crypt': portalDungeonDefinition('Sunken Crypt', 1, FLOOR4_PORTAL_MID_COL),
+  'Goblin Warcamp': portalDungeonDefinition('Goblin Warcamp', FLOOR_LANDING_ROWS - 2, FLOOR4_PORTAL_MID_COL),
+  'Imp Hollow': portalDungeonDefinition('Imp Hollow', FLOOR_LANDING_MID_ROW, FLOOR_LANDING_COLS - 2),
+  'Ashen Wastes': portalDungeonDefinition('Ashen Wastes', FLOOR_LANDING_MID_ROW, 1),
 };
 
 export function getMap(name: MapName): MapDefinition {
