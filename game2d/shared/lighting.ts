@@ -7,6 +7,8 @@ import {
   CASTLE_UPPER_FLOOR_MAPS,
   SPECIALIZATION_CHAMBER_MAPS,
   BRAMWICK_SHOP_MAPS,
+  KORTHO_SHOP_MAPS,
+  FLORO_SHOP_MAPS,
 } from './constants.js';
 import { INFRAVISION_SKILL } from './skills.js';
 import {
@@ -26,8 +28,14 @@ import {
   PORTAL_DUNGEON_MID_COL,
   GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW,
   GRIMOAK_GROUNDS_COLS,
+  GRIMOAK_GROUNDS_ROWS,
   ROAD_TO_KORTHO_MID_ROW,
   ROAD_TO_KORTHO_COLS,
+  GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL,
+  ROAD_TO_FLORO_ROWS,
+  ROAD_TO_FLORO_MID_COL,
+  TOWN_MID_ROW,
+  TOWN_MID_COL,
 } from './maps.js';
 
 // "Late hours of night and early hours of morning" — a narrower, darker
@@ -161,8 +169,22 @@ export const STATIC_LIGHT_SOURCES: Partial<Record<MapName, Array<{ row: number; 
 // deliberately NOT included, it still has a normal day/night cycle.
 // Bramwick's own 4 shop interiors (a later follow-up ask: "it shouldn't
 // be dark in the shops ever") join the castle's own torch-lit rooms —
-// same always-lit treatment, not a separate mechanism.
-export const ALWAYS_LIT_MAPS: MapName[] = ['Labyrinth', ...GRIMOAK_CASTLE_MAPS, ...BRAMWICK_SHOP_MAPS];
+// same always-lit treatment, not a separate mechanism. A later follow-up
+// ask went further for Kortho specifically: "Kortho and the inside of all
+// of the shops are always fully lit even at night because it's a well
+// lit town" — unlike Bramwick, the TOWN STREET itself is included here
+// too, not just its shop interiors. Floro gets the identical treatment
+// (a further follow-up ask: "make sure... Floro get[s] the same updates
+// that Kortho is getting").
+export const ALWAYS_LIT_MAPS: MapName[] = [
+  'Labyrinth',
+  ...GRIMOAK_CASTLE_MAPS,
+  ...BRAMWICK_SHOP_MAPS,
+  'Kortho',
+  ...KORTHO_SHOP_MAPS,
+  'Floro',
+  ...FLORO_SHOP_MAPS,
+];
 
 export function isAlwaysLit(mapName: MapName): boolean {
   return ALWAYS_LIT_MAPS.includes(mapName);
@@ -702,16 +724,46 @@ export const GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION = {
 };
 export const ROAD_TO_KORTHO_SIGN_POSITION = { row: ROAD_TO_KORTHO_MID_ROW + 4, col: ROAD_TO_KORTHO_COLS - 3 };
 
+// Same pair-of-signs convention for the new SW "Road to Floro" exit (a
+// later follow-up ask), transposed for a north-south road — the
+// perpendicular offset is now COLUMN (not row) and "inward" is decreasing
+// row from the map's own new south edge.
+export const GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION = {
+  row: GRIMOAK_GROUNDS_ROWS - 4,
+  col: GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL + 4,
+};
+export const ROAD_TO_FLORO_SIGN_POSITION = { row: ROAD_TO_FLORO_ROWS - 3, col: ROAD_TO_FLORO_MID_COL + 4 };
+
+// A later follow-up ask: "in kortho update the exit to Road to Kortho to
+// have a dirt road leading out with a sign 'Road to Kortho'" — a third
+// sign, this one sitting just inside the TOWN itself pointing back out,
+// unlike the two pairs above which both sit on the connecting road's own
+// two ends.
+export const KORTHO_ROAD_SIGN_POSITION = { row: TOWN_MID_ROW + 4, col: 3 };
+// Same treatment for Floro (a later follow-up ask: "make sure... Floro
+// get[s] the same updates that Kortho is getting").
+export const FLORO_ROAD_SIGN_POSITION = { row: 3, col: TOWN_MID_COL + 4 };
+
 export function isBramwickSignBlocked(mapName: MapName, row: number, col: number): boolean {
   if (mapName === 'Bramwick') return row === BRAMWICK_SIGN_POSITION.row && col === BRAMWICK_SIGN_POSITION.col;
   if (mapName === 'Grimoak Grounds') {
     return (
       (row === GRIMOAK_GROUNDS_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_SIGN_POSITION.col) ||
-      (row === GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION.col)
+      (row === GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION.col) ||
+      (row === GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION.col)
     );
   }
   if (mapName === 'Road to Kortho') {
     return row === ROAD_TO_KORTHO_SIGN_POSITION.row && col === ROAD_TO_KORTHO_SIGN_POSITION.col;
+  }
+  if (mapName === 'Road to Floro') {
+    return row === ROAD_TO_FLORO_SIGN_POSITION.row && col === ROAD_TO_FLORO_SIGN_POSITION.col;
+  }
+  if (mapName === 'Kortho') {
+    return row === KORTHO_ROAD_SIGN_POSITION.row && col === KORTHO_ROAD_SIGN_POSITION.col;
+  }
+  if (mapName === 'Floro') {
+    return row === FLORO_ROAD_SIGN_POSITION.row && col === FLORO_ROAD_SIGN_POSITION.col;
   }
   return false;
 }

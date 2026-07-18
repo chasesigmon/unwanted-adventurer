@@ -49,7 +49,7 @@ export const TOWN_MID_COL = Math.floor(TOWN_SIZE / 2);
 const GREAT_PLAINS_MID_COL = Math.floor(GREAT_PLAINS_SIZE / 2);
 const GREAT_PLAINS_MID_ROW = Math.floor(GREAT_PLAINS_SIZE / 2);
 const LABYRINTH_MID_COL = Math.floor(LABYRINTH_SIZE / 2);
-const TOWN_MID_ROW = Math.floor(TOWN_SIZE / 2);
+export const TOWN_MID_ROW = Math.floor(TOWN_SIZE / 2);
 
 // Floro's 7 shop interiors (item 13, phase 1) — a small room each,
 // entered by walking north onto its own door tile on Floro's street (see
@@ -59,6 +59,13 @@ const TOWN_MID_ROW = Math.floor(TOWN_SIZE / 2);
 const SHOP_INTERIOR_SIZE = 10;
 const SHOP_INTERIOR_MID_COL = Math.floor(SHOP_INTERIOR_SIZE / 2);
 const SHOP_INTERIOR_DOOR_ROW = SHOP_INTERIOR_SIZE - 1;
+// Floro's and Kortho's own shop interiors specifically (a later follow-up
+// ask: "increase the size of the shops on the inside by 3" — 3x the
+// original room, not Bramwick's, which is unaffected and keeps
+// SHOP_INTERIOR_SIZE above).
+const TOWN_SHOP_INTERIOR_SIZE = SHOP_INTERIOR_SIZE * 3;
+const TOWN_SHOP_INTERIOR_MID_COL = Math.floor(TOWN_SHOP_INTERIOR_SIZE / 2);
+const TOWN_SHOP_INTERIOR_DOOR_ROW = TOWN_SHOP_INTERIOR_SIZE - 1;
 
 // Where each shop's door sits on Floro's own street — spread into a
 // loose town-square layout, well clear of Floro's existing east exit
@@ -77,13 +84,13 @@ function shopInteriorDefinition(name: (typeof FLORO_SHOP_MAPS)[number]): MapDefi
   const door = FLORO_SHOP_DOORS[name];
   return {
     name,
-    rows: SHOP_INTERIOR_SIZE,
-    cols: SHOP_INTERIOR_SIZE,
+    rows: TOWN_SHOP_INTERIOR_SIZE,
+    cols: TOWN_SHOP_INTERIOR_SIZE,
     terrain: 'stone',
     exits: [
       {
-        row: SHOP_INTERIOR_DOOR_ROW,
-        col: SHOP_INTERIOR_MID_COL,
+        row: TOWN_SHOP_INTERIOR_DOOR_ROW,
+        col: TOWN_SHOP_INTERIOR_MID_COL,
         direction: 'south',
         toMap: 'Floro',
         toRow: door.row,
@@ -101,8 +108,15 @@ function floroShopDoorExits(): MapExit[] {
       col: door.col,
       direction: 'north',
       toMap: name,
-      toRow: SHOP_INTERIOR_DOOR_ROW,
-      toCol: SHOP_INTERIOR_MID_COL,
+      toRow: TOWN_SHOP_INTERIOR_DOOR_ROW,
+      toCol: TOWN_SHOP_INTERIOR_MID_COL,
+      // A later follow-up ask ("make sure... Floro get[s] the same
+      // updates that Kortho is getting") — no separate GRAND_DOOR sprite
+      // anymore, same "walk into the building's own baked-in door"
+      // treatment as Bramwick's cottages/Kortho's shops (see WorldScene's
+      // shopBuildingSprites positioning, now anchored directly on this
+      // exit tile).
+      kind: 'open',
     };
   });
 }
@@ -127,13 +141,13 @@ function korthoShopInteriorDefinition(name: (typeof KORTHO_SHOP_MAPS)[number]): 
   const door = KORTHO_SHOP_DOORS[name];
   return {
     name,
-    rows: SHOP_INTERIOR_SIZE,
-    cols: SHOP_INTERIOR_SIZE,
+    rows: TOWN_SHOP_INTERIOR_SIZE,
+    cols: TOWN_SHOP_INTERIOR_SIZE,
     terrain: 'stone',
     exits: [
       {
-        row: SHOP_INTERIOR_DOOR_ROW,
-        col: SHOP_INTERIOR_MID_COL,
+        row: TOWN_SHOP_INTERIOR_DOOR_ROW,
+        col: TOWN_SHOP_INTERIOR_MID_COL,
         direction: 'south',
         toMap: 'Kortho',
         toRow: door.row,
@@ -151,8 +165,14 @@ function korthoShopDoorExits(): MapExit[] {
       col: door.col,
       direction: 'north',
       toMap: name,
-      toRow: SHOP_INTERIOR_DOOR_ROW,
-      toCol: SHOP_INTERIOR_MID_COL,
+      toRow: TOWN_SHOP_INTERIOR_DOOR_ROW,
+      toCol: TOWN_SHOP_INTERIOR_MID_COL,
+      // A later follow-up ask: "remove the door from the entrance of the
+      // shop from Kortho and make it so the character walks into the
+      // shop by walking into/through the door on the sprite" — same
+      // treatment Bramwick's cottages already use, no separate GRAND_DOOR
+      // sprite (see WorldScene's own shopBuildingSprites for Kortho).
+      kind: 'open',
     };
   });
 }
@@ -183,6 +203,17 @@ export const GRIMOAK_GROUNDS_COLS = Math.round(GRIMOAK_GROUNDS_SIZE * 1.25);
 // skeleton/goblin populations (server/monsters/monster.ts) only spawn at
 // or past this column.
 export const GRIMOAK_GROUNDS_EXTENSION_MIN_COL = GRIMOAK_GROUNDS_SIZE;
+// Extended another 10% to the south (a later follow-up ask) — same
+// "widen without moving anything" shape as the COLS widening above: the
+// castle/moat/gates are all positioned from CASTLE_DOOR_ON_GROUNDS's own
+// fixed row (55) and fixed offsets from it, not from this size constant,
+// so growing ROWS only adds new open ground south of the existing south
+// gate (already 17-odd rows clear of it) rather than shifting anything.
+// This is also where the new southwest "Road to Floro" exit (a later
+// follow-up ask) actually gets its room — the moat's own footprint spans
+// nearly the full original 80-wide band, so there's no real "southwest"
+// until south of the south gate, which this newly-added strip provides.
+export const GRIMOAK_GROUNDS_ROWS = Math.round(GRIMOAK_GROUNDS_SIZE * 1.1);
 
 // ---------- Road to Kortho (a later follow-up ask: "at the northeast of
 // Grimoak grounds add a dirt road going east... Create 'Road to Kortho'
@@ -196,20 +227,39 @@ export const GRIMOAK_GROUNDS_EXTENSION_MIN_COL = GRIMOAK_GROUNDS_SIZE;
 // east-edge exit at row GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW never
 // conflicts with the castle/moat rectangle. ----------
 export const ROAD_TO_KORTHO_COLS = GRIMOAK_GROUNDS_COLS;
-export const ROAD_TO_KORTHO_ROWS = Math.round(GRIMOAK_GROUNDS_SIZE * 0.25);
+// Derived from GRIMOAK_GROUNDS_ROWS (the Grounds' own TOTAL height, not
+// the pre-expansion base) so this tracks the literal "25% of its height"
+// spec even after the Grounds' own later south expansion.
+export const ROAD_TO_KORTHO_ROWS = Math.round(GRIMOAK_GROUNDS_ROWS * 0.25);
 export const ROAD_TO_KORTHO_MID_ROW = Math.floor(ROAD_TO_KORTHO_ROWS / 2);
 // Same 5-tile-wide (2*halfWidth+1) band convention as the existing
 // Grimoak Grounds <-> Bramwick dirt road (see
 // GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES below) — "a dirt road of the
 // same size as the ones leading out of Grimoak grounds."
 export const ROAD_TO_KORTHO_HALF_WIDTH_TILES = 2;
-// How far the STONE stretch (the "stone road that leads into Kortho")
-// extends back from the eastern Kortho-facing edge.
-export const ROAD_TO_KORTHO_STONE_COLS = 20;
 // Where Grimoak Grounds' own new northeast exit sits — well clear of the
 // moat/castle (rows 0-26 are open ground), a fixed row near the top of
 // the map's own new 25%-wider eastern strip.
 export const GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW = 10;
+
+// ---------- Road to Floro (a later follow-up ask: "at the southwest of
+// grimoak grounds add a dirt road... that goes south, leading to Floro...
+// make it like the road to kortho") — the same corridor shape as Road to
+// Kortho above, transposed for a north-south road instead of east-west:
+// the "along-travel" dimension (now ROWS) matches Grimoak Grounds' own
+// full height, and the "perpendicular" dimension (now COLS) is the short
+// 25% figure. Sits south of the south gate (in the room the Grounds' own
+// 10%-south expansion above just created — the moat's footprint leaves
+// almost no open ground west of it anywhere further north). ----------
+export const ROAD_TO_FLORO_ROWS = GRIMOAK_GROUNDS_ROWS;
+export const ROAD_TO_FLORO_COLS = Math.round(GRIMOAK_GROUNDS_COLS * 0.25);
+export const ROAD_TO_FLORO_MID_COL = Math.floor(ROAD_TO_FLORO_COLS / 2);
+export const ROAD_TO_FLORO_HALF_WIDTH_TILES = 2;
+// Where Grimoak Grounds' own new southwest exit sits — a fixed column
+// near the west edge, well clear of the moat's own footprint (which
+// spans nearly the entire original 80-wide band further north).
+export const GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL = 10;
+
 // Centered horizontally; positioned to leave enough headroom north of the
 // castle (and south of it, for the moat + bridge + a spawn point OUTSIDE
 // the moat) — see GRIMOAK_GROUNDS_SPAWN/startingPositionFor below.
@@ -1119,13 +1169,18 @@ export const MAPS: Record<MapName, MapDefinition> = {
     // FLORO_SHOP_MAPS) are each their own real "inside" interior map.
     terrain: 'stone',
     exits: [
+      // A later follow-up ask reconnected Floro via the new "Road to
+      // Floro" corridor instead (see its own MapDefinition below) — the
+      // stale Great Plains link is gone, same "Add X back" treatment
+      // Kortho's own stale west exit already got earlier this batch.
       {
-        row: TOWN_MID_ROW,
-        col: TOWN_SIZE - 1,
-        direction: 'east',
-        toMap: 'Great Plains',
-        toRow: GREAT_PLAINS_MID_ROW,
-        toCol: 0,
+        row: 0,
+        col: TOWN_MID_COL,
+        direction: 'north',
+        toMap: 'Road to Floro',
+        toRow: ROAD_TO_FLORO_ROWS - 2,
+        toCol: ROAD_TO_FLORO_MID_COL,
+        kind: 'open',
       },
       ...floroShopDoorExits(),
     ],
@@ -1156,6 +1211,11 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toMap: 'Road to Kortho',
         toRow: ROAD_TO_KORTHO_MID_ROW,
         toCol: ROAD_TO_KORTHO_COLS - 2,
+        // A later follow-up ask: "remove the door from... walking into
+        // that direction should take the character into the respective
+        // area" — same plain dirt-road walk-through as Bramwick's own
+        // entrance, no door sprite.
+        kind: 'open',
       },
       ...korthoShopDoorExits(),
     ],
@@ -1171,10 +1231,12 @@ export const MAPS: Record<MapName, MapDefinition> = {
     name: 'Road to Kortho',
     rows: ROAD_TO_KORTHO_ROWS,
     cols: ROAD_TO_KORTHO_COLS,
-    // The dirt/stone road itself is a client-side TileSprite overlay (see
+    // The dirt road itself is a client-side TileSprite overlay (see
     // WorldScene's own renderMap, same technique as the Grimoak Grounds
     // <-> Bramwick road) — the base terrain underneath is grass, matching
-    // "a dirt road... with grass surrounding it on either side."
+    // "a dirt road... with grass surrounding it on either side." A later
+    // follow-up ask removed the original stone stretch near Kortho —
+    // it's all dirt now, the whole way.
     terrain: 'grass',
     exits: [
       {
@@ -1184,6 +1246,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toMap: 'Grimoak Grounds',
         toRow: GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW,
         toCol: GRIMOAK_GROUNDS_COLS - 2,
+        kind: 'open',
       },
       {
         row: ROAD_TO_KORTHO_MID_ROW,
@@ -1192,6 +1255,36 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toMap: 'Kortho',
         toRow: TOWN_MID_ROW,
         toCol: 1,
+        kind: 'open',
+      },
+    ],
+  },
+  'Road to Floro': {
+    name: 'Road to Floro',
+    rows: ROAD_TO_FLORO_ROWS,
+    cols: ROAD_TO_FLORO_COLS,
+    // Same overlay approach as Road to Kortho above — base terrain is
+    // grass, the dirt road itself is a client-side TileSprite (see
+    // WorldScene's own renderMap).
+    terrain: 'grass',
+    exits: [
+      {
+        row: 0,
+        col: ROAD_TO_FLORO_MID_COL,
+        direction: 'north',
+        toMap: 'Grimoak Grounds',
+        toRow: GRIMOAK_GROUNDS_ROWS - 2,
+        toCol: GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL,
+        kind: 'open',
+      },
+      {
+        row: ROAD_TO_FLORO_ROWS - 1,
+        col: ROAD_TO_FLORO_MID_COL,
+        direction: 'south',
+        toMap: 'Floro',
+        toRow: 1,
+        toCol: TOWN_MID_COL,
+        kind: 'open',
       },
     ],
   },
@@ -1213,7 +1306,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Bramwick Pet Shop': bramwickShopInteriorDefinition('Bramwick Pet Shop'),
   'Grimoak Grounds': {
     name: 'Grimoak Grounds',
-    rows: GRIMOAK_GROUNDS_SIZE,
+    rows: GRIMOAK_GROUNDS_ROWS,
     cols: GRIMOAK_GROUNDS_COLS,
     terrain: 'grass',
     exits: [
@@ -1249,6 +1342,21 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toMap: 'Road to Kortho',
         toRow: ROAD_TO_KORTHO_MID_ROW,
         toCol: 1,
+        kind: 'open',
+      },
+      // A later follow-up ask: "at the southwest of grimoak grounds add a
+      // dirt road... that goes south, leading to Floro" — sits in the new
+      // south strip the Grounds' own 10% south expansion above just
+      // created (the moat leaves almost no open ground west of it any
+      // further north).
+      {
+        row: GRIMOAK_GROUNDS_ROWS - 1,
+        col: GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL,
+        direction: 'south',
+        toMap: 'Road to Floro',
+        toRow: 1,
+        toCol: ROAD_TO_FLORO_MID_COL,
+        kind: 'open',
       },
     ],
   },

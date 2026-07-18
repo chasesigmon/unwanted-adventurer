@@ -301,6 +301,10 @@ export const MAP_NAMES = [
   // Grimoak Grounds and Kortho, same "real separate map" shape as every
   // other exit here.
   'Road to Kortho',
+  // A later follow-up ask: "at the southwest of grimoak grounds add a
+  // dirt road... that goes south, leading to Floro" — same "real
+  // separate map" shape as Road to Kortho above.
+  'Road to Floro',
   ...GRIMOAK_CASTLE_MAPS,
   ...PORTAL_DUNGEON_MAPS,
 ] as const;
@@ -337,10 +341,16 @@ export function whereLabelFor(mapName: MapName): string | null {
   if (mapName.startsWith(bramwickPrefix) && (BRAMWICK_SHOP_MAPS as readonly string[]).includes(mapName)) return mapName.slice(bramwickPrefix.length);
   // The castle's own rooms already read fine as their own names ("Great
   // Hall", "Alchemy", ...) without a building-suffix convention the way
-  // Floro's shops needed one — but the Grounds itself should show as
-  // plain (no suffix), matching a shop-street's own "no suffix" case.
+  // Floro's shops needed one.
   if ((GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return mapName;
-  return null;
+  // A follow-up bug fix: "the where in map modal for areas like Grimoak
+  // grounds and Road to kortho are still not showing the area" — standing
+  // on a town's own open street shows no suffix (a deliberate "no
+  // building" case, unchanged from before), but every other open-world
+  // area (Grimoak Grounds, Road to Kortho, Road to Floro, ...) should show
+  // its own name rather than falling through to no label at all.
+  if (mapName === 'Floro' || mapName === 'Kortho' || mapName === 'Bramwick') return null;
+  return mapName;
 }
 
 // Which "world" a map belongs to, for grouping purposes — Floro's street

@@ -154,14 +154,21 @@ function buildShopBuildingFrame() {
 
   // Door — offset toward the right side of the building (this frame is
   // "facing right"; mirrorGridHorizontally below produces "facing left").
-  grid.fillRect(14, 18, 6, 6, DOOR_FRAME);
-  grid.fillRect(15, 19, 4, 5, DOOR_WOOD);
-  grid.set(18, 21, DOOR_FRAME); // doorknob
+  // A later follow-up ask ("make sure Floro get[s] the same updates that
+  // Kortho is getting") extended this down to touch the frame's own
+  // bottom row (27) — same "walk into the building's own baked-in door,
+  // no separate door sprite" treatment Bramwick's cottages/Kortho's shops
+  // already use (see WorldScene's shopBuildingSprites positioning).
+  grid.fillRect(14, 18, 6, 10, DOOR_FRAME);
+  grid.fillRect(15, 19, 4, 9, DOOR_WOOD);
+  grid.set(18, 23, DOOR_FRAME); // doorknob
 
-  // Stone foundation strip along the bottom.
-  grid.fillRect(1, 24, BUILDING_COLS - 2, 2, FOUNDATION);
-  for (let x = 1; x < BUILDING_COLS - 1; x += 3) grid.set(x, 25, FOUNDATION_DARK);
-  grid.fillRect(1, 26, BUILDING_COLS - 2, 2, FOUNDATION_DARK);
+  // Stone foundation strip, flanking the door (not under it, since the
+  // door itself now reaches the bottom edge).
+  grid.fillRect(1, 24, 13, 4, FOUNDATION);
+  grid.fillRect(20, 24, BUILDING_COLS - 21, 4, FOUNDATION);
+  for (let x = 1; x < 14; x += 3) grid.set(x, 25, FOUNDATION_DARK);
+  for (let x = 20; x < BUILDING_COLS - 1; x += 3) grid.set(x, 25, FOUNDATION_DARK);
 
   return grid;
 }

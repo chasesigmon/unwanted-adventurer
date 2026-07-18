@@ -17,6 +17,7 @@ import {
   getMap,
   MAPS,
   TOWN_MID_COL,
+  TOWN_MID_ROW,
   MOAT_OUTER_TOP,
   MOAT_OUTER_BOTTOM,
   MOAT_OUTER_LEFT,
@@ -40,11 +41,15 @@ import {
   BRAMWICK_MID_COL,
   BRAMWICK_ENTRANCE_ROW,
   GRIMOAK_GROUNDS_COLS,
+  GRIMOAK_GROUNDS_ROWS,
   GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW,
+  GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL,
   ROAD_TO_KORTHO_COLS,
   ROAD_TO_KORTHO_MID_ROW,
   ROAD_TO_KORTHO_HALF_WIDTH_TILES,
-  ROAD_TO_KORTHO_STONE_COLS,
+  ROAD_TO_FLORO_ROWS,
+  ROAD_TO_FLORO_MID_COL,
+  ROAD_TO_FLORO_HALF_WIDTH_TILES,
 } from '../../shared/maps.js';
 import { treePositionsFor } from '../../shared/trees.js';
 import {
@@ -113,12 +118,17 @@ import {
   GRIMOAK_GROUNDS_SIGN_POSITION,
   GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION,
   ROAD_TO_KORTHO_SIGN_POSITION,
+  GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION,
+  ROAD_TO_FLORO_SIGN_POSITION,
+  KORTHO_ROAD_SIGN_POSITION,
+  FLORO_ROAD_SIGN_POSITION,
   standingTorchPositionsFor,
 } from '../../shared/lighting.js';
 import {
   MONSTER_KINDS,
   FLORO_SHOP_MAPS,
   BRAMWICK_SHOP_MAPS,
+  KORTHO_SHOP_MAPS,
   GRIMOAK_CASTLE_MAPS,
   CLASSROOM_MAPS,
   COMMON_ROOM_MAPS,
@@ -216,6 +226,9 @@ import {
   BRAMWICK_COTTAGE_TEXTURE_KEY,
   BRAMWICK_COTTAGE_FRAME_WIDTH,
   BRAMWICK_COTTAGE_FRAME_HEIGHT,
+  KORTHO_SHOP_TEXTURE_KEY,
+  KORTHO_SHOP_FRAME_WIDTH,
+  KORTHO_SHOP_FRAME_HEIGHT,
   SWORD_CURSOR,
   KEY_CURSOR,
   SLEEP_CURSOR,
@@ -358,6 +371,10 @@ export class WorldScene extends Phaser.Scene {
   // building sprite behind each shop door" idea as Floro's above, only
   // populated while rendering 'Bramwick' itself.
   private cottageSprites: Phaser.GameObjects.Sprite[] = [];
+  // Kortho's own 7 shop buildings (a later follow-up ask) — same "one
+  // building sprite per shop door, door baked into the art" idea as
+  // Bramwick's cottages above, only populated while rendering 'Kortho'.
+  private korthoShopSprites: Phaser.GameObjects.Sprite[] = [];
   // Bramwick's own 9 standing torches (a later follow-up ask) — frame
   // toggled between unlit/lit on every 'worldTime' broadcast (see
   // handleWorldTime), not per-frame in update(), since the hour only
@@ -610,6 +627,14 @@ export class WorldScene extends Phaser.Scene {
     this.load.spritesheet(BRAMWICK_COTTAGE_TEXTURE_KEY, '/bramwick-cottage-spritesheet.png', {
       frameWidth: BRAMWICK_COTTAGE_FRAME_WIDTH,
       frameHeight: BRAMWICK_COTTAGE_FRAME_HEIGHT,
+    });
+    // Kortho's own 7 shop buildings (a later follow-up ask) — one frame
+    // per shop, each with its own baked-in name banner, in
+    // KORTHO_SHOP_MAPS order (see tools/gen-kortho-shop-assets.mjs, run
+    // via Python/PIL for real text rendering).
+    this.load.spritesheet(KORTHO_SHOP_TEXTURE_KEY, '/kortho-shop-spritesheet.png', {
+      frameWidth: KORTHO_SHOP_FRAME_WIDTH,
+      frameHeight: KORTHO_SHOP_FRAME_HEIGHT,
     });
     // A single fancy double door (a follow-up ask), used for every map
     // exit now — shop doors and every other transition alike.
@@ -1805,20 +1830,26 @@ export class WorldScene extends Phaser.Scene {
 
     // The shop buildings themselves (item 13) — only rendered while
     // standing on Floro's own street (its 7 shop interiors don't need
-    // their own exterior). One per shop door, positioned directly behind
-    // it (one tile further from the street), mirrored to face whichever
+    // their own exterior). One per shop door, mirrored to face whichever
     // way puts its entrance toward the town's own center column rather
-    // than out toward the map edge.
+    // than out toward the map edge. A later follow-up ask ("make sure...
+    // Floro get[s] the same updates that Kortho is getting") moved this
+    // from one-tile-behind-the-door to anchored directly ON the door's
+    // own MapExit tile — the building's own baked-in door art (now
+    // extended to touch the frame's bottom edge, see
+    // tools/gen-shop-assets.mjs) IS the door, no separate sprite (see
+    // floroShopDoorExits' own `kind: 'open'`), same shape as Bramwick's
+    // cottages/Kortho's shops below.
     for (const sprite of this.shopBuildingSprites) sprite.destroy();
     this.shopBuildingSprites =
       mapName === 'Floro'
         ? def.exits
             .filter((exit) => (FLORO_SHOP_MAPS as readonly string[]).includes(exit.toMap))
             .map((exit) => {
-              const pos = this.tilePosition(exit.row - 1, exit.col);
+              const pos = this.tilePosition(exit.row, exit.col);
               const frame = exit.col < TOWN_MID_COL ? SHOP_BUILDING_FACING_RIGHT_FRAME : SHOP_BUILDING_FACING_LEFT_FRAME;
               return this.add
-                .sprite(pos.x, pos.y, SHOP_BUILDING_TEXTURE_KEY, frame)
+                .sprite(pos.x, pos.y + TILE_SIZE / 2, SHOP_BUILDING_TEXTURE_KEY, frame)
                 .setOrigin(0.5, 1)
                 .setDepth(-0.75);
             })
@@ -1846,6 +1877,27 @@ export class WorldScene extends Phaser.Scene {
               const frame = (BRAMWICK_SHOP_MAPS as readonly string[]).indexOf(exit.toMap);
               return this.add
                 .sprite(pos.x, pos.y + TILE_SIZE / 2, BRAMWICK_COTTAGE_TEXTURE_KEY, frame)
+                .setOrigin(0.5, 1)
+                .setDepth(-0.75);
+            })
+        : [];
+
+    // Kortho's own 7 shop buildings (a later follow-up ask: "create a
+    // sprite for the shops... remove the door from the entrance... walks
+    // into the shop by walking into/through the door on the sprite") —
+    // same shape as Bramwick's cottages above, one stone-medieval
+    // building per shop door, door baked in and touching the frame's own
+    // bottom edge.
+    for (const sprite of this.korthoShopSprites) sprite.destroy();
+    this.korthoShopSprites =
+      mapName === 'Kortho'
+        ? def.exits
+            .filter((exit) => (KORTHO_SHOP_MAPS as readonly string[]).includes(exit.toMap))
+            .map((exit) => {
+              const pos = this.tilePosition(exit.row, exit.col);
+              const frame = (KORTHO_SHOP_MAPS as readonly string[]).indexOf(exit.toMap);
+              return this.add
+                .sprite(pos.x, pos.y + TILE_SIZE / 2, KORTHO_SHOP_TEXTURE_KEY, frame)
                 .setOrigin(0.5, 1)
                 .setDepth(-0.75);
             })
@@ -2055,6 +2107,23 @@ export class WorldScene extends Phaser.Scene {
           .setDepth(-0.99)
       );
 
+      // The dirt-road patch leading out the SW exit toward "Road to
+      // Floro" (a later follow-up ask) — same depth convention as the
+      // Bramwick patch above, anchored to the map's own new south edge
+      // instead of its north one.
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            (GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL - GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES) * TILE_SIZE,
+            (GRIMOAK_GROUNDS_ROWS - GRIMOAK_GROUNDS_ROAD_ROWS) * TILE_SIZE,
+            roadWidthTiles * TILE_SIZE,
+            GRIMOAK_GROUNDS_ROAD_ROWS * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+
       const WATER = 0x2f6fa8;
       const fillTileBand = (
         graphics: Phaser.GameObjects.Graphics,
@@ -2132,29 +2201,65 @@ export class WorldScene extends Phaser.Scene {
         .setFlipX(true)
         .setDepth(-0.85);
     } else if (mapName === 'Road to Kortho') {
-      // A later follow-up ask: "a dirt road of the same size... with
-      // grass surrounding it on either side. At the end... there should
-      // be a stone road that leads into Kortho." Same width convention as
-      // the Grimoak Grounds <-> Bramwick road; the last STONE_COLS columns
-      // (nearest Kortho, at the map's east edge) reuse the already-loaded
-      // 'concrete' texture instead of dirt.
+      // A later follow-up ask removed the original stone stretch near
+      // Kortho ("remove the stone path, just make it all dirt road") —
+      // one uniform dirt TileSprite across the road's whole width now,
+      // same convention as the Grimoak Grounds <-> Bramwick road.
       const korthoRoadHeightTiles = ROAD_TO_KORTHO_HALF_WIDTH_TILES * 2 + 1;
       const roadTopY = (ROAD_TO_KORTHO_MID_ROW - ROAD_TO_KORTHO_HALF_WIDTH_TILES) * TILE_SIZE;
-      const dirtCols = ROAD_TO_KORTHO_COLS - ROAD_TO_KORTHO_STONE_COLS;
       this.roadTiles.push(
         this.add
-          .tileSprite(0, roadTopY, dirtCols * TILE_SIZE, korthoRoadHeightTiles * TILE_SIZE, DIRT_ROAD_TEXTURE_KEY)
+          .tileSprite(0, roadTopY, ROAD_TO_KORTHO_COLS * TILE_SIZE, korthoRoadHeightTiles * TILE_SIZE, DIRT_ROAD_TEXTURE_KEY)
           .setOrigin(0, 0)
           .setDepth(-0.99)
       );
+    } else if (mapName === 'Road to Floro') {
+      // Same shape as Road to Kortho above, transposed for a north-south
+      // road (a later follow-up ask: "make sure Road to Floro and Floro
+      // get the same updates that Kortho is getting").
+      const floroRoadWidthTiles = ROAD_TO_FLORO_HALF_WIDTH_TILES * 2 + 1;
+      const roadLeftX = (ROAD_TO_FLORO_MID_COL - ROAD_TO_FLORO_HALF_WIDTH_TILES) * TILE_SIZE;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(roadLeftX, 0, floroRoadWidthTiles * TILE_SIZE, ROAD_TO_FLORO_ROWS * TILE_SIZE, DIRT_ROAD_TEXTURE_KEY)
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+    } else if (mapName === 'Kortho') {
+      // A later follow-up ask: "update the exit to Road to Kortho to have
+      // a dirt road leading out... the dirt road should be about 25% of
+      // the size of the other dirt roads that are used in Grimoak
+      // grounds" — a short entrance patch right at the west door, same
+      // width convention as Road to Kortho itself, 25% of
+      // GRIMOAK_GROUNDS_ROAD_ROWS deep.
+      const korthoEntranceDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
+      const korthoEntranceHeight = ROAD_TO_KORTHO_HALF_WIDTH_TILES * 2 + 1;
       this.roadTiles.push(
         this.add
           .tileSprite(
-            dirtCols * TILE_SIZE,
-            roadTopY,
-            ROAD_TO_KORTHO_STONE_COLS * TILE_SIZE,
-            korthoRoadHeightTiles * TILE_SIZE,
-            'concrete'
+            0,
+            (TOWN_MID_ROW - ROAD_TO_KORTHO_HALF_WIDTH_TILES) * TILE_SIZE,
+            korthoEntranceDepth * TILE_SIZE,
+            korthoEntranceHeight * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+    } else if (mapName === 'Floro') {
+      // Same entrance-patch treatment as Kortho above (a later follow-up
+      // ask: "make sure Road to Floro and Floro get the same updates that
+      // Kortho is getting"), at Floro's own north door instead.
+      const floroEntranceDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
+      const floroEntranceWidth = ROAD_TO_FLORO_HALF_WIDTH_TILES * 2 + 1;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            (TOWN_MID_COL - ROAD_TO_FLORO_HALF_WIDTH_TILES) * TILE_SIZE,
+            0,
+            floroEntranceWidth * TILE_SIZE,
+            floroEntranceDepth * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
           )
           .setOrigin(0, 0)
           .setDepth(-0.99)
@@ -2435,6 +2540,16 @@ export class WorldScene extends Phaser.Scene {
       // "at the end... a sign that will say 'Kortho'").
       { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION, label: 'Road to Kortho' },
       { map: 'Road to Kortho', position: ROAD_TO_KORTHO_SIGN_POSITION, label: 'Kortho' },
+      // A later follow-up ask: "in kortho update the exit to Road to
+      // Kortho to have a dirt road leading out with a sign 'Road to
+      // Kortho'" — a third sign sitting just inside the town itself.
+      { map: 'Kortho', position: KORTHO_ROAD_SIGN_POSITION, label: 'Road to Kortho' },
+      // The new SW "Road to Floro" exit's own pair, plus Floro's own
+      // inside-the-town sign (a later follow-up ask: "make sure Road to
+      // Floro and Floro get the same updates that Kortho is getting").
+      { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION, label: 'Road to Floro' },
+      { map: 'Road to Floro', position: ROAD_TO_FLORO_SIGN_POSITION, label: 'Floro' },
+      { map: 'Floro', position: FLORO_ROAD_SIGN_POSITION, label: 'Road to Floro' },
     ];
     this.signSprites = signDefs
       .filter((def) => def.map === mapName)
@@ -3114,10 +3229,32 @@ export class WorldScene extends Phaser.Scene {
           // AnimatedMonsterSnapshot's own isRare, carried from the source
           // corpse at animate-dead cast time).
           .setScale(am.monsterKind === DEMON_IMP_KIND ? CHAR_SCALE * 0.85 : am.isRare ? CHAR_SCALE * 1.35 : CHAR_SCALE)
-          .setTint(0x9a7bd6);
+          .setTint(0x9a7bd6)
+          .setInteractive({ useHandCursor: true });
         sprite.setData('row', am.row);
         sprite.setData('col', am.col);
         this.animatedMonsterSprites.set(am.id, sprite);
+        // A later follow-up ask: "make it so the summon/animated dead...
+        // can be double clicked to see their details and equipment" —
+        // same click-then-double-click-within-DOUBLE_CLICK_MS pattern the
+        // pet sprite's own pointerdown handler above uses (an animated
+        // monster isn't a real combat target findTargetableAt scans for
+        // either), just without that handler's single-click target-panel
+        // side effect — this ask is only about the detail modal itself.
+        sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+          if (isInputCaptured() || !pointer.leftButtonDown()) return;
+          const amSprite = this.animatedMonsterSprites.get(am.id);
+          if (!amSprite) return;
+          const key = `am:${am.id}`;
+          const now = Date.now();
+          if (this.lastClickKey === key && now - this.lastClickAt < WorldScene.DOUBLE_CLICK_MS) {
+            this.lastClickKey = null;
+            openTargetInfoModal('animatedMonster', am.id, amSprite);
+          } else {
+            this.lastClickKey = key;
+            this.lastClickAt = now;
+          }
+        });
       } else {
         const prevRow = sprite.getData('row') as number;
         const prevCol = sprite.getData('col') as number;
@@ -3133,6 +3270,14 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('label', am.name);
       sprite.setData('hp', am.hp);
       sprite.setData('maxHp', am.maxHp);
+      // For the detail modal (a later follow-up ask) — kept fresh every
+      // tick, same as label/hp/maxHp above, so a double-click always
+      // reads live data rather than whatever was true at sprite-creation
+      // time (mirrors the pet loop's own equivalent block above).
+      sprite.setData('ownerUsername', am.ownerUsername);
+      sprite.setData('attackDamage', am.attackDamage);
+      sprite.setData('equipment', am.equipment);
+      sprite.setData('inventory', am.inventory);
       this.ensureHpBar(sprite, am.hp, am.maxHp);
       sprite.setAlpha(am.alive ? 1 : 0.4);
     }
@@ -3295,11 +3440,17 @@ export class WorldScene extends Phaser.Scene {
     for (const v of state.vendors) {
       if (this.vendorSprites.has(v.id)) continue;
 
-      // The shopfront stall sits directly in front of (one tile south
-      // of) the shopkeeper, who stands behind it — decorative only, not
-      // interactive/collidable.
+      // The shopfront stall (or, for Floro/Kortho, a real desk — a later
+      // follow-up ask: "put the shop keeper behind a real desk instead of
+      // a shop front") sits directly in front of (one tile south of) the
+      // shopkeeper, who stands behind it — decorative only, not
+      // interactive/collidable. Bramwick's shops are unaffected, keeping
+      // the original stall.
       const frontPos = this.tilePosition(v.row + 1, v.col);
-      const frontSprite = this.add.sprite(frontPos.x, frontPos.y, 'shopfront').setDepth(-0.5);
+      const usesDesk = (FLORO_SHOP_MAPS as readonly string[]).includes(v.map) || (KORTHO_SHOP_MAPS as readonly string[]).includes(v.map);
+      const frontSprite = usesDesk
+        ? this.add.sprite(frontPos.x, frontPos.y, CLASSROOM_DESK_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5)
+        : this.add.sprite(frontPos.x, frontPos.y, 'shopfront').setDepth(-0.5);
       this.vendorFrontSprites.set(v.id, frontSprite);
 
       const pos = this.tilePosition(v.row, v.col);

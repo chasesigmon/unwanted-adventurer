@@ -19,14 +19,24 @@ function considerationMessage(viewerLevel: number, targetLevel: number): string 
   return 'You would likely be defeated.';
 }
 
-export function openTargetInfoModal(kind: 'player' | 'npc' | 'monster' | 'pet', id: string, sprite: Phaser.GameObjects.Sprite): void {
+export function openTargetInfoModal(
+  kind: 'player' | 'npc' | 'monster' | 'pet' | 'animatedMonster',
+  id: string,
+  sprite: Phaser.GameObjects.Sprite
+): void {
   closeAllModals();
   const label = (sprite.getData('label') as string | undefined) ?? id;
   const level = (sprite.getData('level') as number | undefined) ?? 1;
 
   targetInfoTitle.textContent = label;
   targetInfoBody.innerHTML = '';
-  appendStatRow(targetInfoBody, 'Level', level);
+  // An animated monster (necromancer's animate dead / monster summons /
+  // demon imp / illusionist's duplicate) has no level concept of its own
+  // (see AnimatedMonsterSnapshot) — showing the generic "Level" row here
+  // would default to a misleading "1" rather than reflecting anything real.
+  if (kind !== 'animatedMonster') {
+    appendStatRow(targetInfoBody, 'Level', level);
+  }
 
   if (kind === 'player') {
     // A later follow-up ask (item 4's dummy players "of different
@@ -43,13 +53,18 @@ export function openTargetInfoModal(kind: 'player' | 'npc' | 'monster' | 'pet', 
   } else if (kind === 'monster') {
     const carried = (sprite.getData('carriedItems') as string[] | undefined) ?? [];
     appendStatRow(targetInfoBody, 'Carrying', carried.length > 0 ? carried.join(', ') : '(nothing)');
-  } else if (kind === 'pet') {
+  } else if (kind === 'pet' || kind === 'animatedMonster') {
     // A later follow-up ask: "see more details including possible
-    // equipment" — a follower's own equipment is limited to
+    // equipment" (originally for pets, now extended to summons/animated
+    // dead too) — a follower's own equipment is limited to
     // FOLLOWER_EQUIPMENT_SLOTS (weapon/torso only), unlike a player's
     // full 12-slot list above.
     const ownerUsername = (sprite.getData('ownerUsername') as string | undefined) ?? '(unknown)';
     appendStatRow(targetInfoBody, 'Owner', ownerUsername);
+    if (kind === 'animatedMonster') {
+      const attackDamage = (sprite.getData('attackDamage') as number | undefined) ?? 0;
+      appendStatRow(targetInfoBody, 'Attack Damage', attackDamage);
+    }
     const equipment = (sprite.getData('equipment') as Record<string, string> | undefined) ?? {};
     for (const slot of FOLLOWER_EQUIPMENT_SLOTS) {
       appendStatRow(targetInfoBody, EQUIPMENT_SLOT_LABELS[slot], equipment[slot] ?? '(none)');
@@ -58,10 +73,11 @@ export function openTargetInfoModal(kind: 'player' | 'npc' | 'monster' | 'pet', 
     appendStatRow(targetInfoBody, 'Carrying', carried.length > 0 ? carried.join(', ') : '(nothing)');
   }
 
-  // A pet isn't a real combat target — "would I win this fight" doesn't
-  // apply to a friendly follower, so it just gets no consideration line
-  // rather than a nonsensical one.
-  targetInfoConsideration.textContent = kind !== 'pet' && myProfile ? considerationMessage(myProfile.level, level) : '';
+  // Neither a pet nor an animated monster is a real combat target —
+  // "would I win this fight" doesn't apply to a friendly follower, so it
+  // just gets no consideration line rather than a nonsensical one.
+  targetInfoConsideration.textContent =
+    kind !== 'pet' && kind !== 'animatedMonster' && myProfile ? considerationMessage(myProfile.level, level) : '';
   targetInfoModal.hidden = false;
   updateInputCaptured();
 }

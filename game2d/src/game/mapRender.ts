@@ -2,7 +2,7 @@
 // mutable module state, just math and small Phaser Graphics drawing.
 import Phaser from 'phaser';
 import type { MapName, Direction } from '../../shared/constants.js';
-import { FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS, BRAMWICK_SHOP_MAPS } from '../../shared/constants.js';
+import { FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS, BRAMWICK_SHOP_MAPS, KORTHO_SHOP_MAPS } from '../../shared/constants.js';
 import type { FacingGroup } from '../characterSprites.js';
 
 export const TILE_SIZE = 32;
@@ -71,6 +71,19 @@ export const BRAMWICK_COTTAGE_TEXTURE_KEY = 'bramwick-cottage';
 // shared/maps.ts's bramwickShopDoorExits, now `kind: 'open'`).
 export const BRAMWICK_COTTAGE_FRAME_WIDTH = 192;
 export const BRAMWICK_COTTAGE_FRAME_HEIGHT = 256;
+
+// Kortho's own 7 shop buildings (a later follow-up ask: "modern medieval
+// shops that would belong in that stone age town... put the name of the
+// shop at the top of each") — same "one frame per shop, door touching the
+// frame's own bottom edge, no separate door sprite" shape as Bramwick's
+// cottages above (see tools/gen-kortho-shop-assets.mjs), one frame per
+// KORTHO_SHOP_MAPS entry in that exact order. A stone-block wall (not
+// Floro's timber-plaster or Bramwick's own look) with a wooden name
+// banner near the roofline, rendered with real PIL text rather than a
+// coarse pixel font.
+export const KORTHO_SHOP_TEXTURE_KEY = 'kortho-shop';
+export const KORTHO_SHOP_FRAME_WIDTH = 192;
+export const KORTHO_SHOP_FRAME_HEIGHT = 256;
 
 // A single fancy double door (a follow-up ask) used for EVERY map exit
 // now — shop doors and every other transition alike — replacing both the
@@ -310,10 +323,18 @@ export type Facing = FacingGroup;
 
 export function floorTextureFor(mapName: MapName): string {
   if (mapName === 'Labyrinth' || (GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return 'stone';
-  if (mapName === 'Floro' || mapName === 'Kortho' || (FLORO_SHOP_MAPS as readonly string[]).includes(mapName)) return 'concrete';
+  if (mapName === 'Floro' || mapName === 'Kortho') return 'concrete';
+  // Floro's and Kortho's own shop interiors (a later follow-up ask: "make
+  // it a different stone texture inside that on the outside, remove the
+  // grass" — KORTHO_SHOP_MAPS was previously missing from this function
+  // entirely, silently falling through to the plain 'grass' default
+  // below) — same 'stone' interior Bramwick's shops/the castle already
+  // use, distinct from either town's own 'concrete' street.
+  if ((FLORO_SHOP_MAPS as readonly string[]).includes(mapName) || (KORTHO_SHOP_MAPS as readonly string[]).includes(mapName)) return 'stone';
   // Bramwick's own shop cottages (a later follow-up ask) get the same
-  // stone interior as Floro's shops; the village street itself is the
-  // "dirt road" the entrance north of Grimoak Grounds leads into.
+  // stone interior as Floro's/Kortho's shops above; the village street
+  // itself is the "dirt road" the entrance north of Grimoak Grounds
+  // leads into.
   if ((BRAMWICK_SHOP_MAPS as readonly string[]).includes(mapName)) return 'stone';
   if (mapName === 'Bramwick') return 'dirt';
   return 'grass';
