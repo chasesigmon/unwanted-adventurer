@@ -305,6 +305,11 @@ export const MAP_NAMES = [
   // dirt road... that goes south, leading to Floro" — same "real
   // separate map" shape as Road to Kortho above.
   'Road to Floro',
+  // A later follow-up ask: "create a new World/area called 'Mystical
+  // Timberland' that is to the left of Grimoak Grounds" — connects
+  // directly off the Grounds' own west edge, same single-shared-border
+  // shape Bramwick's own north connection already uses.
+  'Mystical Timberland',
   ...GRIMOAK_CASTLE_MAPS,
   ...PORTAL_DUNGEON_MAPS,
 ] as const;

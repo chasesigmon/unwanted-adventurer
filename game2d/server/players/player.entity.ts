@@ -10,6 +10,7 @@ import {
   type SpecializationPath,
 } from '../../shared/constants.js';
 import type { QuestProgress } from '../../shared/quests.js';
+import type { PetSnapshot } from '../../shared/pets.js';
 
 // Position fields place a character back where it left off; attribute/
 // vital/level/skill fields back the combat system (see
@@ -228,6 +229,22 @@ export class Player {
   // shared/types.ts's own doc comment.
   @Column({ name: 'killed_monster_kinds', type: 'jsonb', default: () => "'[]'" })
   killedMonsterKinds!: string[];
+
+  // A follow-up bug fix: "the pet is a permanent part of the player's
+  // group unless they are terminated/deleted... the pet disappears from
+  // the group after updates" — PetManagerService only ever kept pets
+  // in-memory (same tradeoff as monsters/corpses, which are fine to lose
+  // on a restart since they're just world content, not something a
+  // player owns) — a REAL restart (not just a hot code reload) wiped
+  // every player's pet outright. The full PetSnapshot is persisted here
+  // (see game.gateway.ts's persistStats, which now always includes it)
+  // and restored into PetManagerService the moment its owner reconnects
+  // (see handleConnection) — dead ones included, so a fallen pet still
+  // shows as "— fallen" in the group panel rather than vanishing, per
+  // this same ask's own "even when dead the pet should remain part of
+  // the group" — reviving one is a still-future mechanic.
+  @Column({ type: 'jsonb', nullable: true, default: null })
+  pet!: PetSnapshot | null;
 
   @Column({ name: 'last_login', type: 'timestamptz', default: () => 'now()' })
   lastLogin!: Date;

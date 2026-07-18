@@ -354,6 +354,10 @@ export function floorTextureFor(mapName: MapName): string {
   // leads into.
   if ((BRAMWICK_SHOP_MAPS as readonly string[]).includes(mapName)) return 'stone';
   if (mapName === 'Bramwick') return 'dirt';
+  // A later follow-up ask: "it should have grass, but make the grass
+  // slightly darker than in Grimoak Grounds" — a distinct, slightly
+  // darker variant of the same grass tile (see assets/dark-grass-tile.svg).
+  if (mapName === 'Mystical Timberland') return 'dark-grass';
   return 'grass';
 }
 

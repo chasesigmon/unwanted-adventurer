@@ -87,6 +87,23 @@ export class PetManagerService {
     return pet;
   }
 
+  // A follow-up bug fix: "the pet is a permanent part of the player's
+  // group unless they are terminated/deleted... it disappears from the
+  // group" — this in-memory map is wiped by any real server restart (see
+  // player.entity.ts's own `pet` column doc comment); called once from
+  // game.gateway.ts's handleConnection, right after loading the player's
+  // own persisted doc, to re-seed this owner's entry from what was last
+  // saved. A no-op if this owner is already tracked (server never
+  // actually restarted, or a duplicate call) — never overwrites a live
+  // in-memory pet with a possibly-stale persisted one. Snaps to wherever
+  // the owner is reconnecting rather than its own last-persisted
+  // position, same "follow the owner's current map" reasoning tickAll's
+  // own map-change branch already uses.
+  restore(ownerUsername: string, snapshot: PetSnapshot, map: MapName, row: number, col: number): void {
+    if (this.pets.has(ownerUsername)) return;
+    this.pets.set(ownerUsername, { ...snapshot, map, row, col });
+  }
+
   setCommand(ownerUsername: string, command: PetCommand): Pet | undefined {
     const pet = this.pets.get(ownerUsername);
     if (!pet || !pet.alive) return undefined;

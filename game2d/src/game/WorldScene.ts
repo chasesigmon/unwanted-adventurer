@@ -50,6 +50,8 @@ import {
   ROAD_TO_FLORO_ROWS,
   ROAD_TO_FLORO_MID_COL,
   ROAD_TO_FLORO_HALF_WIDTH_TILES,
+  MYSTICAL_TIMBERLAND_MID_ROW,
+  MYSTICAL_TIMBERLAND_COLS,
 } from '../../shared/maps.js';
 import { treePositionsFor } from '../../shared/trees.js';
 import {
@@ -124,6 +126,8 @@ import {
   ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION,
   KORTHO_ROAD_SIGN_POSITION,
   FLORO_ROAD_SIGN_POSITION,
+  GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION,
+  MYSTICAL_TIMBERLAND_SIGN_POSITION,
   standingTorchPositionsFor,
 } from '../../shared/lighting.js';
 import {
@@ -575,6 +579,9 @@ export class WorldScene extends Phaser.Scene {
 
   preload(): void {
     this.load.svg('grass', '/grass-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    // Mystical Timberland's own slightly-darker grass (a later follow-up
+    // ask), see mapRender.ts's floorTextureFor.
+    this.load.svg('dark-grass', '/dark-grass-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     this.load.svg('stone', '/stone-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     this.load.svg('concrete', '/concrete-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     // Bramwick's own dirt-road street (a later follow-up ask).
@@ -2271,6 +2278,25 @@ export class WorldScene extends Phaser.Scene {
           .setOrigin(0, 0)
           .setDepth(-0.99)
       );
+    } else if (mapName === 'Mystical Timberland') {
+      // Same small entrance-patch treatment as Kortho/Floro above (a
+      // later follow-up ask: "make the entrance to it have a similar
+      // small dirt road like the dirt road leading out of Kortho"), at
+      // its own EAST door (the only connection into this map).
+      const timberlandEntranceDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
+      const timberlandEntranceHeight = GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES * 2 + 1;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            (MYSTICAL_TIMBERLAND_COLS - timberlandEntranceDepth) * TILE_SIZE,
+            (MYSTICAL_TIMBERLAND_MID_ROW - GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES) * TILE_SIZE,
+            timberlandEntranceDepth * TILE_SIZE,
+            timberlandEntranceHeight * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
     }
 
     // Grimoak Castle's exterior + flying crows (item 4) — only on the
@@ -2565,6 +2591,10 @@ export class WorldScene extends Phaser.Scene {
       // Grounds").
       { map: 'Road to Floro', position: ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION, label: 'Grimoak Grounds' },
       { map: 'Floro', position: FLORO_ROAD_SIGN_POSITION, label: 'Road to Floro' },
+      // The new west "Mystical Timberland" connection's own sign pair (a
+      // later follow-up ask: "have a sign to Mystical Timberland").
+      { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION, label: 'Mystical Timberland' },
+      { map: 'Mystical Timberland', position: MYSTICAL_TIMBERLAND_SIGN_POSITION, label: 'Grimoak Grounds' },
     ];
     this.signSprites = signDefs
       .filter((def) => def.map === mapName)

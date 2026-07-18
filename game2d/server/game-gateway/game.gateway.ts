@@ -680,6 +680,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
             result.pet.row,
             result.pet.col
           );
+          // A follow-up bug fix: "even when dead the pet should remain
+          // part of the group as fallen" — persists the now-`alive:
+          // false` snapshot right away rather than waiting for whatever
+          // persistStats call happens to fire next, so a restart in the
+          // same instant can't resurrect it back to alive.
+          const ownerSocketId = this.activeConnections.getActiveSocketId(ownerUsername);
+          const ownerSocket = ownerSocketId ? (this.server.sockets.sockets.get(ownerSocketId) as GameSocket | undefined) : undefined;
+          if (ownerSocket) void this.persistStats(ownerSocket);
         }
         return result ? result.pet.hp : undefined;
       }
@@ -1480,6 +1488,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         specialization: client.data.specialization,
         visitedPois: client.data.visitedPois,
         killedMonsterKinds: client.data.killedMonsterKinds,
+        // A follow-up bug fix: "the pet is a permanent part of the
+        // player's group... it disappears after updates" — persistStats
+        // already fires after nearly every pet-mutating action (buy,
+        // give/take/equip item, and now every exp grant — see
+        // grantPetExpForKill), so piggybacking here covers it without a
+        // dedicated write path of its own. null once the pet is gone
+        // entirely (never bought, or a still-future "delete" action) —
+        // NOT null just because it died (see PetManagerService's own
+        // getSnapshotForOwner, deliberately unfiltered by `alive`).
+        pet: this.petManager.getSnapshotForOwner(client.data.username) ?? null,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1565,6 +1583,28 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       client.emit('sync', { player: this.snapshotFor(client) });
     }
     return { leveledUp: levelsGained > 0, message: cappedMessage };
+  }
+
+  // A follow-up bug fix: "we are not on a shared experience system right
+  // now so the pet should get their full deserved experience for the
+  // kill even though they did not land the killing blow" — a pet set to
+  // 'attack' against a monster the OWNER ends up killing first (a common
+  // race once the owner's own damage output outpaces the pet's) used to
+  // get nothing at all, since the only place a pet ever earned exp was
+  // resolveFollowerContact's own "the pet itself dealt the killing
+  // blow" branch. Called from EVERY monster-death exp grant now (see
+  // each of this file's own expGainFor(monster.expReward, ...) call
+  // sites), independent of who actually landed the kill — a genuine
+  // full grant, not a split.
+  private grantPetExpForKill(ownerUsername: string, monster: { id: string; expReward: number; level: number; mapName: MapName }): void {
+    const pet = this.petManager.getSnapshotForOwner(ownerUsername);
+    if (!pet || !pet.alive || pet.command !== 'attack' || pet.attackTargetKind !== 'monster' || pet.attackTargetId !== monster.id) return;
+    const previousName = pet.name;
+    const petExpGained = expGainFor(monster.expReward, pet.level, monster.level);
+    const petGrant = this.petManager.grantExp(ownerUsername, petExpGained);
+    if (petGrant?.evolved) {
+      this.server.to(monster.mapName).emit('combatNotice', `${previousName} has evolved into a ${petGrant.pet.name}!`);
+    }
   }
 
   // The character sheet's own stat-point allocation (a later follow-up
@@ -2569,6 +2609,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.visitedPois = doc?.visitedPois ?? [];
     client.data.killedMonsterKinds = doc?.killedMonsterKinds ?? [];
 
+    // A follow-up bug fix: "the pet is a permanent part of the player's
+    // group... it disappears from the group" after a real server
+    // restart wipes PetManagerService's own in-memory map — re-seeds
+    // this owner's pet (alive or fallen) from what was last persisted,
+    // right at the current map/row/col rather than wherever it happened
+    // to be standing when the server went down.
+    if (doc?.pet) {
+      this.petManager.restore(username, doc.pet, client.data.map, client.data.row, client.data.col);
+    }
+
     this.worldManager.addPlayer(username, {
       race: client.data.race,
       gender: client.data.gender,
@@ -3241,6 +3291,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
             casterSocket.emit('sync', { player: this.snapshotFor(casterSocket) });
             this.recordMonsterKill(casterSocket, monster.kind);
           }
+          this.grantPetExpForKill(burn.casterUsername, monster);
           const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
           this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, burn.casterUsername, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0, monster.isRare);
         }
@@ -3342,20 +3393,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // Phase C's "pet evolution" ask — the pet earns its own exp from
       // its own kills, on the same curve/level-up path as the player
       // (see PetManagerService.grantExp), evolving once it crosses
-      // PET_EVOLUTION_LEVEL. A follow-up bug fix: "the pet should receive
-      // proper experience from the killed monster for their level, not
-      // what the player character receives at their level" — rawExpGained
-      // above was computed against the OWNER's own (often much higher)
-      // level, which expGainFor's diminishing-returns ratio crushes down
-      // to a token 1 exp for a high-level player killing a low-level
-      // monster. Recomputed fresh against the pet's OWN level instead.
-      if (followerType === 'pet' && pet) {
-        const petExpGained = expGainFor(monster.expReward, pet.level, monster.level);
-        const petGrant = this.petManager.grantExp(ownerUsername, petExpGained);
-        if (petGrant?.evolved) {
-          this.server.to(client.data.map).emit('combatNotice', `${followerLabel} has evolved into a ${petGrant.pet.name}!`);
-        }
-      }
+      // PET_EVOLUTION_LEVEL. grantPetExpForKill's own doc comment covers
+      // both the level-scaling fix and why this same helper is now
+      // called from every OTHER monster-kill exp grant too, not just
+      // this one (where the pet's own damage happened to land the kill).
+      if (followerType === 'pet') this.grantPetExpForKill(ownerUsername, monster);
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
       this.corpseManager.spawn(
         monster.kind,
@@ -3432,6 +3474,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         const grantResult = this.grantExp(client, rawExpGained);
         leveledUp = grantResult.leveledUp;
         expGained = grantResult.message ? undefined : rawExpGained;
+        this.grantPetExpForKill(client.data.username, monster);
         const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
         this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0, monster.isRare);
         this.recordMonsterKill(client, monster.kind);
@@ -3600,6 +3643,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const rawExpGained = expGainFor(monster.expReward, client.data.level, monster.level);
       const grantResult = this.grantExp(client, rawExpGained);
       leveledUp = grantResult.leveledUp;
+      this.grantPetExpForKill(client.data.username, monster);
       // A capped goblin's message means the nominal reward wasn't (fully)
       // applied — showing "+X exp" would be misleading, so the cap
       // message stands in for it instead.
@@ -4413,6 +4457,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const session = this.playerCombat.get(client.data.username);
       if (session) this.syncFollowerAttackTargets(client.data.username, session.targetKind, session.targetId);
     }
+    void this.persistStats(client);
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     return { ok: true, pet };
   }
@@ -5028,6 +5073,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       leveledUp = grantResult.leveledUp;
       expGained = grantResult.message ? undefined : rawExpGained;
       if (grantResult.message) growthMessages.push(grantResult.message);
+      this.grantPetExpForKill(client.data.username, monster);
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
       this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0, monster.isRare);
       this.recordMonsterKill(client, monster.kind);
@@ -5243,6 +5289,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       leveledUp = grantResult.leveledUp;
       expGained = grantResult.message ? undefined : rawExpGained;
       if (grantResult.message) growthMessages.push(grantResult.message);
+      this.grantPetExpForKill(client.data.username, monster);
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
       this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0, monster.isRare);
       this.recordMonsterKill(client, monster.kind);
@@ -5501,6 +5548,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       leveledUp = grantResult.leveledUp;
       expGained = grantResult.message ? undefined : rawExpGained;
       if (grantResult.message) growthMessages.push(grantResult.message);
+      this.grantPetExpForKill(client.data.username, monster);
       const items = [manaCrystalForLevel(monster.level), ...monster.carriedItems];
       this.corpseManager.spawn(monster.kind, monster.level, items, monster.mapName, monster.row, monster.col, client.data.username, monster.goldReward, monster.maxHp, monster.attackDamage ?? 0, monster.isRare);
       this.recordMonsterKill(client, monster.kind);

@@ -4,6 +4,7 @@ import type { Repository } from 'typeorm';
 import { Player } from './player.entity.js';
 import type { Gender, HairColor, MapName, Race, SkinTone, HouseName, SpecializationPath } from '../../shared/constants.js';
 import type { QuestProgress } from '../../shared/quests.js';
+import type { PetSnapshot } from '../../shared/pets.js';
 
 export interface NewPlayerInput {
   username: string;
@@ -92,6 +93,10 @@ export interface PlayerStatsUpdate {
   specialization?: SpecializationPath | null;
   visitedPois?: string[];
   killedMonsterKinds?: string[];
+  // A follow-up bug fix: "the pet is a permanent part of the player's
+  // group... shouldn't disappear" — see player.entity.ts's own `pet`
+  // column doc comment.
+  pet?: PetSnapshot | null;
 }
 
 @Injectable()

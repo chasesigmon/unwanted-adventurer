@@ -36,6 +36,9 @@ import {
   ROAD_TO_FLORO_MID_COL,
   TOWN_MID_ROW,
   TOWN_MID_COL,
+  GRIMOAK_GROUNDS_MOAT_MID_ROW,
+  MYSTICAL_TIMBERLAND_MID_ROW,
+  MYSTICAL_TIMBERLAND_COLS,
 } from './maps.js';
 
 // "Late hours of night and early hours of morning" — a narrower, darker
@@ -662,42 +665,37 @@ export function isPortalBlocked(mapName: MapName, row: number, col: number): boo
 // actually push back the dark-fog at night.
 export function standingTorchPositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
   if (mapName !== 'Bramwick') return [];
-  // A later follow-up ask reworked the original 3x3 grid: the middle
-  // COLUMN's own middle torch (row 20, dead center of town) is gone
-  // entirely, its north/south neighbors pushed further out to row
-  // 9/31 — and 4 more torches fill in the top/bottom edges at those same
-  // rows, so the left column (col 5), right column (col 35), and these
-  // two new edges together read as one rectangle "encompassing the
-  // town" instead of 3 bare vertical lines.
-  const sideRows = [14, 20, 26];
-  const sideCols = [5, 35];
-  const edgeRow = { top: 9, bottom: 31 };
-  // Clear of both FRONT shops' own ~7-13/27-33 column footprints (see
-  // WorldScene's cottageSprites) — 3 and 37 sit just past each building.
-  // A later follow-up ask fixed the top edge's own middle torch, which
-  // used to sit at (1, BRAMWICK_MID_COL) — pulled all the way up to clear
-  // the Pet Shop's cottage roof (its door sits at (10, BRAMWICK_MID_COL),
-  // roofline reaching to roughly row 2.5), out of line with its two
-  // neighbors at row 9 ("align the other torches... in a straight line
-  // and not offset"). Shifted sideways to col 16 instead — clear of the
-  // Pet Shop's own ~17-22 roof span AND General Shop's 7-13 footprint —
-  // so all 3 top-edge torches now share the same row.
-  const topEdgeCols = [3, 16, 37];
+  // A later follow-up ask reworked the original 3x3 grid into a
+  // rectangle "encompassing the town": a left wall (col 5) and a right
+  // wall (col 35), each running the town's full height, plus 3 interior
+  // fixes (the two entrance-flanking torches and one clearing the Pet
+  // Shop's own roof). A follow-up bug fix ("the torches on the left and
+  // right are still not aligned vertically, some are offset") caught
+  // that the wall's own TOP/BOTTOM rows used to be separate "corner"
+  // torches at col 3/37 — 2 tiles OUTSIDE the col 5/35 the 3 middle rows
+  // actually used, so the "wall" visibly kinked in and back out at each
+  // end instead of running perfectly straight. Every wall torch now
+  // shares the exact same column top to bottom.
+  const wallRows = [9, 14, 20, 26, 31];
+  const wallCols = [5, 35];
+  const bottomRow = 31;
   return [
-    ...sideCols.flatMap((col) => sideRows.map((row) => ({ row, col }))),
-    ...topEdgeCols.map((col) => ({ row: edgeRow.top, col })),
-    // A later follow-up bug fix: "move the torch that is right in front
-    // of the door to the left and add one on the right, so the player
-    // doesn't need to move around it after entering Bramwick" — the
-    // south entrance's own band (see bramwickGroundsEntranceExits) is 5
-    // columns wide, centered on BRAMWICK_MID_COL; the single torch that
-    // used to sit dead center at (edgeRow.bottom, BRAMWICK_MID_COL) stood
-    // directly in a player's path walking straight in. Two torches
-    // flanking that band instead — the entire entrance stays clear.
-    { row: edgeRow.bottom, col: BRAMWICK_MID_COL - 3 },
-    { row: edgeRow.bottom, col: BRAMWICK_MID_COL + 3 },
-    { row: edgeRow.bottom, col: 3 },
-    { row: edgeRow.bottom, col: 37 },
+    ...wallCols.flatMap((col) => wallRows.map((row) => ({ row, col }))),
+    // The top edge's own middle torch — clear of both FRONT shops' own
+    // ~7-13/27-33 column footprints AND the Pet Shop's own ~17-22 roof
+    // span (its door sits at (10, BRAMWICK_MID_COL), roofline reaching to
+    // roughly row 2.5) — see WorldScene's cottageSprites.
+    { row: 9, col: 16 },
+    // A follow-up bug fix: "move the torch that is right in front of the
+    // door to the left and add one on the right, so the player doesn't
+    // need to move around it after entering Bramwick" — the south
+    // entrance's own band (see bramwickGroundsEntranceExits) is 5 columns
+    // wide, centered on BRAMWICK_MID_COL; the single torch that used to
+    // sit dead center stood directly in a player's path walking straight
+    // in. Two torches flanking that band instead — the entire entrance
+    // stays clear.
+    { row: bottomRow, col: BRAMWICK_MID_COL - 3 },
+    { row: bottomRow, col: BRAMWICK_MID_COL + 3 },
   ];
 }
 
@@ -763,13 +761,21 @@ export const KORTHO_ROAD_SIGN_POSITION = { row: TOWN_MID_ROW + 4, col: 3 };
 // get[s] the same updates that Kortho is getting").
 export const FLORO_ROAD_SIGN_POSITION = { row: 3, col: TOWN_MID_COL + 4 };
 
+// A later follow-up ask: "make a connection to the new area Mystical
+// Timberland... have a sign to Mystical Timberland" — same two-sided
+// sign-pair convention as every other connection above, one on Grimoak
+// Grounds' own side, one just inside Mystical Timberland pointing back.
+export const GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION = { row: GRIMOAK_GROUNDS_MOAT_MID_ROW + 4, col: 3 };
+export const MYSTICAL_TIMBERLAND_SIGN_POSITION = { row: MYSTICAL_TIMBERLAND_MID_ROW + 4, col: MYSTICAL_TIMBERLAND_COLS - 3 };
+
 export function isBramwickSignBlocked(mapName: MapName, row: number, col: number): boolean {
   if (mapName === 'Bramwick') return row === BRAMWICK_SIGN_POSITION.row && col === BRAMWICK_SIGN_POSITION.col;
   if (mapName === 'Grimoak Grounds') {
     return (
       (row === GRIMOAK_GROUNDS_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_SIGN_POSITION.col) ||
       (row === GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION.col) ||
-      (row === GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION.col)
+      (row === GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION.col) ||
+      (row === GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION.col)
     );
   }
   if (mapName === 'Road to Kortho') {
@@ -789,6 +795,9 @@ export function isBramwickSignBlocked(mapName: MapName, row: number, col: number
   }
   if (mapName === 'Floro') {
     return row === FLORO_ROAD_SIGN_POSITION.row && col === FLORO_ROAD_SIGN_POSITION.col;
+  }
+  if (mapName === 'Mystical Timberland') {
+    return row === MYSTICAL_TIMBERLAND_SIGN_POSITION.row && col === MYSTICAL_TIMBERLAND_SIGN_POSITION.col;
   }
   return false;
 }

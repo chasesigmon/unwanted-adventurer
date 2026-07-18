@@ -222,6 +222,16 @@ export const GRIMOAK_GROUNDS_EXTENSION_MIN_COL = GRIMOAK_GROUNDS_SIZE;
 // until south of the south gate, which this newly-added strip provides.
 export const GRIMOAK_GROUNDS_ROWS = Math.round(GRIMOAK_GROUNDS_SIZE * 1.1);
 
+// ---------- Mystical Timberland (a later follow-up ask: "create a new
+// World/area called 'Mystical Timberland' that is to the left of Grimoak
+// Grounds... the same size as Grimoak Grounds") — unlike Road to Kortho/
+// Floro, this connects DIRECTLY off Grimoak Grounds' own west edge (no
+// separate corridor map), same single-shared-border shape Bramwick's own
+// north connection already uses. ----------
+export const MYSTICAL_TIMBERLAND_ROWS = GRIMOAK_GROUNDS_ROWS;
+export const MYSTICAL_TIMBERLAND_COLS = GRIMOAK_GROUNDS_COLS;
+export const MYSTICAL_TIMBERLAND_MID_ROW = Math.floor(MYSTICAL_TIMBERLAND_ROWS / 2);
+
 // ---------- Road to Kortho (a later follow-up ask: "at the northeast of
 // Grimoak grounds add a dirt road going east... Create 'Road to Kortho'
 // which should be a dirt road... with grass surrounding it on either
@@ -323,6 +333,13 @@ export const MOAT_OUTER_TOP = MOAT_INNER_TOP - MOAT_WIDTH_TILES;
 export const MOAT_OUTER_BOTTOM = MOAT_INNER_BOTTOM + MOAT_WIDTH_TILES;
 export const BRIDGE_COL_LEFT = CASTLE_DOOR_ON_GROUNDS.col - BRIDGE_HALF_WIDTH_TILES;
 export const BRIDGE_COL_RIGHT = CASTLE_DOOR_ON_GROUNDS.col + BRIDGE_HALF_WIDTH_TILES;
+// A later follow-up ask: "in the middle left (to the left of the middle
+// of the moat), make a connection to the new area Mystical Timberland" —
+// MOAT_OUTER_LEFT sits at col 3, so this row (well within the moat's own
+// north/south span) still has open ground at cols 0-2, clear of the
+// moat's own footprint — no bridge needed, unlike the north/south
+// crossings above.
+export const GRIMOAK_GROUNDS_MOAT_MID_ROW = Math.round((MOAT_INNER_TOP + MOAT_INNER_BOTTOM) / 2);
 
 export function isBridgeTile(mapName: MapName, row: number, col: number): boolean {
   if (mapName !== 'Grimoak Grounds') return false;
@@ -1386,6 +1403,30 @@ export const MAPS: Record<MapName, MapDefinition> = {
       }),
     ],
   },
+  'Mystical Timberland': {
+    name: 'Mystical Timberland',
+    rows: MYSTICAL_TIMBERLAND_ROWS,
+    cols: MYSTICAL_TIMBERLAND_COLS,
+    // The base floor is grass (see mapRender.ts's floorTextureFor, a
+    // later follow-up ask: "make the grass slightly darker than in
+    // Grimoak Grounds") — the actual maze-like feel comes from its own
+    // dense tree scatter (see shared/trees.ts's mysticalTimberlandTreePositions,
+    // wired into collision the same way Great Plains' own trees already
+    // are), not this field.
+    terrain: 'grass',
+    exits: [
+      ...roadBandExits({
+        row: MYSTICAL_TIMBERLAND_MID_ROW,
+        col: MYSTICAL_TIMBERLAND_COLS - 1,
+        direction: 'east',
+        toMap: 'Grimoak Grounds',
+        toRow: GRIMOAK_GROUNDS_MOAT_MID_ROW,
+        toCol: 1,
+        halfWidthTiles: GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
+    ],
+  },
   Bramwick: {
     name: 'Bramwick',
     rows: BRAMWICK_SIZE,
@@ -1460,6 +1501,21 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toCol: ROAD_TO_FLORO_MID_COL,
         halfWidthTiles: ROAD_TO_FLORO_HALF_WIDTH_TILES,
         spread: 'col',
+      }),
+      // A later follow-up ask: "in the middle left (to the left of the
+      // middle of the moat), make a connection to the new area Mystical
+      // Timberland" — GRIMOAK_GROUNDS_MOAT_MID_ROW already sits well
+      // clear of the moat's own footprint at col 0 (MOAT_OUTER_LEFT is
+      // col 3), no bridge needed.
+      ...roadBandExits({
+        row: GRIMOAK_GROUNDS_MOAT_MID_ROW,
+        col: 0,
+        direction: 'west',
+        toMap: 'Mystical Timberland',
+        toRow: MYSTICAL_TIMBERLAND_MID_ROW,
+        toCol: MYSTICAL_TIMBERLAND_COLS - 2,
+        halfWidthTiles: GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES,
+        spread: 'row',
       }),
     ],
   },
