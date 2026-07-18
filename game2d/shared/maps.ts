@@ -36,7 +36,10 @@ export interface MapDefinition {
   exits: MapExit[];
 }
 
-const GREAT_PLAINS_SIZE = 100;
+// Exported (a later follow-up ask needed it client-side, to size the new
+// Floro connection's own sign/road placement relative to Great Plains'
+// own east edge).
+export const GREAT_PLAINS_SIZE = 100;
 const LABYRINTH_SIZE = 60;
 // Exported (a later follow-up ask needed Kortho's own unchanged ROW count
 // client-side, to size the new sand/sea/sand strips' own tileSprites —
@@ -1359,6 +1362,24 @@ function gobblerHutDoorExits(): MapExit[] {
   });
 }
 
+// A later follow-up ask: "add a connection to the west of Floro with a
+// thin dirt road... Create the world 'The Great Plains' (or re-use the
+// old Great Plains)... have it have a dirt road connection at the top
+// right/north east with sign 'Floro'." Great Plains already existed as a
+// real map (with its own wild goblins/trees, see server/monsters/
+// monster.ts and shared/trees.ts) but had been entirely unreachable since
+// Floro/Kortho were rebuilt on their own "Road to..." corridors — this
+// re-links it via a single direct shared border, same shape as Bramwick/
+// Mystical Timberland/Gobbler Village's own connections to Grimoak
+// Grounds, rather than a separate corridor map (nothing here was asked
+// for a "Road to Great Plains" in between). Northeast placement on Great
+// Plains' own side mirrors how "Road to Kortho" sits at the NE of
+// Grimoak Grounds as an EAST-facing exit near the top of that map, not
+// dead center.
+export const GREAT_PLAINS_FLORO_ROW = 15;
+export const GREAT_PLAINS_FLORO_HALF_WIDTH_TILES = 2;
+export const FLORO_GREAT_PLAINS_ROW = TOWN_MID_ROW;
+
 export const MAPS: Record<MapName, MapDefinition> = {
   'Great Plains': {
     name: 'Great Plains',
@@ -1374,22 +1395,22 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toRow: LABYRINTH_SIZE - 1,
         toCol: LABYRINTH_MID_COL,
       },
-      {
-        row: GREAT_PLAINS_MID_ROW,
-        col: 0,
-        direction: 'west',
-        toMap: 'Floro',
-        toRow: TOWN_MID_ROW,
-        toCol: TOWN_SIZE - 1,
-      },
-      {
-        row: GREAT_PLAINS_MID_ROW,
+      // A later follow-up ask: "it should have a dirt road connection at
+      // the top right/north east with sign 'Floro'... it should connect
+      // to Floro" — replaces the old stale west/east exits above (which
+      // pointed at Floro's/Kortho's own long-since-rebuilt street layouts
+      // and had no reciprocal door on either side) with the one real,
+      // signed connection actually asked for.
+      ...roadBandExits({
+        row: GREAT_PLAINS_FLORO_ROW,
         col: GREAT_PLAINS_SIZE - 1,
         direction: 'east',
-        toMap: 'Kortho',
-        toRow: TOWN_MID_ROW,
-        toCol: 0,
-      },
+        toMap: 'Floro',
+        toRow: FLORO_GREAT_PLAINS_ROW,
+        toCol: 1,
+        halfWidthTiles: GREAT_PLAINS_FLORO_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
     ],
   },
   Labyrinth: {
@@ -1433,6 +1454,22 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toCol: ROAD_TO_FLORO_MID_COL,
         halfWidthTiles: ROAD_TO_FLORO_HALF_WIDTH_TILES,
         spread: 'col',
+      }),
+      // A later follow-up ask: "add a connection to the west of Floro
+      // with a thin dirt road for the exit and a sign with 'The Great
+      // Plains'" — re-links Floro to the Great Plains map (see
+      // GREAT_PLAINS_FLORO_ROW's own doc comment above), well clear of
+      // every shop door (all of which sit at cols 10-40, nowhere near
+      // this west edge).
+      ...roadBandExits({
+        row: FLORO_GREAT_PLAINS_ROW,
+        col: 0,
+        direction: 'west',
+        toMap: 'Great Plains',
+        toRow: GREAT_PLAINS_FLORO_ROW,
+        toCol: GREAT_PLAINS_SIZE - 2,
+        halfWidthTiles: GREAT_PLAINS_FLORO_HALF_WIDTH_TILES,
+        spread: 'row',
       }),
       ...floroShopDoorExits(),
     ],

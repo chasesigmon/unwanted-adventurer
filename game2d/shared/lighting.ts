@@ -43,6 +43,9 @@ import {
   GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW,
   GOBBLER_VILLAGE_MID,
   KORTHO_NEAR_SAND_COL_START,
+  GREAT_PLAINS_FLORO_ROW,
+  GREAT_PLAINS_SIZE,
+  FLORO_GREAT_PLAINS_ROW,
 } from './maps.js';
 
 // "Late hours of night and early hours of morning" — a narrower, darker
@@ -806,6 +809,15 @@ export const GOBBLER_VILLAGE_SIGN_POSITION = { row: GOBBLER_VILLAGE_MID + 4, col
 // side of the town's own mid-row so it doesn't block the dock itself.
 export const KORTHO_SHIMMERING_SEA_SIGN_POSITION = { row: TOWN_MID_ROW - 5, col: KORTHO_NEAR_SAND_COL_START + 1 };
 
+// A later follow-up ask: "add a connection to the west of Floro... a
+// sign with 'The Great Plains'... [Great Plains] have a dirt road
+// connection at the top right/north east with sign 'Floro'" — same
+// two-sided sign-pair convention as every other connection above, offset
+// off the road band itself (which spans ±GREAT_PLAINS_FLORO_HALF_WIDTH_TILES
+// rows on both sides) so neither sign sits on the road tiles.
+export const FLORO_GREAT_PLAINS_SIGN_POSITION = { row: FLORO_GREAT_PLAINS_ROW - 4, col: 3 };
+export const GREAT_PLAINS_FLORO_SIGN_POSITION = { row: GREAT_PLAINS_FLORO_ROW - 4, col: GREAT_PLAINS_SIZE - 3 };
+
 export function isBramwickSignBlocked(mapName: MapName, row: number, col: number): boolean {
   if (mapName === 'Bramwick') return row === BRAMWICK_SIGN_POSITION.row && col === BRAMWICK_SIGN_POSITION.col;
   if (mapName === 'Grimoak Grounds') {
@@ -839,10 +851,16 @@ export function isBramwickSignBlocked(mapName: MapName, row: number, col: number
     );
   }
   if (mapName === 'Floro') {
-    return row === FLORO_ROAD_SIGN_POSITION.row && col === FLORO_ROAD_SIGN_POSITION.col;
+    return (
+      (row === FLORO_ROAD_SIGN_POSITION.row && col === FLORO_ROAD_SIGN_POSITION.col) ||
+      (row === FLORO_GREAT_PLAINS_SIGN_POSITION.row && col === FLORO_GREAT_PLAINS_SIGN_POSITION.col)
+    );
   }
   if (mapName === 'Mystical Timberland') {
     return row === MYSTICAL_TIMBERLAND_SIGN_POSITION.row && col === MYSTICAL_TIMBERLAND_SIGN_POSITION.col;
+  }
+  if (mapName === 'Great Plains') {
+    return row === GREAT_PLAINS_FLORO_SIGN_POSITION.row && col === GREAT_PLAINS_FLORO_SIGN_POSITION.col;
   }
   return false;
 }

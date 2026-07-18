@@ -63,6 +63,10 @@ import {
   KORTHO_DOCK_LENGTH_TILES,
   KORTHO_DOCK_HALF_WIDTH_TILES,
   TOWN_SIZE,
+  GREAT_PLAINS_FLORO_ROW,
+  GREAT_PLAINS_FLORO_HALF_WIDTH_TILES,
+  FLORO_GREAT_PLAINS_ROW,
+  GREAT_PLAINS_SIZE,
 } from '../../shared/maps.js';
 import { treePositionsFor } from '../../shared/trees.js';
 import {
@@ -142,6 +146,8 @@ import {
   GRIMOAK_GROUNDS_GOBBLER_VILLAGE_SIGN_POSITION,
   GOBBLER_VILLAGE_SIGN_POSITION,
   KORTHO_SHIMMERING_SEA_SIGN_POSITION,
+  FLORO_GREAT_PLAINS_SIGN_POSITION,
+  GREAT_PLAINS_FLORO_SIGN_POSITION,
   standingTorchPositionsFor,
 } from '../../shared/lighting.js';
 import {
@@ -2486,6 +2492,43 @@ export class WorldScene extends Phaser.Scene {
           .setOrigin(0, 0)
           .setDepth(-0.99)
       );
+
+      // A later follow-up ask: "add a connection to the west of Floro
+      // with a thin dirt road for the exit" — same short "Kortho spur"
+      // depth as the north patch above, at Floro's own west door instead.
+      const floroGreatPlainsDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
+      const floroGreatPlainsHeight = GREAT_PLAINS_FLORO_HALF_WIDTH_TILES * 2 + 1;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            0,
+            (FLORO_GREAT_PLAINS_ROW - GREAT_PLAINS_FLORO_HALF_WIDTH_TILES) * TILE_SIZE,
+            floroGreatPlainsDepth * TILE_SIZE,
+            floroGreatPlainsHeight * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+    } else if (mapName === 'Great Plains') {
+      // The reciprocal thin patch on Great Plains' own side (a later
+      // follow-up ask: "it should have a dirt road connection at the top
+      // right/north east") — same depth convention as Floro's own patch
+      // above, at Great Plains' east edge instead.
+      const greatPlainsFloroDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
+      const greatPlainsFloroHeight = GREAT_PLAINS_FLORO_HALF_WIDTH_TILES * 2 + 1;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            (GREAT_PLAINS_SIZE - greatPlainsFloroDepth) * TILE_SIZE,
+            (GREAT_PLAINS_FLORO_ROW - GREAT_PLAINS_FLORO_HALF_WIDTH_TILES) * TILE_SIZE,
+            greatPlainsFloroDepth * TILE_SIZE,
+            greatPlainsFloroHeight * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
     } else if (mapName === 'Mystical Timberland') {
       // Same small entrance-patch treatment as Kortho/Floro above (a
       // later follow-up ask: "make the entrance to it have a similar
@@ -2831,6 +2874,11 @@ export class WorldScene extends Phaser.Scene {
       // beach with 'The Shimmering Sea'" — no reciprocal sign on the far
       // shore, since nothing else is over there to name a way back to.
       { map: 'Kortho', position: KORTHO_SHIMMERING_SEA_SIGN_POSITION, label: 'The Shimmering Sea' },
+      // The new west "Great Plains" connection's own sign pair (a later
+      // follow-up ask: "a sign with 'The Great Plains'"... "sign
+      // 'Floro'").
+      { map: 'Floro', position: FLORO_GREAT_PLAINS_SIGN_POSITION, label: 'The Great Plains' },
+      { map: 'Great Plains', position: GREAT_PLAINS_FLORO_SIGN_POSITION, label: 'Floro' },
     ];
     this.signSprites = signDefs
       .filter((def) => def.map === mapName)
