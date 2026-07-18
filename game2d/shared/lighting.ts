@@ -673,23 +673,31 @@ export function standingTorchPositionsFor(mapName: MapName): Array<{ row: number
   const sideCols = [5, 35];
   const edgeRow = { top: 9, bottom: 31 };
   // Clear of both FRONT shops' own ~7-13/27-33 column footprints (see
-  // WorldScene's cottageSprites) — 3 and 37 sit just past each building,
-  // 20 (BRAMWICK_MID_COL) is the open gap between them.
-  const edgeCols = [3, BRAMWICK_MID_COL, 37];
+  // WorldScene's cottageSprites) — 3 and 37 sit just past each building.
+  // A later follow-up ask fixed the top edge's own middle torch, which
+  // used to sit at (1, BRAMWICK_MID_COL) — pulled all the way up to clear
+  // the Pet Shop's cottage roof (its door sits at (10, BRAMWICK_MID_COL),
+  // roofline reaching to roughly row 2.5), out of line with its two
+  // neighbors at row 9 ("align the other torches... in a straight line
+  // and not offset"). Shifted sideways to col 16 instead — clear of the
+  // Pet Shop's own ~17-22 roof span AND General Shop's 7-13 footprint —
+  // so all 3 top-edge torches now share the same row.
+  const topEdgeCols = [3, 16, 37];
   return [
     ...sideCols.flatMap((col) => sideRows.map((row) => ({ row, col }))),
-    // A later follow-up bug fix: "there is a torch directly on top of the
-    // Pet Shop" — the Pet Shop's own door was added (a still-later
-    // follow-up ask) at (10, BRAMWICK_MID_COL), the exact same column the
-    // reasoning above already claimed was "the open gap" — true for the
-    // two FRONT shops it was written about, but the Pet Shop's own
-    // cottage sprite (8 tiles tall, see WorldScene's cottageSprites/
-    // BRAMWICK_COTTAGE_FRAME_HEIGHT) stands right behind that door,
-    // roofline reaching up to roughly row 2.5. Only this one edge torch
-    // moves further north (row 1, clear of it); the other two (already
-    // clear of any building) keep the shared edgeRow.top.
-    ...edgeCols.map((col) => ({ row: col === BRAMWICK_MID_COL ? 1 : edgeRow.top, col })),
-    ...edgeCols.map((col) => ({ row: edgeRow.bottom, col })),
+    ...topEdgeCols.map((col) => ({ row: edgeRow.top, col })),
+    // A later follow-up bug fix: "move the torch that is right in front
+    // of the door to the left and add one on the right, so the player
+    // doesn't need to move around it after entering Bramwick" — the
+    // south entrance's own band (see bramwickGroundsEntranceExits) is 5
+    // columns wide, centered on BRAMWICK_MID_COL; the single torch that
+    // used to sit dead center at (edgeRow.bottom, BRAMWICK_MID_COL) stood
+    // directly in a player's path walking straight in. Two torches
+    // flanking that band instead — the entire entrance stays clear.
+    { row: edgeRow.bottom, col: BRAMWICK_MID_COL - 3 },
+    { row: edgeRow.bottom, col: BRAMWICK_MID_COL + 3 },
+    { row: edgeRow.bottom, col: 3 },
+    { row: edgeRow.bottom, col: 37 },
   ];
 }
 

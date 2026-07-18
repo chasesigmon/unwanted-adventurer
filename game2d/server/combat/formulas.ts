@@ -510,16 +510,21 @@ export interface LevelState {
   exp: number;
 }
 
-export function applyExpGain(state: LevelState, gained: number): LevelState {
+// `maxLevel` defaults to the player's own MAX_PLAYER_LEVEL — a follow-up
+// ask gave pets their own separate, lower cap ("Pets should be able to
+// level up, max level 20") via PetManagerService's own call passing
+// PET_MAX_LEVEL here instead, reusing this exact same curve/shape rather
+// than a parallel leveling formula.
+export function applyExpGain(state: LevelState, gained: number, maxLevel: number = MAX_PLAYER_LEVEL): LevelState {
   let { level, exp } = state;
-  if (level >= MAX_PLAYER_LEVEL) return { level: MAX_PLAYER_LEVEL, exp: 0 };
+  if (level >= maxLevel) return { level: maxLevel, exp: 0 };
   exp += gained;
   let maxTnl = maxTnlForLevel(level);
   while (exp >= maxTnl) {
     exp -= maxTnl;
     level += 1;
-    if (level >= MAX_PLAYER_LEVEL) {
-      level = MAX_PLAYER_LEVEL;
+    if (level >= maxLevel) {
+      level = maxLevel;
       exp = 0;
       break;
     }

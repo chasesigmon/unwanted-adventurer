@@ -3342,9 +3342,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // Phase C's "pet evolution" ask — the pet earns its own exp from
       // its own kills, on the same curve/level-up path as the player
       // (see PetManagerService.grantExp), evolving once it crosses
-      // PET_EVOLUTION_LEVEL.
-      if (followerType === 'pet') {
-        const petGrant = this.petManager.grantExp(ownerUsername, rawExpGained);
+      // PET_EVOLUTION_LEVEL. A follow-up bug fix: "the pet should receive
+      // proper experience from the killed monster for their level, not
+      // what the player character receives at their level" — rawExpGained
+      // above was computed against the OWNER's own (often much higher)
+      // level, which expGainFor's diminishing-returns ratio crushes down
+      // to a token 1 exp for a high-level player killing a low-level
+      // monster. Recomputed fresh against the pet's OWN level instead.
+      if (followerType === 'pet' && pet) {
+        const petExpGained = expGainFor(monster.expReward, pet.level, monster.level);
+        const petGrant = this.petManager.grantExp(ownerUsername, petExpGained);
         if (petGrant?.evolved) {
           this.server.to(client.data.map).emit('combatNotice', `${followerLabel} has evolved into a ${petGrant.pet.name}!`);
         }

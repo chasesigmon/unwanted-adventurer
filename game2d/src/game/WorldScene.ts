@@ -206,6 +206,9 @@ import {
   PET_TEXTURE_KEYS,
   PET_FRAME_WIDTH,
   PET_FRAME_HEIGHT,
+  PET_EVOLVED_TEXTURE_KEYS,
+  PET_EVOLVED_FRAME_WIDTH,
+  PET_EVOLVED_FRAME_HEIGHT,
   CLASSROOM_ZOOM,
   COMMON_ROOM_ZOOM,
   DORM_ZOOM,
@@ -272,6 +275,7 @@ import { openNpcDialogueModal, openSpecializationDialogue, openHouseChoiceDialog
 import { hideTargetPanel, updateTargetPanel, updateLockTargetPanel } from '../ui/targetPanel.js';
 import { updateGroupPanel } from '../ui/groupPanel.js';
 import type { PetSnapshot, AnimatedMonsterSnapshot } from '../../shared/pets.js';
+import { PET_EVOLVED_NAME } from '../../shared/pets.js';
 import { openRecallModal } from '../ui/recallModal.js';
 import { openMonsterSummonsModal } from '../ui/monsterSummonsModal.js';
 
@@ -600,6 +604,15 @@ export class WorldScene extends Phaser.Scene {
       this.load.spritesheet(key, `/pet-${kind}-spritesheet.png`, {
         frameWidth: PET_FRAME_WIDTH,
         frameHeight: PET_FRAME_HEIGHT,
+      });
+    }
+    // Each pet's own evolved form (a later follow-up ask) — real,
+    // distinct art per kind, not just the un-evolved sprite reused (see
+    // PET_EVOLVED_TEXTURE_KEYS' own doc comment).
+    for (const key of Object.values(PET_EVOLVED_TEXTURE_KEYS)) {
+      this.load.spritesheet(key, `/${key}-spritesheet.png`, {
+        frameWidth: PET_EVOLVED_FRAME_WIDTH,
+        frameHeight: PET_EVOLVED_FRAME_HEIGHT,
       });
     }
     this.load.svg(TREE_TEXTURE_KEY, '/tree.svg', { width: 48, height: 64 });
@@ -3139,16 +3152,27 @@ export class WorldScene extends Phaser.Scene {
     for (const pet of state.pets) {
       seenPets.add(pet.id);
       const petOffset = followerFanOffsetFor(`pet:${pet.id}`);
+      // A later follow-up ask: "create a sprite that is slightly larger
+      // and modelled differently for each respective pet" for its own
+      // evolved form (PET_EVOLUTION_LEVEL) — real distinct art now (see
+      // PET_EVOLVED_TEXTURE_KEYS' own doc comment) instead of reusing the
+      // un-evolved spritesheet, picked by comparing the pet's own current
+      // `name` against PET_EVOLVED_NAME (the same check
+      // PetManagerService.grantExp uses server-side to decide whether to
+      // rename it in the first place).
+      const isEvolved = pet.name === PET_EVOLVED_NAME[pet.kind];
+      const petTextureKey = isEvolved ? PET_EVOLVED_TEXTURE_KEYS[pet.kind] : PET_TEXTURE_KEYS[pet.kind];
       let sprite = this.petSprites.get(pet.id);
       if (!sprite) {
         const pos = this.tilePosition(pet.row, pet.col);
         sprite = this.add
-          .sprite(pos.x + petOffset.x, pos.y + petOffset.y, PET_TEXTURE_KEYS[pet.kind])
+          .sprite(pos.x + petOffset.x, pos.y + petOffset.y, petTextureKey)
           .setOrigin(0.5, 0.9)
           .setDepth(-0.4)
           .setInteractive({ useHandCursor: true });
         sprite.setData('row', pet.row);
         sprite.setData('col', pet.col);
+        sprite.setData('evolved', isEvolved);
         this.petSprites.set(pet.id, sprite);
         // A later follow-up ask: "make it so other players pets are
         // selectable and they can be double clicked in order to see more
@@ -3186,6 +3210,14 @@ export class WorldScene extends Phaser.Scene {
           pos.x += petOffset.x;
           pos.y += petOffset.y;
           this.tweens.add({ targets: sprite, x: pos.x, y: pos.y, duration: REMOTE_STEP_TWEEN_MS, ease: 'Linear' });
+        }
+        // The evolution moment itself (already-rendered pet crossing
+        // PET_EVOLUTION_LEVEL mid-session) — swap the live sprite's own
+        // texture in place rather than waiting for the next full
+        // create-or-update pass to notice.
+        if (sprite.getData('evolved') !== isEvolved) {
+          sprite.setData('evolved', isEvolved);
+          sprite.setTexture(petTextureKey);
         }
       }
       sprite.setData('label', `${pet.name} (Lv ${pet.level})`);
@@ -3302,8 +3334,12 @@ export class WorldScene extends Phaser.Scene {
       if (this.petCorpseSprites.has(pc.id)) continue;
 
       const pos = this.tilePosition(pc.row, pc.col);
+      // Reflects whatever form the pet actually died in (a corpse is a
+      // one-time snapshot, so this never needs to swap texture later the
+      // way a live pet's own sprite does above).
+      const corpseTextureKey = pc.name === PET_EVOLVED_NAME[pc.kind] ? PET_EVOLVED_TEXTURE_KEYS[pc.kind] : PET_TEXTURE_KEYS[pc.kind];
       const sprite = this.add
-        .sprite(pos.x, pos.y, PET_TEXTURE_KEYS[pc.kind])
+        .sprite(pos.x, pos.y, corpseTextureKey)
         .setOrigin(0.5, 0.9)
         .setDepth(-1)
         .setTint(0x666666)

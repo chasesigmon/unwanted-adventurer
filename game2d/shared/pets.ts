@@ -65,6 +65,11 @@ export const PET_SLEEP_HEAL_PERCENT = 14;
 // "arts-generation is its own large task" scope-down this session already
 // made once for the new race sprites.
 export const PET_EVOLUTION_LEVEL = 5;
+// A later follow-up ask: "Pet's should be able to level up, max level
+// 20" — its own separate, lower cap than the player's own MAX_PLAYER_LEVEL
+// (see PetManagerService.grantExp, which passes this into the shared
+// applyExpGain curve instead of the player's default).
+export const PET_MAX_LEVEL = 20;
 export const PET_EVOLVED_NAME: Record<PetKind, string> = {
   puppy: 'Dog',
   kitten: 'Cat',

@@ -250,6 +250,21 @@ export const PET_TEXTURE_KEYS: Record<'puppy' | 'kitten' | 'piglet', string> = {
 export const PET_FRAME_WIDTH = 24;
 export const PET_FRAME_HEIGHT = 24;
 
+// A pet's own evolved form (a later follow-up ask: "create a sprite that
+// is slightly larger and modelled differently for each respective pet"
+// — evolution previously just renamed the pet and reused its un-evolved
+// spritesheet, see PET_EVOLUTION_LEVEL's own doc comment). Real, distinct
+// art per kind (see tools/gen-pet-evolved-assets.mjs) at a bigger frame
+// size — WorldScene picks between these and PET_TEXTURE_KEYS above by
+// comparing a pet's own `name` against PET_EVOLVED_NAME.
+export const PET_EVOLVED_TEXTURE_KEYS: Record<'puppy' | 'kitten' | 'piglet', string> = {
+  puppy: 'pet-dog',
+  kitten: 'pet-cat',
+  piglet: 'pet-boar',
+};
+export const PET_EVOLVED_FRAME_WIDTH = 32;
+export const PET_EVOLVED_FRAME_HEIGHT = 32;
+
 export const CHAR_SCALE = 0.275;
 export const CORPSE_SCALE = 0.35;
 // One server round trip per tile-step, throttled the same way holding a

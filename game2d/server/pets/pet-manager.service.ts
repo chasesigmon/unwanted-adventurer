@@ -8,6 +8,7 @@ import {
   PET_AWAKE_HEAL_PERCENT,
   PET_SLEEP_HEAL_PERCENT,
   PET_EVOLUTION_LEVEL,
+  PET_MAX_LEVEL,
   PET_EVOLVED_NAME,
   PET_EVOLUTION_HP_BONUS,
   PET_EVOLUTION_ATTACK_BONUS,
@@ -216,7 +217,7 @@ export class PetManagerService {
   grantExp(ownerUsername: string, gained: number): { pet: Pet; evolved: boolean } | undefined {
     const pet = this.pets.get(ownerUsername);
     if (!pet || !pet.alive) return undefined;
-    const { level, exp } = applyExpGain({ level: pet.level, exp: pet.exp }, gained);
+    const { level, exp } = applyExpGain({ level: pet.level, exp: pet.exp }, gained, PET_MAX_LEVEL);
     if (level > pet.level) {
       pet.hp = pet.maxHp + (level - pet.level) * 10;
       pet.maxHp = pet.hp;
