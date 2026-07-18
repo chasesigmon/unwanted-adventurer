@@ -48,14 +48,6 @@ export const WAND_TEXTURE_KEY = 'held-wand';
 export const WAND_GLOW_RADIUS_PX = 7;
 export const WAND_GLOW_COLOR = 0xfff2b0;
 
-// Floro shop building (item 11) — 2 frames (0: facing right, 1: facing
-// left, see tools/gen-shop-assets.mjs), each 3x3.5 tiles.
-export const SHOP_BUILDING_TEXTURE_KEY = 'shop-building';
-export const SHOP_BUILDING_FRAME_WIDTH = 96;
-export const SHOP_BUILDING_FRAME_HEIGHT = 112;
-export const SHOP_BUILDING_FACING_RIGHT_FRAME = 0;
-export const SHOP_BUILDING_FACING_LEFT_FRAME = 1;
-
 // Bramwick's own 4 shop cottages (a later follow-up ask: "create cottage
 // buildings... a sign over each building for the name of it") — one
 // frame per shop with its own baked-in name plaque, in BRAMWICK_SHOP_MAPS
@@ -141,6 +133,16 @@ export const CLASSROOM_SYMBOL_TEXTURE_KEYS: Partial<Record<MapName, string>> = {
 // separate server entity; positioned from server/worlds/teachers.ts's
 // deskPositionFor, always one tile in front of its teacher.
 export const CLASSROOM_DESK_TEXTURE_KEY = 'classroom-desk';
+// A shop counter (a later follow-up ask: "make the desks wider, but not
+// as tall" — a dedicated shape, not a stretched classroom-desk) every
+// Floro/Kortho vendor stands behind now (see tools/gen-shop-counter-
+// asset.mjs); positioned the same "one tile in front of" convention as
+// the classroom desk above, see server/worlds/vendors.ts's
+// vendorCounterFootprintFor for its real (wider, shorter) collision
+// footprint.
+export const SHOP_COUNTER_TEXTURE_KEY = 'shop-counter';
+export const SHOP_COUNTER_WIDTH = 160;
+export const SHOP_COUNTER_HEIGHT = 44;
 // A social gathering spot's benches (a follow-up ask upgraded these from
 // plain chairs) — see shared/lighting.ts's benchPositionsFor.
 export const BENCH_TEXTURE_KEY = 'bench';

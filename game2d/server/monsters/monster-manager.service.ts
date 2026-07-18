@@ -16,7 +16,7 @@ import {
 } from '../../shared/lighting.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
-import { vendorsForMap } from '../worlds/vendors.js';
+import { vendorsForMap, vendorCounterFootprintFor } from '../worlds/vendors.js';
 import { teachersForMap, teacherDeskFootprintFor } from '../worlds/teachers.js';
 import { isChestBlocked } from '../../shared/spells.js';
 import type { MapName } from '../../shared/constants.js';
@@ -340,10 +340,15 @@ export class MonsterManagerService {
     if (isGreatHallTableBlocked(mapName, row, col)) return false;
     if (isGreatHallChairBlocked(mapName, row, col)) return false;
     if (isStandingTorchBlocked(mapName, row, col)) return false;
-    // Same "own tile + shopfront tile in front of it" collision shape as
-    // WorldManagerService.isOccupied — a wandering/spawning monster
-    // shouldn't stand inside the shop stall either.
-    if (vendorsForMap(mapName).some((v) => (v.row === row && v.col === col) || (v.row + 1 === row && v.col === col))) return false;
+    // Same "own tile + counter/shopfront's real footprint" collision
+    // shape as WorldManagerService.isOccupied — a wandering/spawning
+    // monster shouldn't stand inside the shop counter either.
+    if (
+      vendorsForMap(mapName).some(
+        (v) => (v.row === row && v.col === col) || vendorCounterFootprintFor(v).some((d) => d.row === row && d.col === col)
+      )
+    )
+      return false;
     if (
       teachersForMap(mapName).some(
         (t) => (t.row === row && t.col === col) || teacherDeskFootprintFor(t).some((d) => d.row === row && d.col === col)

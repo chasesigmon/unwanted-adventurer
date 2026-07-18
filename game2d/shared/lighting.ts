@@ -723,6 +723,12 @@ export const GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION = {
   col: GRIMOAK_GROUNDS_COLS - 3,
 };
 export const ROAD_TO_KORTHO_SIGN_POSITION = { row: ROAD_TO_KORTHO_MID_ROW + 4, col: ROAD_TO_KORTHO_COLS - 3 };
+// A later follow-up ask: "put a sign going from Road to Kortho to
+// Grimoak Grounds that says 'Grimoak Grounds'" — Road to Kortho's own
+// WEST end had no sign of its own at all before this (only Grimoak
+// Grounds' side of that same junction did); mirrors ROAD_TO_KORTHO_SIGN_
+// POSITION's own offset, just near the opposite edge.
+export const ROAD_TO_KORTHO_GRIMOAK_SIGN_POSITION = { row: ROAD_TO_KORTHO_MID_ROW + 4, col: 2 };
 
 // Same pair-of-signs convention for the new SW "Road to Floro" exit (a
 // later follow-up ask), transposed for a north-south road — the
@@ -733,6 +739,11 @@ export const GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION = {
   col: GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL + 4,
 };
 export const ROAD_TO_FLORO_SIGN_POSITION = { row: ROAD_TO_FLORO_ROWS - 3, col: ROAD_TO_FLORO_MID_COL + 4 };
+// Same missing-sign fix as Road to Kortho above (a later follow-up ask:
+// "same thing, put a sign from Road to Floro to Grimoak Grounds") — Road
+// to Floro's own NORTH end, mirroring ROAD_TO_FLORO_SIGN_POSITION's own
+// offset near the opposite edge.
+export const ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION = { row: 2, col: ROAD_TO_FLORO_MID_COL + 4 };
 
 // A later follow-up ask: "in kortho update the exit to Road to Kortho to
 // have a dirt road leading out with a sign 'Road to Kortho'" — a third
@@ -754,10 +765,16 @@ export function isBramwickSignBlocked(mapName: MapName, row: number, col: number
     );
   }
   if (mapName === 'Road to Kortho') {
-    return row === ROAD_TO_KORTHO_SIGN_POSITION.row && col === ROAD_TO_KORTHO_SIGN_POSITION.col;
+    return (
+      (row === ROAD_TO_KORTHO_SIGN_POSITION.row && col === ROAD_TO_KORTHO_SIGN_POSITION.col) ||
+      (row === ROAD_TO_KORTHO_GRIMOAK_SIGN_POSITION.row && col === ROAD_TO_KORTHO_GRIMOAK_SIGN_POSITION.col)
+    );
   }
   if (mapName === 'Road to Floro') {
-    return row === ROAD_TO_FLORO_SIGN_POSITION.row && col === ROAD_TO_FLORO_SIGN_POSITION.col;
+    return (
+      (row === ROAD_TO_FLORO_SIGN_POSITION.row && col === ROAD_TO_FLORO_SIGN_POSITION.col) ||
+      (row === ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION.row && col === ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION.col)
+    );
   }
   if (mapName === 'Kortho') {
     return row === KORTHO_ROAD_SIGN_POSITION.row && col === KORTHO_ROAD_SIGN_POSITION.col;

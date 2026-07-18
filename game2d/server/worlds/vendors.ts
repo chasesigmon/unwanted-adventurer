@@ -1,4 +1,5 @@
 import type { MapName } from '../../shared/constants.js';
+import { FLORO_SHOP_MAPS, KORTHO_SHOP_MAPS } from '../../shared/constants.js';
 import type { VendorSnapshot } from '../../shared/types.js';
 import { CUP_OF_WATER_ITEM, JERKY_ITEM, CANTEEN_ITEM, SALMON_ITEM, HP_POTION_ITEM, MP_POTION_ITEM } from '../../shared/items.js';
 
@@ -338,6 +339,31 @@ export function vendorsForMap(mapName: MapName): VendorSnapshot[] {
 
 export function findVendor(vendorId: string): VendorSnapshot | undefined {
   return VENDORS.find((v) => v.id === vendorId);
+}
+
+// One tile in front of (south of) the vendor — the counter/shopfront
+// prop stands here, same "anchor tile" shape as
+// server/worlds/teachers.ts's own deskPositionFor.
+function vendorFrontPositionFor(vendor: VendorSnapshot): { row: number; col: number } {
+  return { row: vendor.row + 1, col: vendor.col };
+}
+
+// Real collision for the shop counter/shopfront a vendor stands behind (a
+// later follow-up ask: "the desk should have full collision... make the
+// desks wider, but not as tall" — same "footprint bigger than the single
+// anchor tile" fix teacherDeskFootprintFor already applies to teacher
+// desks, just wider and shallower to match the new dedicated counter art
+// (see mapRender.ts's SHOP_COUNTER_TEXTURE_KEY) rather than the taller
+// classroom-desk Bramwick's own vendors still use unchanged.
+export function vendorCounterFootprintFor(vendor: VendorSnapshot): Array<{ row: number; col: number }> {
+  const anchor = vendorFrontPositionFor(vendor);
+  const usesCounter = (FLORO_SHOP_MAPS as readonly string[]).includes(vendor.map) || (KORTHO_SHOP_MAPS as readonly string[]).includes(vendor.map);
+  const halfWidth = usesCounter ? 2 : 0;
+  const tiles: Array<{ row: number; col: number }> = [];
+  for (let dCol = -halfWidth; dCol <= halfWidth; dCol++) {
+    tiles.push({ row: anchor.row, col: anchor.col + dCol });
+  }
+  return tiles;
 }
 
 // A later follow-up ask: "sell to vendor" — every vendor buys back

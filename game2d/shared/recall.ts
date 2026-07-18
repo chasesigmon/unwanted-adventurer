@@ -19,6 +19,14 @@ export interface RecallPoint {
 export const RECALL_POINTS: RecallPoint[] = [
   { id: 'grimoak-castle', label: 'Grimoak Castle', visitedOnEnteringMap: 'Grimoak Entrance Hall', landingMap: 'Grimoak Entrance Hall' },
   { id: 'bramwick', label: 'Bramwick', visitedOnEnteringMap: 'Bramwick', landingMap: 'Bramwick' },
+  // A later follow-up ask: "travelling to Floro/Kortho adds it to the
+  // player's recall list" — same "first time you set foot there" gate as
+  // every other point of interest above. Landing spot is each town's own
+  // bespoke entrance-street position (see startingPositionFor), not the
+  // generic map-center fallback, which now sits inside a shop's own
+  // building collision.
+  { id: 'kortho', label: 'Kortho', visitedOnEnteringMap: 'Kortho', landingMap: 'Kortho' },
+  { id: 'floro', label: 'Floro', visitedOnEnteringMap: 'Floro', landingMap: 'Floro' },
 ];
 
 export function recallPointForMap(mapName: MapName): RecallPoint | undefined {

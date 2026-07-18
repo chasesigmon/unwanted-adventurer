@@ -26,8 +26,9 @@ import {
   GATE_COL_RIGHT,
   GATE_REACH_TILES,
   isStairsSideBlocked,
+  isShopBuildingBlocked,
 } from '../../shared/maps.js';
-import { vendorsForMap } from './vendors.js';
+import { vendorsForMap, vendorCounterFootprintFor } from './vendors.js';
 import { teachersForMap, teacherDeskFootprintFor } from './teachers.js';
 import { isChestBlocked } from '../../shared/spells.js';
 import { armorClassFor, armorEquipmentBonus } from '../combat/formulas.js';
@@ -164,17 +165,22 @@ export class WorldManagerService {
     if (isBramwickSignBlocked(mapName, row, col)) return true;
     if (isStandingTorchBlocked(mapName, row, col)) return true;
     if (isStairsSideBlocked(mapName, row, col)) return true;
+    if (isShopBuildingBlocked(mapName, row, col)) return true;
 
     const npcHit = NPCS.some((npc) => npc.map === mapName && npc.row === row && npc.col === col);
     if (npcHit) return true;
 
     if (this.monsterManager.isOccupied(mapName, row, col)) return true;
 
-    // A vendor blocks both its own tile and the shopfront tile directly
-    // in front of it (one row south — see main.ts's rendering of that
-    // same offset), even though the shopfront isn't a separate entity of
-    // its own server-side.
-    const vendorHit = vendorsForMap(mapName).some((v) => (v.row === row && v.col === col) || (v.row + 1 === row && v.col === col));
+    // A vendor blocks both its own tile and its counter/shopfront's ENTIRE
+    // footprint (a later follow-up ask fixed this the same way
+    // teacherDeskFootprintFor already fixed teacher desks below — see
+    // vendorCounterFootprintFor, wider but shallower for Floro/Kortho's
+    // own dedicated counter art, unchanged single-tile for Bramwick's
+    // shopfront).
+    const vendorHit = vendorsForMap(mapName).some(
+      (v) => (v.row === row && v.col === col) || vendorCounterFootprintFor(v).some((d) => d.row === row && d.col === col)
+    );
     if (vendorHit) return true;
 
     // A teacher blocks its own tile AND its desk's ENTIRE footprint

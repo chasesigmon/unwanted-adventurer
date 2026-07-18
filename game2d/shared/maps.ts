@@ -67,17 +67,23 @@ const TOWN_SHOP_INTERIOR_SIZE = SHOP_INTERIOR_SIZE * 3;
 const TOWN_SHOP_INTERIOR_MID_COL = Math.floor(TOWN_SHOP_INTERIOR_SIZE / 2);
 const TOWN_SHOP_INTERIOR_DOOR_ROW = TOWN_SHOP_INTERIOR_SIZE - 1;
 
-// Where each shop's door sits on Floro's own street — spread into a
-// loose town-square layout, well clear of Floro's existing east exit
-// back to the Great Plains (row 25, col 49).
+// Where each shop's door sits on Floro's own street — a later follow-up
+// ask ("instead of having the shops arranged how they are now, arrange
+// them in more of a square or rectangle design") replaced the original
+// loose, organically-scattered layout (varying rows AND columns) with a
+// clean two-row grid: 4 shops along row 15, 3 along row 32, evenly spaced
+// with enough gap between columns that neither row's own building
+// footprints (see isShopBuildingBlocked) touch their neighbors. Every
+// door still faces north (approached from the south), so the existing
+// mirroring/direction logic is unchanged — only the positions moved.
 const FLORO_SHOP_DOORS: Record<(typeof FLORO_SHOP_MAPS)[number], { row: number; col: number }> = {
-  'Floro Blacksmith': { row: 10, col: 15 },
-  'Floro General Store': { row: 10, col: 35 },
-  'Floro Inn': { row: 20, col: 8 },
-  'Floro Bank': { row: 20, col: 42 },
+  'Floro Blacksmith': { row: 15, col: 10 },
+  'Floro General Store': { row: 15, col: 20 },
+  'Floro Inn': { row: 15, col: 30 },
+  'Floro Bank': { row: 15, col: 40 },
   'Floro Armorer': { row: 32, col: 15 },
-  'Floro Pet Salesman': { row: 32, col: 35 },
-  'Floro Jobs Office': { row: 42, col: 25 },
+  'Floro Pet Salesman': { row: 32, col: 25 },
+  'Floro Jobs Office': { row: 32, col: 35 },
 };
 
 function shopInteriorDefinition(name: (typeof FLORO_SHOP_MAPS)[number]): MapDefinition {
@@ -125,16 +131,17 @@ function floroShopDoorExits(): MapExit[] {
 // size and rules and shops as when it was being used before") — Floro's
 // own rival-town twin, same hub-and-spoke shop shape mirrored rather than
 // shared (see shared/constants.ts's own KORTHO_SHOP_MAPS doc comment).
-// Door layout is Floro's own layout, unchanged — a real town-square feel
-// without needing a bespoke arrangement.
+// Door layout mirrors Floro's own (see its own doc comment above) —
+// same two-row grid arrangement, unchanged since neither town's own
+// entrance sits anywhere near these rows/columns.
 const KORTHO_SHOP_DOORS: Record<(typeof KORTHO_SHOP_MAPS)[number], { row: number; col: number }> = {
-  'Kortho Blacksmith': { row: 10, col: 15 },
-  'Kortho General Store': { row: 10, col: 35 },
-  'Kortho Inn': { row: 20, col: 8 },
-  'Kortho Bank': { row: 20, col: 42 },
+  'Kortho Blacksmith': { row: 15, col: 10 },
+  'Kortho General Store': { row: 15, col: 20 },
+  'Kortho Inn': { row: 15, col: 30 },
+  'Kortho Bank': { row: 15, col: 40 },
   'Kortho Armorer': { row: 32, col: 15 },
-  'Kortho Pet Salesman': { row: 32, col: 35 },
-  'Kortho Jobs Office': { row: 42, col: 25 },
+  'Kortho Pet Salesman': { row: 32, col: 25 },
+  'Kortho Jobs Office': { row: 32, col: 35 },
 };
 
 function korthoShopInteriorDefinition(name: (typeof KORTHO_SHOP_MAPS)[number]): MapDefinition {
@@ -391,6 +398,15 @@ export function isGateTile(mapName: MapName, row: number, col: number): boolean 
 // centered); everything else still falls back to the map's own center.
 export function startingPositionFor(mapName: MapName): { row: number; col: number } {
   if (mapName === 'Grimoak Grounds') return GRIMOAK_GROUNDS_SPAWN;
+  // A later follow-up ask ("travelling to Floro/Kortho adds it to the
+  // player's recall list") surfaced a real bug in the generic map-center
+  // fallback below: Kortho/Floro's own dead-center tile (25, 25) now sits
+  // inside the row-32/row-15 shop rows' own building collision footprint
+  // (see isShopBuildingBlocked) — recalling there would land the player
+  // inside a wall. Landing just inside each town's own entrance street
+  // instead, clear of every shop's footprint.
+  if (mapName === 'Kortho') return { row: TOWN_MID_ROW, col: 5 };
+  if (mapName === 'Floro') return { row: 5, col: TOWN_MID_COL };
   const map = getMap(mapName);
   return { row: Math.floor(map.rows / 2), col: Math.floor(map.cols / 2) };
 }
@@ -1056,6 +1072,44 @@ function bramwickShopDoorExits(): MapExit[] {
   });
 }
 
+// A later follow-up ask: "the shops in the towns don't seem to have
+// collision, update it so they have collision, players should be able to
+// walk into the shops through the door" — every shop building sprite
+// (Floro's/Kortho's own dedicated art, Bramwick's cottages) was purely
+// decorative until now, with nothing stopping a player from walking
+// straight through its walls. Computed fresh from each door's own
+// position (same "no caching, small array, called rarely" shape as
+// torchWallPositionsFor) rather than hand-placed — widthTiles/heightTiles
+// are each building's own real size in tiles (192x256px = 6x8 for Kortho/
+// Bramwick, 96x112px = 3x4 (rounded up) for Floro — see mapRender.ts's own
+// texture-frame constants, duplicated here as plain numbers rather than
+// importing a client-only file into shared/, per this file's own
+// no-cross-import convention). The door's own exit tile is deliberately
+// EXCLUDED (dRow starts at 1, never 0) so walking through it still works.
+function shopBuildingFootprint(door: { row: number; col: number }, widthTiles: number, heightTiles: number): Array<{ row: number; col: number }> {
+  const halfWidth = Math.floor(widthTiles / 2);
+  const tiles: Array<{ row: number; col: number }> = [];
+  for (let dRow = 1; dRow < heightTiles; dRow++) {
+    for (let dCol = -halfWidth; dCol < widthTiles - halfWidth; dCol++) {
+      tiles.push({ row: door.row - dRow, col: door.col + dCol });
+    }
+  }
+  return tiles;
+}
+
+export function isShopBuildingBlocked(mapName: MapName, row: number, col: number): boolean {
+  if (mapName === 'Floro') {
+    return FLORO_SHOP_MAPS.some((name) => shopBuildingFootprint(FLORO_SHOP_DOORS[name], 3, 4).some((t) => t.row === row && t.col === col));
+  }
+  if (mapName === 'Kortho') {
+    return KORTHO_SHOP_MAPS.some((name) => shopBuildingFootprint(KORTHO_SHOP_DOORS[name], 6, 8).some((t) => t.row === row && t.col === col));
+  }
+  if (mapName === 'Bramwick') {
+    return BRAMWICK_SHOP_MAPS.some((name) => shopBuildingFootprint(BRAMWICK_SHOP_DOORS[name], 6, 8).some((t) => t.row === row && t.col === col));
+  }
+  return false;
+}
+
 // Bramwick's own south entrance — a dirt road leading north from Grimoak
 // Grounds (see the new north-wall exit added to Grimoak Grounds' own
 // MAPS entry below), with a clickable name sign just inside (see
@@ -1109,6 +1163,41 @@ function bramwickGroundsEntranceExits(direction: 'north' | 'south'): MapExit[] {
 }
 
 export { BRAMWICK_MID_COL, BRAMWICK_ENTRANCE_ROW };
+
+// A later follow-up ask generalized bramwickGroundsEntranceExits' own
+// fix ("the entire width/height of the dirt roads... should allow the
+// player to walk through at any part of it... instead of showing the
+// message 'You can't go that way'") to every OTHER road junction this
+// project has since added (Road to Kortho/Kortho, Road to Floro/Floro),
+// which had regressed back to a single-tile choke point — one exit per
+// tile across the road's own half-width band, each preserving its own
+// lateral offset on both sides. `spread` picks which coordinate the band
+// varies across: 'row' for an east-west road (Road to Kortho), 'col' for
+// a north-south one (Road to Floro).
+function roadBandExits(config: {
+  row: number;
+  col: number;
+  direction: Direction;
+  toMap: MapName;
+  toRow: number;
+  toCol: number;
+  halfWidthTiles: number;
+  spread: 'row' | 'col';
+}): MapExit[] {
+  const exits: MapExit[] = [];
+  for (let d = -config.halfWidthTiles; d <= config.halfWidthTiles; d++) {
+    exits.push({
+      row: config.spread === 'row' ? config.row + d : config.row,
+      col: config.spread === 'col' ? config.col + d : config.col,
+      direction: config.direction,
+      toMap: config.toMap,
+      toRow: config.spread === 'row' ? config.toRow + d : config.toRow,
+      toCol: config.spread === 'col' ? config.toCol + d : config.toCol,
+      kind: 'open',
+    });
+  }
+  return exits;
+}
 
 export const MAPS: Record<MapName, MapDefinition> = {
   'Great Plains': {
@@ -1172,16 +1261,19 @@ export const MAPS: Record<MapName, MapDefinition> = {
       // A later follow-up ask reconnected Floro via the new "Road to
       // Floro" corridor instead (see its own MapDefinition below) — the
       // stale Great Plains link is gone, same "Add X back" treatment
-      // Kortho's own stale west exit already got earlier this batch.
-      {
+      // Kortho's own stale west exit already got earlier this batch. A
+      // further follow-up ask widened this from a single choke-point tile
+      // to the road's own full width (see roadBandExits).
+      ...roadBandExits({
         row: 0,
         col: TOWN_MID_COL,
         direction: 'north',
         toMap: 'Road to Floro',
         toRow: ROAD_TO_FLORO_ROWS - 2,
         toCol: ROAD_TO_FLORO_MID_COL,
-        kind: 'open',
-      },
+        halfWidthTiles: ROAD_TO_FLORO_HALF_WIDTH_TILES,
+        spread: 'col',
+      }),
       ...floroShopDoorExits(),
     ],
   },
@@ -1203,20 +1295,22 @@ export const MAPS: Record<MapName, MapDefinition> = {
       // to the Road to Kortho") replaced the old (long-orphaned, since
       // Great Plains isn't reachable from anywhere in the current
       // Grimoak-centric world) exit back to Great Plains with the real
-      // new connection.
-      {
+      // new connection. A further follow-up ask widened this from a
+      // single choke-point tile to the road's own full width (see
+      // roadBandExits) — no separate door sprite either ("remove the
+      // door... walking into that direction should take the character
+      // into the respective area"), same plain dirt-road walk-through as
+      // Bramwick's own entrance.
+      ...roadBandExits({
         row: TOWN_MID_ROW,
         col: 0,
         direction: 'west',
         toMap: 'Road to Kortho',
         toRow: ROAD_TO_KORTHO_MID_ROW,
         toCol: ROAD_TO_KORTHO_COLS - 2,
-        // A later follow-up ask: "remove the door from... walking into
-        // that direction should take the character into the respective
-        // area" — same plain dirt-road walk-through as Bramwick's own
-        // entrance, no door sprite.
-        kind: 'open',
-      },
+        halfWidthTiles: ROAD_TO_KORTHO_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
       ...korthoShopDoorExits(),
     ],
   },
@@ -1239,24 +1333,26 @@ export const MAPS: Record<MapName, MapDefinition> = {
     // it's all dirt now, the whole way.
     terrain: 'grass',
     exits: [
-      {
+      ...roadBandExits({
         row: ROAD_TO_KORTHO_MID_ROW,
         col: 0,
         direction: 'west',
         toMap: 'Grimoak Grounds',
         toRow: GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW,
         toCol: GRIMOAK_GROUNDS_COLS - 2,
-        kind: 'open',
-      },
-      {
+        halfWidthTiles: ROAD_TO_KORTHO_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
+      ...roadBandExits({
         row: ROAD_TO_KORTHO_MID_ROW,
         col: ROAD_TO_KORTHO_COLS - 1,
         direction: 'east',
         toMap: 'Kortho',
         toRow: TOWN_MID_ROW,
         toCol: 1,
-        kind: 'open',
-      },
+        halfWidthTiles: ROAD_TO_KORTHO_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
     ],
   },
   'Road to Floro': {
@@ -1268,24 +1364,26 @@ export const MAPS: Record<MapName, MapDefinition> = {
     // WorldScene's own renderMap).
     terrain: 'grass',
     exits: [
-      {
+      ...roadBandExits({
         row: 0,
         col: ROAD_TO_FLORO_MID_COL,
         direction: 'north',
         toMap: 'Grimoak Grounds',
         toRow: GRIMOAK_GROUNDS_ROWS - 2,
         toCol: GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL,
-        kind: 'open',
-      },
-      {
+        halfWidthTiles: ROAD_TO_FLORO_HALF_WIDTH_TILES,
+        spread: 'col',
+      }),
+      ...roadBandExits({
         row: ROAD_TO_FLORO_ROWS - 1,
         col: ROAD_TO_FLORO_MID_COL,
         direction: 'south',
         toMap: 'Floro',
         toRow: 1,
         toCol: TOWN_MID_COL,
-        kind: 'open',
-      },
+        halfWidthTiles: ROAD_TO_FLORO_HALF_WIDTH_TILES,
+        spread: 'col',
+      }),
     ],
   },
   Bramwick: {
@@ -1334,30 +1432,35 @@ export const MAPS: Record<MapName, MapDefinition> = {
       ...bramwickGroundsEntranceExits('north'),
       // A later follow-up ask: "at the northeast of Grimoak grounds add a
       // dirt road going east... Create 'Road to Kortho'" — well clear of
-      // the moat/castle rectangle (rows 0-26 are open ground).
-      {
+      // the moat/castle rectangle (rows 0-26 are open ground). A further
+      // follow-up ask widened this from a single choke-point tile to the
+      // road's own full width (see roadBandExits).
+      ...roadBandExits({
         row: GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW,
         col: GRIMOAK_GROUNDS_COLS - 1,
         direction: 'east',
         toMap: 'Road to Kortho',
         toRow: ROAD_TO_KORTHO_MID_ROW,
         toCol: 1,
-        kind: 'open',
-      },
+        halfWidthTiles: ROAD_TO_KORTHO_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
       // A later follow-up ask: "at the southwest of grimoak grounds add a
       // dirt road... that goes south, leading to Floro" — sits in the new
       // south strip the Grounds' own 10% south expansion above just
       // created (the moat leaves almost no open ground west of it any
-      // further north).
-      {
+      // further north). Same full-width band treatment as the Kortho exit
+      // above.
+      ...roadBandExits({
         row: GRIMOAK_GROUNDS_ROWS - 1,
         col: GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL,
         direction: 'south',
         toMap: 'Road to Floro',
         toRow: 1,
         toCol: ROAD_TO_FLORO_MID_COL,
-        kind: 'open',
-      },
+        halfWidthTiles: ROAD_TO_FLORO_HALF_WIDTH_TILES,
+        spread: 'col',
+      }),
     ],
   },
   'Grimoak Entrance Hall': ENTRANCE_HALL,
