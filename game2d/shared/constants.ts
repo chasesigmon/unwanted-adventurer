@@ -102,6 +102,12 @@ export const KORTHO_SHOP_MAPS = [
 // its own 5th cottage now, same hub-and-spoke shape as the 4 above.
 export const BRAMWICK_SHOP_MAPS = ['Bramwick General Shop', 'Bramwick Weapons', 'Bramwick Armor', 'Bramwick Potions', 'Bramwick Pet Shop'] as const;
 
+// Gobbler Village (a later follow-up ask: "add a new World... called
+// 'Gobbler Village'... a small village structure with huts to go into") —
+// same "each hut is its own real interior map" shape as Bramwick's own
+// shops above, just plain enterable huts rather than shops.
+export const GOBBLER_VILLAGE_HUT_MAPS = ['Gobbler Hut 1', 'Gobbler Hut 2', 'Gobbler Hut 3'] as const;
+
 // The 3 upper-floor landings (a later follow-up ask) — each a small hub
 // room reached by stairs, hanging 5 specialization chambers off its own
 // north wall (floors 2 and 3) or, for floor 4, nothing but 4 decorative
@@ -310,6 +316,11 @@ export const MAP_NAMES = [
   // directly off the Grounds' own west edge, same single-shared-border
   // shape Bramwick's own north connection already uses.
   'Mystical Timberland',
+  // A later follow-up ask: "add a new World from the southeast of
+  // Grimoak Grounds called 'Gobbler Village'" — same direct
+  // shared-border shape as Mystical Timberland/Bramwick above.
+  'Gobbler Village',
+  ...GOBBLER_VILLAGE_HUT_MAPS,
   ...GRIMOAK_CASTLE_MAPS,
   ...PORTAL_DUNGEON_MAPS,
 ] as const;

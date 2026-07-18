@@ -1587,18 +1587,20 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
   // A follow-up bug fix: "we are not on a shared experience system right
   // now so the pet should get their full deserved experience for the
-  // kill even though they did not land the killing blow" — a pet set to
-  // 'attack' against a monster the OWNER ends up killing first (a common
-  // race once the owner's own damage output outpaces the pet's) used to
-  // get nothing at all, since the only place a pet ever earned exp was
-  // resolveFollowerContact's own "the pet itself dealt the killing
-  // blow" branch. Called from EVERY monster-death exp grant now (see
-  // each of this file's own expGainFor(monster.expReward, ...) call
-  // sites), independent of who actually landed the kill — a genuine
-  // full grant, not a split.
+  // kill even though they did not land the killing blow" — originally
+  // scoped to only fire when the pet was ALREADY set to 'attack' against
+  // that exact monster, which turned out to be far too narrow: "I killed
+  // a lvl 7 goblin and that should have levelled up a level 1 pet
+  // easily" — the user never explicitly commands the pet to attack
+  // every single kill, they just expect a live, present pet to earn its
+  // own share automatically. Now fires for ANY kill the owner gets,
+  // provided the pet is alive and actually standing on the same map the
+  // kill happened on (so a pet left behind on 'stay'/'sleep' somewhere
+  // else doesn't retroactively benefit from fights it was never near) —
+  // independent of its own command mode or attack target.
   private grantPetExpForKill(ownerUsername: string, monster: { id: string; expReward: number; level: number; mapName: MapName }): void {
     const pet = this.petManager.getSnapshotForOwner(ownerUsername);
-    if (!pet || !pet.alive || pet.command !== 'attack' || pet.attackTargetKind !== 'monster' || pet.attackTargetId !== monster.id) return;
+    if (!pet || !pet.alive || pet.map !== monster.mapName) return;
     const previousName = pet.name;
     const petExpGained = expGainFor(monster.expReward, pet.level, monster.level);
     const petGrant = this.petManager.grantExp(ownerUsername, petExpGained);
@@ -4581,10 +4583,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!parsed.success) return { ok: false, message: 'Invalid request.' };
     const { followerKind, followerId, itemIndex } = parsed.data;
 
-    const inventory =
-      followerKind === 'pet' ? this.petManager.getPet(client.data.username)?.inventory : followerId
-        ? this.animatedMonsterManager.getSnapshotsForOwner(client.data.username).find((m) => m.id === followerId)?.inventory
-        : undefined;
+    // A follow-up ask: "pets should not be able to wear any equipment at
+    // all, but they should be able to hold items. Only animated dead or
+    // summoned followers should be allowed to wear equipment" — a real
+    // (bought) pet can still hold/carry items via give/take, just never
+    // equip them; only animated monsters keep the weapon-damage-bonus
+    // behavior.
+    if (followerKind === 'pet') {
+      return { ok: false, message: 'Pets can only hold items — they cannot wear equipment.' };
+    }
+
+    const inventory = followerId
+      ? this.animatedMonsterManager.getSnapshotsForOwner(client.data.username).find((m) => m.id === followerId)?.inventory
+      : undefined;
     const item = inventory?.[itemIndex];
     if (item === undefined) return { ok: false, message: "Your follower isn't holding that." };
 
@@ -4593,12 +4604,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: "That can't be equipped on a follower." };
     }
 
-    const equippedOn =
-      followerKind === 'pet'
-        ? this.petManager.equipItem(client.data.username, itemIndex, slot)
-        : followerId
-          ? this.animatedMonsterManager.equipItem(client.data.username, followerId, itemIndex, slot)
-          : undefined;
+    const equippedOn = followerId ? this.animatedMonsterManager.equipItem(client.data.username, followerId, itemIndex, slot) : undefined;
     if (!equippedOn) return { ok: false, message: "You don't have that follower." };
 
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));

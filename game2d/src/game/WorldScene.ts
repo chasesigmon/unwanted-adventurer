@@ -52,6 +52,9 @@ import {
   ROAD_TO_FLORO_HALF_WIDTH_TILES,
   MYSTICAL_TIMBERLAND_MID_ROW,
   MYSTICAL_TIMBERLAND_COLS,
+  GRIMOAK_GROUNDS_MOAT_MID_ROW,
+  GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW,
+  GOBBLER_VILLAGE_MID,
 } from '../../shared/maps.js';
 import { treePositionsFor } from '../../shared/trees.js';
 import {
@@ -128,6 +131,8 @@ import {
   FLORO_ROAD_SIGN_POSITION,
   GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION,
   MYSTICAL_TIMBERLAND_SIGN_POSITION,
+  GRIMOAK_GROUNDS_GOBBLER_VILLAGE_SIGN_POSITION,
+  GOBBLER_VILLAGE_SIGN_POSITION,
   standingTorchPositionsFor,
 } from '../../shared/lighting.js';
 import {
@@ -135,6 +140,7 @@ import {
   FLORO_SHOP_MAPS,
   BRAMWICK_SHOP_MAPS,
   KORTHO_SHOP_MAPS,
+  GOBBLER_VILLAGE_HUT_MAPS,
   GRIMOAK_CASTLE_MAPS,
   CLASSROOM_MAPS,
   COMMON_ROOM_MAPS,
@@ -234,6 +240,9 @@ import {
   KORTHO_SHOP_TEXTURE_KEY,
   KORTHO_SHOP_FRAME_WIDTH,
   KORTHO_SHOP_FRAME_HEIGHT,
+  GOBBLER_HUT_TEXTURE_KEY,
+  GOBBLER_HUT_FRAME_WIDTH,
+  GOBBLER_HUT_FRAME_HEIGHT,
   SWORD_CURSOR,
   KEY_CURSOR,
   SLEEP_CURSOR,
@@ -381,6 +390,10 @@ export class WorldScene extends Phaser.Scene {
   // building sprite per shop door, door baked into the art" idea as
   // Bramwick's cottages above, only populated while rendering 'Kortho'.
   private korthoShopSprites: Phaser.GameObjects.Sprite[] = [];
+  // Gobbler Village's own 3 huts (a later follow-up ask) — same "one
+  // building sprite per door, door baked into the art" idea as Bramwick's
+  // cottages above, only populated while rendering 'Gobbler Village'.
+  private gobblerHutSprites: Phaser.GameObjects.Sprite[] = [];
   // Bramwick's own 9 standing torches (a later follow-up ask) — frame
   // toggled between unlit/lit on every 'worldTime' broadcast (see
   // handleWorldTime), not per-frame in update(), since the hour only
@@ -644,6 +657,13 @@ export class WorldScene extends Phaser.Scene {
     this.load.spritesheet(KORTHO_SHOP_TEXTURE_KEY, '/kortho-shop-spritesheet.png', {
       frameWidth: KORTHO_SHOP_FRAME_WIDTH,
       frameHeight: KORTHO_SHOP_FRAME_HEIGHT,
+    });
+    // Gobbler Village's own 3 huts (a later follow-up ask) — one frame per
+    // hut, in GOBBLER_VILLAGE_HUT_MAPS order (see tools/gen-gobbler-hut-
+    // assets.mjs).
+    this.load.spritesheet(GOBBLER_HUT_TEXTURE_KEY, '/gobbler-hut-spritesheet.png', {
+      frameWidth: GOBBLER_HUT_FRAME_WIDTH,
+      frameHeight: GOBBLER_HUT_FRAME_HEIGHT,
     });
     // A single fancy double door (a follow-up ask), used for every map
     // exit now — shop doors and every other transition alike.
@@ -1917,6 +1937,24 @@ export class WorldScene extends Phaser.Scene {
             })
         : [];
 
+    // Gobbler Village's own 3 huts (a later follow-up ask) — same shape as
+    // Bramwick/Kortho's buildings above, one primitive log-and-thatch hut
+    // per door.
+    for (const sprite of this.gobblerHutSprites) sprite.destroy();
+    this.gobblerHutSprites =
+      mapName === 'Gobbler Village'
+        ? def.exits
+            .filter((exit) => (GOBBLER_VILLAGE_HUT_MAPS as readonly string[]).includes(exit.toMap))
+            .map((exit) => {
+              const pos = this.tilePosition(exit.row, exit.col);
+              const frame = (GOBBLER_VILLAGE_HUT_MAPS as readonly string[]).indexOf(exit.toMap);
+              return this.add
+                .sprite(pos.x, pos.y + TILE_SIZE / 2, GOBBLER_HUT_TEXTURE_KEY, frame)
+                .setOrigin(0.5, 1)
+                .setDepth(-0.75);
+            })
+        : [];
+
     // Bramwick's own 9 standing street torches (a later follow-up ask) —
     // starts on whichever frame the current hour already calls for (not
     // always unlit) so a transition into Bramwick at night doesn't show
@@ -1997,7 +2035,13 @@ export class WorldScene extends Phaser.Scene {
     this.tweens.killTweensOf(this.treeSprites);
     for (const sprite of this.treeSprites) sprite.destroy();
     this.treeSprites = [];
-    if (mapName === 'Great Plains') {
+    // A follow-up bug fix: "the trees are completely not visible in
+    // Mystical Timberland but they have collision" — treePositionsFor
+    // itself was already made generic over Mystical Timberland (a later
+    // follow-up ask), but this rendering loop was still hardcoded to
+    // Great Plains only, so the (very real, server-enforced) collision
+    // had no matching sprite to show for it.
+    if (mapName === 'Great Plains' || mapName === 'Mystical Timberland') {
       for (const { row, col } of treePositionsFor(mapName)) {
         const pos = this.tilePosition(row, col);
         const sprite = this.add.sprite(pos.x, pos.y, TREE_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
@@ -2132,6 +2176,45 @@ export class WorldScene extends Phaser.Scene {
             (GRIMOAK_GROUNDS_ROWS - GRIMOAK_GROUNDS_ROAD_ROWS) * TILE_SIZE,
             roadWidthTiles * TILE_SIZE,
             GRIMOAK_GROUNDS_ROAD_ROWS * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+
+      // A follow-up bug fix: "the thin dirt road leading to mystical
+      // timberland (like the one leading out of Kortho) is missing" —
+      // only cols 0-2 are open ground west of the moat at this row (col
+      // 3 is MOAT_OUTER_LEFT, already water), so this reuses the SAME
+      // short "Kortho spur" depth (1 tile) instead of the standard
+      // GRIMOAK_GROUNDS_ROAD_ROWS(4) the other 3 patches above use, which
+      // would overshoot straight into the moat.
+      const timberlandGroundsEntranceDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            0,
+            (GRIMOAK_GROUNDS_MOAT_MID_ROW - GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES) * TILE_SIZE,
+            timberlandGroundsEntranceDepth * TILE_SIZE,
+            roadWidthTiles * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+
+      // The dirt-road patch leading out the new SE exit toward "Gobbler
+      // Village" (a later follow-up ask) — a direct, spacious connection
+      // (unlike the moat-cramped Mystical Timberland spur above), so this
+      // uses the full Bramwick-style GRIMOAK_GROUNDS_ROAD_ROWS depth, same
+      // width convention as every other Grounds road.
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            (GRIMOAK_GROUNDS_COLS - GRIMOAK_GROUNDS_ROAD_ROWS) * TILE_SIZE,
+            (GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW - GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES) * TILE_SIZE,
+            GRIMOAK_GROUNDS_ROAD_ROWS * TILE_SIZE,
+            roadWidthTiles * TILE_SIZE,
             DIRT_ROAD_TEXTURE_KEY
           )
           .setOrigin(0, 0)
@@ -2292,6 +2375,24 @@ export class WorldScene extends Phaser.Scene {
             (MYSTICAL_TIMBERLAND_MID_ROW - GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES) * TILE_SIZE,
             timberlandEntranceDepth * TILE_SIZE,
             timberlandEntranceHeight * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+    } else if (mapName === 'Gobbler Village') {
+      // The dirt-road patch leading back toward "Grimoak Grounds" (a later
+      // follow-up ask: "a dirt road leading back to Grimoak Grounds") —
+      // same full Bramwick-style depth as the Grounds-side patch above,
+      // anchored to this map's own west edge (its only connection).
+      const gobblerEntranceWidth = GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES * 2 + 1;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            0,
+            (GOBBLER_VILLAGE_MID - GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES) * TILE_SIZE,
+            GRIMOAK_GROUNDS_ROAD_ROWS * TILE_SIZE,
+            gobblerEntranceWidth * TILE_SIZE,
             DIRT_ROAD_TEXTURE_KEY
           )
           .setOrigin(0, 0)
@@ -2595,6 +2696,12 @@ export class WorldScene extends Phaser.Scene {
       // later follow-up ask: "have a sign to Mystical Timberland").
       { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION, label: 'Mystical Timberland' },
       { map: 'Mystical Timberland', position: MYSTICAL_TIMBERLAND_SIGN_POSITION, label: 'Grimoak Grounds' },
+      // The new SE "Gobbler Village" exit's own sign pair (a later
+      // follow-up ask: "a dirt road and sign leading into 'Gobbler
+      // Village' from Grimoak Grounds and a dirt road and sign leading
+      // out of Gobbler Village into 'Grimoak Grounds'").
+      { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_GOBBLER_VILLAGE_SIGN_POSITION, label: 'Gobbler Village' },
+      { map: 'Gobbler Village', position: GOBBLER_VILLAGE_SIGN_POSITION, label: 'Grimoak Grounds' },
     ];
     this.signSprites = signDefs
       .filter((def) => def.map === mapName)

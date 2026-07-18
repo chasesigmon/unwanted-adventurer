@@ -76,22 +76,31 @@ function buildFollowerItemsSection(
       });
   };
 
-  for (const slot of FOLLOWER_EQUIPMENT_SLOTS) {
-    const row = document.createElement('div');
-    row.className = 'group-member-equip-row';
-    const item = equipment[slot];
-    const label = document.createElement('span');
-    label.textContent = `${slot}: ${item ?? 'empty'}`;
-    row.appendChild(label);
-    if (item) {
-      const unequipBtn = document.createElement('button');
-      unequipBtn.type = 'button';
-      unequipBtn.textContent = 'Unequip';
-      unequipBtn.disabled = !alive;
-      unequipBtn.addEventListener('click', () => run(() => network.unequipFollowerItem({ followerKind, followerId, slot })));
-      row.appendChild(unequipBtn);
+  // A follow-up ask: "pets should not be able to wear any equipment at
+  // all, but they should be able to hold items. Only animated dead or
+  // summoned followers should be allowed to wear equipment" — a real
+  // pet's own equipment slots are always permanently empty and un-
+  // fillable now (see game.gateway.ts's handleEquipFollowerItem), so
+  // showing them here at all would just be dead UI. Skipped entirely for
+  // a pet; unchanged for an animated monster.
+  if (followerKind === 'animatedMonster') {
+    for (const slot of FOLLOWER_EQUIPMENT_SLOTS) {
+      const row = document.createElement('div');
+      row.className = 'group-member-equip-row';
+      const item = equipment[slot];
+      const label = document.createElement('span');
+      label.textContent = `${slot}: ${item ?? 'empty'}`;
+      row.appendChild(label);
+      if (item) {
+        const unequipBtn = document.createElement('button');
+        unequipBtn.type = 'button';
+        unequipBtn.textContent = 'Unequip';
+        unequipBtn.disabled = !alive;
+        unequipBtn.addEventListener('click', () => run(() => network.unequipFollowerItem({ followerKind, followerId, slot })));
+        row.appendChild(unequipBtn);
+      }
+      section.appendChild(row);
     }
-    section.appendChild(row);
   }
 
   if (inventory.length > 0) {
@@ -104,12 +113,16 @@ function buildFollowerItemsSection(
       const label = document.createElement('span');
       label.textContent = item;
       row.appendChild(label);
-      const equipBtn = document.createElement('button');
-      equipBtn.type = 'button';
-      equipBtn.textContent = 'Equip';
-      equipBtn.disabled = !alive;
-      equipBtn.addEventListener('click', () => run(() => network.equipFollowerItem({ followerKind, followerId, itemIndex })));
-      row.appendChild(equipBtn);
+      // Only an animated monster can equip what it's holding — a pet can
+      // only hold/carry (see this function's own doc comment above).
+      if (followerKind === 'animatedMonster') {
+        const equipBtn = document.createElement('button');
+        equipBtn.type = 'button';
+        equipBtn.textContent = 'Equip';
+        equipBtn.disabled = !alive;
+        equipBtn.addEventListener('click', () => run(() => network.equipFollowerItem({ followerKind, followerId, itemIndex })));
+        row.appendChild(equipBtn);
+      }
       const takeBtn = document.createElement('button');
       takeBtn.type = 'button';
       takeBtn.textContent = 'Take';

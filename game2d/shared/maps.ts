@@ -1,5 +1,5 @@
 import type { MapName, Direction } from './constants.js';
-import { FLORO_SHOP_MAPS, KORTHO_SHOP_MAPS, BRAMWICK_SHOP_MAPS } from './constants.js';
+import { FLORO_SHOP_MAPS, KORTHO_SHOP_MAPS, BRAMWICK_SHOP_MAPS, GOBBLER_VILLAGE_HUT_MAPS } from './constants.js';
 
 // A single source of truth for both the server (movement resolution) and
 // the client (rendering the floor/door) — no need to duplicate these
@@ -1124,6 +1124,13 @@ export function isShopBuildingBlocked(mapName: MapName, row: number, col: number
   if (mapName === 'Bramwick') {
     return BRAMWICK_SHOP_MAPS.some((name) => shopBuildingFootprint(BRAMWICK_SHOP_DOORS[name], 6, 8).some((t) => t.row === row && t.col === col));
   }
+  if (mapName === 'Gobbler Village') {
+    // Gobbler Village's own huts are smaller than the town buildings above
+    // — 128x160px = 4x5 tiles (see mapRender.ts's GOBBLER_HUT_FRAME_WIDTH/
+    // HEIGHT, duplicated here as plain numbers per this file's own
+    // no-cross-import convention).
+    return GOBBLER_VILLAGE_HUT_MAPS.some((name) => shopBuildingFootprint(GOBBLER_HUT_DOORS[name], 4, 5).some((t) => t.row === row && t.col === col));
+  }
   return false;
 }
 
@@ -1214,6 +1221,68 @@ function roadBandExits(config: {
     });
   }
   return exits;
+}
+
+// ---------- Gobbler Village (a later follow-up ask: "add a new World
+// from the southeast of Grimoak Grounds called 'Gobbler Village'... a
+// small village structure with huts to go into... torches that light it
+// up at night") — same overall shape as Bramwick (a small village, a
+// handful of plain enterable buildings, day/night standing torches, same
+// dirt street texture and map SIZE — "the map should be the same size as
+// Bramwick's map"), just connected off Grimoak Grounds' own SE corner
+// instead of straight north, with huts instead of shops. ----------
+export const GOBBLER_VILLAGE_SIZE = BRAMWICK_SIZE;
+export const GOBBLER_VILLAGE_MID = Math.floor(GOBBLER_VILLAGE_SIZE / 2);
+// Where Grimoak Grounds' own new SE exit sits — well south of the moat
+// (MOAT_OUTER_BOTTOM is row 62) and at the map's own far east edge, same
+// "southeast" placement the ask itself describes.
+export const GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW = 75;
+
+const GOBBLER_HUT_DOORS: Record<(typeof GOBBLER_VILLAGE_HUT_MAPS)[number], { row: number; col: number }> = {
+  'Gobbler Hut 1': { row: 10, col: 14 },
+  'Gobbler Hut 2': { row: 10, col: 26 },
+  'Gobbler Hut 3': { row: 28, col: GOBBLER_VILLAGE_MID },
+};
+
+function gobblerHutInteriorDefinition(name: (typeof GOBBLER_VILLAGE_HUT_MAPS)[number]): MapDefinition {
+  const door = GOBBLER_HUT_DOORS[name];
+  return {
+    name,
+    rows: SHOP_INTERIOR_SIZE,
+    cols: SHOP_INTERIOR_SIZE,
+    // Unused metadata (see MapTerrain's own doc comment) — the real
+    // texture comes from mapRender.ts's floorTextureFor (dirt, matching
+    // the huts' own rustic feel, not the stone Floro/Kortho/Bramwick's
+    // own SHOPS use).
+    terrain: 'stone',
+    exits: [
+      {
+        row: SHOP_INTERIOR_DOOR_ROW,
+        col: SHOP_INTERIOR_MID_COL,
+        direction: 'south',
+        toMap: 'Gobbler Village',
+        toRow: door.row,
+        toCol: door.col,
+      },
+    ],
+  };
+}
+
+function gobblerHutDoorExits(): MapExit[] {
+  return GOBBLER_VILLAGE_HUT_MAPS.map((name) => {
+    const door = GOBBLER_HUT_DOORS[name];
+    return {
+      row: door.row,
+      col: door.col,
+      direction: 'north',
+      toMap: name,
+      toRow: SHOP_INTERIOR_DOOR_ROW,
+      toCol: SHOP_INTERIOR_MID_COL,
+      // Same "walk into the hut's own baked-in door" treatment Bramwick's
+      // cottages already use — no separate door sprite.
+      kind: 'open',
+    };
+  });
 }
 
 export const MAPS: Record<MapName, MapDefinition> = {
@@ -1443,6 +1512,30 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Bramwick Armor': bramwickShopInteriorDefinition('Bramwick Armor'),
   'Bramwick Potions': bramwickShopInteriorDefinition('Bramwick Potions'),
   'Bramwick Pet Shop': bramwickShopInteriorDefinition('Bramwick Pet Shop'),
+  'Gobbler Village': {
+    name: 'Gobbler Village',
+    rows: GOBBLER_VILLAGE_SIZE,
+    cols: GOBBLER_VILLAGE_SIZE,
+    // Unused metadata — real texture is 'dirt' via floorTextureFor,
+    // "the same texture as in Bramwick."
+    terrain: 'grass',
+    exits: [
+      ...roadBandExits({
+        row: GOBBLER_VILLAGE_MID,
+        col: 0,
+        direction: 'west',
+        toMap: 'Grimoak Grounds',
+        toRow: GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW,
+        toCol: GRIMOAK_GROUNDS_COLS - 2,
+        halfWidthTiles: GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
+      ...gobblerHutDoorExits(),
+    ],
+  },
+  'Gobbler Hut 1': gobblerHutInteriorDefinition('Gobbler Hut 1'),
+  'Gobbler Hut 2': gobblerHutInteriorDefinition('Gobbler Hut 2'),
+  'Gobbler Hut 3': gobblerHutInteriorDefinition('Gobbler Hut 3'),
   'Grimoak Grounds': {
     name: 'Grimoak Grounds',
     rows: GRIMOAK_GROUNDS_ROWS,
@@ -1514,6 +1607,19 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toMap: 'Mystical Timberland',
         toRow: MYSTICAL_TIMBERLAND_MID_ROW,
         toCol: MYSTICAL_TIMBERLAND_COLS - 2,
+        halfWidthTiles: GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
+      // A later follow-up ask: "add a new World from the southeast of
+      // Grimoak Grounds called 'Gobbler Village'" — well south of the
+      // moat, at the map's own far east edge.
+      ...roadBandExits({
+        row: GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW,
+        col: GRIMOAK_GROUNDS_COLS - 1,
+        direction: 'east',
+        toMap: 'Gobbler Village',
+        toRow: GOBBLER_VILLAGE_MID,
+        toCol: 1,
         halfWidthTiles: GRIMOAK_GROUNDS_ROAD_HALF_WIDTH_TILES,
         spread: 'row',
       }),

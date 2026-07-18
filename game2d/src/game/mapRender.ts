@@ -2,7 +2,7 @@
 // mutable module state, just math and small Phaser Graphics drawing.
 import Phaser from 'phaser';
 import type { MapName, Direction } from '../../shared/constants.js';
-import { FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS, BRAMWICK_SHOP_MAPS, KORTHO_SHOP_MAPS } from '../../shared/constants.js';
+import { FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS, BRAMWICK_SHOP_MAPS, KORTHO_SHOP_MAPS, GOBBLER_VILLAGE_HUT_MAPS } from '../../shared/constants.js';
 import type { FacingGroup } from '../characterSprites.js';
 
 export const TILE_SIZE = 32;
@@ -76,6 +76,17 @@ export const BRAMWICK_COTTAGE_FRAME_HEIGHT = 256;
 export const KORTHO_SHOP_TEXTURE_KEY = 'kortho-shop';
 export const KORTHO_SHOP_FRAME_WIDTH = 192;
 export const KORTHO_SHOP_FRAME_HEIGHT = 256;
+
+// Gobbler Village's own 3 huts (a later follow-up ask: "make it like a
+// small village structure with huts to go into") — same "one frame per
+// door, touching the frame's own bottom edge, no separate door sprite"
+// shape as Bramwick/Kortho above (see tools/gen-gobbler-hut-assets.mjs),
+// one frame per GOBBLER_VILLAGE_HUT_MAPS entry in that exact order.
+// Deliberately smaller/cruder than the town buildings above (log walls,
+// conical thatch roof, no name banner) to read as a primitive village.
+export const GOBBLER_HUT_TEXTURE_KEY = 'gobbler-hut';
+export const GOBBLER_HUT_FRAME_WIDTH = 128;
+export const GOBBLER_HUT_FRAME_HEIGHT = 160;
 
 // A single fancy double door (a follow-up ask) used for EVERY map exit
 // now — shop doors and every other transition alike — replacing both the
@@ -358,6 +369,12 @@ export function floorTextureFor(mapName: MapName): string {
   // slightly darker than in Grimoak Grounds" — a distinct, slightly
   // darker variant of the same grass tile (see assets/dark-grass-tile.svg).
   if (mapName === 'Mystical Timberland') return 'dark-grass';
+  // A later follow-up ask: "make this world have a dirt background with
+  // the same texture as in Bramwick" — same 'dirt' street Bramwick's own
+  // village square uses. Its own huts get the same treatment inside too,
+  // a rustic dirt floor rather than the stone Floro/Kortho/Bramwick's
+  // own SHOPS use.
+  if (mapName === 'Gobbler Village' || (GOBBLER_VILLAGE_HUT_MAPS as readonly string[]).includes(mapName)) return 'dirt';
   return 'grass';
 }
 

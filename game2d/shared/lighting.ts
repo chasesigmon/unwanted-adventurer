@@ -9,6 +9,7 @@ import {
   BRAMWICK_SHOP_MAPS,
   KORTHO_SHOP_MAPS,
   FLORO_SHOP_MAPS,
+  GOBBLER_VILLAGE_HUT_MAPS,
 } from './constants.js';
 import { INFRAVISION_SKILL } from './skills.js';
 import {
@@ -39,6 +40,8 @@ import {
   GRIMOAK_GROUNDS_MOAT_MID_ROW,
   MYSTICAL_TIMBERLAND_MID_ROW,
   MYSTICAL_TIMBERLAND_COLS,
+  GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW,
+  GOBBLER_VILLAGE_MID,
 } from './maps.js';
 
 // "Late hours of night and early hours of morning" — a narrower, darker
@@ -187,6 +190,11 @@ export const ALWAYS_LIT_MAPS: MapName[] = [
   ...KORTHO_SHOP_MAPS,
   'Floro',
   ...FLORO_SHOP_MAPS,
+  // Gobbler Village's own huts (a later follow-up ask) — same "shop
+  // interiors are always lit" treatment as Bramwick's own shops above;
+  // the village SQUARE itself keeps a normal day/night cycle (see its own
+  // standing torches instead), same as Bramwick's own street.
+  ...GOBBLER_VILLAGE_HUT_MAPS,
 ];
 
 export function isAlwaysLit(mapName: MapName): boolean {
@@ -664,6 +672,7 @@ export function isPortalBlocked(mapName: MapName, row: number, col: number): boo
 // STATIC_LIGHT_SOURCES below for the matching light-radius entries that
 // actually push back the dark-fog at night.
 export function standingTorchPositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
+  if (mapName === 'Gobbler Village') return gobblerVillageTorchPositions();
   if (mapName !== 'Bramwick') return [];
   // A later follow-up ask reworked the original 3x3 grid into a
   // rectangle "encompassing the town": a left wall (col 5) and a right
@@ -697,6 +706,17 @@ export function standingTorchPositionsFor(mapName: MapName): Array<{ row: number
     { row: bottomRow, col: BRAMWICK_MID_COL - 3 },
     { row: bottomRow, col: BRAMWICK_MID_COL + 3 },
   ];
+}
+
+// Gobbler Village (a later follow-up ask: "torches that light it up at
+// night") — same day/night-cycling standing torch, same "rectangle
+// perimeter" idea as Bramwick's own wall above. All 3 huts (see
+// shared/maps.ts's GOBBLER_HUT_DOORS) sit well clear of the perimeter
+// itself, so — unlike Bramwick — no special-case clearance is needed.
+function gobblerVillageTorchPositions(): Array<{ row: number; col: number }> {
+  const wallRows = [9, 14, 20, 26, 31];
+  const wallCols = [5, 35];
+  return wallCols.flatMap((col) => wallRows.map((row) => ({ row, col })));
 }
 
 // A later follow-up ask: "the torches should have collision, so the
@@ -765,8 +785,20 @@ export const FLORO_ROAD_SIGN_POSITION = { row: 3, col: TOWN_MID_COL + 4 };
 // Timberland... have a sign to Mystical Timberland" — same two-sided
 // sign-pair convention as every other connection above, one on Grimoak
 // Grounds' own side, one just inside Mystical Timberland pointing back.
-export const GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION = { row: GRIMOAK_GROUNDS_MOAT_MID_ROW + 4, col: 3 };
+// A follow-up bug fix: "the sign leading to mystical timberland should
+// be on the grass or dirt road, right now it is on the water" — col 3 IS
+// MOAT_OUTER_LEFT (the moat's own outer edge, still water at any row
+// within its span) — moved to col 1, safely inside the narrow 3-tile-wide
+// clear strip west of the moat.
+export const GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION = { row: GRIMOAK_GROUNDS_MOAT_MID_ROW + 4, col: 1 };
 export const MYSTICAL_TIMBERLAND_SIGN_POSITION = { row: MYSTICAL_TIMBERLAND_MID_ROW + 4, col: MYSTICAL_TIMBERLAND_COLS - 3 };
+
+// A later follow-up ask: "there should be a dirt road and sign leading
+// into 'Gobbler Village' from Grimoak Grounds and a dirt road and sign
+// leading out of Gobbler Village into 'Grimoak Grounds'" — same
+// two-sided sign-pair convention as every other connection above.
+export const GRIMOAK_GROUNDS_GOBBLER_VILLAGE_SIGN_POSITION = { row: GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW + 4, col: GRIMOAK_GROUNDS_COLS - 3 };
+export const GOBBLER_VILLAGE_SIGN_POSITION = { row: GOBBLER_VILLAGE_MID + 4, col: 3 };
 
 export function isBramwickSignBlocked(mapName: MapName, row: number, col: number): boolean {
   if (mapName === 'Bramwick') return row === BRAMWICK_SIGN_POSITION.row && col === BRAMWICK_SIGN_POSITION.col;
@@ -775,8 +807,12 @@ export function isBramwickSignBlocked(mapName: MapName, row: number, col: number
       (row === GRIMOAK_GROUNDS_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_SIGN_POSITION.col) ||
       (row === GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION.col) ||
       (row === GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION.col) ||
-      (row === GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION.col)
+      (row === GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION.col) ||
+      (row === GRIMOAK_GROUNDS_GOBBLER_VILLAGE_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_GOBBLER_VILLAGE_SIGN_POSITION.col)
     );
+  }
+  if (mapName === 'Gobbler Village') {
+    return row === GOBBLER_VILLAGE_SIGN_POSITION.row && col === GOBBLER_VILLAGE_SIGN_POSITION.col;
   }
   if (mapName === 'Road to Kortho') {
     return (
