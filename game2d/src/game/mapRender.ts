@@ -97,6 +97,15 @@ export const CANOE_TEXTURE_KEY = 'canoe';
 export const RAFT_TEXTURE_KEY = 'raft';
 export const BOAT_FRAME_SIZE = 48;
 
+// The Hexstone Cavern cave-mouth entrance (a later follow-up ask:
+// "a nice looking cave sprite entrance... there should not be a door")
+// — a single static image (see tools/gen-cave-entrance.mjs), reused at
+// both ends of the connection (Great Plains' own side and Hexstone
+// Cavern's own side); the dark opening touches the frame's own bottom
+// edge, same "walk into the sprite's own door, no separate door sprite"
+// convention every other structure sprite here already uses.
+export const CAVE_ENTRANCE_TEXTURE_KEY = 'cave-entrance';
+
 // A single fancy double door (a follow-up ask) used for EVERY map exit
 // now — shop doors and every other transition alike — replacing both the
 // old plain 'door' SVG and the shop-only wooden-door spritesheet (which
@@ -384,6 +393,9 @@ export function floorTextureFor(mapName: MapName): string {
   // a rustic dirt floor rather than the stone Floro/Kortho/Bramwick's
   // own SHOPS use.
   if (mapName === 'Gobbler Village' || (GOBBLER_VILLAGE_HUT_MAPS as readonly string[]).includes(mapName)) return 'dirt';
+  // A later follow-up ask: "make it have a cave texture" — Hexstone
+  // Cavern's own rocky floor.
+  if (mapName === 'Hexstone Cavern') return 'cave';
   return 'grass';
 }
 

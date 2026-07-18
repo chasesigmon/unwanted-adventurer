@@ -67,6 +67,9 @@ import {
   GREAT_PLAINS_FLORO_HALF_WIDTH_TILES,
   FLORO_GREAT_PLAINS_ROW,
   GREAT_PLAINS_SIZE,
+  GREAT_PLAINS_HEXSTONE_ROW,
+  HEXSTONE_CAVERN_SIZE,
+  HEXSTONE_GREAT_PLAINS_COL,
 } from '../../shared/maps.js';
 import { treePositionsFor } from '../../shared/trees.js';
 import {
@@ -148,6 +151,8 @@ import {
   KORTHO_SHIMMERING_SEA_SIGN_POSITION,
   FLORO_GREAT_PLAINS_SIGN_POSITION,
   GREAT_PLAINS_FLORO_SIGN_POSITION,
+  GREAT_PLAINS_HEXSTONE_SIGN_POSITION,
+  HEXSTONE_GREAT_PLAINS_SIGN_POSITION,
   standingTorchPositionsFor,
 } from '../../shared/lighting.js';
 import {
@@ -262,6 +267,7 @@ import {
   RAFT_TEXTURE_KEY,
   BOAT_FRAME_SIZE,
   BOAT_FRAME_FOR_FACING,
+  CAVE_ENTRANCE_TEXTURE_KEY,
   SWORD_CURSOR,
   KEY_CURSOR,
   SLEEP_CURSOR,
@@ -459,6 +465,11 @@ export class WorldScene extends Phaser.Scene {
   // grass elsewhere (floorTextureFor has no per-tile-region concept, see
   // its own doc comment).
   private korthoSeaSprites: Phaser.GameObjects.GameObject[] = [];
+  // Hexstone Cavern's own cave-mouth entrance sprite (a later follow-up
+  // ask) — one per map that has one (Great Plains' own west exit,
+  // Hexstone Cavern's own south exit), same destroy/recreate-per-
+  // renderMap lifetime as roadTiles/korthoSeaSprites above.
+  private caveEntranceSprites: Phaser.GameObjects.Sprite[] = [];
   // The castle gate at the bridge's own outer end (a later follow-up
   // ask) — two leaf sprites (the right one just the same texture
   // flipped) that slide apart when open, only populated on 'Grimoak
@@ -634,6 +645,10 @@ export class WorldScene extends Phaser.Scene {
     // sandy sprite to use for the land on both sides") plus its dock.
     this.load.svg('sand', '/sand-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     this.load.svg('dock', '/dock-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    // Hexstone Cavern's own rocky floor + cave-mouth entrance sprite (a
+    // later follow-up ask).
+    this.load.svg('cave', '/cave-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    this.load.image(CAVE_ENTRANCE_TEXTURE_KEY, '/cave-entrance.png');
     // Grimoak Grounds' own stretch of road leading up to it (a later
     // follow-up ask: "clearly have a different colored dirt road from
     // the dirt in Bramwick") — a cooler, grayer worn-path tone, its own
@@ -2174,6 +2189,8 @@ export class WorldScene extends Phaser.Scene {
     this.roadTiles = [];
     for (const sprite of this.korthoSeaSprites) sprite.destroy();
     this.korthoSeaSprites = [];
+    for (const sprite of this.caveEntranceSprites) sprite.destroy();
+    this.caveEntranceSprites = [];
     if (mapName === 'Bramwick') {
       // A later follow-up bug fix: "the dirt road to exit Bramwick is
       // still the same color as the rest of the town" — the reddish
@@ -2529,6 +2546,64 @@ export class WorldScene extends Phaser.Scene {
           .setOrigin(0, 0)
           .setDepth(-0.99)
       );
+
+      // A later follow-up ask: "create a cave entrance at the northwest/
+      // north of the great plains with a thin dirt road" — same short
+      // depth convention as the Floro patch above, at Great Plains' own
+      // west edge instead.
+      const greatPlainsHexstoneDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
+      const greatPlainsHexstoneHeight = GREAT_PLAINS_FLORO_HALF_WIDTH_TILES * 2 + 1;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            0,
+            (GREAT_PLAINS_HEXSTONE_ROW - GREAT_PLAINS_FLORO_HALF_WIDTH_TILES) * TILE_SIZE,
+            greatPlainsHexstoneDepth * TILE_SIZE,
+            greatPlainsHexstoneHeight * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+
+      // The cave-mouth sprite itself (a later follow-up ask: "a nice
+      // looking cave sprite entrance and there should not be a door") —
+      // anchored at the exit tile's own south edge, same "the sprite's
+      // own baked-in doorway touches the real MapExit tile, no separate
+      // door sprite" convention Bramwick's cottages/Kortho's shops use.
+      {
+        const pos = this.tilePosition(GREAT_PLAINS_HEXSTONE_ROW, 0);
+        this.caveEntranceSprites.push(
+          this.add.sprite(pos.x, pos.y + TILE_SIZE / 2, CAVE_ENTRANCE_TEXTURE_KEY).setOrigin(0.5, 1).setDepth(-0.75)
+        );
+      }
+    } else if (mapName === 'Hexstone Cavern') {
+      // The reciprocal thin patch on Hexstone Cavern's own side (a later
+      // follow-up ask: "a connection to the great plains from the
+      // southeast/south") — at its own south edge.
+      const hexstoneGreatPlainsDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
+      const hexstoneGreatPlainsWidth = GREAT_PLAINS_FLORO_HALF_WIDTH_TILES * 2 + 1;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            (HEXSTONE_GREAT_PLAINS_COL - GREAT_PLAINS_FLORO_HALF_WIDTH_TILES) * TILE_SIZE,
+            (HEXSTONE_CAVERN_SIZE - hexstoneGreatPlainsDepth) * TILE_SIZE,
+            hexstoneGreatPlainsWidth * TILE_SIZE,
+            hexstoneGreatPlainsDepth * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+
+      // The reciprocal cave-mouth sprite on Hexstone Cavern's own side —
+      // same anchoring convention as Great Plains' own sprite above.
+      {
+        const pos = this.tilePosition(HEXSTONE_CAVERN_SIZE - 1, HEXSTONE_GREAT_PLAINS_COL);
+        this.caveEntranceSprites.push(
+          this.add.sprite(pos.x, pos.y + TILE_SIZE / 2, CAVE_ENTRANCE_TEXTURE_KEY).setOrigin(0.5, 1).setDepth(-0.75)
+        );
+      }
     } else if (mapName === 'Mystical Timberland') {
       // Same small entrance-patch treatment as Kortho/Floro above (a
       // later follow-up ask: "make the entrance to it have a similar
@@ -2879,6 +2954,11 @@ export class WorldScene extends Phaser.Scene {
       // 'Floro'").
       { map: 'Floro', position: FLORO_GREAT_PLAINS_SIGN_POSITION, label: 'The Great Plains' },
       { map: 'Great Plains', position: GREAT_PLAINS_FLORO_SIGN_POSITION, label: 'Floro' },
+      // The new Hexstone Cavern connection's own sign pair (a later
+      // follow-up ask: "a sign next to it with 'Hexstone Cavern'"...
+      // "a sign next to it 'The Great Plains'").
+      { map: 'Great Plains', position: GREAT_PLAINS_HEXSTONE_SIGN_POSITION, label: 'Hexstone Cavern' },
+      { map: 'Hexstone Cavern', position: HEXSTONE_GREAT_PLAINS_SIGN_POSITION, label: 'The Great Plains' },
     ];
     this.signSprites = signDefs
       .filter((def) => def.map === mapName)

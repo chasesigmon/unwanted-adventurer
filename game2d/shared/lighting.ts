@@ -46,6 +46,9 @@ import {
   GREAT_PLAINS_FLORO_ROW,
   GREAT_PLAINS_SIZE,
   FLORO_GREAT_PLAINS_ROW,
+  GREAT_PLAINS_HEXSTONE_ROW,
+  HEXSTONE_CAVERN_SIZE,
+  HEXSTONE_GREAT_PLAINS_COL,
 } from './maps.js';
 
 // "Late hours of night and early hours of morning" — a narrower, darker
@@ -818,6 +821,16 @@ export const KORTHO_SHIMMERING_SEA_SIGN_POSITION = { row: TOWN_MID_ROW - 5, col:
 export const FLORO_GREAT_PLAINS_SIGN_POSITION = { row: FLORO_GREAT_PLAINS_ROW - 4, col: 3 };
 export const GREAT_PLAINS_FLORO_SIGN_POSITION = { row: GREAT_PLAINS_FLORO_ROW - 4, col: GREAT_PLAINS_SIZE - 3 };
 
+// A later follow-up ask: "create a cave entrance at the northwest/north
+// of the great plains... a sign next to it with 'Hexstone Cavern'...
+// [Hexstone Cavern] a cave entrance/exit sprite with a sign next to it
+// 'The Great Plains'" — same two-sided sign-pair convention as every
+// other connection above, offset off the road band (which spans
+// ±GREAT_PLAINS_HEXSTONE_HALF_WIDTH_TILES) so neither sign sits on the
+// cave-entrance tiles themselves.
+export const GREAT_PLAINS_HEXSTONE_SIGN_POSITION = { row: GREAT_PLAINS_HEXSTONE_ROW + 4, col: 3 };
+export const HEXSTONE_GREAT_PLAINS_SIGN_POSITION = { row: HEXSTONE_CAVERN_SIZE - 4, col: HEXSTONE_GREAT_PLAINS_COL + 4 };
+
 export function isBramwickSignBlocked(mapName: MapName, row: number, col: number): boolean {
   if (mapName === 'Bramwick') return row === BRAMWICK_SIGN_POSITION.row && col === BRAMWICK_SIGN_POSITION.col;
   if (mapName === 'Grimoak Grounds') {
@@ -860,7 +873,13 @@ export function isBramwickSignBlocked(mapName: MapName, row: number, col: number
     return row === MYSTICAL_TIMBERLAND_SIGN_POSITION.row && col === MYSTICAL_TIMBERLAND_SIGN_POSITION.col;
   }
   if (mapName === 'Great Plains') {
-    return row === GREAT_PLAINS_FLORO_SIGN_POSITION.row && col === GREAT_PLAINS_FLORO_SIGN_POSITION.col;
+    return (
+      (row === GREAT_PLAINS_FLORO_SIGN_POSITION.row && col === GREAT_PLAINS_FLORO_SIGN_POSITION.col) ||
+      (row === GREAT_PLAINS_HEXSTONE_SIGN_POSITION.row && col === GREAT_PLAINS_HEXSTONE_SIGN_POSITION.col)
+    );
+  }
+  if (mapName === 'Hexstone Cavern') {
+    return row === HEXSTONE_GREAT_PLAINS_SIGN_POSITION.row && col === HEXSTONE_GREAT_PLAINS_SIGN_POSITION.col;
   }
   return false;
 }

@@ -1380,6 +1380,21 @@ export const GREAT_PLAINS_FLORO_ROW = 15;
 export const GREAT_PLAINS_FLORO_HALF_WIDTH_TILES = 2;
 export const FLORO_GREAT_PLAINS_ROW = TOWN_MID_ROW;
 
+// ---------- Hexstone Cavern (a later follow-up ask: "create a cave
+// entrance at the northwest/north of the great plains... the player
+// should walk through the cave entrance... create a new world called
+// 'Hexstone Cavern'... a connection to the great plains from the
+// southeast/south") — same direct shared-border shape as the Floro
+// connection above, no door on either side (walk straight through the
+// cave-mouth sprite itself, see WorldScene's own renderDoorsAndChest).
+// ----------
+export const GREAT_PLAINS_HEXSTONE_ROW = 15;
+export const GREAT_PLAINS_HEXSTONE_HALF_WIDTH_TILES = 2;
+export const HEXSTONE_CAVERN_SIZE = GREAT_PLAINS_SIZE;
+// "From the southeast/south" — the south edge, offset toward the east
+// side of it rather than dead center.
+export const HEXSTONE_GREAT_PLAINS_COL = Math.round(HEXSTONE_CAVERN_SIZE * 0.75);
+
 export const MAPS: Record<MapName, MapDefinition> = {
   'Great Plains': {
     name: 'Great Plains',
@@ -1411,6 +1426,20 @@ export const MAPS: Record<MapName, MapDefinition> = {
         halfWidthTiles: GREAT_PLAINS_FLORO_HALF_WIDTH_TILES,
         spread: 'row',
       }),
+      // A later follow-up ask: "create a cave entrance at the northwest/
+      // north of the great plains... create a new world called 'Hexstone
+      // Cavern'" — the west edge, near the top (mirroring how the Floro
+      // exit above sits on the EAST edge near the top for "northeast").
+      ...roadBandExits({
+        row: GREAT_PLAINS_HEXSTONE_ROW,
+        col: 0,
+        direction: 'west',
+        toMap: 'Hexstone Cavern',
+        toRow: HEXSTONE_CAVERN_SIZE - 2,
+        toCol: HEXSTONE_GREAT_PLAINS_COL,
+        halfWidthTiles: GREAT_PLAINS_HEXSTONE_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
     ],
   },
   Labyrinth: {
@@ -1427,6 +1456,31 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toRow: 0,
         toCol: GREAT_PLAINS_MID_COL,
       },
+    ],
+  },
+  'Hexstone Cavern': {
+    name: 'Hexstone Cavern',
+    rows: HEXSTONE_CAVERN_SIZE,
+    cols: HEXSTONE_CAVERN_SIZE,
+    // Unused metadata — real texture is 'cave' via floorTextureFor, same
+    // "MapTerrain only ever drives movement cost, not the actual visual"
+    // shape every other map's own terrain field already has.
+    terrain: 'stone',
+    exits: [
+      // A later follow-up ask: "make it have a connection to the great
+      // plains from the southeast/south... a cave entrance/exit sprite
+      // with a sign next to it 'The Great Plains'" — south edge, offset
+      // toward the east (see HEXSTONE_GREAT_PLAINS_COL's own doc comment).
+      ...roadBandExits({
+        row: HEXSTONE_CAVERN_SIZE - 1,
+        col: HEXSTONE_GREAT_PLAINS_COL,
+        direction: 'south',
+        toMap: 'Great Plains',
+        toRow: GREAT_PLAINS_HEXSTONE_ROW,
+        toCol: 1,
+        halfWidthTiles: GREAT_PLAINS_HEXSTONE_HALF_WIDTH_TILES,
+        spread: 'col',
+      }),
     ],
   },
   Floro: {

@@ -326,6 +326,12 @@ export const MAP_NAMES = [
   // shared-border shape as Mystical Timberland/Bramwick above.
   'Gobbler Village',
   ...GOBBLER_VILLAGE_HUT_MAPS,
+  // A later follow-up ask: "create a new world called 'Hexstone
+  // Cavern'... a connection to the great plains from the southeast/
+  // south" — a direct shared-border connection off Great Plains' own
+  // northwest edge, same shape as Mystical Timberland/Gobbler Village
+  // above.
+  'Hexstone Cavern',
   ...GRIMOAK_CASTLE_MAPS,
   ...PORTAL_DUNGEON_MAPS,
 ] as const;
