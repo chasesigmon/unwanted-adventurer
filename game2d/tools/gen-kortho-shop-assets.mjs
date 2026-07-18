@@ -22,7 +22,7 @@ import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outPath = join(__dirname, '..', 'assets', 'kortho-shop-spritesheet.png');
 
-const SHOP_NAMES = ['Blacksmith', 'General Store', 'Inn', 'Bank', 'Armorer', 'Pet Salesman', 'Jobs Office'];
+const SHOP_NAMES = ['Blacksmith', 'General Store', 'Inn', 'Bank', 'Armorer', 'Pet Salesman', 'Boat Shop'];
 
 const python = `
 import random

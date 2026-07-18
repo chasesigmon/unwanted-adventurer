@@ -67,7 +67,8 @@ export class CorpseManagerService {
     gold?: number,
     sourceMaxHp?: number,
     sourceAttackDamage?: number,
-    isRare?: boolean
+    isRare?: boolean,
+    ownerUsername?: string
   ): CorpseSnapshot {
     const corpse: CorpseSnapshot = {
       id: randomUUID(),
@@ -82,6 +83,7 @@ export class CorpseManagerService {
       sourceMaxHp,
       sourceAttackDamage,
       isRare,
+      ownerUsername,
     };
     this.corpses.set(corpse.id, corpse);
     this.expiresAt.set(corpse.id, Date.now() + CORPSE_TTL_MS);
@@ -90,6 +92,19 @@ export class CorpseManagerService {
 
   get(id: string): CorpseSnapshot | undefined {
     return this.corpses.get(id);
+  }
+
+  // A later follow-up ask: "if the player has a corpse anywhere in the
+  // game, that has not faded away due to time limit, tell them where" —
+  // only ever set on a player's own death corpse (see
+  // spawnPlayerCorpseAndStripGear), so this never matches a monster/NPC
+  // corpse. A player can only ever die once at a time, so at most one
+  // corpse will ever match a given username.
+  findForOwner(ownerUsername: string): CorpseSnapshot | undefined {
+    for (const corpse of this.corpses.values()) {
+      if (corpse.ownerUsername === ownerUsername) return corpse;
+    }
+    return undefined;
   }
 
   remove(id: string): void {

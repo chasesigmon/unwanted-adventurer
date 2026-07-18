@@ -55,6 +55,14 @@ import {
   GRIMOAK_GROUNDS_MOAT_MID_ROW,
   GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW,
   GOBBLER_VILLAGE_MID,
+  KORTHO_NEAR_SAND_COL_START,
+  KORTHO_SEA_COL_START,
+  KORTHO_SEA_COL_END,
+  KORTHO_FAR_SAND_COL_START,
+  KORTHO_COLS,
+  KORTHO_DOCK_LENGTH_TILES,
+  KORTHO_DOCK_HALF_WIDTH_TILES,
+  TOWN_SIZE,
 } from '../../shared/maps.js';
 import { treePositionsFor } from '../../shared/trees.js';
 import {
@@ -133,6 +141,7 @@ import {
   MYSTICAL_TIMBERLAND_SIGN_POSITION,
   GRIMOAK_GROUNDS_GOBBLER_VILLAGE_SIGN_POSITION,
   GOBBLER_VILLAGE_SIGN_POSITION,
+  KORTHO_SHIMMERING_SEA_SIGN_POSITION,
   standingTorchPositionsFor,
 } from '../../shared/lighting.js';
 import {
@@ -243,6 +252,10 @@ import {
   GOBBLER_HUT_TEXTURE_KEY,
   GOBBLER_HUT_FRAME_WIDTH,
   GOBBLER_HUT_FRAME_HEIGHT,
+  CANOE_TEXTURE_KEY,
+  RAFT_TEXTURE_KEY,
+  BOAT_FRAME_SIZE,
+  BOAT_FRAME_FOR_FACING,
   SWORD_CURSOR,
   KEY_CURSOR,
   SLEEP_CURSOR,
@@ -273,6 +286,7 @@ import {
 } from '../ui/statusBar.js';
 import { logChatMessage, logCombatMessage, noteCombatActivity } from '../ui/log.js';
 import { showCenterToast } from '../ui/toast.js';
+import { updateRespawnOverlay } from '../ui/respawnOverlay.js';
 import { loadActionBarOnce } from '../ui/actionBar.js';
 import { closeAllModals, isInputCaptured, isMovementBlocked, refreshOpenModals, updateMapButtonVisibility } from '../ui/modalCore.js';
 import { refreshCharSheetIfOpen } from '../ui/charSheet.js';
@@ -340,6 +354,11 @@ export class WorldScene extends Phaser.Scene {
   // under the normal character sprite (same "layered on top/under, not a
   // replacement" shape as updateScutumGlow), keyed the same way.
   private flightCloudSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  // Boats (a later follow-up ask) — same "keyed by username or 'self',
+  // layered under the normal character sprite" shape as flightCloudSprites
+  // above, but with its own texture/frame (canoe vs raft, one of 4
+  // facings) rather than a fixed always-the-same-look effect.
+  private boatSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private floorTile!: Phaser.GameObjects.TileSprite;
   private doorSprites: Phaser.GameObjects.Sprite[] = [];
   // Classroom door symbols (a follow-up ask) — recreated alongside
@@ -428,6 +447,12 @@ export class WorldScene extends Phaser.Scene {
   // Road to Kortho one), and "Road to Kortho" itself carries a dirt
   // stretch + a stone stretch near Kortho.
   private roadTiles: Phaser.GameObjects.TileSprite[] = [];
+  // Kortho's own "Shimmering Sea" (a later follow-up ask) — the two sand
+  // strips + water fill + dock, all layered over Kortho's own base
+  // 'concrete' floor tile the same way roadTiles layers dirt roads over
+  // grass elsewhere (floorTextureFor has no per-tile-region concept, see
+  // its own doc comment).
+  private korthoSeaSprites: Phaser.GameObjects.GameObject[] = [];
   // The castle gate at the bridge's own outer end (a later follow-up
   // ask) — two leaf sprites (the right one just the same texture
   // flipped) that slide apart when open, only populated on 'Grimoak
@@ -599,6 +624,10 @@ export class WorldScene extends Phaser.Scene {
     this.load.svg('concrete', '/concrete-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     // Bramwick's own dirt-road street (a later follow-up ask).
     this.load.svg('dirt', '/dirt-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    // Kortho's own new beach (a later follow-up ask: "create a beachy
+    // sandy sprite to use for the land on both sides") plus its dock.
+    this.load.svg('sand', '/sand-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    this.load.svg('dock', '/dock-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     // Grimoak Grounds' own stretch of road leading up to it (a later
     // follow-up ask: "clearly have a different colored dirt road from
     // the dirt in Bramwick") — a cooler, grayer worn-path tone, its own
@@ -665,6 +694,10 @@ export class WorldScene extends Phaser.Scene {
       frameWidth: GOBBLER_HUT_FRAME_WIDTH,
       frameHeight: GOBBLER_HUT_FRAME_HEIGHT,
     });
+    // The small canoe/large raft (a later follow-up ask) — one 4-frame
+    // sheet each, one frame per facing (see tools/gen-boat-assets.mjs).
+    this.load.spritesheet(CANOE_TEXTURE_KEY, '/canoe-spritesheet.png', { frameWidth: BOAT_FRAME_SIZE, frameHeight: BOAT_FRAME_SIZE });
+    this.load.spritesheet(RAFT_TEXTURE_KEY, '/raft-spritesheet.png', { frameWidth: BOAT_FRAME_SIZE, frameHeight: BOAT_FRAME_SIZE });
     // A single fancy double door (a follow-up ask), used for every map
     // exit now — shop doors and every other transition alike.
     this.load.image(GRAND_DOOR_TEXTURE_KEY, '/grand-door.png');
@@ -940,6 +973,8 @@ export class WorldScene extends Phaser.Scene {
     this.repositionHpBars();
     this.updateDarkFog();
     applyDaynightTint(isAlwaysLit(this.currentMap), myProfile ? myProfile.skills[INFRAVISION_SKILL] !== undefined : false);
+    updateRespawnOverlay(myProfile?.respawningUntil);
+    if (myProfile?.respawningUntil && Date.now() < myProfile.respawningUntil) return;
 
     if (this.isMoving || this.isPunching) return;
 
@@ -1323,6 +1358,7 @@ export class WorldScene extends Phaser.Scene {
     this.updateBarrierVisual();
     this.updateWispVisual('self', this.player, Boolean(myProfile?.wispActive));
     this.updateFlightVisual('self', this.player, Boolean(myProfile?.flightActive));
+    this.updateBoatVisual('self', this.player, myProfile?.inBoat, this.facing);
     // Invisibility (a later follow-up ask) — "make the player's sprite
     // slightly faded while the spell is active," for the CASTER'S OWN
     // view of themselves only; other players don't even get a faded
@@ -1333,6 +1369,7 @@ export class WorldScene extends Phaser.Scene {
       this.updateScutumGlow(username, sprite, Boolean(sprite.getData('scutumActive')));
       this.updateWispVisual(username, sprite, Boolean(sprite.getData('wispActive')));
       this.updateFlightVisual(username, sprite, Boolean(sprite.getData('flightActive')));
+      this.updateBoatVisual(username, sprite, sprite.getData('inBoat') as 'small' | 'large' | null | undefined, (sprite.getData('facing') as Facing) ?? 'down');
     }
     for (const sprite of this.npcSprites.values()) this.repositionBarFor(sprite);
     for (const sprite of this.monsterSprites.values()) this.repositionBarFor(sprite);
@@ -1416,6 +1453,30 @@ export class WorldScene extends Phaser.Scene {
     }
     cloud.setVisible(true);
     cloud.setPosition(sprite.x, sprite.y + FLIGHT_CLOUD_FEET_OFFSET_Y);
+  }
+
+  // Boats (a later follow-up ask: "movement over water should make the
+  // canoe or raft turn in the direction the player is moving on the
+  // water and the player sprite attached to it basically should turn
+  // with it") — sits at a depth just below the owner's own sprite so
+  // they read as standing "in" it, reusing the SAME facing already
+  // computed for the owner's own idle/walk frame (see BOAT_FRAME_FOR_FACING)
+  // rather than any separate rotation math, so the boat and its rider
+  // always turn together by construction.
+  private updateBoatVisual(key: string, sprite: Phaser.GameObjects.Sprite, boat: 'small' | 'large' | null | undefined, facing: Facing): void {
+    let boatSprite = this.boatSprites.get(key);
+    if (!boat) {
+      boatSprite?.setVisible(false);
+      return;
+    }
+    const textureKey = boat === 'large' ? RAFT_TEXTURE_KEY : CANOE_TEXTURE_KEY;
+    if (!boatSprite) {
+      boatSprite = this.add.sprite(sprite.x, sprite.y, textureKey).setDepth(sprite.depth - 0.01);
+      this.boatSprites.set(key, boatSprite);
+    }
+    boatSprite.setTexture(textureKey, BOAT_FRAME_FOR_FACING[facing]);
+    boatSprite.setVisible(true);
+    boatSprite.setPosition(sprite.x, sprite.y);
   }
 
   // Barrier's own yellow dome (a later follow-up ask) — deliberately
@@ -1991,6 +2052,8 @@ export class WorldScene extends Phaser.Scene {
     this.wispSprites.clear();
     for (const sprite of this.flightCloudSprites.values()) sprite.destroy();
     this.flightCloudSprites.clear();
+    for (const sprite of this.boatSprites.values()) sprite.destroy();
+    this.boatSprites.clear();
     for (const sprite of this.npcSprites.values()) this.destroyEntitySprite(sprite);
     this.npcSprites.clear();
     for (const sprite of this.monsterSprites.values()) this.destroyEntitySprite(sprite);
@@ -2103,6 +2166,8 @@ export class WorldScene extends Phaser.Scene {
     this.northGateOpen = false;
     for (const tile of this.roadTiles) tile.destroy();
     this.roadTiles = [];
+    for (const sprite of this.korthoSeaSprites) sprite.destroy();
+    this.korthoSeaSprites = [];
     if (mapName === 'Bramwick') {
       // A later follow-up bug fix: "the dirt road to exit Bramwick is
       // still the same color as the rest of the town" — the reddish
@@ -2342,6 +2407,66 @@ export class WorldScene extends Phaser.Scene {
           )
           .setOrigin(0, 0)
           .setDepth(-0.99)
+      );
+
+      // Kortho's own "Shimmering Sea" (a later follow-up ask: "extend the
+      // land to the east by 5%... a body of water... at the end...
+      // another sandy piece of land... a dock... connects to the
+      // water"). Two sand strips + a water fill, all layered over
+      // Kortho's own base 'concrete' floor the same way roads layer dirt
+      // over grass elsewhere; the dock is drawn LAST so it sits on top of
+      // the water fill at its own near edge.
+      this.korthoSeaSprites.push(
+        this.add
+          .tileSprite(
+            KORTHO_NEAR_SAND_COL_START * TILE_SIZE,
+            0,
+            (KORTHO_SEA_COL_START - KORTHO_NEAR_SAND_COL_START) * TILE_SIZE,
+            TOWN_SIZE * TILE_SIZE,
+            'sand'
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+      this.korthoSeaSprites.push(
+        this.add
+          .tileSprite(
+            KORTHO_FAR_SAND_COL_START * TILE_SIZE,
+            0,
+            (KORTHO_COLS - KORTHO_FAR_SAND_COL_START) * TILE_SIZE,
+            TOWN_SIZE * TILE_SIZE,
+            'sand'
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+      const seaGraphics = this.add.graphics().setDepth(-0.98);
+      seaGraphics.fillStyle(0x1f7a93, 1);
+      seaGraphics.fillRect(
+        KORTHO_SEA_COL_START * TILE_SIZE,
+        0,
+        (KORTHO_SEA_COL_END - KORTHO_SEA_COL_START + 1) * TILE_SIZE,
+        TOWN_SIZE * TILE_SIZE
+      );
+      // A later "shimmering" pass — faint lighter bands across the water,
+      // same "cheap 2-tone variation, not a real shader" treatment this
+      // project's other flat-color fills (the moat) get by.
+      seaGraphics.fillStyle(0x2f95ad, 0.5);
+      for (let c = KORTHO_SEA_COL_START; c <= KORTHO_SEA_COL_END; c += 3) {
+        seaGraphics.fillRect(c * TILE_SIZE, 0, TILE_SIZE, TOWN_SIZE * TILE_SIZE);
+      }
+      this.korthoSeaSprites.push(seaGraphics);
+      this.korthoSeaSprites.push(
+        this.add
+          .tileSprite(
+            KORTHO_SEA_COL_START * TILE_SIZE,
+            (TOWN_MID_ROW - KORTHO_DOCK_HALF_WIDTH_TILES) * TILE_SIZE,
+            KORTHO_DOCK_LENGTH_TILES * TILE_SIZE,
+            (KORTHO_DOCK_HALF_WIDTH_TILES * 2 + 1) * TILE_SIZE,
+            'dock'
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.97)
       );
     } else if (mapName === 'Floro') {
       // Same entrance-patch treatment as Kortho above (a later follow-up
@@ -2702,6 +2827,10 @@ export class WorldScene extends Phaser.Scene {
       // out of Gobbler Village into 'Grimoak Grounds'").
       { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_GOBBLER_VILLAGE_SIGN_POSITION, label: 'Gobbler Village' },
       { map: 'Gobbler Village', position: GOBBLER_VILLAGE_SIGN_POSITION, label: 'Grimoak Grounds' },
+      // A later follow-up ask: "add a sign on the Kortho side of the
+      // beach with 'The Shimmering Sea'" — no reciprocal sign on the far
+      // shore, since nothing else is over there to name a way back to.
+      { map: 'Kortho', position: KORTHO_SHIMMERING_SEA_SIGN_POSITION, label: 'The Shimmering Sea' },
     ];
     this.signSprites = signDefs
       .filter((def) => def.map === mapName)
@@ -2918,6 +3047,16 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private applySync(player: PlayerSnapshot): void {
+    // A later follow-up ask: "when they respawn it should tell them in a
+    // tooltip where their corpse is" — detected as the transition from
+    // "was respawning" to "no longer respawning," so this only ever fires
+    // once per death rather than on every subsequent sync.
+    const wasRespawning = Boolean(myProfile?.respawningUntil && Date.now() < myProfile.respawningUntil);
+    const stillRespawning = Boolean(player.respawningUntil && Date.now() < player.respawningUntil);
+    if (wasRespawning && !stillRespawning && player.corpseLocation) {
+      showCenterToast(`Your corpse is in ${player.corpseLocation}.`);
+    }
+
     this.myUsername = player.username;
     this.race = player.race;
     this.gender = player.gender;
@@ -3106,6 +3245,8 @@ export class WorldScene extends Phaser.Scene {
           this.wispSprites.delete(p.username);
           this.flightCloudSprites.get(p.username)?.destroy();
           this.flightCloudSprites.delete(p.username);
+          this.boatSprites.get(p.username)?.destroy();
+          this.boatSprites.delete(p.username);
         }
         continue;
       }
@@ -3145,6 +3286,7 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('scutumActive', p.scutumActive);
       sprite.setData('wispActive', p.wispActive);
       sprite.setData('flightActive', p.flightActive);
+      sprite.setData('inBoat', p.inBoat ?? null);
       sprite.setData('specialization', p.specialization ?? null);
       this.ensureHpBar(sprite, p.hp, p.maxHp);
       this.ensureWeaponSprite(sprite, p.equipment.weapon === 'bone dagger', (sprite.getData('facing') as Facing) ?? 'down');
@@ -3165,6 +3307,8 @@ export class WorldScene extends Phaser.Scene {
         this.wispSprites.delete(username);
         this.flightCloudSprites.get(username)?.destroy();
         this.flightCloudSprites.delete(username);
+        this.boatSprites.get(username)?.destroy();
+        this.boatSprites.delete(username);
       }
     }
 

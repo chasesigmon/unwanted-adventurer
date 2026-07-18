@@ -1360,6 +1360,18 @@ body {
   gap: 4px;
 }
 
+/* "Your corpse is in X" (a later follow-up ask) — sits above the Where
+   tab's own player list. */
+.map-corpse-note {
+  color: #e0a03a;
+  background: #2a2418;
+  border: 1px solid #4a3a1e;
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
 .map-connections li {
   background: #1e1e2a;
   border: 1px solid #333;
@@ -1995,6 +2007,31 @@ body {
   color: #555;
   font-size: 14px;
   font-style: italic;
+}
+
+/* ---------- Respawn overlay (a later follow-up ask) ---------- */
+/* "Make the screen slightly darken while the yellow text countdown
+   happens" — a translucent dark scrim (NOT a full blackout like
+   #sleep-overlay above), above the HUD so it reads over everything while
+   the player is dead and waiting out the 10s respawn timer. */
+#respawn-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+
+#respawn-overlay:not([hidden]) {
+  display: flex;
+}
+
+#respawn-overlay-text {
+  color: #f2d94e;
+  font-size: 28px;
+  font-weight: 600;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
 }
 
 /* ---------- Custom tooltip (item 4) ---------- */

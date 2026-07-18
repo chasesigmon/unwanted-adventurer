@@ -88,6 +88,15 @@ export const GOBBLER_HUT_TEXTURE_KEY = 'gobbler-hut';
 export const GOBBLER_HUT_FRAME_WIDTH = 128;
 export const GOBBLER_HUT_FRAME_HEIGHT = 160;
 
+// The small canoe/large raft (a later follow-up ask) — each a 4-frame
+// spritesheet, one frame per facing in the same down/up/left/right row
+// order src/characterSprites.ts's own ROW_INDEX uses, so
+// `ROW_INDEX[facing]` doubles as the frame index here too (see
+// tools/gen-boat-assets.mjs).
+export const CANOE_TEXTURE_KEY = 'canoe';
+export const RAFT_TEXTURE_KEY = 'raft';
+export const BOAT_FRAME_SIZE = 48;
+
 // A single fancy double door (a follow-up ask) used for EVERY map exit
 // now — shop doors and every other transition alike — replacing both the
 // old plain 'door' SVG and the shop-only wooden-door spritesheet (which
@@ -383,6 +392,11 @@ export function facingForDirection(direction: Direction): Facing {
   if (direction === 'south') return 'down';
   return direction === 'west' ? 'left' : 'right';
 }
+
+// The canoe/raft spritesheets' own frame order (see tools/gen-boat-
+// assets.mjs) — matches src/characterSprites.ts's ROW_INDEX exactly, so a
+// boat always faces the same way its rider does.
+export const BOAT_FRAME_FOR_FACING: Record<Facing, number> = { down: 0, up: 1, left: 2, right: 3 };
 
 export function drawStatBar(bar: Phaser.GameObjects.Graphics, ratio: number, color: number): void {
   bar.clear();

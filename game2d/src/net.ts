@@ -1040,14 +1040,34 @@ export class NetworkManager extends EventTarget {
   }
 
   // The Utility Classroom's own level-15 spell (a later follow-up ask) —
-  // see game.gateway.ts's handleCastRecall.
-  castRecall(poiId: string): Promise<CastSpellAck> {
+  // reworked to a single settable recall point (see game.gateway.ts's
+  // handleCastRecall) — no poiId anymore, the server just teleports to
+  // whichever point the player last set via setRecallPoint below.
+  castRecall(): Promise<CastSpellAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
         reject(new Error('Not connected.'));
         return;
       }
-      this.socket.emit('castRecall', { poiId }, (res) => {
+      this.socket.emit('castRecall', {}, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // "The player must set one location to be their recall choice at a
+  // time... travel to the respective place... use recall... 'Set <name>
+  // as recall point'" — a free action (no mana/cooldown, see
+  // game.gateway.ts's handleSetRecallPoint), gated only on physically
+  // standing in one of shared/recall.ts's RECALL_POINTS maps right now.
+  setRecallPoint(): Promise<{ ok: boolean; message?: string; recallPointId?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('setRecallPoint', {}, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

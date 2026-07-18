@@ -38,7 +38,10 @@ export interface MapDefinition {
 
 const GREAT_PLAINS_SIZE = 100;
 const LABYRINTH_SIZE = 60;
-const TOWN_SIZE = 50;
+// Exported (a later follow-up ask needed Kortho's own unchanged ROW count
+// client-side, to size the new sand/sea/sand strips' own tileSprites —
+// Kortho only ever grows east, never taller, see KORTHO_COLS above).
+export const TOWN_SIZE = 50;
 // Exported so the client can decide which way a shop building's facade
 // should face (item 13) — a shop door west of the town's own center
 // column faces right/east (toward the main square), one east of it faces
@@ -141,7 +144,7 @@ const KORTHO_SHOP_DOORS: Record<(typeof KORTHO_SHOP_MAPS)[number], { row: number
   'Kortho Bank': { row: 15, col: 40 },
   'Kortho Armorer': { row: 32, col: 15 },
   'Kortho Pet Salesman': { row: 32, col: 25 },
-  'Kortho Jobs Office': { row: 32, col: 35 },
+  'Kortho Boat Shop': { row: 32, col: 35 },
 };
 
 function korthoShopInteriorDefinition(name: (typeof KORTHO_SHOP_MAPS)[number]): MapDefinition {
@@ -374,6 +377,77 @@ export function isMoatBlocked(mapName: MapName, row: number, col: number): boole
 export function isWithinMoatFootprint(mapName: MapName, row: number, col: number): boolean {
   if (mapName !== 'Grimoak Grounds') return false;
   return row >= MOAT_OUTER_TOP && row <= MOAT_OUTER_BOTTOM && col >= MOAT_OUTER_LEFT && col <= MOAT_OUTER_RIGHT;
+}
+
+// ---------- Kortho's own "Shimmering Sea" (a later follow-up ask: "extend
+// the land to the east by 5%... a body of water... half of the length of
+// the road to kortho... at the end... another sandy piece of land 5% the
+// width of the town... a dock... connects to the water") — three new
+// strips appended to Kortho's own east edge, beyond its original TOWN_SIZE
+// square (the shop-door grid stays untouched, all of it sits west of col
+// 50). ----------
+export const KORTHO_SAND_STRIP_WIDTH_TILES = Math.round(TOWN_SIZE * 0.05);
+export const KORTHO_SEA_LENGTH_TILES = Math.round(ROAD_TO_KORTHO_COLS / 2);
+export const KORTHO_NEAR_SAND_COL_START = TOWN_SIZE;
+export const KORTHO_SEA_COL_START = KORTHO_NEAR_SAND_COL_START + KORTHO_SAND_STRIP_WIDTH_TILES;
+export const KORTHO_SEA_COL_END = KORTHO_SEA_COL_START + KORTHO_SEA_LENGTH_TILES - 1;
+export const KORTHO_FAR_SAND_COL_START = KORTHO_SEA_COL_END + 1;
+export const KORTHO_COLS = KORTHO_FAR_SAND_COL_START + KORTHO_SAND_STRIP_WIDTH_TILES;
+// A wooden dock (a later follow-up ask) — a walkable strip poking out
+// from the town's own shore into the near edge of the sea, same
+// "carve an exception out of the water-blocked ring" shape isBridgeTile
+// already uses for the moat.
+export const KORTHO_DOCK_LENGTH_TILES = 6;
+export const KORTHO_DOCK_HALF_WIDTH_TILES = 2;
+
+function isKorthoDockTile(row: number, col: number): boolean {
+  return (
+    row >= TOWN_MID_ROW - KORTHO_DOCK_HALF_WIDTH_TILES &&
+    row <= TOWN_MID_ROW + KORTHO_DOCK_HALF_WIDTH_TILES &&
+    col >= KORTHO_SEA_COL_START &&
+    col < KORTHO_SEA_COL_START + KORTHO_DOCK_LENGTH_TILES
+  );
+}
+
+export function isKorthoSeaBlocked(mapName: MapName, row: number, col: number): boolean {
+  if (mapName !== 'Kortho') return false;
+  if (col < KORTHO_SEA_COL_START || col > KORTHO_SEA_COL_END) return false;
+  return !isKorthoDockTile(row, col);
+}
+
+// A later follow-up ask: "pets/animated dead/summons cannot travel over
+// water" and "if a player lands on water... and they do not have a boat"
+// both need one single "is this tile water" answer spanning EVERY body of
+// water in the game — the moat, plus Kortho's own new sea — rather than
+// each caller having to know and OR together every individual water
+// feature itself.
+export function isWaterBlocked(mapName: MapName, row: number, col: number): boolean {
+  return isMoatBlocked(mapName, row, col) || isKorthoSeaBlocked(mapName, row, col);
+}
+
+// "If a player lands on water from flight wearing off and they do not
+// have a boat... place their corpse on the nearest body of land" — a
+// plain expanding-ring search outward from the drowning tile (bounded by
+// the map's own size) for the first non-water, in-bounds tile; no other
+// occupancy check (trees/buildings/etc) since a corpse doesn't block
+// movement anyway. Falls back to the map's own dead center if somehow
+// nothing qualifies within the search bound (should never happen — no
+// water body in this game is anywhere near that large).
+export function nearestLandTile(mapName: MapName, row: number, col: number): { row: number; col: number } {
+  const map = getMap(mapName);
+  const maxRadius = Math.max(map.rows, map.cols);
+  for (let radius = 0; radius <= maxRadius; radius++) {
+    for (let dRow = -radius; dRow <= radius; dRow++) {
+      for (let dCol = -radius; dCol <= radius; dCol++) {
+        if (Math.max(Math.abs(dRow), Math.abs(dCol)) !== radius) continue;
+        const r = row + dRow;
+        const c = col + dCol;
+        if (r < 0 || r >= map.rows || c < 0 || c >= map.cols) continue;
+        if (!isWaterBlocked(mapName, r, c)) return { row: r, col: c };
+      }
+    }
+  }
+  return { row: Math.floor(map.rows / 2), col: Math.floor(map.cols / 2) };
 }
 
 // Just north of the south bridge, touching its inner (castle-side) end —
@@ -1373,7 +1447,10 @@ export const MAPS: Record<MapName, MapDefinition> = {
   Kortho: {
     name: 'Kortho',
     rows: TOWN_SIZE,
-    cols: TOWN_SIZE,
+    // Widened east (a later follow-up ask) to fit a new sand/sea/sand strip
+    // beyond the original stone town square — see KORTHO_COLS's own doc
+    // comment above.
+    cols: KORTHO_COLS,
     // Same reasoning as Floro above.
     terrain: 'stone',
     exits: [
@@ -1406,7 +1483,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Kortho Bank': korthoShopInteriorDefinition('Kortho Bank'),
   'Kortho Armorer': korthoShopInteriorDefinition('Kortho Armorer'),
   'Kortho Pet Salesman': korthoShopInteriorDefinition('Kortho Pet Salesman'),
-  'Kortho Jobs Office': korthoShopInteriorDefinition('Kortho Jobs Office'),
+  'Kortho Boat Shop': korthoShopInteriorDefinition('Kortho Boat Shop'),
   'Road to Kortho': {
     name: 'Road to Kortho',
     rows: ROAD_TO_KORTHO_ROWS,

@@ -85,7 +85,12 @@ export const KORTHO_SHOP_MAPS = [
   'Kortho Bank',
   'Kortho Armorer',
   'Kortho Pet Salesman',
-  'Kortho Jobs Office',
+  // A later follow-up ask: "change one of the shops in Kortho to be a
+  // 'Boat Shop'" — the Jobs Office was the one Kortho shop with no real
+  // mechanics of its own yet (empty vendor items, "no postings on the
+  // board today"), so it's the one repurposed rather than any shop that
+  // was already stocked/functional.
+  'Kortho Boat Shop',
 ] as const;
 
 // Bramwick (a later follow-up ask) — a small village just north of

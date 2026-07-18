@@ -225,6 +225,15 @@ export class Player {
   @Column({ name: 'visited_pois', type: 'jsonb', default: () => "'[]'" })
   visitedPois!: string[];
 
+  // A later follow-up ask reworked recall to a single settable point
+  // ("the player must set one location to be their recall choice at a
+  // time") — the RecallPoint.id (see shared/recall.ts) they last set via
+  // "Set <name> as recall point", or null until they ever do. Also the
+  // player's own default respawn destination (see game.gateway.ts's
+  // respawnDefeatedPlayer) once set, falling back to Grimoak Castle.
+  @Column({ name: 'recall_point_id', type: 'varchar', length: 32, nullable: true, default: null })
+  recallPointId!: string | null;
+
   // Summoner's own kill-tracking (a later follow-up ask) — see
   // shared/types.ts's own doc comment.
   @Column({ name: 'killed_monster_kinds', type: 'jsonb', default: () => "'[]'" })

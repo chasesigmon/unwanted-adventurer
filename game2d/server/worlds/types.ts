@@ -64,6 +64,11 @@ export interface PlayerState extends Location, Attributes {
   // players need to see the floating visual/wind trail too" reasoning as
   // wispActive above.
   flightActive: boolean;
+  // Boats (a later follow-up ask) — needed here too so a follower's own
+  // tickAll (see PetManagerService/AnimatedMonsterManagerService) can read
+  // its owner's current boat state without a separate lookup, and so
+  // getMapState shows OTHER nearby players their boat sprite too.
+  inBoat: 'small' | 'large' | null;
   // A later follow-up ask (item 4's dummy players "of different
   // specializations" surfaced this gap): this was never threaded through
   // to OTHER players' clients at all before — see PlayerSnapshot's own

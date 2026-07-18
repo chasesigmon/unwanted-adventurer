@@ -11,6 +11,7 @@
 // longer requires the old one to have never existed — see
 // PetManagerService's own hasPet/buy, which now only check `alive`.
 import type { MapName, MonsterKind, Race } from './constants.js';
+import { isWaterBlocked } from './maps.js';
 
 export const PET_KINDS = ['puppy', 'kitten', 'piglet'] as const;
 export type PetKind = (typeof PET_KINDS)[number];
@@ -78,6 +79,15 @@ export const PET_EVOLVED_NAME: Record<PetKind, string> = {
 export const PET_EVOLUTION_HP_BONUS = 25;
 export const PET_EVOLUTION_ATTACK_BONUS = 3;
 
+// A later follow-up ask: "pets sold in Bramwick... classified as 'small'
+// when puppy/kitten/piglet, 'medium' once evolved" — feeds the small
+// raft/canoe's own "small or medium sized pet" capacity check (see
+// shared/boats.ts); an animated monster/summon has no size tier at all,
+// it's simply never eligible for the canoe regardless of size (see
+// boats.ts's own doc comment).
+export const FOLLOWER_SIZES = ['small', 'medium'] as const;
+export type FollowerSize = (typeof FOLLOWER_SIZES)[number];
+
 // Phase C's own "give/equip UI" ask — a follower can now hold items given
 // to it (see game.gateway.ts's handleGiveFollowerItem/handleTakeFollowerItem)
 // and equip a weapon/torso-armor item out of its own inventory (see
@@ -104,6 +114,10 @@ export interface PetSnapshot {
   // Set once, the moment this pet evolves (see PET_EVOLUTION_LEVEL) — a
   // flat bonus on top of PET_ATTACK_DAMAGE, undefined/0 until then.
   attackDamageBonus?: number;
+  // 'small' until PET_EVOLUTION_LEVEL, 'medium' from the same moment
+  // attackDamageBonus first gets set (see PetManagerService.grantExp) —
+  // see FollowerSize's own doc comment above.
+  size: FollowerSize;
   map: MapName;
   row: number;
   col: number;
@@ -214,3 +228,44 @@ export const PET_CORPSE_TTL_MS = 10 * 60 * 1000;
 // SACRIFICE_GOLD_PER_LEVEL), reusing the pet's own level rather than
 // inventing a separate figure.
 export const PET_CORPSE_SACRIFICE_GOLD_PER_LEVEL = 3;
+
+// A later follow-up ask: "pets/animated dead/summons cannot travel over
+// water and instead have to navigate around naturally like a player
+// would" — shared by PetManagerService.tickAll and
+// AnimatedMonsterManagerService.tickAll (both do a greedy single-axis
+// step toward a follow/attack target, no real pathfinding). Tries the
+// axis with the larger remaining distance first, same as before; if that
+// candidate tile is water and `canCrossWater` is false, falls back to
+// the OTHER axis instead of just standing still — a light "walk around
+// the edge" approximation, not a real pathfind, but enough for a
+// follower to route around a lake/moat rather than stopping dead at its
+// shore. Returns undefined if no step is currently possible (both axes
+// blocked, or already adjacent). `canCrossWater` is true while the owner
+// is flying (a later follow-up ask: "if a player successfully casts
+// flight... their pets/animated dead/summons have flight as well") or
+// riding a boat that's large enough to carry this particular follower
+// kind (see shared/boats.ts) — callers compute that flag themselves from
+// the owner's own PlayerState, since neither manager here knows about
+// flight/boats directly.
+export function computeFollowerStep(
+  current: { row: number; col: number },
+  target: { row: number; col: number },
+  mapName: MapName,
+  canCrossWater: boolean
+): { row: number; col: number } | undefined {
+  const dRow = target.row - current.row;
+  const dCol = target.col - current.col;
+  if (Math.abs(dRow) + Math.abs(dCol) <= 1) return undefined;
+
+  const tryStep = (stepRow: number, stepCol: number): { row: number; col: number } | undefined => {
+    if (stepRow === 0 && stepCol === 0) return undefined;
+    const candidate = { row: current.row + stepRow, col: current.col + stepCol };
+    if (!canCrossWater && isWaterBlocked(mapName, candidate.row, candidate.col)) return undefined;
+    return candidate;
+  };
+
+  const preferRow = Math.abs(dRow) >= Math.abs(dCol);
+  const primary = preferRow ? tryStep(Math.sign(dRow), 0) : tryStep(0, Math.sign(dCol));
+  if (primary) return primary;
+  return preferRow ? tryStep(0, Math.sign(dCol)) : tryStep(Math.sign(dRow), 0);
+}

@@ -20,7 +20,7 @@ import {
 } from '../../shared/lighting.js';
 import {
   isCastleExteriorBlocked,
-  isMoatBlocked,
+  isWaterBlocked,
   isGateTile,
   GATE_COL_LEFT,
   GATE_COL_RIGHT,
@@ -144,7 +144,12 @@ export class WorldManagerService {
   private isOccupied(mapName: MapName, row: number, col: number, excludeUsername: string, flying = false): boolean {
     if (isTreeTile(mapName, row, col)) return true;
     if (isCastleExteriorBlocked(mapName, row, col)) return true;
-    if (!flying && isMoatBlocked(mapName, row, col)) return true;
+    // `flying` doubles as "can cross water at all" (a later follow-up ask
+    // added boats — see game.gateway.ts's handleMove, which also passes
+    // true here while the mover simply OWNS a canoe/raft, not just while
+    // actually airborne) — isWaterBlocked covers every body of water in
+    // the game (the moat, plus Kortho's own new sea), not just the moat.
+    if (!flying && isWaterBlocked(mapName, row, col)) return true;
     if (isGateTile(mapName, row, col) && !this.isGateOpen(mapName, row)) return true;
     if (isFireplaceBlocked(mapName, row, col)) return true;
     if (isBenchBlocked(mapName, row, col)) return true;
@@ -282,6 +287,7 @@ export class WorldManagerService {
         barrierActive: state.barrierActive,
         wispActive: state.wispActive,
         flightActive: state.flightActive,
+        inBoat: state.inBoat,
         specialization: state.specialization ?? undefined,
         invisibleActive: state.invisibleActive,
         dancing: state.dancing,

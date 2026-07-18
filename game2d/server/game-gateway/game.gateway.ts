@@ -45,7 +45,10 @@ import {
   CAVERNA_CHEST_POSITION,
   CAVERNA_SECRET_DOOR_POSITION,
   CAVERNA_SECRET_DOOR_INSIDE_POSITION,
+  isWaterBlocked,
+  nearestLandTile,
 } from '../../shared/maps.js';
+import { pickBoatItem, boatSizeForItem } from '../../shared/boats.js';
 import { resolveMove } from '../worlds/resolveMove.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { STARTING_MAP, DIRECTIONS, MAP_NAMES, HOUSE_NAMES, SPECIALIZATION_PATHS, SPECIALIZATION_LEVEL_REQUIREMENT, houseForMap, specializationForMap } from '../../shared/constants.js';
@@ -271,7 +274,7 @@ import {
   POTION_RESTORE_AMOUNT,
 } from '../../shared/items.js';
 import { questDefinition, QUESTS, LEARN_SPELLS_QUEST_ID, allObjectivesDone } from '../../shared/quests.js';
-import { recallPointForMap, recallPointById } from '../../shared/recall.js';
+import { RECALL_POINTS, recallPointForMap, recallPointById } from '../../shared/recall.js';
 import { MONSTER_KINDS } from '../../shared/constants.js';
 import type { Direction, MapName, MonsterClass, MonsterKind, Race } from '../../shared/constants.js';
 
@@ -788,6 +791,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         this.checkWispTransformationExpiry(client);
         this.checkInvisibilityExpiry(client);
         this.checkFlightExpiry(client);
+        this.checkRespawnCountdown(client);
       }
     }, MONSTER_TICK_INTERVAL_MS);
 
@@ -1041,10 +1045,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       flightActive: client.data.flightActive,
       flightActiveUntil: client.data.flightActiveUntil,
       flightBurstReadyAt: client.data.flightBurstReadyAt,
+      inBoat: client.data.inBoat,
       party: client.data.party,
       house: client.data.house ?? undefined,
       specialization: client.data.specialization ?? undefined,
       visitedPois: client.data.visitedPois,
+      recallPointId: client.data.recallPointId,
+      respawningUntil: client.data.respawningUntil,
+      corpseLocation: this.corpseManager.findForOwner(client.data.username)?.map ?? null,
       killedMonsterKinds: client.data.killedMonsterKinds,
     };
   }
@@ -1348,7 +1356,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       leveledUp = grantResult.leveledUp;
       expGained = grantResult.message ? undefined : rawExpGained;
       this.spawnPlayerCorpseAndStripGear(targetClient, client.data.username);
-      this.respawnDefeatedPlayer(targetClient);
+      this.beginRespawnCountdown(targetClient);
       this.endPlayerCombat(client.data.username);
     } else {
       this.worldManager.updateState(targetUsername, { hp: targetClient.data.hp });
@@ -1371,20 +1379,43 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // "lose your gear on death" stakes PvP kills should actually carry;
   // only reached on a PLAYER kill (a monster killing a player still just
   // respawns them with nothing lost, unchanged).
-  private spawnPlayerCorpseAndStripGear(targetClient: GameSocket, killedByUsername: string): void {
+  private spawnPlayerCorpseAndStripGear(
+    targetClient: GameSocket,
+    killedByUsername: string | undefined,
+    row: number = targetClient.data.row,
+    col: number = targetClient.data.col
+  ): void {
     const items = [...targetClient.data.inventory, ...Object.values(targetClient.data.equipment)];
     this.corpseManager.spawn(
       targetClient.data.race,
       targetClient.data.level,
       items,
       targetClient.data.map,
-      targetClient.data.row,
-      targetClient.data.col,
-      killedByUsername
+      row,
+      col,
+      killedByUsername,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      targetClient.data.username
     );
     targetClient.data.inventory = [];
     targetClient.data.equipment = {};
     this.worldManager.updateState(targetClient.data.username, { inventory: [], equipment: {} });
+  }
+
+  // A later follow-up ask: "if a player lands on water from flight
+  // wearing off and they do not have a boat in their inventory, then it
+  // should kill the player and place their corpse on the nearest body of
+  // land" — same full inventory/equipment transfer a PvP kill uses (see
+  // spawnPlayerCorpseAndStripGear), just at the nearest LAND tile rather
+  // than the (underwater) death tile itself, and with no killer credited.
+  private killPlayerFromWaterLanding(client: GameSocket): void {
+    const land = nearestLandTile(client.data.map, client.data.row, client.data.col);
+    this.spawnPlayerCorpseAndStripGear(client, undefined, land.row, land.col);
+    this.systemMessage(client, `You drown! Your body washes up nearby, and everything you carried is left in a corpse in ${client.data.map}.`);
+    this.beginRespawnCountdown(client);
   }
 
   // Every map:state broadcast (25+ call sites) goes through here now
@@ -1487,6 +1518,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         house: client.data.house,
         specialization: client.data.specialization,
         visitedPois: client.data.visitedPois,
+        recallPointId: client.data.recallPointId,
         killedMonsterKinds: client.data.killedMonsterKinds,
         // A follow-up bug fix: "the pet is a permanent part of the
         // player's group... it disappears after updates" — persistStats
@@ -2202,10 +2234,42 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.flightActive = false;
     client.data.flightActiveUntil = null;
     this.worldManager.updateState(client.data.username, { flightActive: false });
+
+    // A later follow-up ask: "if a player lands on water from flight
+    // wearing off and they do not have a boat in their inventory, then it
+    // should kill the player" — checked the instant flight itself turns
+    // off, since that's the only moment a player can be standing on a
+    // water tile without already being in a boat (ordinary movement onto
+    // water requires owning one, see handleMove's own canCrossWater).
+    if (isWaterBlocked(client.data.map, client.data.row, client.data.col)) {
+      this.syncBoatState(client);
+      if (!client.data.inBoat) {
+        void this.persistStats(client);
+        client.emit('sync', { player: this.snapshotFor(client) });
+        this.killPlayerFromWaterLanding(client);
+        return;
+      }
+    }
+
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     this.systemMessage(client, 'Your flight spell ends and you settle back onto the ground.');
+  }
+
+  // A boat is only ever "worn" while standing on water and carrying one
+  // (see shared/boats.ts's pickBoatItem) — called after every successful
+  // move and the instant flight ends, never a manual toggle.
+  private syncBoatState(client: GameSocket): void {
+    if (client.data.flightActive) return; // hovering above it, not "in" a boat
+    if (isWaterBlocked(client.data.map, client.data.row, client.data.col)) {
+      if (!client.data.inBoat) {
+        const item = pickBoatItem(client.data.inventory);
+        client.data.inBoat = item ? (boatSizeForItem(item) ?? null) : null;
+      }
+    } else if (client.data.inBoat) {
+      client.data.inBoat = null;
+    }
   }
 
   // Invisibility (a later follow-up ask) — same periodic-expiry shape as
@@ -2330,7 +2394,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.hp = Math.max(0, client.data.hp - damage);
     const died = client.data.hp <= 0;
     if (died) {
-      this.respawnDefeatedPlayer(client);
+      this.beginRespawnCountdown(client);
     } else {
       this.worldManager.updateState(client.data.username, { hp: client.data.hp });
     }
@@ -2428,13 +2492,52 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // counter-attack (resolveMonsterCounterAttack). Doesn't grant exp or
   // leave a corpse (only a player killer does that); this just puts them
   // back on their feet somewhere.
-  private respawnDefeatedPlayer(targetClient: GameSocket): void {
+  // A later follow-up ask: "it should take 10 seconds for the player to
+  // respawn and have a countdown shown on screen... the screen darken
+  // while the yellow text countdown happens" — every death (PvP, a
+  // monster's counter-attack, or drowning — see killPlayerFromWaterLanding)
+  // now funnels through here instead of respawning instantly. Movement/
+  // attacks are blocked for the duration (see handleMove/handlePunch's own
+  // respawningUntil checks); the actual position/hp reset happens in
+  // finishRespawn once checkRespawnCountdown notices time's up.
+  private static readonly RESPAWN_COUNTDOWN_MS = 10 * 1000;
+
+  private beginRespawnCountdown(targetClient: GameSocket): void {
+    targetClient.data.respawningUntil = Date.now() + GameGateway.RESPAWN_COUNTDOWN_MS;
+    targetClient.emit('sync', { player: this.snapshotFor(targetClient) });
+  }
+
+  // Checked on the same fast tick flight/wisp/etc. already expire on (see
+  // its own call site) — reads the CURRENTLY connected socket for this
+  // username every time, so a mid-countdown reconnect never resolves
+  // against a stale closure.
+  private checkRespawnCountdown(client: GameSocket): void {
+    if (!client.data.username || client.data.respawningUntil === null) return;
+    if (Date.now() < client.data.respawningUntil) return;
+    this.finishRespawn(client);
+  }
+
+  // A later follow-up ask: "the player should respawn in their set recall
+  // point. By default all new players and any player that does not yet
+  // have the recall spell or has not set their recall point should
+  // respawn to Grimoak Castle" — falls back through the SAME
+  // 'grimoak-castle' RECALL_POINT every other recall destination is
+  // drawn from, rather than a separately-hardcoded map, so the two stay
+  // numerically impossible to drift apart.
+  private respawnDestination(client: GameSocket): MapName {
+    const point = client.data.recallPointId ? recallPointById(client.data.recallPointId) : undefined;
+    return point?.landingMap ?? recallPointById('grimoak-castle')?.landingMap ?? STARTING_MAP;
+  }
+
+  private finishRespawn(targetClient: GameSocket): void {
     const previousMap = targetClient.data.map;
-    const spawn = startingPositionFor(STARTING_MAP);
-    targetClient.data.map = STARTING_MAP;
+    const destinationMap = this.respawnDestination(targetClient);
+    const spawn = startingPositionFor(destinationMap);
+    targetClient.data.map = destinationMap;
     targetClient.data.row = spawn.row;
     targetClient.data.col = spawn.col;
     targetClient.data.hp = targetClient.data.maxHp;
+    targetClient.data.respawningUntil = null;
 
     this.worldManager.updateState(targetClient.data.username, {
       mapName: targetClient.data.map,
@@ -2446,9 +2549,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (previousMap !== targetClient.data.map) {
       void targetClient.leave(previousMap);
       void targetClient.join(targetClient.data.map);
+      this.server.to(previousMap).emit('map:state', this.mapStateFor(previousMap));
     }
     this.applyCondeathPenalty(targetClient);
+    void this.persistPosition(targetClient);
     targetClient.emit('sync', { player: this.snapshotFor(targetClient) });
+    this.server.to(targetClient.data.map).emit('map:state', this.mapStateFor(targetClient.data.map));
+
+    // "When they respawn it should tell them in a tooltip where their
+    // corpse is."
+    const corpse = this.corpseManager.findForOwner(targetClient.data.username);
+    if (corpse) {
+      this.systemMessage(targetClient, `You respawn. Your corpse (and everything in it) is waiting in ${corpse.map}.`);
+    }
   }
 
   async handleConnection(client: GameSocket): Promise<void> {
@@ -2591,6 +2704,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.flightActive = false;
     client.data.flightActiveUntil = null;
     client.data.flightBurstReadyAt = null;
+    // Same tradeoff again — a boat is only ever "worn" while standing on
+    // water; nothing to carry over on reconnect.
+    client.data.inBoat = null;
+    // Same tradeoff again — the 10s respawn countdown never carries over.
+    client.data.respawningUntil = null;
     // A minimal player party (a later follow-up ask) — UNLIKE the toggles
     // above, party membership genuinely does survive a reconnect (see
     // GameGateway's own in-memory `parties` map, keyed by username rather
@@ -2610,6 +2728,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.specialization = doc?.specialization ?? null;
     client.data.visitedPois = doc?.visitedPois ?? [];
     client.data.killedMonsterKinds = doc?.killedMonsterKinds ?? [];
+    client.data.recallPointId = doc?.recallPointId ?? null;
+    // Reconnecting mid-lake (rare, but possible if the connection dropped
+    // while riding a boat) should still show the boat sprite rather than
+    // waiting for the next move.
+    this.syncBoatState(client);
 
     // A follow-up bug fix: "the pet is a permanent part of the player's
     // group... it disappears from the group" after a real server
@@ -2665,6 +2788,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       invisibleActive: client.data.invisibleActive,
       dancing: client.data.dancing,
       flightActive: client.data.flightActive,
+      inBoat: client.data.inBoat,
       specialization: client.data.specialization,
     });
     void client.join(client.data.map);
@@ -2706,6 +2830,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     if (this.isParalyzed(`player:${client.data.username}`)) {
       return { ok: false, player: this.snapshotFor(client), message: "You are paralyzed by a skeleton's glare and cannot move!" };
+    }
+    if (client.data.respawningUntil !== null) {
+      return { ok: false, player: this.snapshotFor(client), message: 'You are dead and respawning...' };
     }
 
     const parsed = directionSchema.safeParse(rawDirection);
@@ -2770,7 +2897,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
     }
 
-    const result = this.worldManager.processMove(username, parsed.data, client.data.flightActive);
+    // A later follow-up ask: "for the canoe and raft to work, the player
+    // must have them in their inventory and as soon as they either walk
+    // onto water... then they should automatically be in their boat" —
+    // simply OWNING a boat item is what unlocks stepping onto water at
+    // all (syncBoatState below then actually puts them "in" it once they
+    // land there); flying still bypasses water the same way it always
+    // has.
+    const canCrossWater = client.data.flightActive || pickBoatItem(client.data.inventory) !== undefined;
+    const result = this.worldManager.processMove(username, parsed.data, canCrossWater);
     if (!result) {
       return { ok: false, player: this.snapshotFor(client), message: 'Your session was lost. Please reconnect.' };
     }
@@ -2796,7 +2931,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // Movement points (a later follow-up ask re-added this resource) —
     // floors at 0 rather than going negative or blocking the move.
     client.data.mv = Math.max(0, client.data.mv - MV_COST_PER_TILE);
-    this.worldManager.updateState(username, { mv: client.data.mv });
+    this.syncBoatState(client);
+    this.worldManager.updateState(username, { mv: client.data.mv, inBoat: client.data.inBoat });
 
     void this.persistPosition(client);
 
@@ -2878,6 +3014,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, "You are paralyzed by a skeleton's glare and cannot attack!");
       return;
     }
+    if (client.data.respawningUntil !== null) return;
     // Druid's own wisp transformation (a later follow-up ask) — "the
     // player should not be able to attack while in wisp form."
     if (client.data.wispActive) {
@@ -4009,7 +4146,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (grantResult.message) growthMessages.push(grantResult.message);
       this.spawnPlayerCorpseAndStripGear(targetClient, client.data.username);
 
-      this.respawnDefeatedPlayer(targetClient);
+      this.beginRespawnCountdown(targetClient);
       this.endPlayerCombat(client.data.username);
     } else {
       this.worldManager.updateState(targetUsername, { hp: targetClient.data.hp });
@@ -6712,21 +6849,41 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // not be teleported" just means no OTHER real player ever moves, which
   // is already true by construction (only this owner's own companions are
   // ever touched).
+  // A later follow-up ask reworked recall down to a single settable
+  // point ("the player must set one location to be their recall choice
+  // at a time... in order to set the recall location the player must
+  // travel to the respective place... while there they use recall and...
+  // it should have the option to 'Set <name> as recall point'") — a free
+  // action (no mana/cooldown, unlike the actual teleport below), gated
+  // only on physically standing in one of RECALL_POINTS' own maps right
+  // now. Overwrites whatever was set before — "just 1 recall point at a
+  // time."
+  @SubscribeMessage('setRecallPoint')
+  handleSetRecallPoint(@ConnectedSocket() client: GameSocket): { ok: boolean; message?: string; recallPointId?: string } {
+    if (client.data.skills[RECALL_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the recall spell yet." };
+    }
+    const point = recallPointForMap(client.data.map);
+    if (!point) {
+      return { ok: false, message: 'You cannot set a recall point here.' };
+    }
+    client.data.recallPointId = point.id;
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    return { ok: true, message: `${point.label} set as your recall point.`, recallPointId: point.id };
+  }
+
   @SubscribeMessage('castRecall')
-  handleCastRecall(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+  handleCastRecall(@ConnectedSocket() client: GameSocket): CastSpellAck {
     if (client.data.skills[RECALL_SKILL] === undefined) {
       return { ok: false, message: "You don't know the recall spell yet." };
     }
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
-    const parsed = z.object({ poiId: z.string() }).safeParse(payload);
-    if (!parsed.success) {
-      return { ok: false, message: 'Invalid destination.' };
-    }
-    const point = recallPointById(parsed.data.poiId);
-    if (!point || !client.data.visitedPois.includes(point.id)) {
-      return { ok: false, message: "You haven't been there yet." };
+    const point = client.data.recallPointId ? recallPointById(client.data.recallPointId) : undefined;
+    if (!point) {
+      return { ok: false, message: "You haven't set a recall point yet." };
     }
     const cooldownUntil = client.data.skillCooldowns[RECALL_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {

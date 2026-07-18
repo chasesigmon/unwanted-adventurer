@@ -42,6 +42,7 @@ import {
   MYSTICAL_TIMBERLAND_COLS,
   GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW,
   GOBBLER_VILLAGE_MID,
+  KORTHO_NEAR_SAND_COL_START,
 } from './maps.js';
 
 // "Late hours of night and early hours of morning" — a narrower, darker
@@ -800,6 +801,11 @@ export const MYSTICAL_TIMBERLAND_SIGN_POSITION = { row: MYSTICAL_TIMBERLAND_MID_
 export const GRIMOAK_GROUNDS_GOBBLER_VILLAGE_SIGN_POSITION = { row: GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW + 4, col: GRIMOAK_GROUNDS_COLS - 3 };
 export const GOBBLER_VILLAGE_SIGN_POSITION = { row: GOBBLER_VILLAGE_MID + 4, col: 3 };
 
+// A later follow-up ask: "add a sign on the Kortho side of the beach
+// with 'The Shimmering Sea'" — sits on the near sand strip, off to the
+// side of the town's own mid-row so it doesn't block the dock itself.
+export const KORTHO_SHIMMERING_SEA_SIGN_POSITION = { row: TOWN_MID_ROW - 5, col: KORTHO_NEAR_SAND_COL_START + 1 };
+
 export function isBramwickSignBlocked(mapName: MapName, row: number, col: number): boolean {
   if (mapName === 'Bramwick') return row === BRAMWICK_SIGN_POSITION.row && col === BRAMWICK_SIGN_POSITION.col;
   if (mapName === 'Grimoak Grounds') {
@@ -827,7 +833,10 @@ export function isBramwickSignBlocked(mapName: MapName, row: number, col: number
     );
   }
   if (mapName === 'Kortho') {
-    return row === KORTHO_ROAD_SIGN_POSITION.row && col === KORTHO_ROAD_SIGN_POSITION.col;
+    return (
+      (row === KORTHO_ROAD_SIGN_POSITION.row && col === KORTHO_ROAD_SIGN_POSITION.col) ||
+      (row === KORTHO_SHIMMERING_SEA_SIGN_POSITION.row && col === KORTHO_SHIMMERING_SEA_SIGN_POSITION.col)
+    );
   }
   if (mapName === 'Floro') {
     return row === FLORO_ROAD_SIGN_POSITION.row && col === FLORO_ROAD_SIGN_POSITION.col;

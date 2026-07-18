@@ -2,6 +2,7 @@ import type { MapName } from '../../shared/constants.js';
 import { FLORO_SHOP_MAPS, KORTHO_SHOP_MAPS } from '../../shared/constants.js';
 import type { VendorSnapshot } from '../../shared/types.js';
 import { CUP_OF_WATER_ITEM, JERKY_ITEM, CANTEEN_ITEM, SALMON_ITEM, HP_POTION_ITEM, MP_POTION_ITEM } from '../../shared/items.js';
+import { CANOE_ITEM, RAFT_ITEM, BOAT_PRICE } from '../../shared/boats.js';
 
 // Deterministic (not Math.random) so a vendor's appearance/name stays
 // the same across server restarts — same reasoning as shared/trees.ts's
@@ -219,14 +220,21 @@ const VENDOR_SEEDS: VendorSeed[] = [
     items: [],
     greeting: "No creatures for sale just yet, but I'm always looking for stock.",
   },
+  // A later follow-up ask: "change one of the shops in Kortho to be a
+  // 'Boat Shop'" — sells the small canoe/large raft (see shared/boats.ts)
+  // that let a player cross water; the actual boarding/capacity rules
+  // live in game.gateway.ts, not here — this vendor just sells the item.
   {
-    id: 'kortho-jobs-office',
-    name: 'Clerk',
-    map: 'Kortho Jobs Office',
+    id: 'kortho-boat-shop',
+    name: 'Boat Shop',
+    map: 'Kortho Boat Shop',
     row: 3,
     col: 15,
-    items: [],
-    greeting: 'No postings on the board today — check back another time.',
+    items: [
+      { label: CANOE_ITEM, price: BOAT_PRICE[CANOE_ITEM] },
+      { label: RAFT_ITEM, price: BOAT_PRICE[RAFT_ITEM] },
+    ],
+    greeting: 'Looking to cross the water? A canoe carries you and one pet — the raft carries your whole company.',
   },
   // --- Bramwick, the small village north of Grimoak Grounds (a later
   // follow-up ask) — same "one shopkeeper just inside the door" shape as

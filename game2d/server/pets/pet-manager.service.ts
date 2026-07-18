@@ -13,6 +13,7 @@ import {
   PET_EVOLUTION_HP_BONUS,
   PET_EVOLUTION_ATTACK_BONUS,
   FOLLOWER_ATTACK_COOLDOWN_MS,
+  computeFollowerStep,
   type FollowerEquipmentSlot,
 } from '../../shared/pets.js';
 import { applyExpGain } from '../combat/formulas.js';
@@ -82,6 +83,7 @@ export class PetManagerService {
       inventory: [],
       equipment: {},
       alive: true,
+      size: 'small',
     };
     this.pets.set(ownerUsername, pet);
     return pet;
@@ -101,7 +103,10 @@ export class PetManagerService {
   // own map-change branch already uses.
   restore(ownerUsername: string, snapshot: PetSnapshot, map: MapName, row: number, col: number): void {
     if (this.pets.has(ownerUsername)) return;
-    this.pets.set(ownerUsername, { ...snapshot, map, row, col });
+    // A persisted pet doc from before FollowerSize existed won't have its
+    // own `size` — same "old rows missing a newer field" tolerance every
+    // other schema addition in this project's restore/connect path needs.
+    this.pets.set(ownerUsername, { ...snapshot, size: snapshot.size ?? 'small', map, row, col });
   }
 
   setCommand(ownerUsername: string, command: PetCommand): Pet | undefined {
@@ -248,6 +253,7 @@ export class PetManagerService {
       pet.maxHp += PET_EVOLUTION_HP_BONUS;
       pet.hp += PET_EVOLUTION_HP_BONUS;
       pet.attackDamageBonus = (pet.attackDamageBonus ?? 0) + PET_EVOLUTION_ATTACK_BONUS;
+      pet.size = 'medium';
       evolved = true;
     }
     return { pet, evolved };
@@ -269,6 +275,14 @@ export class PetManagerService {
     for (const pet of this.pets.values()) {
       if (!pet.alive) continue;
 
+      // A later follow-up ask: "pets... cannot travel over water" unless
+      // the OWNER is flying (item 4) or riding a boat (a pet fits on
+      // either size, see shared/boats.ts) — this is the owner's own
+      // state, not the pet's, so it's looked up once per pet regardless
+      // of which branch below actually moves it.
+      const owner = this.worldManager.getLocation(pet.ownerUsername);
+      const canCrossWater = owner?.flightActive === true || owner?.inBoat != null;
+
       if (pet.command === 'attack' && pet.attackTargetKind && pet.attackTargetId) {
         const target = this.targetLocator?.(pet.attackTargetKind, pet.attackTargetId);
         if (!target) {
@@ -287,14 +301,10 @@ export class PetManagerService {
           changedMaps.add(pet.map);
           continue;
         }
-        const dRow = target.row - pet.row;
-        const dCol = target.col - pet.col;
-        if (Math.abs(dRow) + Math.abs(dCol) <= 1) continue; // already adjacent — checkContacts handles this
-        if (Math.abs(dRow) >= Math.abs(dCol)) {
-          pet.row += Math.sign(dRow);
-        } else {
-          pet.col += Math.sign(dCol);
-        }
+        const step = computeFollowerStep(pet, target, pet.map, canCrossWater);
+        if (!step) continue; // already adjacent, or blocked by water on both axes
+        pet.row = step.row;
+        pet.col = step.col;
         changedMaps.add(pet.map);
         continue;
       }
@@ -306,7 +316,6 @@ export class PetManagerService {
       // excluded here and standing frozen — "it should still continue to
       // follow the player as normal if not attacking a monster."
       if (pet.command !== 'follow' && pet.command !== 'attack') continue;
-      const owner = this.worldManager.getLocation(pet.ownerUsername);
       if (!owner) continue;
       if (pet.map !== owner.mapName) {
         // Snapping onto the owner's new map (a simplified first pass —
@@ -319,14 +328,10 @@ export class PetManagerService {
         changedMaps.add(pet.map);
         continue;
       }
-      const dRow = owner.row - pet.row;
-      const dCol = owner.col - pet.col;
-      if (Math.abs(dRow) + Math.abs(dCol) <= 1) continue;
-      if (Math.abs(dRow) >= Math.abs(dCol)) {
-        pet.row += Math.sign(dRow);
-      } else {
-        pet.col += Math.sign(dCol);
-      }
+      const step = computeFollowerStep(pet, owner, pet.map, canCrossWater);
+      if (!step) continue;
+      pet.row = step.row;
+      pet.col = step.col;
       changedMaps.add(pet.map);
     }
     return changedMaps;

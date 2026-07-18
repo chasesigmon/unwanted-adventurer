@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import type { MapName, MonsterKind, Race } from '../../shared/constants.js';
 import type { PetCommand, AnimatedMonsterSnapshot, FollowerEquipmentSlot } from '../../shared/pets.js';
-import { FOLLOWER_ATTACK_COOLDOWN_MS } from '../../shared/pets.js';
+import { FOLLOWER_ATTACK_COOLDOWN_MS, computeFollowerStep } from '../../shared/pets.js';
 import { animatedMonsterCapFor } from '../../shared/skills.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
 
@@ -196,6 +196,14 @@ export class AnimatedMonsterManagerService {
       for (const monster of owned) {
         if (!monster.alive) continue;
 
+        // A later follow-up ask: "pets/animated dead/summons cannot
+        // travel over water" unless the OWNER is flying (item 4) — an
+        // animated monster/summon, unlike a pet, only fits on the LARGE
+        // raft, never the small canoe (see shared/boats.ts's own doc
+        // comment on canoe capacity).
+        const owner = this.worldManager.getLocation(monster.ownerUsername);
+        const canCrossWater = owner?.flightActive === true || owner?.inBoat === 'large';
+
         if (monster.command === 'attack' && monster.attackTargetKind && monster.attackTargetId) {
           const target = this.targetLocator?.(monster.attackTargetKind, monster.attackTargetId);
           if (!target) {
@@ -212,14 +220,10 @@ export class AnimatedMonsterManagerService {
             changedMaps.add(monster.map);
             continue;
           }
-          const dRow = target.row - monster.row;
-          const dCol = target.col - monster.col;
-          if (Math.abs(dRow) + Math.abs(dCol) <= 1) continue; // already adjacent — checkContacts handles this
-          if (Math.abs(dRow) >= Math.abs(dCol)) {
-            monster.row += Math.sign(dRow);
-          } else {
-            monster.col += Math.sign(dCol);
-          }
+          const step = computeFollowerStep(monster, target, monster.map, canCrossWater);
+          if (!step) continue; // already adjacent, or blocked by water on both axes
+          monster.row = step.row;
+          monster.col = step.col;
           changedMaps.add(monster.map);
           continue;
         }
@@ -228,7 +232,6 @@ export class AnimatedMonsterManagerService {
         // comment on why 'attack' with no current target falls through
         // to plain following instead of standing frozen.
         if (monster.command !== 'follow' && monster.command !== 'attack') continue;
-        const owner = this.worldManager.getLocation(monster.ownerUsername);
         if (!owner) continue;
         if (monster.map !== owner.mapName) {
           changedMaps.add(monster.map);
@@ -238,14 +241,10 @@ export class AnimatedMonsterManagerService {
           changedMaps.add(monster.map);
           continue;
         }
-        const dRow = owner.row - monster.row;
-        const dCol = owner.col - monster.col;
-        if (Math.abs(dRow) + Math.abs(dCol) <= 1) continue;
-        if (Math.abs(dRow) >= Math.abs(dCol)) {
-          monster.row += Math.sign(dRow);
-        } else {
-          monster.col += Math.sign(dCol);
-        }
+        const step = computeFollowerStep(monster, owner, monster.map, canCrossWater);
+        if (!step) continue;
+        monster.row = step.row;
+        monster.col = step.col;
         changedMaps.add(monster.map);
       }
     }

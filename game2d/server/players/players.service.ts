@@ -92,6 +92,7 @@ export interface PlayerStatsUpdate {
   house?: HouseName | null;
   specialization?: SpecializationPath | null;
   visitedPois?: string[];
+  recallPointId?: string | null;
   killedMonsterKinds?: string[];
   // A follow-up bug fix: "the pet is a permanent part of the player's
   // group... shouldn't disappear" — see player.entity.ts's own `pet`

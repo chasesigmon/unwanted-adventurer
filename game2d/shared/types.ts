@@ -227,6 +227,15 @@ export interface PlayerSnapshot {
   flightActive: boolean;
   flightActiveUntil?: number | null;
   flightBurstReadyAt?: number | null;
+  // A later follow-up ask: boats ("a small canoe"/"a large raft") — which
+  // one (if either) this player is CURRENTLY riding, auto-set the instant
+  // they step onto (or land on, from flight) a water tile while carrying
+  // one (see game.gateway.ts's handleMove/checkFlightExpiry), auto-cleared
+  // the instant they step back onto dry land. Threaded through
+  // PlayerState/world-manager's broadcast snapshot like flightActive —
+  // bystanders need to see the boat sprite too (see WorldScene's
+  // applyMapState).
+  inBoat?: 'small' | 'large' | null;
   // A minimal player party (a later follow-up ask) — see shared/pvp.ts's
   // own doc comment. Optional/owning-client-only, same reasoning as
   // hunger/thirst above — only used for the local player's own PvP-cursor
@@ -250,6 +259,24 @@ export interface PlayerSnapshot {
   // game.gateway.ts's snapshotFor); other players' own map:state entries
   // simply omit it, same "optional, self-only" shape as mapUnlocked.
   visitedPois?: string[];
+  // A later follow-up ask reworked recall down to a single settable
+  // point ("the player must set one location to be their recall
+  // choice at a time") — the RecallPoint.id (see shared/recall.ts) they
+  // last set, or null/undefined if they never have. Same "optional,
+  // self-only" shape as visitedPois above.
+  recallPointId?: string | null;
+  // A later follow-up ask: dying now takes a real 10s respawn countdown
+  // ("have a countdown shown on screen... the screen darken while the
+  // yellow text countdown happens") — the absolute epoch-ms it ends, same
+  // convention as wandLitUntil/flightActiveUntil above; null/undefined
+  // while alive. Self-only — nothing about another player's own respawn
+  // needs to render for bystanders.
+  respawningUntil?: number | null;
+  // "If the player has a corpse anywhere in the game... tell them where"
+  // — the map their own most recent death corpse sits in, if it hasn't
+  // faded yet (see CorpseManagerService.findForOwner), else null.
+  // Self-only, recomputed fresh on every snapshotFor call.
+  corpseLocation?: MapName | null;
   // Summoner's own "which monster kinds can I summon" gate (a later
   // follow-up ask) — same "optional, self-only" shape as visitedPois:
   // only populated once a player has actually specialized into Summoner
@@ -354,6 +381,12 @@ export interface CorpseSnapshot {
   // and game.gateway.ts's handleCastAnimateDead). Absent/false for
   // anything that isn't a rare monster's corpse.
   isRare?: boolean;
+  // A later follow-up ask: "if the player has a corpse anywhere in the
+  // game... tell them where their corpse is" — set only for a PLAYER's
+  // own death corpse (see game.gateway.ts's spawnPlayerCorpseAndStripGear),
+  // absent for every monster/NPC corpse, which has no single "owner" to
+  // report back to.
+  ownerUsername?: string;
 }
 
 export interface SyncPayload {
@@ -1066,7 +1099,10 @@ export interface ClientToServerEvents {
   // a dedicated event rather than folding into PetCommand, since a real
   // pet is never removable this way (only animated monsters are).
   removeAnimatedMonster: (payload: { id: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
-  castRecall: (payload: { poiId: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
+  // A later follow-up ask reworked recall to a single settable point —
+  // no poiId anymore, see shared/recall.ts's own doc comment.
+  castRecall: (payload: Record<string, never>, ack: (res: { ok: boolean; message?: string }) => void) => void;
+  setRecallPoint: (payload: Record<string, never>, ack: (res: { ok: boolean; message?: string; recallPointId?: string }) => void) => void;
   castBarrier: (ack: (res: { ok: boolean; message?: string }) => void) => void;
   castEnhanceDamage: (ack: (res: CastSpellAck) => void) => void;
   // ===== TESTING OVERRIDE — REMOVE AFTER TESTING ===== "add a 'cheat'
@@ -1190,6 +1226,19 @@ export interface SocketData {
   flightActive: boolean;
   flightActiveUntil: number | null;
   flightBurstReadyAt: number | null;
+  // Boats (a later follow-up ask) — never persisted (a boat is only ever
+  // "worn" while standing in/on water; see PlayerSnapshot's own doc
+  // comment). null while on dry land or with no boat item on hand.
+  inBoat: 'small' | 'large' | null;
+  // The single settable recall point (a later follow-up ask) — persisted;
+  // loaded from the player doc on connect. null until the player ever
+  // sets one (see shared/recall.ts's RecallPoint/RECALL_POINTS).
+  recallPointId: string | null;
+  // The 10s respawn countdown (a later follow-up ask) — never persisted,
+  // same tradeoff as every other ephemeral toggle here; checked on the
+  // same fast tick flight/wisp/etc already expire on (see
+  // checkRespawnCountdown).
+  respawningUntil: number | null;
   // A minimal player party (a later follow-up ask) — see shared/pvp.ts's
   // own doc comment. Never persisted; rehydrated from GameGateway's own
   // in-memory `parties` map on every fresh connection (that map is itself
