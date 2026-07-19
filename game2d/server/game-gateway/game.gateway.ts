@@ -90,9 +90,10 @@ import {
   EQUIPMENT_SLOT_FOR_ITEM,
   EQUIPMENT_SLOTS,
   WEAPON_DAMAGE_BONUS,
-  BASE_ARMOR_CLASS,
-  armorClassFor,
-  armorEquipmentBonus,
+  armorVsPhysicalFor,
+  armorVsMagicalFor,
+  physicalArmorEquipmentBonus,
+  magicalArmorEquipmentBonus,
   dexterityEquipmentBonus,
   intelligenceEquipmentBonus,
   intelligenceScaledSpellDamage,
@@ -1030,7 +1031,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       mimicForm: client.data.mimicForm,
       eatBrainsReadyAtTick: client.data.eatBrainsReadyAtTick,
       skillCooldowns: client.data.skillCooldowns,
-      armorClass: armorClassFor(client.data.dexterity + dexterityEquipmentBonus(client.data.equipment), armorEquipmentBonus(client.data.equipment)),
+      armorVsPhysical: armorVsPhysicalFor(
+        client.data.dexterity + dexterityEquipmentBonus(client.data.equipment),
+        client.data.strength,
+        physicalArmorEquipmentBonus(client.data.equipment)
+      ),
+      armorVsMagical: armorVsMagicalFor(
+        client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment),
+        client.data.wisdom,
+        magicalArmorEquipmentBonus(client.data.equipment)
+      ),
       deathCount: client.data.deathCount,
       statPointsAvailable: client.data.statPointsAvailable,
       practicePointsAvailable: client.data.practicePointsAvailable,
@@ -1345,6 +1355,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (targetClient.data.scutumActive && dmg > 0) {
       dmg = Math.max(0, dmg - SCUTUM_DAMAGE_REDUCTION);
     }
+    // A later follow-up ask: "make sure the formulas work when the player
+    // is hit by a player or monster" — every caller of this helper (wand
+    // bolt, augue) is a magical ranged attack, so Armor vs Magical applies
+    // here, same "flat, no dodge/parry" simplification this path already
+    // uses for everything else.
+    const targetArmorVsMagical = armorVsMagicalFor(
+      targetClient.data.intelligence + intelligenceEquipmentBonus(targetClient.data.equipment),
+      targetClient.data.wisdom,
+      magicalArmorEquipmentBonus(targetClient.data.equipment)
+    );
+    dmg = Math.max(0, dmg - targetArmorVsMagical);
     targetClient.data.hp = Math.max(0, targetClient.data.hp - dmg);
     const died = targetClient.data.hp <= 0;
 
@@ -2371,12 +2392,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const hasWeapon = attacker?.carriedItems.some((item) => item.toLowerCase().includes('dagger')) ?? false;
     const skillPercent = attacker ? (attacker.skills[hasWeapon ? DAGGER_SKILL : PUNCH_SKILL] ?? 0) : 0;
     const weaponBonus = hasWeapon ? (WEAPON_DAMAGE_BONUS['bone dagger'] ?? 0) : 0;
-    const defenderAC = armorClassFor(client.data.dexterity + dexterityEquipmentBonus(client.data.equipment), armorEquipmentBonus(client.data.equipment));
+    const defenderArmorVsPhysical = armorVsPhysicalFor(
+      client.data.dexterity + dexterityEquipmentBonus(client.data.equipment),
+      client.data.strength,
+      physicalArmorEquipmentBonus(client.data.equipment)
+    );
     // A species with its own flat attackDamage (a later follow-up ask:
     // "the imps have a physical attack/punch that should do 5 damage per
     // hit") counter-attacks for exactly that instead of the shared
     // punchDamage() formula.
-    const rawDamage = attacker?.attackDamage ?? punchDamage(attackerStats, this.attackerStatsFor(client), skillPercent, weaponBonus, defenderAC);
+    const rawDamage = attacker?.attackDamage ?? punchDamage(attackerStats, this.attackerStatsFor(client), skillPercent, weaponBonus, defenderArmorVsPhysical);
     const reduction = monsterClass ? monsterDamageReduction(monsterClass, client.data.skills) : 0;
     const scutumReduction = client.data.scutumActive ? SCUTUM_DAMAGE_REDUCTION : 0;
     // Battlemage's own "enhanced armor" — "a CHANCE based on learned
@@ -3601,7 +3626,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         this.endPlayerCombat(client.data.username);
         return;
       }
-      const wandBoltDamage = baseWandBoltDamage + (monster.monsterClass === 'undead' ? enhancedUndeadDamageBonus : 0);
+      const rawWandBoltDamage = baseWandBoltDamage + (monster.monsterClass === 'undead' ? enhancedUndeadDamageBonus : 0);
+      // A later follow-up ask: "make sure the formulas work when the
+      // player is hit by a player or monster" — same monster Armor vs
+      // Magical treatment resolveElementalBolt's own monster branch uses.
+      const wandBoltDamage = Math.max(0, rawWandBoltDamage - armorVsMagicalFor(monster.intelligence, monster.wisdom, 0));
       this.monsterManager.setAggro(monster.id, client.data.username, this.combatTickCount);
       const result = this.monsterManager.applyDamage(monster.id, wandBoltDamage);
       if (!result) return;
@@ -3646,7 +3675,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         this.endPlayerCombat(client.data.username);
         return;
       }
-      const wandBoltDamage = baseWandBoltDamage + (npc.race === 'skeleton' ? enhancedUndeadDamageBonus : 0);
+      const rawWandBoltDamage = baseWandBoltDamage + (npc.race === 'skeleton' ? enhancedUndeadDamageBonus : 0);
+      // Same training-dummy Armor vs Magical treatment resolveElementalBolt's
+      // own npc branch uses.
+      const wandBoltDamage = Math.max(0, rawWandBoltDamage - armorVsMagicalFor(STARTING_ATTRIBUTE, STARTING_ATTRIBUTE, 0));
       npc.hp = Math.max(0, npc.hp - wandBoltDamage);
       const died = npc.hp <= 0;
       const label = npc.label ?? 'training dummy';
@@ -3743,14 +3775,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const weaponBonus = weaponBonusFor(client.data.equipment, client.data.skills);
     // Monsters carry weapon/shield-shaped loot but never "wear" it for AC
     // purposes — just their own base+dexterity AC (item 18).
-    const monsterAC = armorClassFor(monster.dexterity, 0);
+    const monsterArmorVsPhysical = armorVsPhysicalFor(monster.dexterity, monster.strength, 0);
 
     let totalDamage = 0;
     let died = false;
     let currentHp = monster.hp;
 
     if (skillName === BONE_FINGER_STRIKE_SKILL) {
-      const basePunchDamage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus, monsterAC);
+      const basePunchDamage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus, monsterArmorVsPhysical);
       const boneSkillPercent = client.data.skills[BONE_FINGER_STRIKE_SKILL] ?? STARTING_SKILL_PERCENT;
       const swingDamage = computeBoneFingerStrikeDamage(basePunchDamage, boneSkillPercent);
       const result = this.monsterManager.applyDamage(monster.id, swingDamage);
@@ -3764,7 +3796,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     } else {
       const { swings, enhancedBonus } = this.rollExtraAttacks(client, growthMessages, monster.monsterClass === 'undead');
       for (let i = 0; i < swings; i++) {
-        const swingDamage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus, monsterAC) + enhancedBonus;
+        const swingDamage = punchDamage(this.attackerStatsFor(client), monster, attackSkillPercent, weaponBonus, monsterArmorVsPhysical) + enhancedBonus;
         const result = this.monsterManager.applyDamage(monster.id, swingDamage);
         if (!result) break;
         totalDamage += swingDamage;
@@ -3900,7 +3932,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
     const growthMessages: string[] = [];
     // A dummy's base AC only — it doesn't equip anything (item 18).
-    const npcAC = armorClassFor(STARTING_ATTRIBUTE, 0);
+    const npcArmorVsPhysical = armorVsPhysicalFor(STARTING_ATTRIBUTE, STARTING_ATTRIBUTE, 0);
 
     // The dummy has no equipment/learned skills of its own to defend with
     // — it can still dodge (a flat, skill-less roll), but never parries
@@ -3916,7 +3948,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         defenderStats,
         attackSkillPercent,
         weaponBonusFor(client.data.equipment, client.data.skills),
-        npcAC
+        npcArmorVsPhysical
       );
       const boneSkillPercent = client.data.skills[BONE_FINGER_STRIKE_SKILL] ?? STARTING_SKILL_PERCENT;
       const swingDamage = computeBoneFingerStrikeDamage(basePunchDamage, boneSkillPercent);
@@ -3940,7 +3972,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
             defenderStats,
             attackSkillPercent,
             weaponBonusFor(client.data.equipment, client.data.skills),
-            npcAC
+            npcArmorVsPhysical
           ) + enhancedBonus;
         const defense = this.resolveDefense(defenderStats, {}, {}, this.attackerStatsFor(client));
         if (!defense.avoided) {
@@ -4069,7 +4101,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
     const growthMessages: string[] = [];
-    const defenderAC = armorClassFor(targetClient.data.dexterity + dexterityEquipmentBonus(targetClient.data.equipment), armorEquipmentBonus(targetClient.data.equipment));
+    const defenderArmorVsPhysical = armorVsPhysicalFor(
+      targetClient.data.dexterity + dexterityEquipmentBonus(targetClient.data.equipment),
+      targetClient.data.strength,
+      physicalArmorEquipmentBonus(targetClient.data.equipment)
+    );
 
     let damage = 0;
     let avoidedVerb: string | undefined;
@@ -4080,7 +4116,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         defenderStats,
         attackSkillPercent,
         weaponBonusFor(client.data.equipment, client.data.skills),
-        defenderAC
+        defenderArmorVsPhysical
       );
       const boneSkillPercent = client.data.skills[BONE_FINGER_STRIKE_SKILL] ?? STARTING_SKILL_PERCENT;
       const swingDamage = computeBoneFingerStrikeDamage(basePunchDamage, boneSkillPercent);
@@ -4105,7 +4141,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
             defenderStats,
             attackSkillPercent,
             weaponBonusFor(client.data.equipment, client.data.skills),
-            defenderAC
+            defenderArmorVsPhysical
           ) + enhancedBonus;
         const defense = this.resolveDefense(defenderStats, targetClient.data.skills, targetClient.data.equipment, this.attackerStatsFor(client));
         if (defense.skill) {
@@ -5023,7 +5059,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // 24.2, ...), computed once per cast from the caster's own effective
     // intelligence (base + equipment) and reused for every branch below,
     // in place of the flat AUGUE_DAMAGE constant.
-    const augueDamage = intelligenceScaledSpellDamage(AUGUE_DAMAGE, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment));
+    // A later follow-up ask reduces this by the target's own Armor vs
+    // Magical right before it's applied in the npc/monster branches below
+    // (the player branch already gets this via applyPvpRangedDamage) —
+    // `let`, not `const`, so each branch can do that in place.
+    let augueDamage = intelligenceScaledSpellDamage(AUGUE_DAMAGE, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment));
     // A practice scarecrow (or the original Great Plains training dummy)
     // is a valid target too (a follow-up ask: "practice their offense
     // spells, like augue, on them") — a much simpler, self-contained
@@ -5053,6 +5093,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: true, skills: client.data.skills, message };
       }
 
+      augueDamage = Math.max(0, augueDamage - armorVsMagicalFor(STARTING_ATTRIBUTE, STARTING_ATTRIBUTE, 0));
       npc.hp = Math.max(0, npc.hp - augueDamage);
       const died = npc.hp <= 0;
       // A later follow-up ask: "arcane bolt should not have a burning
@@ -5195,6 +5236,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: true, skills: client.data.skills, message };
     }
 
+    augueDamage = Math.max(0, augueDamage - armorVsMagicalFor(monster.intelligence, monster.wisdom, 0));
     const result = this.monsterManager.applyDamage(monster.id, augueDamage);
     if (!result) {
       return { ok: false, message: 'Your target is no longer here.' };
@@ -5281,7 +5323,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // "The base damage... for all offensive spells should increase by
     // 10% of its max for every point of intelligence" (a later follow-up
     // ask) — see intelligenceScaledSpellDamage's own doc comment.
-    const damage = intelligenceScaledSpellDamage(
+    // A later follow-up ask reduces this by the target's own Armor vs
+    // Magical right before it's actually applied (see the npc/monster
+    // branches below) — `let`, not `const`, so each branch can do that in
+    // place and have the reduced figure flow through to its own combat
+    // message/emit.
+    let damage = intelligenceScaledSpellDamage(
       config.damage ?? ELEMENTAL_BOLT_DAMAGE,
       client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment)
     );
@@ -5328,6 +5375,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: true, skills: client.data.skills, message };
       }
 
+      // A later follow-up ask: "make sure the formulas work when the
+      // player is hit by a player or monster" — a training dummy's own
+      // base-only Armor vs Magical, same STARTING_ATTRIBUTE-everything
+      // shape resolveHitOnNpc's own defenderStats already uses for it.
+      // Reduces `damage` itself (not just the hp subtraction) so the
+      // combat message/emit below reports what actually landed.
+      damage = Math.max(0, damage - armorVsMagicalFor(STARTING_ATTRIBUTE, STARTING_ATTRIBUTE, 0));
       npc.hp = Math.max(0, npc.hp - damage);
       const died = npc.hp <= 0;
       // Slow/knockback/stun are all skipped for an npc target — a static
@@ -5402,6 +5456,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: true, skills: client.data.skills, message };
     }
 
+    // A later follow-up ask: "make sure the formulas work when the player
+    // is hit by a player or monster" — monsters carry weapon/shield-shaped
+    // loot but never "wear" it for armor purposes, same "just their own
+    // base+stats" treatment resolveHitOnMonster's own monsterArmorVsPhysical
+    // already gives the physical side.
+    damage = Math.max(0, damage - armorVsMagicalFor(monster.intelligence, monster.wisdom, 0));
     const result = this.monsterManager.applyDamage(monster.id, damage);
     if (!result) {
       return { ok: false, message: 'Your target is no longer here.' };
@@ -5552,7 +5612,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // 10% of its max for every point of intelligence" (a later follow-up
     // ask) — sap health drains (and heals the caster) this same scaled
     // figure instead of the flat SAP_HEALTH_AMOUNT.
-    const sapHealthAmount = intelligenceScaledSpellDamage(SAP_HEALTH_AMOUNT, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment));
+    // A later follow-up ask reduces this by the target's own Armor vs
+    // Magical right before it's applied (see the npc/monster branches
+    // below) — `let`, not `const`, since sap health both damages the
+    // target AND heals the caster by this SAME figure, so a reduced drain
+    // means a smaller heal too, not just less damage dealt.
+    let sapHealthAmount = intelligenceScaledSpellDamage(SAP_HEALTH_AMOUNT, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment));
 
     // "The player should be able to continue using BP even when they
     // reach 0 or below" — no insufficient-BP rejection at all, unlike
@@ -5605,6 +5670,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: true, skills: client.data.skills, message };
       }
 
+      sapHealthAmount = Math.max(0, sapHealthAmount - armorVsMagicalFor(STARTING_ATTRIBUTE, STARTING_ATTRIBUTE, 0));
       npc.hp = Math.max(0, npc.hp - sapHealthAmount);
       const died = npc.hp <= 0;
       client.data.hp = Math.min(client.data.maxHp, client.data.hp + sapHealthAmount);
@@ -5673,6 +5739,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: true, skills: client.data.skills, message };
     }
 
+    sapHealthAmount = Math.max(0, sapHealthAmount - armorVsMagicalFor(monster.intelligence, monster.wisdom, 0));
     const result = this.monsterManager.applyDamage(monster.id, sapHealthAmount);
     if (!result) {
       return { ok: false, message: 'Your target is no longer here.' };

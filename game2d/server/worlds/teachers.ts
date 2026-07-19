@@ -194,13 +194,13 @@ export const TEACHERS: TeacherSnapshot[] = [
   { id: 'necromancer-teacher', name: 'Professor Voss', map: 'Necromancer Chamber', row: 2, col: 9, teachesSkills: [ANIMATE_DEAD_SKILL], robeColorKey: 'slate' },
   // A later follow-up ask gave the Shaman specialist an actual click
   // behavior too: "enhance damage" through the same click-to-learn modal
-  // (level 15, shaman-only — see SKILL_SPECIALIZATION_REQUIREMENT).
+  // (level 10, shaman-only — see SKILL_SPECIALIZATION_REQUIREMENT).
   { id: 'shaman-teacher', name: 'Professor Brann', map: 'Shaman Chamber', row: 2, col: 9, teachesSkills: [SHAMAN_ENHANCE_DAMAGE_SKILL], robeColorKey: 'olive' },
   // A later follow-up ask gave the Elementalist specialist actual click
-  // behavior too: all 4 bolt spells (level 15, elementalist-only).
+  // behavior too: all 4 bolt spells (level 10, elementalist-only).
   { id: 'elementalist-teacher', name: 'Professor Tempest', map: 'Elementalist Chamber', row: 2, col: 9, teachesSkills: ELEMENTAL_BOLT_SKILLS, robeColorKey: 'teal' },
   // A later follow-up ask gave the Summoner specialist actual click
-  // behavior too: monster summons (level 15, summoner-only).
+  // behavior too: monster summons (level 10, summoner-only).
   {
     id: 'summoner-teacher',
     name: 'Professor Corvin',
@@ -211,7 +211,7 @@ export const TEACHERS: TeacherSnapshot[] = [
     robeColorKey: 'plum',
   },
   // A later follow-up ask gave the Illusionist specialist actual click
-  // behavior too: invisibility + create duplicate (both level 15,
+  // behavior too: invisibility + create duplicate (both level 10,
   // illusionist-only).
   {
     id: 'illusionist-teacher',
@@ -223,7 +223,7 @@ export const TEACHERS: TeacherSnapshot[] = [
     robeColorKey: 'violet',
   },
   // A later follow-up ask gave the Battlemage specialist actual click
-  // behavior too: 2 passives + kinetic strike (all level 15,
+  // behavior too: 2 passives + kinetic strike (all level 10,
   // battlemage-only).
   {
     id: 'battlemage-teacher',
@@ -235,7 +235,7 @@ export const TEACHERS: TeacherSnapshot[] = [
     robeColorKey: 'steel',
   },
   // A later follow-up ask gave the Cleric specialist actual click
-  // behavior too: lesser heal + enhanced undead damage (both level 15,
+  // behavior too: lesser heal + enhanced undead damage (both level 10,
   // cleric-only).
   {
     id: 'cleric-teacher',
@@ -247,7 +247,7 @@ export const TEACHERS: TeacherSnapshot[] = [
     robeColorKey: 'amber',
   },
   // A later follow-up ask gave the Druid specialist actual click
-  // behavior too: lesser self heal + wisp transformation (both level 15,
+  // behavior too: lesser self heal + wisp transformation (both level 10,
   // druid-only).
   {
     id: 'druid-teacher',
@@ -271,7 +271,7 @@ export const TEACHERS: TeacherSnapshot[] = [
     robeColorKey: 'maroon',
   },
   // A later follow-up ask gave the Hemomancer specialist actual click
-  // behavior too: sap health (level 15, hemomancer-only).
+  // behavior too: sap health (level 10, hemomancer-only).
   {
     id: 'hemomancer-teacher',
     name: 'Professor Vex',

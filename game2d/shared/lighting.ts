@@ -43,12 +43,22 @@ import {
   GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW,
   GOBBLER_VILLAGE_MID,
   KORTHO_NEAR_SAND_COL_START,
+  KORTHO_COLS,
+  KORTHO_DIREFELL_ROW,
+  DIREFELL_KORTHO_ROW,
   GREAT_PLAINS_FLORO_ROW,
   GREAT_PLAINS_SIZE,
   FLORO_GREAT_PLAINS_ROW,
   GREAT_PLAINS_HEXSTONE_ROW,
   HEXSTONE_CAVERN_SIZE,
   HEXSTONE_GREAT_PLAINS_COL,
+  BRAMWICK_SIZE,
+  BRAMWICK_BRIMSTONE_ROW,
+  BRIMSTONE_CAVE_MID_ROW,
+  BRIMSTONE_CAVE_SIZE,
+  BRAMWICK_RUNESTONE_COL,
+  BRAMWICK_SILVERBRANCH_ROW,
+  SILVERBRANCH_ROAD_MID_ROW,
 } from './maps.js';
 
 // "Late hours of night and early hours of morning" — a narrower, darker
@@ -740,53 +750,56 @@ export function isStandingTorchBlocked(mapName: MapName, row: number, col: numbe
 // Grimoak Grounds... update the sign in Bramwick to say Grimoak
 // Grounds") — each sign names the destination the road leads TO, not
 // wherever the player is currently standing, same as a real road sign.
-// Both sit a couple tiles in from their own map's edge of the shared
-// entrance, off to the side so neither blocks the road tile itself.
-export const BRAMWICK_SIGN_POSITION = { row: BRAMWICK_ENTRANCE_ROW - 2, col: BRAMWICK_MID_COL + 4 };
-export const GRIMOAK_GROUNDS_SIGN_POSITION = { row: 2, col: CASTLE_DOOR_ON_GROUNDS.col + 4 };
+// A later follow-up ask: "fix all of the signs... so that they are
+// against the edge that they are closest to and not spaces away" — every
+// sign pair below sits EXACTLY on its own map's true boundary row/col
+// along the road's own travel axis (0 or the map's own last valid index),
+// offset only along the PERPENDICULAR axis (still a few tiles off the
+// band's own center, so neither sign sits ON a walkable road/cave tile).
+export const BRAMWICK_SIGN_POSITION = { row: BRAMWICK_ENTRANCE_ROW, col: BRAMWICK_MID_COL + 4 };
+export const GRIMOAK_GROUNDS_SIGN_POSITION = { row: 0, col: CASTLE_DOOR_ON_GROUNDS.col + 4 };
 
 // Same pair-of-signs convention for the new NE "Road to Kortho" exit (a
 // later follow-up ask) — one sign on each side of the shared entrance,
-// each naming the destination the road leads TO. Offset to the side
-// (row, since this road runs east-west) so neither sits on the road tile
-// itself, same "a couple tiles in from the edge, off to the side" shape
-// as the Bramwick pair above.
+// each naming the destination the road leads TO, sitting exactly on the
+// map's own true edge column, offset in row (this road runs east-west)
+// so neither sits on the road tile itself.
 export const GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION = {
   row: GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW + 4,
-  col: GRIMOAK_GROUNDS_COLS - 3,
+  col: GRIMOAK_GROUNDS_COLS - 1,
 };
-export const ROAD_TO_KORTHO_SIGN_POSITION = { row: ROAD_TO_KORTHO_MID_ROW + 4, col: ROAD_TO_KORTHO_COLS - 3 };
+export const ROAD_TO_KORTHO_SIGN_POSITION = { row: ROAD_TO_KORTHO_MID_ROW + 4, col: ROAD_TO_KORTHO_COLS - 1 };
 // A later follow-up ask: "put a sign going from Road to Kortho to
 // Grimoak Grounds that says 'Grimoak Grounds'" — Road to Kortho's own
 // WEST end had no sign of its own at all before this (only Grimoak
 // Grounds' side of that same junction did); mirrors ROAD_TO_KORTHO_SIGN_
-// POSITION's own offset, just near the opposite edge.
-export const ROAD_TO_KORTHO_GRIMOAK_SIGN_POSITION = { row: ROAD_TO_KORTHO_MID_ROW + 4, col: 2 };
+// POSITION's own offset, just against the opposite (west) edge.
+export const ROAD_TO_KORTHO_GRIMOAK_SIGN_POSITION = { row: ROAD_TO_KORTHO_MID_ROW + 4, col: 0 };
 
 // Same pair-of-signs convention for the new SW "Road to Floro" exit (a
 // later follow-up ask), transposed for a north-south road — the
-// perpendicular offset is now COLUMN (not row) and "inward" is decreasing
-// row from the map's own new south edge.
+// perpendicular offset is now COLUMN (not row), sitting exactly on the
+// map's own true edge row.
 export const GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION = {
-  row: GRIMOAK_GROUNDS_ROWS - 4,
+  row: GRIMOAK_GROUNDS_ROWS - 1,
   col: GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL + 4,
 };
-export const ROAD_TO_FLORO_SIGN_POSITION = { row: ROAD_TO_FLORO_ROWS - 3, col: ROAD_TO_FLORO_MID_COL + 4 };
+export const ROAD_TO_FLORO_SIGN_POSITION = { row: ROAD_TO_FLORO_ROWS - 1, col: ROAD_TO_FLORO_MID_COL + 4 };
 // Same missing-sign fix as Road to Kortho above (a later follow-up ask:
 // "same thing, put a sign from Road to Floro to Grimoak Grounds") — Road
 // to Floro's own NORTH end, mirroring ROAD_TO_FLORO_SIGN_POSITION's own
-// offset near the opposite edge.
-export const ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION = { row: 2, col: ROAD_TO_FLORO_MID_COL + 4 };
+// offset against the opposite (north) edge.
+export const ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION = { row: 0, col: ROAD_TO_FLORO_MID_COL + 4 };
 
 // A later follow-up ask: "in kortho update the exit to Road to Kortho to
 // have a dirt road leading out with a sign 'Road to Kortho'" — a third
 // sign, this one sitting just inside the TOWN itself pointing back out,
 // unlike the two pairs above which both sit on the connecting road's own
 // two ends.
-export const KORTHO_ROAD_SIGN_POSITION = { row: TOWN_MID_ROW + 4, col: 3 };
+export const KORTHO_ROAD_SIGN_POSITION = { row: TOWN_MID_ROW + 4, col: 0 };
 // Same treatment for Floro (a later follow-up ask: "make sure... Floro
 // get[s] the same updates that Kortho is getting").
-export const FLORO_ROAD_SIGN_POSITION = { row: 3, col: TOWN_MID_COL + 4 };
+export const FLORO_ROAD_SIGN_POSITION = { row: 0, col: TOWN_MID_COL + 4 };
 
 // A later follow-up ask: "make a connection to the new area Mystical
 // Timberland... have a sign to Mystical Timberland" — same two-sided
@@ -795,22 +808,35 @@ export const FLORO_ROAD_SIGN_POSITION = { row: 3, col: TOWN_MID_COL + 4 };
 // A follow-up bug fix: "the sign leading to mystical timberland should
 // be on the grass or dirt road, right now it is on the water" — col 3 IS
 // MOAT_OUTER_LEFT (the moat's own outer edge, still water at any row
-// within its span) — moved to col 1, safely inside the narrow 3-tile-wide
-// clear strip west of the moat.
-export const GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION = { row: GRIMOAK_GROUNDS_MOAT_MID_ROW + 4, col: 1 };
-export const MYSTICAL_TIMBERLAND_SIGN_POSITION = { row: MYSTICAL_TIMBERLAND_MID_ROW + 4, col: MYSTICAL_TIMBERLAND_COLS - 3 };
+// within its span); a LATER follow-up ask ("put the sign... against the
+// very edge, right now the player has to walk around it") moved it the
+// rest of the way to col 0 — clear of the moat at this row regardless
+// (only col 3-4 are water here, see isMoatBlocked), and now flush with
+// the map's own true west edge instead of sitting a tile in from it.
+export const GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION = { row: GRIMOAK_GROUNDS_MOAT_MID_ROW + 4, col: 0 };
+export const MYSTICAL_TIMBERLAND_SIGN_POSITION = { row: MYSTICAL_TIMBERLAND_MID_ROW + 4, col: MYSTICAL_TIMBERLAND_COLS - 1 };
 
 // A later follow-up ask: "there should be a dirt road and sign leading
 // into 'Gobbler Village' from Grimoak Grounds and a dirt road and sign
 // leading out of Gobbler Village into 'Grimoak Grounds'" — same
 // two-sided sign-pair convention as every other connection above.
-export const GRIMOAK_GROUNDS_GOBBLER_VILLAGE_SIGN_POSITION = { row: GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW + 4, col: GRIMOAK_GROUNDS_COLS - 3 };
-export const GOBBLER_VILLAGE_SIGN_POSITION = { row: GOBBLER_VILLAGE_MID + 4, col: 3 };
+export const GRIMOAK_GROUNDS_GOBBLER_VILLAGE_SIGN_POSITION = { row: GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW + 4, col: GRIMOAK_GROUNDS_COLS - 1 };
+export const GOBBLER_VILLAGE_SIGN_POSITION = { row: GOBBLER_VILLAGE_MID + 4, col: 0 };
 
 // A later follow-up ask: "add a sign on the Kortho side of the beach
-// with 'The Shimmering Sea'" — sits on the near sand strip, off to the
-// side of the town's own mid-row so it doesn't block the dock itself.
-export const KORTHO_SHIMMERING_SEA_SIGN_POSITION = { row: TOWN_MID_ROW - 5, col: KORTHO_NEAR_SAND_COL_START + 1 };
+// with 'The Shimmering Sea'" — sits on the near sand strip, right at the
+// edge where sand meets sea, off to the side of the town's own mid-row
+// so it doesn't block the dock itself.
+export const KORTHO_SHIMMERING_SEA_SIGN_POSITION = { row: TOWN_MID_ROW - 5, col: KORTHO_NEAR_SAND_COL_START };
+
+// A later follow-up ask: "a 1 tile dirt road connection... with a sign
+// against the edge reading 'Direfell'... [Direfell] a dirt road
+// connection to the southwest/west with sign 'Kortho'" — same two-sided
+// sign-pair convention as every other connection, sitting exactly on
+// each map's own true edge column (see this file's own "against the
+// edge" doc comment above).
+export const KORTHO_DIREFELL_SIGN_POSITION = { row: KORTHO_DIREFELL_ROW + 4, col: KORTHO_COLS - 1 };
+export const DIREFELL_KORTHO_SIGN_POSITION = { row: DIREFELL_KORTHO_ROW - 4, col: 0 };
 
 // A later follow-up ask: "add a connection to the west of Floro... a
 // sign with 'The Great Plains'... [Great Plains] have a dirt road
@@ -818,8 +844,8 @@ export const KORTHO_SHIMMERING_SEA_SIGN_POSITION = { row: TOWN_MID_ROW - 5, col:
 // two-sided sign-pair convention as every other connection above, offset
 // off the road band itself (which spans ±GREAT_PLAINS_FLORO_HALF_WIDTH_TILES
 // rows on both sides) so neither sign sits on the road tiles.
-export const FLORO_GREAT_PLAINS_SIGN_POSITION = { row: FLORO_GREAT_PLAINS_ROW - 4, col: 3 };
-export const GREAT_PLAINS_FLORO_SIGN_POSITION = { row: GREAT_PLAINS_FLORO_ROW - 4, col: GREAT_PLAINS_SIZE - 3 };
+export const FLORO_GREAT_PLAINS_SIGN_POSITION = { row: FLORO_GREAT_PLAINS_ROW - 4, col: 0 };
+export const GREAT_PLAINS_FLORO_SIGN_POSITION = { row: GREAT_PLAINS_FLORO_ROW - 4, col: GREAT_PLAINS_SIZE - 1 };
 
 // A later follow-up ask: "create a cave entrance at the northwest/north
 // of the great plains... a sign next to it with 'Hexstone Cavern'...
@@ -828,11 +854,48 @@ export const GREAT_PLAINS_FLORO_SIGN_POSITION = { row: GREAT_PLAINS_FLORO_ROW - 
 // other connection above, offset off the road band (which spans
 // ±GREAT_PLAINS_HEXSTONE_HALF_WIDTH_TILES) so neither sign sits on the
 // cave-entrance tiles themselves.
-export const GREAT_PLAINS_HEXSTONE_SIGN_POSITION = { row: GREAT_PLAINS_HEXSTONE_ROW + 4, col: 3 };
-export const HEXSTONE_GREAT_PLAINS_SIGN_POSITION = { row: HEXSTONE_CAVERN_SIZE - 4, col: HEXSTONE_GREAT_PLAINS_COL + 4 };
+export const GREAT_PLAINS_HEXSTONE_SIGN_POSITION = { row: GREAT_PLAINS_HEXSTONE_ROW + 4, col: 0 };
+export const HEXSTONE_GREAT_PLAINS_SIGN_POSITION = { row: HEXSTONE_CAVERN_SIZE - 1, col: HEXSTONE_GREAT_PLAINS_COL + 4 };
+
+// A later follow-up ask: "add a cave connection to the west of Bramwick
+// with a sign that reads 'Brimstone Cave'... a cave connection east with
+// sign 'Bramwick'" — same two-sided sign-pair convention as every other
+// connection above.
+export const BRAMWICK_BRIMSTONE_SIGN_POSITION = { row: BRAMWICK_BRIMSTONE_ROW - 4, col: 0 };
+export const BRIMSTONE_BRAMWICK_SIGN_POSITION = { row: BRIMSTONE_CAVE_MID_ROW - 4, col: BRIMSTONE_CAVE_SIZE - 1 };
+
+// A later follow-up ask: "a dirt road connection to the north of
+// Bramwick with sign 'Boulder Pass'" — only the one sign was asked for
+// (Bramwick's own side); Runestone Way's own far end has no reciprocal
+// sign since nothing was asked to be there. The perpendicular offset
+// moves WEST (-4, toward the gap between the Weapons shop's own
+// footprint and the exit band) rather than +4 — BRAMWICK_RUNESTONE_COL
+// (36) + 4 would land at col 40, one past Bramwick's own last valid
+// column (39).
+export const BRAMWICK_RUNESTONE_SIGN_POSITION = { row: 0, col: BRAMWICK_RUNESTONE_COL - 4 };
+
+// A later follow-up ask: "a dirt road connection to the east of Bramwick
+// with sign 'Silverbranch Road'... a dirt road connection to the west
+// for Bramwick with sign 'Bramwick'" — same two-sided sign-pair
+// convention as every other connection above.
+export const BRAMWICK_SILVERBRANCH_SIGN_POSITION = { row: BRAMWICK_SILVERBRANCH_ROW - 4, col: BRAMWICK_SIZE - 1 };
+export const SILVERBRANCH_BRAMWICK_SIGN_POSITION = { row: SILVERBRANCH_ROAD_MID_ROW - 4, col: 0 };
 
 export function isBramwickSignBlocked(mapName: MapName, row: number, col: number): boolean {
-  if (mapName === 'Bramwick') return row === BRAMWICK_SIGN_POSITION.row && col === BRAMWICK_SIGN_POSITION.col;
+  if (mapName === 'Bramwick') {
+    return (
+      (row === BRAMWICK_SIGN_POSITION.row && col === BRAMWICK_SIGN_POSITION.col) ||
+      (row === BRAMWICK_BRIMSTONE_SIGN_POSITION.row && col === BRAMWICK_BRIMSTONE_SIGN_POSITION.col) ||
+      (row === BRAMWICK_RUNESTONE_SIGN_POSITION.row && col === BRAMWICK_RUNESTONE_SIGN_POSITION.col) ||
+      (row === BRAMWICK_SILVERBRANCH_SIGN_POSITION.row && col === BRAMWICK_SILVERBRANCH_SIGN_POSITION.col)
+    );
+  }
+  if (mapName === 'Brimstone Cave') {
+    return row === BRIMSTONE_BRAMWICK_SIGN_POSITION.row && col === BRIMSTONE_BRAMWICK_SIGN_POSITION.col;
+  }
+  if (mapName === 'Silverbranch Road') {
+    return row === SILVERBRANCH_BRAMWICK_SIGN_POSITION.row && col === SILVERBRANCH_BRAMWICK_SIGN_POSITION.col;
+  }
   if (mapName === 'Grimoak Grounds') {
     return (
       (row === GRIMOAK_GROUNDS_SIGN_POSITION.row && col === GRIMOAK_GROUNDS_SIGN_POSITION.col) ||
@@ -860,8 +923,12 @@ export function isBramwickSignBlocked(mapName: MapName, row: number, col: number
   if (mapName === 'Kortho') {
     return (
       (row === KORTHO_ROAD_SIGN_POSITION.row && col === KORTHO_ROAD_SIGN_POSITION.col) ||
-      (row === KORTHO_SHIMMERING_SEA_SIGN_POSITION.row && col === KORTHO_SHIMMERING_SEA_SIGN_POSITION.col)
+      (row === KORTHO_SHIMMERING_SEA_SIGN_POSITION.row && col === KORTHO_SHIMMERING_SEA_SIGN_POSITION.col) ||
+      (row === KORTHO_DIREFELL_SIGN_POSITION.row && col === KORTHO_DIREFELL_SIGN_POSITION.col)
     );
+  }
+  if (mapName === 'Direfell') {
+    return row === DIREFELL_KORTHO_SIGN_POSITION.row && col === DIREFELL_KORTHO_SIGN_POSITION.col;
   }
   if (mapName === 'Floro') {
     return (

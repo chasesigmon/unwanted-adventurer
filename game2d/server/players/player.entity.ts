@@ -107,10 +107,12 @@ export class Player {
   // Movement points (a later follow-up ask re-added this resource) —
   // 'real' (not 'int'), same fractional-decay precedent hunger/thirst
   // already use, since a move costs 0.5 mv (see MV_COST_PER_TILE).
-  @Column({ type: 'real', default: 200 })
+  // Starting mv matches hp/mana's own 100 (a later follow-up ask), down
+  // from the original 200 — see STARTING_MV in combat/formulas.ts.
+  @Column({ type: 'real', default: 100 })
   mv!: number;
 
-  @Column({ name: 'max_mv', type: 'real', default: 200 })
+  @Column({ name: 'max_mv', type: 'real', default: 100 })
   maxMv!: number;
 
   // Hemomancer's own resource (a later follow-up ask) — granted at 100

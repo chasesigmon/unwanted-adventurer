@@ -23,10 +23,18 @@ const python = `
 from PIL import Image, ImageDraw
 
 FRAME = 48
+# A later follow-up ask: "update the canoe graphic to be a little longer
+# and wider and try to make it look a little more like a canoe" — its own
+# bigger frame (the raft stays at FRAME); Phaser renders each texture at
+# its own native pixel size with no extra scale applied, so this alone
+# makes the canoe read as visibly bigger/more boat-shaped on screen.
+CANOE_FRAME = 64
 
 CANOE_HULL = (120, 84, 46)
 CANOE_HULL_DARK = (92, 62, 30)
 CANOE_INTERIOR = (166, 128, 78)
+CANOE_KEEL = (74, 50, 24)
+CANOE_SEAT = (100, 70, 38)
 RAFT_LOG = (128, 96, 60)
 RAFT_LOG_DARK = (100, 74, 44)
 RAFT_ROPE = (60, 44, 24)
@@ -35,8 +43,8 @@ FLAG_CLOTH = (196, 58, 48)
 
 FACING_DELTA = {'down': (0, 1), 'up': (0, -1), 'left': (-1, 0), 'right': (1, 0)}
 
-def blank():
-    return Image.new('RGBA', (FRAME, FRAME), (0, 0, 0, 0))
+def blank(size=FRAME):
+    return Image.new('RGBA', (size, size), (0, 0, 0, 0))
 
 # A small red pennant planted at the BOW end, same marker on both hulls —
 # an unambiguous "which way is this thing facing" cue that still reads at
@@ -51,25 +59,63 @@ def plant_flag(d, cx, cy, dx, dy, reach):
         cloth = [(tip_x - 5, tip_y), (tip_x, tip_y + dy * 8), (tip_x + 5, tip_y)]
     d.polygon(cloth, fill=FLAG_CLOTH)
 
-# A slim, pointed-both-ends hull (a canoe) — symmetric fore-to-aft, so the
-# bow-mounted flag above (plant_flag) is what actually shows facing.
+# A longer, wider hull (a later follow-up ask) built from a smoother
+# 8-point silhouette instead of a plain 4-point diamond — a real canoe's
+# sides bow outward at the midpoint rather than tapering in a straight
+# line from bow to stern, and its ends narrow gradually into a point
+# rather than meeting at one sharp diamond tip. Symmetric fore-to-aft, so
+# the bow-mounted flag above (plant_flag) is what actually shows facing.
 def canoe_frame(facing):
-    img = blank()
+    img = blank(CANOE_FRAME)
     d = ImageDraw.Draw(img)
-    long_half = 18
-    short_half = 8
-    cx, cy = FRAME / 2, FRAME / 2
+    long_half = 27
+    mid_half = 13
+    tip_half = 21
+    cx, cy = CANOE_FRAME / 2, CANOE_FRAME / 2
     dx, dy = FACING_DELTA[facing]
-    if dx == 0:
-        points = [(cx, cy + long_half * dy), (cx + short_half, cy), (cx, cy - long_half * dy), (cx - short_half, cy)]
-        interior = [(cx, cy + long_half * dy * 0.55), (cx + short_half * 0.55, cy), (cx, cy - long_half * dy * 0.55), (cx - short_half * 0.55, cy)]
-    else:
-        points = [(cx + long_half * dx, cy), (cx, cy + short_half), (cx - long_half * dx, cy), (cx, cy - short_half)]
-        interior = [(cx + long_half * dx * 0.55, cy), (cx, cy + short_half * 0.55), (cx - long_half * dx * 0.55, cy), (cx, cy - short_half * 0.55)]
+
+    def hull_points(scale):
+        lh, mh, th = long_half * scale, mid_half * scale, tip_half * scale
+        if dx == 0:
+            return [
+                (cx, cy + lh * dy),
+                (cx + mh * 0.65, cy + th * dy),
+                (cx + mh, cy),
+                (cx + mh * 0.65, cy - th * dy),
+                (cx, cy - lh * dy),
+                (cx - mh * 0.65, cy - th * dy),
+                (cx - mh, cy),
+                (cx - mh * 0.65, cy + th * dy),
+            ]
+        return [
+            (cx + lh * dx, cy),
+            (cx + th * dx, cy + mh * 0.65),
+            (cx, cy + mh),
+            (cx - th * dx, cy + mh * 0.65),
+            (cx - lh * dx, cy),
+            (cx - th * dx, cy - mh * 0.65),
+            (cx, cy - mh),
+            (cx + th * dx, cy - mh * 0.65),
+        ]
+
+    points = hull_points(1.0)
+    interior = hull_points(0.6)
     d.polygon(points, fill=CANOE_HULL_DARK)
     d.polygon(interior, fill=CANOE_INTERIOR)
     d.line(points + [points[0]], fill=CANOE_HULL, width=2)
-    plant_flag(d, cx + long_half * dx * 0.7, cy + long_half * dy * 0.7, dx, dy, 10)
+    # A keel line down the centerline plus two thwarts (seats) crossing
+    # it, reading as an actual boat interior rather than a flat blob.
+    if dx == 0:
+        d.line([(cx, cy - long_half * 0.75 * dy), (cx, cy + long_half * 0.75 * dy)], fill=CANOE_KEEL, width=2)
+        for frac in (-0.35, 0.35):
+            y = cy + long_half * frac * dy
+            d.line([(cx - mid_half * 0.7, y), (cx + mid_half * 0.7, y)], fill=CANOE_SEAT, width=3)
+    else:
+        d.line([(cx - long_half * 0.75 * dx, cy), (cx + long_half * 0.75 * dx, cy)], fill=CANOE_KEEL, width=2)
+        for frac in (-0.35, 0.35):
+            x = cx + long_half * frac * dx
+            d.line([(x, cy - mid_half * 0.7), (x, cy + mid_half * 0.7)], fill=CANOE_SEAT, width=3)
+    plant_flag(d, cx + long_half * dx * 0.7, cy + long_half * dy * 0.7, dx, dy, 11)
     return img
 
 # A blocky, roughly-square log raft — the log grain always runs ACROSS
@@ -110,15 +156,16 @@ def raft_frame(facing):
 
 FACINGS = ['down', 'up', 'left', 'right']
 
-canoe_sheet = Image.new('RGBA', (FRAME * len(FACINGS), FRAME), (0, 0, 0, 0))
+canoe_sheet = Image.new('RGBA', (CANOE_FRAME * len(FACINGS), CANOE_FRAME), (0, 0, 0, 0))
 raft_sheet = Image.new('RGBA', (FRAME * len(FACINGS), FRAME), (0, 0, 0, 0))
 for i, facing in enumerate(FACINGS):
-    canoe_sheet.paste(canoe_frame(facing), (i * FRAME, 0))
+    canoe_sheet.paste(canoe_frame(facing), (i * CANOE_FRAME, 0))
     raft_sheet.paste(raft_frame(facing), (i * FRAME, 0))
 
 canoe_sheet.save("${join(assetsDir, 'canoe-spritesheet.png')}")
 raft_sheet.save("${join(assetsDir, 'raft-spritesheet.png')}")
-print("Wrote canoe-spritesheet.png and raft-spritesheet.png (" + str(FRAME * len(FACINGS)) + "x" + str(FRAME) + ", 4 frames of " + str(FRAME) + "x" + str(FRAME) + " each)")
+print("Wrote canoe-spritesheet.png (" + str(CANOE_FRAME * len(FACINGS)) + "x" + str(CANOE_FRAME) + ", 4 frames of " + str(CANOE_FRAME) + "x" + str(CANOE_FRAME) + ")")
+print("Wrote raft-spritesheet.png (" + str(FRAME * len(FACINGS)) + "x" + str(FRAME) + ", 4 frames of " + str(FRAME) + "x" + str(FRAME) + ")")
 `;
 
 execFileSync('python3', ['-c', python], { stdio: 'inherit' });

@@ -70,6 +70,22 @@ import {
   GREAT_PLAINS_HEXSTONE_ROW,
   HEXSTONE_CAVERN_SIZE,
   HEXSTONE_GREAT_PLAINS_COL,
+  BRAMWICK_SIZE,
+  BRAMWICK_BRIMSTONE_ROW,
+  BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES,
+  BRIMSTONE_CAVE_MID_ROW,
+  BRIMSTONE_CAVE_SIZE,
+  RUNESTONE_WAY_ROWS,
+  RUNESTONE_WAY_MID_COL,
+  RUNESTONE_WAY_HALF_WIDTH_TILES,
+  BRAMWICK_RUNESTONE_COL,
+  SILVERBRANCH_ROAD_COLS,
+  SILVERBRANCH_ROAD_MID_ROW,
+  SILVERBRANCH_ROAD_HALF_WIDTH_TILES,
+  BRAMWICK_SILVERBRANCH_ROW,
+  KORTHO_DIREFELL_ROW,
+  DIREFELL_KORTHO_ROW,
+  DIREFELL_SIZE,
 } from '../../shared/maps.js';
 import { treePositionsFor } from '../../shared/trees.js';
 import {
@@ -153,6 +169,13 @@ import {
   GREAT_PLAINS_FLORO_SIGN_POSITION,
   GREAT_PLAINS_HEXSTONE_SIGN_POSITION,
   HEXSTONE_GREAT_PLAINS_SIGN_POSITION,
+  BRAMWICK_BRIMSTONE_SIGN_POSITION,
+  BRIMSTONE_BRAMWICK_SIGN_POSITION,
+  BRAMWICK_RUNESTONE_SIGN_POSITION,
+  BRAMWICK_SILVERBRANCH_SIGN_POSITION,
+  SILVERBRANCH_BRAMWICK_SIGN_POSITION,
+  KORTHO_DIREFELL_SIGN_POSITION,
+  DIREFELL_KORTHO_SIGN_POSITION,
   standingTorchPositionsFor,
 } from '../../shared/lighting.js';
 import {
@@ -264,6 +287,7 @@ import {
   GOBBLER_HUT_FRAME_WIDTH,
   GOBBLER_HUT_FRAME_HEIGHT,
   CANOE_TEXTURE_KEY,
+  CANOE_FRAME_SIZE,
   RAFT_TEXTURE_KEY,
   BOAT_FRAME_SIZE,
   BOAT_FRAME_FOR_FACING,
@@ -277,6 +301,8 @@ import {
   WAND_GLOW_RADIUS_PX,
   WAND_GLOW_COLOR,
   TREE_TEXTURE_KEY,
+  SILVER_TREE_TEXTURE_KEY,
+  SPOOKY_TREE_TEXTURE_KEY,
   STAIRS_TEXTURE_KEY,
   GRAND_DOOR_TEXTURE_KEY,
   drawHpBar,
@@ -648,6 +674,9 @@ export class WorldScene extends Phaser.Scene {
     // Hexstone Cavern's own rocky floor + cave-mouth entrance sprite (a
     // later follow-up ask).
     this.load.svg('cave', '/cave-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    // Runestone Way's own impassable-looking off-road ground (a later
+    // follow-up ask).
+    this.load.svg('boulder-field', '/boulder-field-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     this.load.image(CAVE_ENTRANCE_TEXTURE_KEY, '/cave-entrance.png');
     // Grimoak Grounds' own stretch of road leading up to it (a later
     // follow-up ask: "clearly have a different colored dirt road from
@@ -686,6 +715,8 @@ export class WorldScene extends Phaser.Scene {
       });
     }
     this.load.svg(TREE_TEXTURE_KEY, '/tree.svg', { width: 48, height: 64 });
+    this.load.svg(SILVER_TREE_TEXTURE_KEY, '/silver-tree.svg', { width: 48, height: 64 });
+    this.load.svg(SPOOKY_TREE_TEXTURE_KEY, '/spooky-tree.svg', { width: 48, height: 64 });
     this.load.svg(DAGGER_TEXTURE_KEY, '/dagger.svg', { width: 16, height: 16 });
     this.load.svg(CLUB_TEXTURE_KEY, '/club.svg', { width: 16, height: 16 });
     this.load.svg(BONE_SHIELD_TEXTURE_KEY, '/bone-shield.svg', { width: 16, height: 16 });
@@ -717,7 +748,7 @@ export class WorldScene extends Phaser.Scene {
     });
     // The small canoe/large raft (a later follow-up ask) — one 4-frame
     // sheet each, one frame per facing (see tools/gen-boat-assets.mjs).
-    this.load.spritesheet(CANOE_TEXTURE_KEY, '/canoe-spritesheet.png', { frameWidth: BOAT_FRAME_SIZE, frameHeight: BOAT_FRAME_SIZE });
+    this.load.spritesheet(CANOE_TEXTURE_KEY, '/canoe-spritesheet.png', { frameWidth: CANOE_FRAME_SIZE, frameHeight: CANOE_FRAME_SIZE });
     this.load.spritesheet(RAFT_TEXTURE_KEY, '/raft-spritesheet.png', { frameWidth: BOAT_FRAME_SIZE, frameHeight: BOAT_FRAME_SIZE });
     // A single fancy double door (a follow-up ask), used for every map
     // exit now — shop doors and every other transition alike.
@@ -2125,10 +2156,17 @@ export class WorldScene extends Phaser.Scene {
     // follow-up ask), but this rendering loop was still hardcoded to
     // Great Plains only, so the (very real, server-enforced) collision
     // had no matching sprite to show for it.
-    if (mapName === 'Great Plains' || mapName === 'Mystical Timberland') {
+    if (mapName === 'Great Plains' || mapName === 'Mystical Timberland' || mapName === 'Silverbranch Road' || mapName === 'Direfell') {
+      // A later follow-up ask: "add some trees on the grass with silver
+      // branches... to match the naming theme of the road" — same tree
+      // system every other map's own trees use (see shared/trees.ts's
+      // treePositionsFor/isTreeTile), just its own distinct sprite. A
+      // later ask's "haunted looking forest" reuses the same system too.
+      const textureKey =
+        mapName === 'Silverbranch Road' ? SILVER_TREE_TEXTURE_KEY : mapName === 'Direfell' ? SPOOKY_TREE_TEXTURE_KEY : TREE_TEXTURE_KEY;
       for (const { row, col } of treePositionsFor(mapName)) {
         const pos = this.tilePosition(row, col);
-        const sprite = this.add.sprite(pos.x, pos.y, TREE_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
+        const sprite = this.add.sprite(pos.x, pos.y, textureKey).setOrigin(0.5, 0.85).setDepth(-0.5);
         // A gentle sway tween (a whole crown swaying in a breeze) instead
         // of a multi-frame animation — the tree is a single static image
         // asset now (see assets/tree.svg), and a small back-and-forth
@@ -2211,6 +2249,115 @@ export class WorldScene extends Phaser.Scene {
             GRIMOAK_GROUNDS_ROAD_ROWS * TILE_SIZE,
             DIRT_ROAD_TEXTURE_KEY
           )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+
+      // A later follow-up ask: "a cave connection to the west of
+      // Bramwick" — same short "Kortho spur" thin-patch depth as every
+      // other cave/direct-connection entrance uses.
+      const bramwickBrimstoneDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
+      const bramwickBrimstoneHeight = BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES * 2 + 1;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            0,
+            (BRAMWICK_BRIMSTONE_ROW - BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES) * TILE_SIZE,
+            bramwickBrimstoneDepth * TILE_SIZE,
+            bramwickBrimstoneHeight * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+      {
+        const pos = this.tilePosition(BRAMWICK_BRIMSTONE_ROW, 0);
+        this.caveEntranceSprites.push(
+          this.add.sprite(pos.x, pos.y + TILE_SIZE / 2, CAVE_ENTRANCE_TEXTURE_KEY).setOrigin(0.5, 1).setDepth(-0.75)
+        );
+      }
+
+      // A later follow-up ask: "a dirt road connection to the north of
+      // Bramwick with sign 'Boulder Pass'" — same short depth, at
+      // Bramwick's own north edge instead.
+      const bramwickRunestoneDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
+      const bramwickRunestoneWidth = RUNESTONE_WAY_HALF_WIDTH_TILES * 2 + 1;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            (BRAMWICK_RUNESTONE_COL - RUNESTONE_WAY_HALF_WIDTH_TILES) * TILE_SIZE,
+            0,
+            bramwickRunestoneWidth * TILE_SIZE,
+            bramwickRunestoneDepth * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+
+      // A later follow-up ask: "a dirt road connection to the east of
+      // Bramwick with sign 'Silverbranch Road'" — same short depth, at
+      // Bramwick's own east edge instead.
+      const bramwickSilverbranchDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
+      const bramwickSilverbranchHeight = SILVERBRANCH_ROAD_HALF_WIDTH_TILES * 2 + 1;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            (BRAMWICK_SIZE - bramwickSilverbranchDepth) * TILE_SIZE,
+            (BRAMWICK_SILVERBRANCH_ROW - SILVERBRANCH_ROAD_HALF_WIDTH_TILES) * TILE_SIZE,
+            bramwickSilverbranchDepth * TILE_SIZE,
+            bramwickSilverbranchHeight * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+    } else if (mapName === 'Brimstone Cave') {
+      // The reciprocal thin patch + cave-mouth sprite on Brimstone Cave's
+      // own side (a later follow-up ask: "a cave connection east with
+      // sign 'Bramwick'") — same convention as Bramwick's own side above.
+      const brimstoneBramwickDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
+      const brimstoneBramwickHeight = BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES * 2 + 1;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(
+            (BRIMSTONE_CAVE_SIZE - brimstoneBramwickDepth) * TILE_SIZE,
+            (BRIMSTONE_CAVE_MID_ROW - BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES) * TILE_SIZE,
+            brimstoneBramwickDepth * TILE_SIZE,
+            brimstoneBramwickHeight * TILE_SIZE,
+            DIRT_ROAD_TEXTURE_KEY
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+      {
+        const pos = this.tilePosition(BRIMSTONE_CAVE_MID_ROW, BRIMSTONE_CAVE_SIZE - 1);
+        this.caveEntranceSprites.push(
+          this.add.sprite(pos.x, pos.y + TILE_SIZE / 2, CAVE_ENTRANCE_TEXTURE_KEY).setOrigin(0.5, 1).setDepth(-0.75)
+        );
+      }
+    } else if (mapName === 'Runestone Way') {
+      // The full-length dirt road overlay (a later follow-up ask: "like
+      // the road to floro, except this goes north") — same shape as Road
+      // to Floro's own north-south road, spanning the corridor's whole
+      // length.
+      const runestoneRoadWidthTiles = RUNESTONE_WAY_HALF_WIDTH_TILES * 2 + 1;
+      const runestoneRoadLeftX = (RUNESTONE_WAY_MID_COL - RUNESTONE_WAY_HALF_WIDTH_TILES) * TILE_SIZE;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(runestoneRoadLeftX, 0, runestoneRoadWidthTiles * TILE_SIZE, RUNESTONE_WAY_ROWS * TILE_SIZE, DIRT_ROAD_TEXTURE_KEY)
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+    } else if (mapName === 'Silverbranch Road') {
+      // The full-length dirt road overlay (a later follow-up ask: "like
+      // the road to kortho going east") — same shape as Road to Kortho's
+      // own east-west road, spanning the corridor's whole length.
+      const silverbranchRoadHeightTiles = SILVERBRANCH_ROAD_HALF_WIDTH_TILES * 2 + 1;
+      const silverbranchRoadTopY = (SILVERBRANCH_ROAD_MID_ROW - SILVERBRANCH_ROAD_HALF_WIDTH_TILES) * TILE_SIZE;
+      this.roadTiles.push(
+        this.add
+          .tileSprite(0, silverbranchRoadTopY, SILVERBRANCH_ROAD_COLS * TILE_SIZE, silverbranchRoadHeightTiles * TILE_SIZE, DIRT_ROAD_TEXTURE_KEY)
           .setOrigin(0, 0)
           .setDepth(-0.99)
       );
@@ -2490,6 +2637,25 @@ export class WorldScene extends Phaser.Scene {
           )
           .setOrigin(0, 0)
           .setDepth(-0.97)
+      );
+
+      // A later follow-up ask: "add a 1 tile dirt road connection (with
+      // no door)... on the sandy beach area" — a single dirt tile (not
+      // the usual multi-tile band) right at the Direfell exit, on the
+      // far sand strip.
+      this.roadTiles.push(
+        this.add.tileSprite(
+          (KORTHO_COLS - 1) * TILE_SIZE,
+          KORTHO_DIREFELL_ROW * TILE_SIZE,
+          TILE_SIZE,
+          TILE_SIZE,
+          DIRT_ROAD_TEXTURE_KEY
+        ).setOrigin(0, 0).setDepth(-0.99)
+      );
+    } else if (mapName === 'Direfell') {
+      // The reciprocal single dirt tile on Direfell's own side.
+      this.roadTiles.push(
+        this.add.tileSprite(0, DIREFELL_KORTHO_ROW * TILE_SIZE, TILE_SIZE, TILE_SIZE, DIRT_ROAD_TEXTURE_KEY).setOrigin(0, 0).setDepth(-0.99)
       );
     } else if (mapName === 'Floro') {
       // Same entrance-patch treatment as Kortho above (a later follow-up
@@ -2949,6 +3115,12 @@ export class WorldScene extends Phaser.Scene {
       // beach with 'The Shimmering Sea'" — no reciprocal sign on the far
       // shore, since nothing else is over there to name a way back to.
       { map: 'Kortho', position: KORTHO_SHIMMERING_SEA_SIGN_POSITION, label: 'The Shimmering Sea' },
+      // The new 1-tile Direfell connection's own sign pair (a later
+      // follow-up ask: "a dirt road connection... on the sandy beach
+      // area with a sign against the edge reading 'Direfell'"... "sign
+      // 'Kortho'").
+      { map: 'Kortho', position: KORTHO_DIREFELL_SIGN_POSITION, label: 'Direfell' },
+      { map: 'Direfell', position: DIREFELL_KORTHO_SIGN_POSITION, label: 'Kortho' },
       // The new west "Great Plains" connection's own sign pair (a later
       // follow-up ask: "a sign with 'The Great Plains'"... "sign
       // 'Floro'").
@@ -2959,6 +3131,15 @@ export class WorldScene extends Phaser.Scene {
       // "a sign next to it 'The Great Plains'").
       { map: 'Great Plains', position: GREAT_PLAINS_HEXSTONE_SIGN_POSITION, label: 'Hexstone Cavern' },
       { map: 'Hexstone Cavern', position: HEXSTONE_GREAT_PLAINS_SIGN_POSITION, label: 'The Great Plains' },
+      // Bramwick's own 3 new connections' sign(s) (a later follow-up
+      // ask): Brimstone Cave (both sides), Runestone Way/"Boulder Pass"
+      // (Bramwick's own side only — nothing was asked for at the far
+      // end), Silverbranch Road (both sides).
+      { map: 'Bramwick', position: BRAMWICK_BRIMSTONE_SIGN_POSITION, label: 'Brimstone Cave' },
+      { map: 'Brimstone Cave', position: BRIMSTONE_BRAMWICK_SIGN_POSITION, label: 'Bramwick' },
+      { map: 'Bramwick', position: BRAMWICK_RUNESTONE_SIGN_POSITION, label: 'Boulder Pass' },
+      { map: 'Bramwick', position: BRAMWICK_SILVERBRANCH_SIGN_POSITION, label: 'Silverbranch Road' },
+      { map: 'Silverbranch Road', position: SILVERBRANCH_BRAMWICK_SIGN_POSITION, label: 'Bramwick' },
     ];
     this.signSprites = signDefs
       .filter((def) => def.map === mapName)

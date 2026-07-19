@@ -1112,7 +1112,10 @@ const HEMOMANCER_CHAMBER = chamberOffFloorLanding('Hemomancer Chamber', 'Grimoak
 // hub-and-spoke shape as Floro's own shops (see shopInteriorDefinition/
 // floroShopDoorExits above), just parameterized to Bramwick's own name/
 // door list instead. ----------
-const BRAMWICK_SIZE = 40;
+// Exported (a later follow-up ask needed it client-side, to size the new
+// Brimstone Cave/Runestone Way/Silverbranch Road connections' own sign
+// placement relative to Bramwick's own edges).
+export const BRAMWICK_SIZE = 40;
 const BRAMWICK_MID_COL = Math.floor(BRAMWICK_SIZE / 2);
 
 const BRAMWICK_SHOP_DOORS: Record<(typeof BRAMWICK_SHOP_MAPS)[number], { row: number; col: number }> = {
@@ -1395,6 +1398,81 @@ export const HEXSTONE_CAVERN_SIZE = GREAT_PLAINS_SIZE;
 // side of it rather than dead center.
 export const HEXSTONE_GREAT_PLAINS_COL = Math.round(HEXSTONE_CAVERN_SIZE * 0.75);
 
+// ---------- Brimstone Cave (a later follow-up ask: "add a cave
+// connection to the west of Bramwick... make it the same size as
+// Hexstone Cavern... a cave connection east with sign 'Bramwick'") — same
+// direct shared-border, no-door shape as the Great Plains <-> Hexstone
+// Cavern connection above, reusing the same generic cave-mouth sprite. ----------
+export const BRIMSTONE_CAVE_SIZE = HEXSTONE_CAVERN_SIZE;
+export const BRIMSTONE_CAVE_MID_ROW = Math.floor(BRIMSTONE_CAVE_SIZE / 2);
+export const BRAMWICK_BRIMSTONE_ROW = Math.floor(BRAMWICK_SIZE / 2);
+export const BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES = 2;
+
+// ---------- Runestone Way (a later follow-up ask: "a dirt road
+// connection to the north of Bramwick with sign 'Boulder Pass'... like
+// the road to floro, except this goes north... instead of the grass on
+// either side, create boulders and rocks and impassable looking
+// terrain... collision on the side of the road so the player is only
+// able to walk on the road") — same north-south corridor shape as Road
+// to Floro (see ROAD_TO_FLORO_ROWS/COLS's own doc comment for the same
+// "ROWS matches the big map's own size, COLS is a thin 25% slice" ratio,
+// here relative to Bramwick instead of Grimoak Grounds), but with real
+// off-road collision (see isRunestoneWayOffRoadBlocked below) instead of
+// merely-decorative grass, and no second connection at its own far end
+// (nothing was asked to be there yet — a dead end for now). ----------
+export const RUNESTONE_WAY_ROWS = BRAMWICK_SIZE;
+export const RUNESTONE_WAY_COLS = Math.round(BRAMWICK_SIZE * 0.25);
+export const RUNESTONE_WAY_MID_COL = Math.floor(RUNESTONE_WAY_COLS / 2);
+export const RUNESTONE_WAY_HALF_WIDTH_TILES = 2;
+// Bramwick's own north-edge column for this connection — NOT
+// BRAMWICK_MID_COL (20): the Pet Shop's own door sits at (10,
+// BRAMWICK_MID_COL) with its building footprint reaching rows 3-9 at
+// cols 17-22 (see BRAMWICK_SHOP_DOORS/shopBuildingFootprint), directly in
+// the path north from the map's own top edge. 36 sits in the clear gap
+// east of the Weapons shop's own footprint (cols 27-32).
+export const BRAMWICK_RUNESTONE_COL = 36;
+
+// Blocks every tile OFF the walkable road band — the "boulders and rocks
+// and impassable looking terrain" flanking it. Never bypassed by flying
+// (same "solid obstacle, not water" treatment isCastleExteriorBlocked/
+// isTreeTile already get — see world-manager.service.ts's isOccupied).
+export function isRunestoneWayOffRoadBlocked(mapName: MapName, row: number, col: number): boolean {
+  if (mapName !== 'Runestone Way') return false;
+  return col < RUNESTONE_WAY_MID_COL - RUNESTONE_WAY_HALF_WIDTH_TILES || col > RUNESTONE_WAY_MID_COL + RUNESTONE_WAY_HALF_WIDTH_TILES;
+}
+
+// ---------- Silverbranch Road (a later follow-up ask: "a dirt road
+// connection to the east of Bramwick with sign 'Silverbranch Road'...
+// like the road to kortho going east... a dirt road connection to the
+// west for Bramwick with sign 'Bramwick'... trees on the grass with
+// silver branches with collision") — same east-west corridor shape as
+// Road to Kortho, relative to Bramwick instead of Grimoak Grounds, plain
+// grass (not boulder-walled like Runestone Way above) with real trees
+// (see shared/trees.ts's own silverbranchRoadTreePositions) rather than
+// a blanket off-road wall. No second connection at its own far end,
+// same "nothing asked for there yet" reasoning as Runestone Way. ----------
+export const SILVERBRANCH_ROAD_ROWS = Math.round(BRAMWICK_SIZE * 0.25);
+export const SILVERBRANCH_ROAD_COLS = BRAMWICK_SIZE;
+export const SILVERBRANCH_ROAD_MID_ROW = Math.floor(SILVERBRANCH_ROAD_ROWS / 2);
+export const SILVERBRANCH_ROAD_HALF_WIDTH_TILES = 2;
+export const BRAMWICK_SILVERBRANCH_ROW = Math.floor(BRAMWICK_SIZE / 2);
+
+// ---------- Direfell (a later follow-up ask: "add a 1 tile dirt road
+// connection (with no door) at the northeast/east of Kortho on the sandy
+// beach area... make the new world Direfell be half the size of
+// Kortho... a dirt road connection to the southwest/west with sign
+// 'Kortho'") — unlike every other connection in this file, a single
+// CHOKE-POINT tile (halfWidthTiles 0), not the usual multi-tile band, per
+// the user's own explicit "1 tile" ask. "Half the size of Kortho" reads
+// as half of Kortho's own original town square (TOWN_SIZE), not the much
+// longer sand/sea/sand-extended KORTHO_COLS. ----------
+export const DIREFELL_SIZE = Math.round(TOWN_SIZE / 2);
+// "Northeast/east" — Kortho's own far (east) sand strip, toward the
+// north/top of it.
+export const KORTHO_DIREFELL_ROW = 15;
+// "Southwest/west" — Direfell's own west edge, toward the south/bottom.
+export const DIREFELL_KORTHO_ROW = DIREFELL_SIZE - 6;
+
 export const MAPS: Record<MapName, MapDefinition> = {
   'Great Plains': {
     name: 'Great Plains',
@@ -1566,6 +1644,20 @@ export const MAPS: Record<MapName, MapDefinition> = {
         spread: 'row',
       }),
       ...korthoShopDoorExits(),
+      // A later follow-up ask: "add a 1 tile dirt road connection (with
+      // no door) at the northeast/east of Kortho on the sandy beach area
+      // with a sign against the edge reading 'Direfell'" — a single
+      // choke-point tile on the far (east) sand strip, unlike every
+      // other connection's own multi-tile band.
+      {
+        row: KORTHO_DIREFELL_ROW,
+        col: KORTHO_COLS - 1,
+        direction: 'east',
+        toMap: 'Direfell',
+        toRow: DIREFELL_KORTHO_ROW,
+        toCol: 1,
+        kind: 'open',
+      },
     ],
   },
   'Kortho Blacksmith': korthoShopInteriorDefinition('Kortho Blacksmith'),
@@ -1607,6 +1699,28 @@ export const MAPS: Record<MapName, MapDefinition> = {
         halfWidthTiles: ROAD_TO_KORTHO_HALF_WIDTH_TILES,
         spread: 'row',
       }),
+    ],
+  },
+  Direfell: {
+    name: 'Direfell',
+    rows: DIREFELL_SIZE,
+    cols: DIREFELL_SIZE,
+    // Unused metadata — real texture is 'haunted-forest' via
+    // floorTextureFor.
+    terrain: 'grass',
+    exits: [
+      // The reciprocal single-tile connection back to Kortho (a later
+      // follow-up ask: "a dirt road connection to the southwest/west
+      // with sign 'Kortho'... it should connect to kortho").
+      {
+        row: DIREFELL_KORTHO_ROW,
+        col: 0,
+        direction: 'west',
+        toMap: 'Kortho',
+        toRow: KORTHO_DIREFELL_ROW,
+        toCol: KORTHO_COLS - 2,
+        kind: 'open',
+      },
     ],
   },
   'Road to Floro': {
@@ -1673,13 +1787,115 @@ export const MAPS: Record<MapName, MapDefinition> = {
     // this `terrain` field is unused metadata, see MapTerrain's own doc
     // comment), not this field.
     terrain: 'grass',
-    exits: [...bramwickGroundsEntranceExits('south'), ...bramwickShopDoorExits()],
+    exits: [
+      ...bramwickGroundsEntranceExits('south'),
+      ...bramwickShopDoorExits(),
+      // A later follow-up ask: "a cave connection to the west of
+      // Bramwick with a sign that reads 'Brimstone Cave'."
+      ...roadBandExits({
+        row: BRAMWICK_BRIMSTONE_ROW,
+        col: 0,
+        direction: 'west',
+        toMap: 'Brimstone Cave',
+        toRow: BRIMSTONE_CAVE_MID_ROW,
+        toCol: BRIMSTONE_CAVE_SIZE - 2,
+        halfWidthTiles: BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
+      // A later follow-up ask: "a dirt road connection to the north of
+      // Bramwick with sign 'Boulder Pass'" — Bramwick's own top edge is
+      // free (its existing entrance sits on the SOUTH edge, back toward
+      // Grimoak Grounds).
+      ...roadBandExits({
+        row: 0,
+        col: BRAMWICK_RUNESTONE_COL,
+        direction: 'north',
+        toMap: 'Runestone Way',
+        toRow: RUNESTONE_WAY_ROWS - 2,
+        toCol: RUNESTONE_WAY_MID_COL,
+        halfWidthTiles: RUNESTONE_WAY_HALF_WIDTH_TILES,
+        spread: 'col',
+      }),
+      // A later follow-up ask: "a dirt road connection to the east of
+      // Bramwick with sign 'Silverbranch Road'."
+      ...roadBandExits({
+        row: BRAMWICK_SILVERBRANCH_ROW,
+        col: BRAMWICK_SIZE - 1,
+        direction: 'east',
+        toMap: 'Silverbranch Road',
+        toRow: SILVERBRANCH_ROAD_MID_ROW,
+        toCol: 1,
+        halfWidthTiles: SILVERBRANCH_ROAD_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
+    ],
   },
   'Bramwick General Shop': bramwickShopInteriorDefinition('Bramwick General Shop'),
   'Bramwick Weapons': bramwickShopInteriorDefinition('Bramwick Weapons'),
   'Bramwick Armor': bramwickShopInteriorDefinition('Bramwick Armor'),
   'Bramwick Potions': bramwickShopInteriorDefinition('Bramwick Potions'),
   'Bramwick Pet Shop': bramwickShopInteriorDefinition('Bramwick Pet Shop'),
+  'Brimstone Cave': {
+    name: 'Brimstone Cave',
+    rows: BRIMSTONE_CAVE_SIZE,
+    cols: BRIMSTONE_CAVE_SIZE,
+    // Unused metadata — real texture is 'cave' via floorTextureFor, same
+    // as Hexstone Cavern.
+    terrain: 'stone',
+    exits: [
+      ...roadBandExits({
+        row: BRIMSTONE_CAVE_MID_ROW,
+        col: BRIMSTONE_CAVE_SIZE - 1,
+        direction: 'east',
+        toMap: 'Bramwick',
+        toRow: BRAMWICK_BRIMSTONE_ROW,
+        toCol: 1,
+        halfWidthTiles: BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
+    ],
+  },
+  'Runestone Way': {
+    name: 'Runestone Way',
+    rows: RUNESTONE_WAY_ROWS,
+    cols: RUNESTONE_WAY_COLS,
+    // Unused metadata — real texture is 'boulder-field' via
+    // floorTextureFor; the walkable band itself is the usual dirt-road
+    // TileSprite overlay (see WorldScene's own renderMap).
+    terrain: 'stone',
+    exits: [
+      ...roadBandExits({
+        row: RUNESTONE_WAY_ROWS - 1,
+        col: RUNESTONE_WAY_MID_COL,
+        direction: 'south',
+        toMap: 'Bramwick',
+        toRow: 1,
+        toCol: BRAMWICK_RUNESTONE_COL,
+        halfWidthTiles: RUNESTONE_WAY_HALF_WIDTH_TILES,
+        spread: 'col',
+      }),
+    ],
+  },
+  'Silverbranch Road': {
+    name: 'Silverbranch Road',
+    rows: SILVERBRANCH_ROAD_ROWS,
+    cols: SILVERBRANCH_ROAD_COLS,
+    // Same overlay approach as Road to Kortho — base terrain is grass,
+    // the dirt road itself is a client-side TileSprite.
+    terrain: 'grass',
+    exits: [
+      ...roadBandExits({
+        row: SILVERBRANCH_ROAD_MID_ROW,
+        col: 0,
+        direction: 'west',
+        toMap: 'Bramwick',
+        toRow: BRAMWICK_SILVERBRANCH_ROW,
+        toCol: BRAMWICK_SIZE - 2,
+        halfWidthTiles: SILVERBRANCH_ROAD_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
+    ],
+  },
   'Gobbler Village': {
     name: 'Gobbler Village',
     rows: GOBBLER_VILLAGE_SIZE,

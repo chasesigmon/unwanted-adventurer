@@ -28,6 +28,13 @@ export const CLASSROOM_ZOOM = 3;
 export const COMMON_ROOM_ZOOM = 1.4;
 export const DORM_ZOOM = 3.1;
 export const TREE_TEXTURE_KEY = 'tree';
+// Silverbranch Road's own trees (a later follow-up ask: "trees on the
+// grass with silver branches... to match the naming theme of the road")
+// — a distinct sprite, same tree system otherwise (see shared/trees.ts).
+export const SILVER_TREE_TEXTURE_KEY = 'silver-tree';
+// Direfell's own bare, gnarled trees (a later follow-up ask: "a haunted
+// looking forest") — same tree system, its own distinct sprite.
+export const SPOOKY_TREE_TEXTURE_KEY = 'spooky-tree';
 export const DAGGER_TEXTURE_KEY = 'held-dagger';
 // The training skeletons' own practice weapon (a follow-up ask) — same
 // "small held-item overlay" shape as the dagger, its own texture/asset
@@ -95,6 +102,10 @@ export const GOBBLER_HUT_FRAME_HEIGHT = 160;
 // tools/gen-boat-assets.mjs).
 export const CANOE_TEXTURE_KEY = 'canoe';
 export const RAFT_TEXTURE_KEY = 'raft';
+// A later follow-up ask: "update the canoe graphic to be a little longer
+// and wider" — its own bigger frame now (see tools/gen-boat-assets.mjs's
+// own CANOE_FRAME), distinct from the raft's own BOAT_FRAME_SIZE.
+export const CANOE_FRAME_SIZE = 64;
 export const BOAT_FRAME_SIZE = 48;
 
 // The Hexstone Cavern cave-mouth entrance (a later follow-up ask:
@@ -394,8 +405,16 @@ export function floorTextureFor(mapName: MapName): string {
   // own SHOPS use.
   if (mapName === 'Gobbler Village' || (GOBBLER_VILLAGE_HUT_MAPS as readonly string[]).includes(mapName)) return 'dirt';
   // A later follow-up ask: "make it have a cave texture" — Hexstone
-  // Cavern's own rocky floor.
-  if (mapName === 'Hexstone Cavern') return 'cave';
+  // Cavern's own rocky floor, reused as-is for Brimstone Cave.
+  if (mapName === 'Hexstone Cavern' || mapName === 'Brimstone Cave') return 'cave';
+  // A later follow-up ask: "instead of the grass on either side, create
+  // boulders and rocks and impassable looking terrain" — Runestone Way's
+  // own off-road ground (the walkable band itself is still the usual
+  // dirt-road overlay, see WorldScene's own renderMap).
+  if (mapName === 'Runestone Way') return 'boulder-field';
+  // A later follow-up ask: "the new world Direfell... its texture/
+  // background should be a haunted looking forest."
+  if (mapName === 'Direfell') return 'haunted-forest';
   return 'grass';
 }
 

@@ -332,6 +332,24 @@ export const MAP_NAMES = [
   // northwest edge, same shape as Mystical Timberland/Gobbler Village
   // above.
   'Hexstone Cavern',
+  // A later follow-up ask: "a cave connection to the west of Bramwick...
+  // Brimstone Cave" — same direct shared-border cave shape as Hexstone
+  // Cavern above.
+  'Brimstone Cave',
+  // A later follow-up ask: "a dirt road connection to the north of
+  // Bramwick... Runestone Way... like the road to floro, except this
+  // goes north" — a real separate corridor map, same shape as Road to
+  // Kortho/Floro, but with boulder-walled off-road collision (see
+  // shared/maps.ts's isRunestoneWayOffRoadBlocked).
+  'Runestone Way',
+  // A later follow-up ask: "a dirt road connection to the east of
+  // Bramwick... Silverbranch Road... like the road to kortho going
+  // east."
+  'Silverbranch Road',
+  // A later follow-up ask: "add a 1 tile dirt road connection... at the
+  // northeast/east of Kortho... make the new world Direfell... level 20
+  // dire wolves."
+  'Direfell',
   ...GRIMOAK_CASTLE_MAPS,
   ...PORTAL_DUNGEON_MAPS,
 ] as const;
@@ -412,7 +430,11 @@ export type Direction = (typeof DIRECTIONS)[number];
 // 'demon imp' (a later follow-up ask) is Diabolist-summon-only — never a
 // wild spawn, so it has no MONSTER_SPECIES entry, no corpse, no
 // carriedItemRolls; see game.gateway.ts's handleCastSummonDemonImp.
-export const MONSTER_KINDS = ['wild goblin', 'wild skeleton', 'imp', 'demon imp'] as const;
+// A later follow-up ask: "Direfell should have level 20 dire wolves...
+// in the great plains add level 20 bears" — 'bear' reuses the same
+// species entry shape as every other wild monster (see server/monsters/
+// monster.ts), just its own sprite/stats.
+export const MONSTER_KINDS = ['wild goblin', 'wild skeleton', 'imp', 'demon imp', 'dire wolf', 'bear'] as const;
 export type MonsterKind = (typeof MONSTER_KINDS)[number];
 
 // Same idea as the text game's own monster classification — determines

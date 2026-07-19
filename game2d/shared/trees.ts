@@ -1,4 +1,4 @@
-import { getMap } from './maps.js';
+import { getMap, SILVERBRANCH_ROAD_MID_ROW, SILVERBRANCH_ROAD_HALF_WIDTH_TILES } from './maps.js';
 import type { MapName } from './constants.js';
 
 // A single source of truth for the Great Plains' 30 decorative trees —
@@ -64,9 +64,67 @@ function mysticalTimberlandTreePositions(): Array<{ row: number; col: number }> 
   return positions;
 }
 
+// A later follow-up ask: "add some trees on the grass with silver
+// branches with collision to match the naming theme of the road" — a
+// modest scatter (not a dense forest like Mystical Timberland above),
+// confined to the grass strips flanking the walkable dirt-road band
+// (never on the road itself), same seeded-scatter technique as every
+// other map's own trees.
+const SILVERBRANCH_ROAD_TREE_COUNT = 16;
+
+function silverbranchRoadTreePositions(): Array<{ row: number; col: number }> {
+  const def = getMap('Silverbranch Road');
+  const positions: Array<{ row: number; col: number }> = [];
+  const occupied = new Set<string>();
+  let seed = 0;
+  let attempts = 0;
+  while (positions.length < SILVERBRANCH_ROAD_TREE_COUNT && attempts < 10000) {
+    seed += 1;
+    attempts += 1;
+    const row = Math.floor(seededRandom(seed * 2) * def.rows);
+    const col = Math.floor(seededRandom(seed * 2 + 1) * def.cols);
+    const key = `${row},${col}`;
+    if (occupied.has(key)) continue;
+    if (Math.abs(row - SILVERBRANCH_ROAD_MID_ROW) <= SILVERBRANCH_ROAD_HALF_WIDTH_TILES) continue;
+    if (def.exits.some((e) => Math.abs(e.row - row) <= 2 && Math.abs(e.col - col) <= 2)) continue;
+    occupied.add(key);
+    positions.push({ row, col });
+  }
+  return positions;
+}
+
+// A later follow-up ask: "its texture/background should be a haunted
+// looking forest" — a moderate scatter (denser than Great Plains'
+// scenic 30, nowhere near Mystical Timberland's maze-density) befitting
+// a small, spooky woodland rather than open plains or a labyrinth.
+const DIREFELL_TREE_DENSITY = 0.08;
+
+function direfellTreePositions(): Array<{ row: number; col: number }> {
+  const def = getMap('Direfell');
+  const targetCount = Math.round(def.rows * def.cols * DIREFELL_TREE_DENSITY);
+  const positions: Array<{ row: number; col: number }> = [];
+  const occupied = new Set<string>();
+  let seed = 0;
+  let attempts = 0;
+  while (positions.length < targetCount && attempts < 10000) {
+    seed += 1;
+    attempts += 1;
+    const row = Math.floor(seededRandom(seed * 2) * def.rows);
+    const col = Math.floor(seededRandom(seed * 2 + 1) * def.cols);
+    const key = `${row},${col}`;
+    if (occupied.has(key)) continue;
+    if (def.exits.some((e) => Math.abs(e.row - row) <= 2 && Math.abs(e.col - col) <= 2)) continue;
+    occupied.add(key);
+    positions.push({ row, col });
+  }
+  return positions;
+}
+
 export function treePositionsFor(mapName: MapName): Array<{ row: number; col: number }> {
   if (mapName === 'Great Plains') return greatPlainsTreePositions();
   if (mapName === 'Mystical Timberland') return mysticalTimberlandTreePositions();
+  if (mapName === 'Silverbranch Road') return silverbranchRoadTreePositions();
+  if (mapName === 'Direfell') return direfellTreePositions();
   return [];
 }
 

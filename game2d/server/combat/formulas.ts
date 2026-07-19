@@ -51,9 +51,10 @@ export {
 export const STARTING_ATTRIBUTE = 1;
 export const STARTING_VITAL = 100;
 // Movement points (a later follow-up ask re-added this resource) — every
-// race starts with the same 200, unlike hp/mana which will vary per race
-// (see RACE_STARTING_STATS).
-export const STARTING_MV = 200;
+// race starts with the same value, unlike hp/mana which will vary per
+// race (see RACE_STARTING_STATS). A later follow-up ask matched this to
+// STARTING_VITAL (100), same as hp/mana, down from the original 200.
+export const STARTING_MV = STARTING_VITAL;
 // "1 point per 2 feet moved" — this project already treats "N feet" as N
 // tiles everywhere else (shop/gate reach, spell ranges), so this is 0.5 mv
 // per tile. Floors at 0 rather than blocking movement — mv depletes/
@@ -152,31 +153,40 @@ export function skillBonus(skillPercent: number): number {
   return Math.floor(skillPercent / 20);
 }
 
-// --- Armor Class (item 18) — every player race and monster starts here,
-// on top of dodge/parry/shield-block (which fully negate a hit by
-// chance) and resistance skills (their own flat reduction against a
-// monster class specifically). Matches the design note this was modeled
-// after: AC is deliberately the WEAKEST defense layer, a modest flat
-// mitigation rather than a wall, not something that scales into
-// relevance the way skills do. ---
+// --- Armor vs Physical / Armor vs Magical (a later follow-up ask split
+// the old single "Armor Class" into two tracks) — every player race and
+// monster starts here, on top of dodge/parry/shield-block (which fully
+// negate a hit by chance) and resistance skills (their own flat reduction
+// against a monster class specifically). Matches the design note this
+// was modeled after: armor is deliberately the WEAKEST defense layer, a
+// modest flat mitigation rather than a wall, not something that scales
+// into relevance the way skills do. Each of these two numbers IS the
+// final flat damage reduction directly (no further division needed by a
+// caller) — Armor vs Physical mitigates melee/punch/dagger hits, Armor vs
+// Magical mitigates spell damage (elemental bolts, wand bolt, augue,
+// kinetic strike, sap health). ---
 
-export const BASE_ARMOR_CLASS = 10;
-// Dexterity nudges AC a little too (on top of its existing dodge-chance
-// role) — a small, secondary effect, not double-dipping into a whole
-// second dodge-shaped mechanic.
-const ARMOR_CLASS_PER_DEXTERITY = 4;
+export const BASE_ARMOR_VS_PHYSICAL = 2;
+export const BASE_ARMOR_VS_MAGICAL = 2;
+// Physical armor draws on BOTH dexterity (already the dodge-chance stat)
+// and strength (raw toughness) — split evenly so a str/dex-balanced
+// character ends up with roughly the same total the old dex-only AC/4
+// formula gave at the same stat totals.
+const ARMOR_VS_PHYSICAL_PER_DEXTERITY = 10;
+const ARMOR_VS_PHYSICAL_PER_STRENGTH = 10;
+// Magical armor is brand new — intelligence (a spellcaster's own
+// awareness of incoming magic) and wisdom (resistance to it), the same
+// pairing INFRAVISION_SKILL/spell-damage formulas already lean on
+// elsewhere in this file.
+const ARMOR_VS_MAGICAL_PER_INTELLIGENCE = 10;
+const ARMOR_VS_MAGICAL_PER_WISDOM = 10;
 
-export function armorClassFor(dexterity: number, equipmentBonus: number): number {
-  return BASE_ARMOR_CLASS + Math.floor(dexterity / ARMOR_CLASS_PER_DEXTERITY) + equipmentBonus;
+export function armorVsPhysicalFor(dexterity: number, strength: number, equipmentBonus: number): number {
+  return BASE_ARMOR_VS_PHYSICAL + Math.floor(dexterity / ARMOR_VS_PHYSICAL_PER_DEXTERITY) + Math.floor(strength / ARMOR_VS_PHYSICAL_PER_STRENGTH) + equipmentBonus;
 }
 
-// 1 point of flat damage mitigation per 4 AC — base AC alone (10) blunts
-// 2 damage; a bone shield's +5 (see BONE_SHIELD_ARMOR_CLASS_BONUS) blunts
-// 3. Deliberately modest against a typical early hit (~6-10 damage), so
-// it softens without trivializing.
-const ARMOR_CLASS_DAMAGE_REDUCTION_DIVISOR = 4;
-export function armorDamageReduction(armorClass: number): number {
-  return Math.floor(armorClass / ARMOR_CLASS_DAMAGE_REDUCTION_DIVISOR);
+export function armorVsMagicalFor(intelligence: number, wisdom: number, equipmentBonus: number): number {
+  return BASE_ARMOR_VS_MAGICAL + Math.floor(intelligence / ARMOR_VS_MAGICAL_PER_INTELLIGENCE) + Math.floor(wisdom / ARMOR_VS_MAGICAL_PER_WISDOM) + equipmentBonus;
 }
 
 export function punchDamage(
@@ -184,10 +194,10 @@ export function punchDamage(
   defender: CombatantStats,
   punchSkillPercent: number,
   weaponBonus = 0,
-  defenderArmorClass: number = BASE_ARMOR_CLASS
+  defenderArmorVsPhysical: number = BASE_ARMOR_VS_PHYSICAL
 ): number {
   const raw = baseDamage(attacker.strength, attacker.level) + attributeBonus(attacker, defender) + skillBonus(punchSkillPercent) + weaponBonus;
-  return Math.max(0, raw - armorDamageReduction(defenderArmorClass));
+  return Math.max(0, raw - defenderArmorVsPhysical);
 }
 
 // Flat damage bonus while a given item is equipped in its slot — matches
@@ -208,40 +218,58 @@ export function weaponBonusFor(equipment: Record<string, string>, skills: Record
   return flat + daggerBonus;
 }
 
-// A bone shield's own AC bonus while equipped (item 19) — a torch fills
-// the same off-hand slot but isn't armor, same "only a real shield
-// counts" carve-out computeShieldBlockChance already makes below.
-export const BONE_SHIELD_ARMOR_CLASS_BONUS = 5;
+// A bone shield's own Armor vs Physical bonus while equipped (item 19) —
+// a torch fills the same off-hand slot but isn't armor, same "only a
+// real shield counts" carve-out computeShieldBlockChance already makes
+// below.
+export const BONE_SHIELD_ARMOR_BONUS = 2;
 
-// Flat AC bonus per equipped armor piece (a later follow-up ask: "cloth
-// armor should reduce damage by 1 each"/"studded armor & helmet should
-// reduce damage by 2 each") — armorDamageReduction floors AC/4 to a flat
-// damage-reduction number, so +4 AC -> 1 less damage, +8 AC -> 2 less.
-export const ARMOR_ITEM_AC_BONUS: Record<string, number> = {
-  'cloth armor': 4,
-  'cloth helmet': 4,
-  'cloth boots': 4,
-  'cloth vambraces': 4,
-  'cloth greaves': 4,
-  'cloth gauntlets': 4,
-  'studded armor': 8,
-  'studded helmet': 8,
+// Flat Armor vs Physical bonus per equipped armor piece — a later
+// follow-up ask retuned these directly as final damage-reduction points
+// (no more AC-then-divide-by-4 indirection): "cloth armor items... give
+// Armor vs Physical + 1... studded armor items... Armor vs Physical + 3."
+// Every other existing armor piece is rescaled proportionally onto this
+// same small direct-reduction scale (nothing else was named explicitly).
+// None of these contribute to Armor vs Magical yet — no magical-armor
+// item exists in this game currently (same "earnable now, inert until
+// something needs it" tradeoff this project already accepts elsewhere).
+export const ARMOR_ITEM_PHYSICAL_BONUS: Record<string, number> = {
+  'cloth armor': 1,
+  'cloth helmet': 1,
+  'cloth boots': 1,
+  'cloth vambraces': 1,
+  'cloth greaves': 1,
+  'cloth gauntlets': 1,
+  'studded armor': 3,
+  'studded helmet': 3,
   // The 4 portal dungeons' own armor pieces (a later follow-up ask) —
-  // one per tier, each noticeably stronger than the last.
-  'chainmail vambraces': 6,
-  "warlord's greaves": 10,
-  'obsidian helm': 12,
-  'dragon scale armor': 16,
+  // one per tier, each noticeably stronger than the last, rescaled onto
+  // the same direct-reduction scale as cloth/studded above.
+  'chainmail vambraces': 2,
+  "warlord's greaves": 4,
+  'obsidian helm': 5,
+  'dragon scale armor': 6,
 };
+
+// No item grants this yet — see this section's own doc comment above.
+export const ARMOR_ITEM_MAGICAL_BONUS: Record<string, number> = {};
 
 // Summed across EVERY equipped slot now (a later follow-up ask added
 // several more armor pieces beyond the shield) — order-independent, one
-// lookup per equipped item, 0 for anything not in ARMOR_ITEM_AC_BONUS
+// lookup per equipped item, 0 for anything not in ARMOR_ITEM_PHYSICAL_BONUS
 // (a weapon, a torch, jewelry, ...).
-export function armorEquipmentBonus(equipment: Record<string, string>): number {
-  let bonus = equipment.shield === 'bone shield' ? BONE_SHIELD_ARMOR_CLASS_BONUS : 0;
+export function physicalArmorEquipmentBonus(equipment: Record<string, string>): number {
+  let bonus = equipment.shield === 'bone shield' ? BONE_SHIELD_ARMOR_BONUS : 0;
   for (const item of Object.values(equipment)) {
-    bonus += ARMOR_ITEM_AC_BONUS[item] ?? 0;
+    bonus += ARMOR_ITEM_PHYSICAL_BONUS[item] ?? 0;
+  }
+  return bonus;
+}
+
+export function magicalArmorEquipmentBonus(equipment: Record<string, string>): number {
+  let bonus = 0;
+  for (const item of Object.values(equipment)) {
+    bonus += ARMOR_ITEM_MAGICAL_BONUS[item] ?? 0;
   }
   return bonus;
 }

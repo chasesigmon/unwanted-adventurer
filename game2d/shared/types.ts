@@ -151,11 +151,16 @@ export interface PlayerSnapshot {
   // Wall-clock, not tick-based, so the client can render a countdown/wipe
   // (item 23) without needing to know the server's own tick counter.
   skillCooldowns: Record<string, number>;
-  // Server-computed, not stored — see combat/formulas.ts's armorClassFor
-  // (base 10 + a small dexterity nudge + a bone shield's own +5 while
-  // equipped). Shown on the character sheet purely for transparency;
-  // damage reduction itself is computed fresh per-hit server-side.
-  armorClass: number;
+  // Server-computed, not stored — a later follow-up ask split the old
+  // single "Armor Class" into two tracks (see combat/formulas.ts's
+  // armorVsPhysicalFor/armorVsMagicalFor): physical mitigates melee/
+  // punch/dagger hits (dexterity + strength + worn armor), magical
+  // mitigates spell damage (intelligence + wisdom + worn armor — no item
+  // grants this yet). Each IS the final flat damage reduction directly.
+  // Shown on the character sheet purely for transparency; damage
+  // reduction itself is computed fresh per-hit server-side.
+  armorVsPhysical: number;
+  armorVsMagical: number;
   // Condeath tracking (item 23) — every death, from any cause, counts
   // toward CONDEATH_LIMIT (65); see game.gateway.ts's applyCondeathPenalty.
   deathCount: number;

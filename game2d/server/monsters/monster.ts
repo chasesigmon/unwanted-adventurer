@@ -523,4 +523,42 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
       { label: 'dragon scale armor', chance: 0.15 },
     ],
   },
+  // A later follow-up ask: "Direfell should have level 20 dire wolves
+  // (while meancing gnarly looking wolves bigger than normal wolves)
+  // that have 200 hp and do appropriate damage for a level 20 mob...
+  // give appropriate experience" — 200 hp is the user's own explicit
+  // figure; expReward/attackDamage/goldReward are interpolated between
+  // this file's own existing level-17 (220 exp/28 dmg) and level-25 (320
+  // exp/38 dmg) entries above, landing where a level 20 naturally falls
+  // on that same curve.
+  {
+    kind: 'dire wolf',
+    monsterClass: 'normal',
+    homeMap: 'Direfell',
+    maxCount: 10,
+    level: 20,
+    startingHp: 200,
+    expReward: 260,
+    attackDamage: 32,
+    goldReward: 17,
+    aggroRadiusTiles: 5,
+  },
+  // A later follow-up ask: "in the great plains add level 20 bears
+  // (similar stats to the dire wolves) that roam around the great
+  // plains" — same figures as dire wolf above, just its own kind/sprite/
+  // home map; the default random-wander behavior already gives Great
+  // Plains' other monsters (no patrolRangeTiles here) covers "roam
+  // around."
+  {
+    kind: 'bear',
+    monsterClass: 'normal',
+    homeMap: 'Great Plains',
+    maxCount: 8,
+    level: 20,
+    startingHp: 200,
+    expReward: 260,
+    attackDamage: 32,
+    goldReward: 17,
+    aggroRadiusTiles: 5,
+  },
 ];

@@ -21,6 +21,7 @@ import {
 import {
   isCastleExteriorBlocked,
   isWaterBlocked,
+  isRunestoneWayOffRoadBlocked,
   isGateTile,
   GATE_COL_LEFT,
   GATE_COL_RIGHT,
@@ -31,7 +32,14 @@ import {
 import { vendorsForMap, vendorCounterFootprintFor } from './vendors.js';
 import { teachersForMap, teacherDeskFootprintFor } from './teachers.js';
 import { isChestBlocked } from '../../shared/spells.js';
-import { armorClassFor, armorEquipmentBonus } from '../combat/formulas.js';
+import {
+  armorVsPhysicalFor,
+  armorVsMagicalFor,
+  physicalArmorEquipmentBonus,
+  magicalArmorEquipmentBonus,
+  dexterityEquipmentBonus,
+  intelligenceEquipmentBonus,
+} from '../combat/formulas.js';
 
 // A much smaller version of the text game's own WorldManagerService — no
 // per-map capacity sharding or worker_threads, just an in-memory map of
@@ -144,6 +152,10 @@ export class WorldManagerService {
   private isOccupied(mapName: MapName, row: number, col: number, excludeUsername: string, flying = false): boolean {
     if (isTreeTile(mapName, row, col)) return true;
     if (isCastleExteriorBlocked(mapName, row, col)) return true;
+    // Runestone Way's own boulder-walled off-road terrain (a later
+    // follow-up ask) — solid rock, never bypassed by flying, same
+    // treatment as every other permanent obstacle above.
+    if (isRunestoneWayOffRoadBlocked(mapName, row, col)) return true;
     // `flying` doubles as "can cross water at all" (a later follow-up ask
     // added boats — see game.gateway.ts's handleMove, which also passes
     // true here while the mover simply OWNS a canoe/raft, not just while
@@ -296,7 +308,16 @@ export class WorldManagerService {
         mimicForm: state.mimicForm,
         eatBrainsReadyAtTick: state.eatBrainsReadyAtTick,
         skillCooldowns: state.skillCooldowns,
-        armorClass: armorClassFor(state.dexterity, armorEquipmentBonus(state.equipment)),
+        armorVsPhysical: armorVsPhysicalFor(
+          state.dexterity + dexterityEquipmentBonus(state.equipment),
+          state.strength,
+          physicalArmorEquipmentBonus(state.equipment)
+        ),
+        armorVsMagical: armorVsMagicalFor(
+          state.intelligence + intelligenceEquipmentBonus(state.equipment),
+          state.wisdom,
+          magicalArmorEquipmentBonus(state.equipment)
+        ),
         deathCount: state.deathCount,
         statPointsAvailable: state.statPointsAvailable,
         practicePointsAvailable: state.practicePointsAvailable,

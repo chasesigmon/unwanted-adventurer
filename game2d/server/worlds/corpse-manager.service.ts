@@ -42,6 +42,8 @@ const BODY_PART_LABEL: Record<Race | MonsterKind, string> = {
   // AnimatedMonsterManagerService, which has no corpse-spawning of its
   // own), but the lookup must stay total over MonsterKind.
   'demon imp': 'imp horn',
+  'dire wolf': 'dire wolf fang',
+  bear: 'bear claw',
 };
 
 export function bodyPartLabelFor(kind: Race | MonsterKind): string {

@@ -21,16 +21,18 @@ const CHAR_SHEET_STAT_DESCRIPTIONS: Record<string, string> = {
   Strength: 'Increases your base melee damage.',
   Intelligence:
     'Each point increases your max mana by 10, adds +1% success chance to every spell you cast, adds ranged damage when attacking with a wand equipped, and increases how much mana you regain from resting/sleeping.',
-  Wisdom: 'No mechanical effect yet — reserved for future use.',
+  Wisdom: 'Increases your Armor vs Magical a little, resisting incoming spell damage.',
   // Dodge isn't implemented yet (may be added later) — dropped from
   // this description (a follow-up ask).
-  Dexterity: 'Increases your Armor Class a little and how fast you can move.',
+  Dexterity: 'Increases your Armor vs Physical a little and how fast you can move.',
   // Shield block isn't implemented yet (may be added later) — dropped
   // from this description (a follow-up ask).
   Constitution: 'Increases your max hp by 20 per point.',
   Luck: "Gives every spell cast a chance at a bonus to its own success chance, and boosts how much your skills/spells can grow from casting them.",
-  'Armor Class':
-    'A base of 10, plus a small dexterity bonus and +5 while a bone shield is equipped. Flatly reduces incoming damage a little on every hit that lands.',
+  'Armor vs Physical':
+    'A small base, plus a bit from dexterity and strength, plus whatever armor you have equipped (cloth +1 each, studded +3 each, ...). Flatly reduces incoming melee/punch/dagger damage on every hit that lands.',
+  'Armor vs Magical':
+    'A small base, plus a bit from intelligence and wisdom, plus whatever armor grants it (nothing does yet). Flatly reduces incoming spell damage (bolts, wand bolt, augue, ...) on every hit that lands.',
   Deaths: 'Every death (from any cause) counts here. Every 5th costs 1 constitution permanently. At 65, CONDEATH — this character can never be played again.',
   Hunger: 'Drops by 1 every game hour. Eating jerky restores 20. No mechanical effect yet at 0 — reserved for future use.',
   Thirst: 'Drops by 1 every game hour. Drinking from your canteen or a cup of water restores 20. No mechanical effect yet at 0 — reserved for future use.',
@@ -142,7 +144,8 @@ export function renderCharSheet(): void {
   for (const { label, stat } of ALLOCATABLE_STATS) {
     appendAllocatableStatRow(label, stat, myProfile[stat], hasPoints);
   }
-  appendStatRow(charSheetBody, 'Armor Class', myProfile.armorClass, CHAR_SHEET_STAT_DESCRIPTIONS['Armor Class']);
+  appendStatRow(charSheetBody, 'Armor vs Physical', myProfile.armorVsPhysical, CHAR_SHEET_STAT_DESCRIPTIONS['Armor vs Physical']);
+  appendStatRow(charSheetBody, 'Armor vs Magical', myProfile.armorVsMagical, CHAR_SHEET_STAT_DESCRIPTIONS['Armor vs Magical']);
   appendStatRow(charSheetBody, 'Deaths', `${myProfile.deathCount}/${CONDEATH_LIMIT_CLIENT}`, CHAR_SHEET_STAT_DESCRIPTIONS.Deaths);
 }
 
