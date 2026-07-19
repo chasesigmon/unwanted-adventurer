@@ -5,6 +5,7 @@
 // drag-to-resize + persisted size/position (item 6).
 import { network } from '../state.js';
 import { setupCollapsible } from './collapsible.js';
+import { openMapModalToTab } from './mapModal.js';
 
 const COMBAT_LOG_MAX_LINES = 60;
 
@@ -228,8 +229,13 @@ export function logChatMessage(username: string, message: string): void {
 // visible, but turning the last visible one off is refused (at least one
 // must always stay up). Filtering (not separate storage) is what makes
 // the single fluid ordering above possible.
+// A later follow-up ask: "by default the Combat/Chat window should have
+// both Combat and Chat selected for all players until the player
+// unselects one of them" — Chat used to start OFF; both now start ON,
+// matching the un-filtered "single chronological stream" this whole
+// panel is built around, until a player deliberately narrows it down.
 let combatTabVisible = true;
-let chatTabVisible = false;
+let chatTabVisible = true;
 
 function updateLogTabsView(): void {
   logTabCombatBtn.classList.toggle('active', combatTabVisible);
@@ -315,12 +321,26 @@ export function registerChatFocusListener(onFocusChange: () => void): void {
   });
 }
 
+// A later follow-up ask: "add commands /who, /where, /map" — each just
+// opens the map modal to its own matching tab. Purely a client-side UI
+// action (see mapModal.ts's own openMapModalToTab), so these are caught
+// here and never actually sent to the server at all, unlike every other
+// chat command (sleep, time, ...), which round-trip through
+// GameGateway.handleCommand instead.
+const MAP_MODAL_CHAT_COMMANDS: Record<string, 'who' | 'where' | 'world'> = {
+  '/who': 'who',
+  '/where': 'where',
+  '/map': 'world',
+};
+
 chatInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     e.preventDefault();
     const text = chatInput.value.trim();
     chatInput.value = '';
-    if (text) network.chat(text);
+    const mapTab = MAP_MODAL_CHAT_COMMANDS[text.toLowerCase()];
+    if (mapTab) openMapModalToTab(mapTab);
+    else if (text) network.chat(text);
     chatInput.blur();
   } else if (e.key === 'Escape') {
     e.preventDefault();

@@ -51,7 +51,7 @@ import {
   FLORO_GREAT_PLAINS_ROW,
   GREAT_PLAINS_HEXSTONE_ROW,
   HEXSTONE_CAVERN_SIZE,
-  HEXSTONE_GREAT_PLAINS_COL,
+  HEXSTONE_GREAT_PLAINS_ROW,
   BRAMWICK_SIZE,
   BRAMWICK_BRIMSTONE_ROW,
   BRIMSTONE_CAVE_MID_ROW,
@@ -756,8 +756,23 @@ export function isStandingTorchBlocked(mapName: MapName, row: number, col: numbe
 // along the road's own travel axis (0 or the map's own last valid index),
 // offset only along the PERPENDICULAR axis (still a few tiles off the
 // band's own center, so neither sign sits ON a walkable road/cave tile).
+//
+// A still-later follow-up ask ("the sign going north to Boulder Pass from
+// Bramwick is cut off, you can only see the base (stem) of it and not the
+// sign part") turned up the real bug that fix introduced: the sign
+// texture's own origin (0.5, 0.9, see WorldScene's own renderMap) anchors
+// near its BOTTOM, so most of the sign board renders ABOVE the anchor's
+// own row — for a sign sitting at the map's true TOP edge (row 0), that
+// puts almost the whole board at a negative world-Y the camera's own
+// bounds (fixed to start at (0,0) — see applyCameraBounds) can never
+// scroll up far enough to show, leaving only the small sliver below the
+// anchor (the "stem") visible. Same root cause the classroom-door symbol
+// sprites hit once already (see their own doc comment further down this
+// file) — SIGN_TOP_EDGE_ROW nudges every row-0 sign down just far enough
+// to clear the camera's own bound, while staying visually "at the edge."
+const SIGN_TOP_EDGE_ROW = 2;
 export const BRAMWICK_SIGN_POSITION = { row: BRAMWICK_ENTRANCE_ROW, col: BRAMWICK_MID_COL + 4 };
-export const GRIMOAK_GROUNDS_SIGN_POSITION = { row: 0, col: CASTLE_DOOR_ON_GROUNDS.col + 4 };
+export const GRIMOAK_GROUNDS_SIGN_POSITION = { row: SIGN_TOP_EDGE_ROW, col: CASTLE_DOOR_ON_GROUNDS.col + 4 };
 
 // Same pair-of-signs convention for the new NE "Road to Kortho" exit (a
 // later follow-up ask) — one sign on each side of the shared entrance,
@@ -789,7 +804,7 @@ export const ROAD_TO_FLORO_SIGN_POSITION = { row: ROAD_TO_FLORO_ROWS - 1, col: R
 // "same thing, put a sign from Road to Floro to Grimoak Grounds") — Road
 // to Floro's own NORTH end, mirroring ROAD_TO_FLORO_SIGN_POSITION's own
 // offset against the opposite (north) edge.
-export const ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION = { row: 0, col: ROAD_TO_FLORO_MID_COL + 4 };
+export const ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION = { row: SIGN_TOP_EDGE_ROW, col: ROAD_TO_FLORO_MID_COL + 4 };
 
 // A later follow-up ask: "in kortho update the exit to Road to Kortho to
 // have a dirt road leading out with a sign 'Road to Kortho'" — a third
@@ -799,7 +814,7 @@ export const ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION = { row: 0, col: ROAD_TO_FLORO_
 export const KORTHO_ROAD_SIGN_POSITION = { row: TOWN_MID_ROW + 4, col: 0 };
 // Same treatment for Floro (a later follow-up ask: "make sure... Floro
 // get[s] the same updates that Kortho is getting").
-export const FLORO_ROAD_SIGN_POSITION = { row: 0, col: TOWN_MID_COL + 4 };
+export const FLORO_ROAD_SIGN_POSITION = { row: SIGN_TOP_EDGE_ROW, col: TOWN_MID_COL + 4 };
 
 // A later follow-up ask: "make a connection to the new area Mystical
 // Timberland... have a sign to Mystical Timberland" — same two-sided
@@ -855,7 +870,12 @@ export const GREAT_PLAINS_FLORO_SIGN_POSITION = { row: GREAT_PLAINS_FLORO_ROW - 
 // ±GREAT_PLAINS_HEXSTONE_HALF_WIDTH_TILES) so neither sign sits on the
 // cave-entrance tiles themselves.
 export const GREAT_PLAINS_HEXSTONE_SIGN_POSITION = { row: GREAT_PLAINS_HEXSTONE_ROW + 4, col: 0 };
-export const HEXSTONE_GREAT_PLAINS_SIGN_POSITION = { row: HEXSTONE_CAVERN_SIZE - 1, col: HEXSTONE_GREAT_PLAINS_COL + 4 };
+// A later follow-up ask moved this connection's own Hexstone-side exit
+// from the south edge to the east edge (see HEXSTONE_GREAT_PLAINS_ROW's
+// own doc comment) — this sign moves with it, same row+4/true-edge-col
+// shape GREAT_PLAINS_HEXSTONE_SIGN_POSITION above already uses for its
+// own west-edge exit, just on the opposite (east) edge.
+export const HEXSTONE_GREAT_PLAINS_SIGN_POSITION = { row: HEXSTONE_GREAT_PLAINS_ROW + 4, col: HEXSTONE_CAVERN_SIZE - 1 };
 
 // A later follow-up ask: "add a cave connection to the west of Bramwick
 // with a sign that reads 'Brimstone Cave'... a cave connection east with
@@ -872,7 +892,7 @@ export const BRIMSTONE_BRAMWICK_SIGN_POSITION = { row: BRIMSTONE_CAVE_MID_ROW - 
 // footprint and the exit band) rather than +4 — BRAMWICK_RUNESTONE_COL
 // (36) + 4 would land at col 40, one past Bramwick's own last valid
 // column (39).
-export const BRAMWICK_RUNESTONE_SIGN_POSITION = { row: 0, col: BRAMWICK_RUNESTONE_COL - 4 };
+export const BRAMWICK_RUNESTONE_SIGN_POSITION = { row: SIGN_TOP_EDGE_ROW, col: BRAMWICK_RUNESTONE_COL - 4 };
 
 // A later follow-up ask: "a dirt road connection to the east of Bramwick
 // with sign 'Silverbranch Road'... a dirt road connection to the west

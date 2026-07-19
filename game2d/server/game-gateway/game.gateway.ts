@@ -96,7 +96,8 @@ import {
   magicalArmorEquipmentBonus,
   dexterityEquipmentBonus,
   intelligenceEquipmentBonus,
-  intelligenceScaledSpellDamage,
+  scaledSpellDamage,
+  applyArmorMitigation,
   isRingItem,
   resolveRingSlot,
   startingSkills,
@@ -198,7 +199,7 @@ import {
   SHAMAN_ENHANCE_DAMAGE_SKILL,
   SHAMAN_ENHANCE_DAMAGE_MANA_COST,
   SHAMAN_ENHANCE_DAMAGE_DURATION_MS,
-  SHAMAN_ENHANCE_DAMAGE_BONUS,
+  shamanEnhanceDamageBonusFor,
   FIRE_BOLT_SKILL,
   WATER_BOLT_SKILL,
   AIR_BOLT_SKILL,
@@ -1345,7 +1346,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client: GameSocket,
     targetUsername: string,
     damage: number
-  ): { died: boolean; hp: number; maxHp: number; expGained?: number; leveledUp: boolean } | undefined {
+  ): { died: boolean; hp: number; maxHp: number; damage: number; expGained?: number; leveledUp: boolean } | undefined {
     if (!this.canAttackPlayer(client, targetUsername).ok) return undefined;
     const targetClient = this.getActiveClient(targetUsername);
     if (!targetClient) return undefined;
@@ -1359,13 +1360,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // is hit by a player or monster" — every caller of this helper (wand
     // bolt, augue) is a magical ranged attack, so Armor vs Magical applies
     // here, same "flat, no dodge/parry" simplification this path already
-    // uses for everything else.
+    // uses for everything else. Rounded once, here, since this is the
+    // final total — a past bug had every caller's own combat message show
+    // the UN-mitigated `damage` argument instead of what actually landed
+    // after this reduction; returning the real figure (see `damage` on
+    // this function's own return type) lets each caller fix that up.
     const targetArmorVsMagical = armorVsMagicalFor(
       targetClient.data.intelligence + intelligenceEquipmentBonus(targetClient.data.equipment),
       targetClient.data.wisdom,
       magicalArmorEquipmentBonus(targetClient.data.equipment)
     );
-    dmg = Math.max(0, dmg - targetArmorVsMagical);
+    dmg = Math.round(applyArmorMitigation(dmg, targetArmorVsMagical));
     targetClient.data.hp = Math.max(0, targetClient.data.hp - dmg);
     const died = targetClient.data.hp <= 0;
 
@@ -1385,7 +1390,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     void this.persistPosition(targetClient);
     void this.persistStats(targetClient);
-    return { died, hp: targetClient.data.hp, maxHp: targetClient.data.maxHp, expGained, leveledUp };
+    return { died, hp: targetClient.data.hp, maxHp: targetClient.data.maxHp, damage: dmg, expGained, leveledUp };
   }
 
   // Shared by both PvP death paths (this and resolveHitOnPlayer's own
@@ -2029,10 +2034,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // MAX_SKILL_PERCENT, so nothing left to grow).
   private rollExtraAttacks(client: GameSocket, growthMessages: string[], isUndeadTarget = false): { swings: number; enhancedBonus: number } {
     let swings = 1;
-    // Shaman's own "enhance damage" (a later follow-up ask) — a flat
-    // +5 while active, independent of race, stacking with hobgoblin's own
+    // Shaman's own "enhance damage" (a later follow-up ask) — grows with
+    // the caster's own level/intelligence (see shamanEnhanceDamageBonusFor's
+    // own doc comment), independent of race, stacking with hobgoblin's own
     // innate enhanced-damage bonus below if a player somehow has both.
-    let enhancedBonus = client.data.enhanceDamageActive ? SHAMAN_ENHANCE_DAMAGE_BONUS : 0;
+    let enhancedBonus = client.data.enhanceDamageActive
+      ? shamanEnhanceDamageBonusFor(client.data.level, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment))
+      : 0;
 
     // Cleric's own "enhanced undead damage" (a later follow-up ask) — a
     // flat +5 vs a target classified undead ONLY (see isUndeadTarget at
@@ -2400,8 +2408,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // A species with its own flat attackDamage (a later follow-up ask:
     // "the imps have a physical attack/punch that should do 5 damage per
     // hit") counter-attacks for exactly that instead of the shared
-    // punchDamage() formula.
-    const rawDamage = attacker?.attackDamage ?? punchDamage(attackerStats, this.attackerStatsFor(client), skillPercent, weaponBonus, defenderArmorVsPhysical);
+    // punchDamage() formula — but a REAL bug this same follow-up batch
+    // caught was that this flat-damage branch skipped armor reduction
+    // ENTIRELY (defenderArmorVsPhysical was computed above but only ever
+    // fed into the punchDamage() branch), so a monster with its own
+    // attackDamage always hit for that exact number no matter how much
+    // Armor vs Physical the defender had. Now both branches go through
+    // the same applyArmorMitigation curve — see its own doc comment for
+    // why that's a percentage curve, not the old flat subtraction.
+    const damageBeforeOtherReductions =
+      attacker?.attackDamage !== undefined
+        ? Math.round(applyArmorMitigation(attacker.attackDamage, defenderArmorVsPhysical))
+        : punchDamage(attackerStats, this.attackerStatsFor(client), skillPercent, weaponBonus, defenderArmorVsPhysical);
     const reduction = monsterClass ? monsterDamageReduction(monsterClass, client.data.skills) : 0;
     const scutumReduction = client.data.scutumActive ? SCUTUM_DAMAGE_REDUCTION : 0;
     // Battlemage's own "enhanced armor" — "a CHANCE based on learned
@@ -2413,7 +2431,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       Math.random() < computeExtraAttackChance(client.data.skills[BATTLEMAGE_ENHANCED_ARMOR_SKILL])
         ? BATTLEMAGE_ENHANCED_ARMOR_BONUS
         : 0;
-    const damage = Math.max(0, rawDamage - reduction - scutumReduction - battlemageArmorReduction);
+    const damage = Math.max(0, damageBeforeOtherReductions - reduction - scutumReduction - battlemageArmorReduction);
     const verb = hasWeapon ? 'stabs' : 'punches';
 
     client.data.hp = Math.max(0, client.data.hp - damage);
@@ -3537,14 +3555,21 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       followerType === 'animatedMonster' ? this.animatedMonsterManager.getSnapshotsForOwner(ownerUsername).find((m) => m.id === animatedMonsterId) : undefined;
     // Phase C's "give/equip" ask — a weapon equipped on a follower (see
     // shared/pets.ts's FOLLOWER_EQUIPMENT_SLOTS) adds a flat damage bonus
-    // on top of its own base attack. Armor sits in equipment too but has
-    // no effect here — no monster in this game currently damages a
-    // follower back at all (applyDamage on either manager is never called
-    // from any monster-attack path), so there's nothing for armor to
-    // reduce yet; wiring monster-vs-follower retaliation is a separate,
-    // materially bigger combat-AI feature this ask didn't cover.
+    // on top of its own base attack. The follower's OWN armor (equipment
+    // slot) has no effect here — no monster in this game currently
+    // damages a follower back at all (applyDamage on either manager is
+    // never called from any monster-attack path), so there's nothing for
+    // a follower's armor to reduce yet; wiring monster-vs-follower
+    // retaliation is a separate, materially bigger combat-AI feature this
+    // ask didn't cover. The MONSTER's own armor, on the other hand, now
+    // does apply here (a later follow-up ask: "monsters also have armor
+    // vs physical & armor vs magical depending on equipment and stats" —
+    // that should mitigate every attacker, not just a player's own punch).
     const weaponBonus = (pet?.equipment.weapon ?? animatedMonster?.equipment.weapon) ? FOLLOWER_WEAPON_DAMAGE_BONUS : 0;
-    const damage = (followerType === 'pet' ? PET_ATTACK_DAMAGE + (pet?.attackDamageBonus ?? 0) : (animatedMonster?.attackDamage ?? 0)) + weaponBonus;
+    const rawDamage = (followerType === 'pet' ? PET_ATTACK_DAMAGE + (pet?.attackDamageBonus ?? 0) : (animatedMonster?.attackDamage ?? 0)) + weaponBonus;
+    if (rawDamage <= 0) return;
+    const monsterArmorVsPhysical = armorVsPhysicalFor(monster.dexterity, monster.strength, 0);
+    const damage = Math.round(applyArmorMitigation(rawDamage, monsterArmorVsPhysical));
     if (damage <= 0) return;
     const followerLabel = followerType === 'pet' ? (pet?.name ?? 'Your pet') : (animatedMonster?.name ?? 'Your ally');
 
@@ -3607,13 +3632,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // A later follow-up ask replaced the old flat "+1 damage per
     // intelligence point" wand-bolt bonus with the same compounding
     // formula every other offensive spell's own base damage now uses
-    // (see intelligenceScaledSpellDamage's own doc comment) — Shaman's
-    // enhance-damage buff and Battlemage's own chance-based bonus stay
-    // flat additions on top, unrelated sources rather than part of the
-    // spell's own base figure.
+    // (see scaledSpellDamage's own doc comment) — Shaman's enhance-damage
+    // buff and Battlemage's own chance-based bonus stay flat additions on
+    // top, unrelated sources rather than part of the spell's own base
+    // figure.
+    const effectiveIntelligence = client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment);
     const baseWandBoltDamage =
-      intelligenceScaledSpellDamage(WAND_BOLT_DAMAGE, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment)) +
-      (client.data.enhanceDamageActive ? SHAMAN_ENHANCE_DAMAGE_BONUS : 0) +
+      scaledSpellDamage(WAND_BOLT_DAMAGE, client.data.level, effectiveIntelligence) +
+      (client.data.enhanceDamageActive ? shamanEnhanceDamageBonusFor(client.data.level, effectiveIntelligence) : 0) +
       battlemageDamageBonus;
     // Cleric's own "enhanced undead damage" (a later follow-up ask) — the
     // TARGET's own classification isn't known until each branch below
@@ -3630,7 +3656,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // A later follow-up ask: "make sure the formulas work when the
       // player is hit by a player or monster" — same monster Armor vs
       // Magical treatment resolveElementalBolt's own monster branch uses.
-      const wandBoltDamage = Math.max(0, rawWandBoltDamage - armorVsMagicalFor(monster.intelligence, monster.wisdom, 0));
+      const wandBoltDamage = Math.round(applyArmorMitigation(rawWandBoltDamage, armorVsMagicalFor(monster.intelligence, monster.wisdom, 0)));
       this.monsterManager.setAggro(monster.id, client.data.username, this.combatTickCount);
       const result = this.monsterManager.applyDamage(monster.id, wandBoltDamage);
       if (!result) return;
@@ -3678,7 +3704,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const rawWandBoltDamage = baseWandBoltDamage + (npc.race === 'skeleton' ? enhancedUndeadDamageBonus : 0);
       // Same training-dummy Armor vs Magical treatment resolveElementalBolt's
       // own npc branch uses.
-      const wandBoltDamage = Math.max(0, rawWandBoltDamage - armorVsMagicalFor(STARTING_ATTRIBUTE, STARTING_ATTRIBUTE, 0));
+      const wandBoltDamage = Math.round(applyArmorMitigation(rawWandBoltDamage, armorVsMagicalFor(STARTING_ATTRIBUTE, STARTING_ATTRIBUTE, 0)));
       npc.hp = Math.max(0, npc.hp - wandBoltDamage);
       const died = npc.hp <= 0;
       const label = npc.label ?? 'training dummy';
@@ -3741,14 +3767,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return;
     }
     const message = result.died
-      ? `${client.data.username}'s wand bolt strikes ${targetUsername} for ${wandBoltDamage} damage, defeating them!${result.expGained !== undefined ? ` (+${result.expGained} exp)` : ''}`
-      : `${client.data.username}'s wand bolt strikes ${targetUsername} for ${wandBoltDamage} damage.`;
+      ? `${client.data.username}'s wand bolt strikes ${targetUsername} for ${result.damage} damage, defeating them!${result.expGained !== undefined ? ` (+${result.expGained} exp)` : ''}`
+      : `${client.data.username}'s wand bolt strikes ${targetUsername} for ${result.damage} damage.`;
     void this.persistStats(client);
     this.emitCombat(client, {
       targetKind: 'player',
       target: targetUsername,
       targetLabel: targetUsername,
-      damage: wandBoltDamage,
+      damage: result.damage,
       targetHp: result.hp,
       targetMaxHp: result.maxHp,
       targetDied: result.died,
@@ -5055,15 +5081,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     // "The base damage... for all offensive spells should increase by
     // 10% of its max for every point of intelligence" (a later follow-up
-    // ask) — a COMPOUNDING multiplier (20 base, 1 int -> 22, 2 int ->
-    // 24.2, ...), computed once per cast from the caster's own effective
-    // intelligence (base + equipment) and reused for every branch below,
-    // in place of the flat AUGUE_DAMAGE constant.
+    // ask) — a COMPOUNDING multiplier, PLUS a linear per-level multiplier
+    // from a still-later ask (see scaledSpellDamage's own doc comment),
+    // computed once per cast from the caster's own effective intelligence
+    // (base + equipment) and reused for every branch below, in place of
+    // the flat AUGUE_DAMAGE constant.
     // A later follow-up ask reduces this by the target's own Armor vs
     // Magical right before it's applied in the npc/monster branches below
     // (the player branch already gets this via applyPvpRangedDamage) —
-    // `let`, not `const`, so each branch can do that in place.
-    let augueDamage = intelligenceScaledSpellDamage(AUGUE_DAMAGE, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment));
+    // `let`, not `const`, so each branch can do that in place. Left
+    // un-rounded until that final mitigation step (see
+    // applyArmorMitigation's own doc comment).
+    let augueDamage = scaledSpellDamage(AUGUE_DAMAGE, client.data.level, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment));
     // A practice scarecrow (or the original Great Plains training dummy)
     // is a valid target too (a follow-up ask: "practice their offense
     // spells, like augue, on them") — a much simpler, self-contained
@@ -5093,7 +5122,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: true, skills: client.data.skills, message };
       }
 
-      augueDamage = Math.max(0, augueDamage - armorVsMagicalFor(STARTING_ATTRIBUTE, STARTING_ATTRIBUTE, 0));
+      augueDamage = Math.round(applyArmorMitigation(augueDamage, armorVsMagicalFor(STARTING_ATTRIBUTE, STARTING_ATTRIBUTE, 0)));
       npc.hp = Math.max(0, npc.hp - augueDamage);
       const died = npc.hp <= 0;
       // A later follow-up ask: "arcane bolt should not have a burning
@@ -5189,8 +5218,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (growth) growthMessages.push(growth);
 
       const message = result.died
-        ? `${client.data.username}'s arcane bolt strikes ${targetUsername} for ${augueDamage} damage, defeating them!${result.expGained !== undefined ? ` (+${result.expGained} exp)` : ''}`
-        : `${client.data.username}'s arcane bolt strikes ${targetUsername} for ${augueDamage} damage.`;
+        ? `${client.data.username}'s arcane bolt strikes ${targetUsername} for ${result.damage} damage, defeating them!${result.expGained !== undefined ? ` (+${result.expGained} exp)` : ''}`
+        : `${client.data.username}'s arcane bolt strikes ${targetUsername} for ${result.damage} damage.`;
 
       this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
       void this.persistStats(client);
@@ -5199,7 +5228,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         targetKind: 'player',
         target: targetUsername,
         targetLabel: targetUsername,
-        damage: augueDamage,
+        damage: result.damage,
         targetHp: result.hp,
         targetMaxHp: result.maxHp,
         targetDied: result.died,
@@ -5236,7 +5265,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: true, skills: client.data.skills, message };
     }
 
-    augueDamage = Math.max(0, augueDamage - armorVsMagicalFor(monster.intelligence, monster.wisdom, 0));
+    augueDamage = Math.round(applyArmorMitigation(augueDamage, armorVsMagicalFor(monster.intelligence, monster.wisdom, 0)));
     const result = this.monsterManager.applyDamage(monster.id, augueDamage);
     if (!result) {
       return { ok: false, message: 'Your target is no longer here.' };
@@ -5322,14 +5351,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const manaCost = config.manaCost ?? ELEMENTAL_BOLT_MANA_COST;
     // "The base damage... for all offensive spells should increase by
     // 10% of its max for every point of intelligence" (a later follow-up
-    // ask) — see intelligenceScaledSpellDamage's own doc comment.
+    // ask), PLUS a linear per-level multiplier from a still-later ask —
+    // see scaledSpellDamage's own doc comment.
     // A later follow-up ask reduces this by the target's own Armor vs
     // Magical right before it's actually applied (see the npc/monster
     // branches below) — `let`, not `const`, so each branch can do that in
     // place and have the reduced figure flow through to its own combat
-    // message/emit.
-    let damage = intelligenceScaledSpellDamage(
+    // message/emit. Left un-rounded until that final mitigation step.
+    let damage = scaledSpellDamage(
       config.damage ?? ELEMENTAL_BOLT_DAMAGE,
+      client.data.level,
       client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment)
     );
     const displayName = skill.charAt(0).toUpperCase() + skill.slice(1);
@@ -5381,7 +5412,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // shape resolveHitOnNpc's own defenderStats already uses for it.
       // Reduces `damage` itself (not just the hp subtraction) so the
       // combat message/emit below reports what actually landed.
-      damage = Math.max(0, damage - armorVsMagicalFor(STARTING_ATTRIBUTE, STARTING_ATTRIBUTE, 0));
+      damage = Math.round(applyArmorMitigation(damage, armorVsMagicalFor(STARTING_ATTRIBUTE, STARTING_ATTRIBUTE, 0)));
       npc.hp = Math.max(0, npc.hp - damage);
       const died = npc.hp <= 0;
       // Slow/knockback/stun are all skipped for an npc target — a static
@@ -5461,7 +5492,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // loot but never "wear" it for armor purposes, same "just their own
     // base+stats" treatment resolveHitOnMonster's own monsterArmorVsPhysical
     // already gives the physical side.
-    damage = Math.max(0, damage - armorVsMagicalFor(monster.intelligence, monster.wisdom, 0));
+    damage = Math.round(applyArmorMitigation(damage, armorVsMagicalFor(monster.intelligence, monster.wisdom, 0)));
     const result = this.monsterManager.applyDamage(monster.id, damage);
     if (!result) {
       return { ok: false, message: 'Your target is no longer here.' };
@@ -5617,7 +5648,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // below) — `let`, not `const`, since sap health both damages the
     // target AND heals the caster by this SAME figure, so a reduced drain
     // means a smaller heal too, not just less damage dealt.
-    let sapHealthAmount = intelligenceScaledSpellDamage(SAP_HEALTH_AMOUNT, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment));
+    let sapHealthAmount = scaledSpellDamage(SAP_HEALTH_AMOUNT, client.data.level, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment));
 
     // "The player should be able to continue using BP even when they
     // reach 0 or below" — no insufficient-BP rejection at all, unlike
@@ -5670,7 +5701,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         return { ok: true, skills: client.data.skills, message };
       }
 
-      sapHealthAmount = Math.max(0, sapHealthAmount - armorVsMagicalFor(STARTING_ATTRIBUTE, STARTING_ATTRIBUTE, 0));
+      sapHealthAmount = Math.round(applyArmorMitigation(sapHealthAmount, armorVsMagicalFor(STARTING_ATTRIBUTE, STARTING_ATTRIBUTE, 0)));
       npc.hp = Math.max(0, npc.hp - sapHealthAmount);
       const died = npc.hp <= 0;
       client.data.hp = Math.min(client.data.maxHp, client.data.hp + sapHealthAmount);
@@ -5739,7 +5770,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: true, skills: client.data.skills, message };
     }
 
-    sapHealthAmount = Math.max(0, sapHealthAmount - armorVsMagicalFor(monster.intelligence, monster.wisdom, 0));
+    sapHealthAmount = Math.round(applyArmorMitigation(sapHealthAmount, armorVsMagicalFor(monster.intelligence, monster.wisdom, 0)));
     const result = this.monsterManager.applyDamage(monster.id, sapHealthAmount);
     if (!result) {
       return { ok: false, message: 'Your target is no longer here.' };
@@ -7107,7 +7138,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.startSkillCooldown(client, SHAMAN_ENHANCE_DAMAGE_SKILL);
       client.data.enhanceDamageActive = true;
       client.data.enhanceDamageActiveUntil = Date.now() + SHAMAN_ENHANCE_DAMAGE_DURATION_MS;
-      message = `Your strikes begin to hit harder (+${SHAMAN_ENHANCE_DAMAGE_BONUS} damage).`;
+      const bonus = shamanEnhanceDamageBonusFor(client.data.level, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment));
+      message = `Your strikes begin to hit harder (+${bonus} damage).`;
     } else {
       message = 'You fumble the incantation and nothing happens.';
     }

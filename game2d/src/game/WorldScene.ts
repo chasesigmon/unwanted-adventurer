@@ -69,7 +69,10 @@ import {
   GREAT_PLAINS_SIZE,
   GREAT_PLAINS_HEXSTONE_ROW,
   HEXSTONE_CAVERN_SIZE,
-  HEXSTONE_GREAT_PLAINS_COL,
+  HEXSTONE_GREAT_PLAINS_ROW,
+  GREAT_PLAINS_MID_COL,
+  LABYRINTH_SIZE,
+  LABYRINTH_MID_COL,
   BRAMWICK_SIZE,
   BRAMWICK_BRIMSTONE_ROW,
   BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES,
@@ -557,6 +560,14 @@ export class WorldScene extends Phaser.Scene {
   private mimicForm: (Race | MonsterKind) | null = null;
   private facing: Facing = 'down';
   private currentMap: MapName = 'Great Plains';
+  // See applyCameraBounds/updateCameraScroll's own doc comments — whether
+  // the camera should track the player on each axis this frame, or stay
+  // permanently centered because the whole map already fits on screen
+  // along that axis.
+  private cameraFollowsX = true;
+  private cameraFollowsY = true;
+  private cameraMapPixelWidth = 0;
+  private cameraMapPixelHeight = 0;
   private row = 0;
   private col = 0;
   private myUsername = '';
@@ -1022,6 +1033,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   update(): void {
+    this.updateCameraScroll();
     this.repositionHpBars();
     this.updateDarkFog();
     applyDaynightTint(isAlwaysLit(this.currentMap), myProfile ? myProfile.skills[INFRAVISION_SKILL] !== undefined : false);
@@ -1815,6 +1827,59 @@ export class WorldScene extends Phaser.Scene {
     return { row: Math.floor(worldY / TILE_SIZE), col: Math.floor(worldX / TILE_SIZE) };
   }
 
+  // Every cave-mouth sprite in the game was originally placed the same
+  // way regardless of which edge of the map its own MapExit actually sat
+  // on — always unrotated, with its baked-in archway opening toward the
+  // BOTTOM of the image ("south"). That happened to look right for a
+  // south-edge exit, but was backwards for anything on the west/east/north
+  // edge (a later follow-up ask caught and fixed several of these:
+  // Hexstone Cavern, Great Plains' own entrances, Bramwick, the Labyrinth).
+  // `facing` is the compass direction the archway should visually open
+  // toward — i.e., the direction a player standing INSIDE this same map,
+  // approaching the exit, is coming FROM. The sprite's own origin (0.5, 1)
+  // sits exactly where the archway's threshold is drawn (bottom-center of
+  // the un-rotated texture), so rotating around that same origin keeps
+  // the threshold fixed in world space while the rock mound swings around
+  // it — meaning the anchor position itself also needs to shift toward
+  // `facing` by half a tile (into the map's own interior, on the side the
+  // approaching player stands), not just the rotation angle.
+  private addCaveEntranceSprite(row: number, col: number, facing: 'south' | 'north' | 'east' | 'west', wide = false): void {
+    const pos = this.tilePosition(row, col);
+    let x = pos.x;
+    let y = pos.y;
+    let angle = 0;
+    switch (facing) {
+      case 'south':
+        y += TILE_SIZE / 2;
+        angle = 0;
+        break;
+      case 'north':
+        y -= TILE_SIZE / 2;
+        angle = 180;
+        break;
+      case 'west':
+        x -= TILE_SIZE / 2;
+        angle = 90;
+        break;
+      case 'east':
+        x += TILE_SIZE / 2;
+        angle = -90;
+        break;
+    }
+    const sprite = this.add.sprite(x, y, CAVE_ENTRANCE_TEXTURE_KEY).setOrigin(0.5, 1).setAngle(angle).setDepth(-0.75);
+    // "Make the cave entrances wider" (a later follow-up ask) — a modest
+    // horizontal-only scale bump, applied along whichever axis is
+    // actually horizontal ON SCREEN for this sprite's own rotation (a
+    // 90°/-90° rotation swaps which of the texture's own axes reads as
+    // "width" to a viewer, so "wider" there means scaling the texture's Y
+    // axis instead of X).
+    if (wide) {
+      if (facing === 'east' || facing === 'west') sprite.setScale(1, 1.35);
+      else sprite.setScale(1.35, 1);
+    }
+    this.caveEntranceSprites.push(sprite);
+  }
+
   // The kind actually rendered — a slime's mimicForm, if set, otherwise
   // its real race (resolved to the full gender/skin/hair composite for a
   // human — see effectiveSpriteKind). Every texture/animation lookup for
@@ -1927,14 +1992,43 @@ export class WorldScene extends Phaser.Scene {
     const zoom = isClassroomSized ? CLASSROOM_ZOOM : isCommonRoomSized ? COMMON_ROOM_ZOOM : isDormSized ? DORM_ZOOM : 1;
     cam.setZoom(zoom);
     cam.setBounds(0, 0, pixelWidth, pixelHeight);
-    const fitsWidth = pixelWidth * zoom <= cam.width;
-    const fitsHeight = pixelHeight * zoom <= cam.height;
-    if (fitsWidth && fitsHeight) {
-      cam.stopFollow();
-      cam.centerOn(pixelWidth / 2, pixelHeight / 2);
-    } else {
-      cam.startFollow(this.player, true, 1, 1);
-    }
+    // A later follow-up ask: "any map that is not large enough to cover
+    // the whole screen should be centered... with black space on either
+    // side (left/right)." The OLD all-or-nothing version only centered
+    // when BOTH axes fit on screen — for a map that's narrow but tall (or
+    // wide but short, like the "Road to X" corridors, Runestone Way,
+    // Silverbranch Road), it fell through to full cam.startFollow on both
+    // axes, and Phaser's own bounds-clamping pins an axis smaller than the
+    // viewport to its bounds' own top-left corner (scroll 0) rather than
+    // centering it — so a narrow map ended up pinned to the LEFT edge
+    // with all its empty space on the right, not evenly split either
+    // side. Phaser's built-in follow doesn't support "follow this axis,
+    // but keep that OTHER axis permanently centered" as a single call, so
+    // this is now done by hand every frame (see updateCameraScroll,
+    // called from update()) instead of using startFollow at all.
+    this.cameraMapPixelWidth = pixelWidth;
+    this.cameraMapPixelHeight = pixelHeight;
+    this.cameraFollowsX = pixelWidth * zoom > cam.width;
+    this.cameraFollowsY = pixelHeight * zoom > cam.height;
+    cam.stopFollow();
+    this.updateCameraScroll();
+  }
+
+  // See applyCameraBounds's own doc comment above for why this replaces
+  // Phaser's built-in camera-follow entirely: an axis the whole map
+  // already fits on screen along stays permanently centered; an axis too
+  // big to fit tracks the player exactly (same instant, no-smoothing
+  // tracking cam.startFollow(player, true, 1, 1) used to provide).
+  private updateCameraScroll(): void {
+    const cam = this.cameras.main;
+    const viewW = cam.width / cam.zoom;
+    const viewH = cam.height / cam.zoom;
+    cam.scrollX = this.cameraFollowsX
+      ? Phaser.Math.Clamp(this.player.x - viewW / 2, 0, Math.max(0, this.cameraMapPixelWidth - viewW))
+      : (this.cameraMapPixelWidth - viewW) / 2;
+    cam.scrollY = this.cameraFollowsY
+      ? Phaser.Math.Clamp(this.player.y - viewH / 2, 0, Math.max(0, this.cameraMapPixelHeight - viewH))
+      : (this.cameraMapPixelHeight - viewH) / 2;
   }
 
   private renderMap(mapName: MapName): void {
@@ -2254,28 +2348,12 @@ export class WorldScene extends Phaser.Scene {
       );
 
       // A later follow-up ask: "a cave connection to the west of
-      // Bramwick" — same short "Kortho spur" thin-patch depth as every
-      // other cave/direct-connection entrance uses.
-      const bramwickBrimstoneDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
-      const bramwickBrimstoneHeight = BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES * 2 + 1;
-      this.roadTiles.push(
-        this.add
-          .tileSprite(
-            0,
-            (BRAMWICK_BRIMSTONE_ROW - BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES) * TILE_SIZE,
-            bramwickBrimstoneDepth * TILE_SIZE,
-            bramwickBrimstoneHeight * TILE_SIZE,
-            DIRT_ROAD_TEXTURE_KEY
-          )
-          .setOrigin(0, 0)
-          .setDepth(-0.99)
-      );
-      {
-        const pos = this.tilePosition(BRAMWICK_BRIMSTONE_ROW, 0);
-        this.caveEntranceSprites.push(
-          this.add.sprite(pos.x, pos.y + TILE_SIZE / 2, CAVE_ENTRANCE_TEXTURE_KEY).setOrigin(0.5, 1).setDepth(-0.75)
-        );
-      }
+      // Bramwick" — a still-later follow-up ask ("make the updates to the
+      // cave entrance in Bramwick, make it face east and remove the dirt
+      // road") removed the dirt-road patch entirely and turned the
+      // sprite to face east (toward a player standing inside Bramwick,
+      // approaching this west-edge exit from the east).
+      this.addCaveEntranceSprite(BRAMWICK_BRIMSTONE_ROW, 0, 'east');
 
       // A later follow-up ask: "a dirt road connection to the north of
       // Bramwick with sign 'Boulder Pass'" — same short depth, at
@@ -2713,49 +2791,41 @@ export class WorldScene extends Phaser.Scene {
           .setDepth(-0.99)
       );
 
-      // A later follow-up ask: "create a cave entrance at the northwest/
-      // north of the great plains with a thin dirt road" — same short
-      // depth convention as the Floro patch above, at Great Plains' own
-      // west edge instead.
-      const greatPlainsHexstoneDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
-      const greatPlainsHexstoneHeight = GREAT_PLAINS_FLORO_HALF_WIDTH_TILES * 2 + 1;
-      this.roadTiles.push(
-        this.add
-          .tileSprite(
-            0,
-            (GREAT_PLAINS_HEXSTONE_ROW - GREAT_PLAINS_FLORO_HALF_WIDTH_TILES) * TILE_SIZE,
-            greatPlainsHexstoneDepth * TILE_SIZE,
-            greatPlainsHexstoneHeight * TILE_SIZE,
-            DIRT_ROAD_TEXTURE_KEY
-          )
-          .setOrigin(0, 0)
-          .setDepth(-0.99)
-      );
-
       // The cave-mouth sprite itself (a later follow-up ask: "a nice
       // looking cave sprite entrance and there should not be a door") —
-      // anchored at the exit tile's own south edge, same "the sprite's
-      // own baked-in doorway touches the real MapExit tile, no separate
-      // door sprite" convention Bramwick's cottages/Kortho's shops use.
-      {
-        const pos = this.tilePosition(GREAT_PLAINS_HEXSTONE_ROW, 0);
-        this.caveEntranceSprites.push(
-          this.add.sprite(pos.x, pos.y + TILE_SIZE / 2, CAVE_ENTRANCE_TEXTURE_KEY).setOrigin(0.5, 1).setDepth(-0.75)
-        );
-      }
+      // anchored at the exit tile's own west edge. A still-later follow-up
+      // ask ("update the great plains cave entrance to hexstone cavern to
+      // be facing east, from where the player would enter from. Also
+      // remove the dirt road. And make the cave entrances wider") removed
+      // the dirt-road patch that used to sit here, turned the sprite to
+      // face east (toward a player standing inside Great Plains,
+      // approaching this west-edge exit from the east), and widened it.
+      this.addCaveEntranceSprite(GREAT_PLAINS_HEXSTONE_ROW, 0, 'east', true);
+
+      // The Great Plains <-> Labyrinth connection (a later follow-up ask:
+      // "make an update so that the entrance to the labyrinth from the
+      // great plains is a cave entrance with no door, this cave entrance
+      // can be facing south") — its own MapExit already has `kind: 'open'`
+      // (see shared/maps.ts), so renderDoorsAndChest already skips the
+      // generic door sprite here; this just adds the actual cave-mouth
+      // art. South-facing (unrotated) matches a player standing inside
+      // Great Plains, approaching this north-edge exit from the south.
+      this.addCaveEntranceSprite(0, GREAT_PLAINS_MID_COL, 'south');
     } else if (mapName === 'Hexstone Cavern') {
       // The reciprocal thin patch on Hexstone Cavern's own side (a later
       // follow-up ask: "a connection to the great plains from the
-      // southeast/south") — at its own south edge.
+      // southeast/south") — originally the south edge; a still-later
+      // follow-up ask ("update the cave exit out of hexstone cavern to
+      // the great plains to be to the east") moved this to the east edge.
       const hexstoneGreatPlainsDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
-      const hexstoneGreatPlainsWidth = GREAT_PLAINS_FLORO_HALF_WIDTH_TILES * 2 + 1;
+      const hexstoneGreatPlainsHeight = GREAT_PLAINS_FLORO_HALF_WIDTH_TILES * 2 + 1;
       this.roadTiles.push(
         this.add
           .tileSprite(
-            (HEXSTONE_GREAT_PLAINS_COL - GREAT_PLAINS_FLORO_HALF_WIDTH_TILES) * TILE_SIZE,
             (HEXSTONE_CAVERN_SIZE - hexstoneGreatPlainsDepth) * TILE_SIZE,
-            hexstoneGreatPlainsWidth * TILE_SIZE,
+            (HEXSTONE_GREAT_PLAINS_ROW - GREAT_PLAINS_FLORO_HALF_WIDTH_TILES) * TILE_SIZE,
             hexstoneGreatPlainsDepth * TILE_SIZE,
+            hexstoneGreatPlainsHeight * TILE_SIZE,
             DIRT_ROAD_TEXTURE_KEY
           )
           .setOrigin(0, 0)
@@ -2763,13 +2833,18 @@ export class WorldScene extends Phaser.Scene {
       );
 
       // The reciprocal cave-mouth sprite on Hexstone Cavern's own side —
-      // same anchoring convention as Great Plains' own sprite above.
-      {
-        const pos = this.tilePosition(HEXSTONE_CAVERN_SIZE - 1, HEXSTONE_GREAT_PLAINS_COL);
-        this.caveEntranceSprites.push(
-          this.add.sprite(pos.x, pos.y + TILE_SIZE / 2, CAVE_ENTRANCE_TEXTURE_KEY).setOrigin(0.5, 1).setDepth(-0.75)
-        );
-      }
+      // now on the east edge, facing west (toward a player standing
+      // inside Hexstone Cavern, approaching this east-edge exit from the
+      // west) per the same follow-up ask as the dirt patch above.
+      this.addCaveEntranceSprite(HEXSTONE_GREAT_PLAINS_ROW, HEXSTONE_CAVERN_SIZE - 1, 'west');
+    } else if (mapName === 'Labyrinth') {
+      // The reciprocal cave-mouth sprite on the Labyrinth's own side (a
+      // later follow-up ask: "from inside of the labyrinth, remove the
+      // door and make it a cave entrance that faces north") — its own
+      // MapExit already has `kind: 'open'` (see shared/maps.ts). North-
+      // facing matches a player standing inside the Labyrinth,
+      // approaching this south-edge exit from the north.
+      this.addCaveEntranceSprite(LABYRINTH_SIZE - 1, LABYRINTH_MID_COL, 'north');
     } else if (mapName === 'Mystical Timberland') {
       // Same small entrance-patch treatment as Kortho/Floro above (a
       // later follow-up ask: "make the entrance to it have a similar
@@ -3810,7 +3885,16 @@ export class WorldScene extends Phaser.Scene {
           sprite.setTexture(petTextureKey);
         }
       }
-      sprite.setData('label', `${pet.name} (Lv ${pet.level})`);
+      // A later follow-up bug fix: "when I click on the pet, it shows
+      // <name> (Lvl #) (Lvl #), with the level shown twice" — this used
+      // to bake "(Lv X)" into the label itself, but updateTargetPanel
+      // (see setPetTarget below) ALREADY appends "(Lv {level})" using the
+      // separately-tracked `level` data below, same as every other sprite
+      // kind's own plain-name label (player/npc/monster/animatedMonster —
+      // see their own setData('label', ...) calls, none of which bake the
+      // level in). Storing just the plain name here matches that
+      // convention and leaves exactly one "(Lv X)" in the rendered panel.
+      sprite.setData('label', pet.name);
       sprite.setData('level', pet.level);
       sprite.setData('hp', pet.hp);
       sprite.setData('maxHp', pet.maxHp);

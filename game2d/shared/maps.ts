@@ -40,7 +40,10 @@ export interface MapDefinition {
 // Floro connection's own sign/road placement relative to Great Plains'
 // own east edge).
 export const GREAT_PLAINS_SIZE = 100;
-const LABYRINTH_SIZE = 60;
+// Exported — the client needs this to place the new cave-mouth sprite at
+// the Great Plains <-> Labyrinth connection (a later follow-up ask made
+// this a proper cave entrance instead of a plain door).
+export const LABYRINTH_SIZE = 60;
 // Exported (a later follow-up ask needed Kortho's own unchanged ROW count
 // client-side, to size the new sand/sea/sand strips' own tileSprites —
 // Kortho only ever grows east, never taller, see KORTHO_COLS above).
@@ -52,9 +55,11 @@ export const TOWN_SIZE = 50;
 export const TOWN_MID_COL = Math.floor(TOWN_SIZE / 2);
 // "Very top middle" / "south middle" — floor(size / 2), the same
 // even-width convention the text game's own map exits use.
-const GREAT_PLAINS_MID_COL = Math.floor(GREAT_PLAINS_SIZE / 2);
+// Exported — same reasoning as LABYRINTH_SIZE above.
+export const GREAT_PLAINS_MID_COL = Math.floor(GREAT_PLAINS_SIZE / 2);
 const GREAT_PLAINS_MID_ROW = Math.floor(GREAT_PLAINS_SIZE / 2);
-const LABYRINTH_MID_COL = Math.floor(LABYRINTH_SIZE / 2);
+// Exported — same reasoning as LABYRINTH_SIZE above.
+export const LABYRINTH_MID_COL = Math.floor(LABYRINTH_SIZE / 2);
 export const TOWN_MID_ROW = Math.floor(TOWN_SIZE / 2);
 
 // Floro's 7 shop interiors (item 13, phase 1) — a small room each,
@@ -72,6 +77,15 @@ const SHOP_INTERIOR_DOOR_ROW = SHOP_INTERIOR_SIZE - 1;
 const TOWN_SHOP_INTERIOR_SIZE = SHOP_INTERIOR_SIZE * 3;
 const TOWN_SHOP_INTERIOR_MID_COL = Math.floor(TOWN_SHOP_INTERIOR_SIZE / 2);
 const TOWN_SHOP_INTERIOR_DOOR_ROW = TOWN_SHOP_INTERIOR_SIZE - 1;
+// Gobbler Village's own 3 hut interiors specifically (a later follow-up
+// ask: "make the inside of the huts in Gobbler Village twice the size") —
+// same "own dedicated multiplier off the base SHOP_INTERIOR_SIZE" shape
+// as TOWN_SHOP_INTERIOR_SIZE above, just 2x instead of 3x, and scoped to
+// only the huts (see gobblerHutInteriorDefinition/gobblerHutDoorExits
+// below) rather than every shop.
+const GOBBLER_HUT_INTERIOR_SIZE = SHOP_INTERIOR_SIZE * 2;
+const GOBBLER_HUT_INTERIOR_MID_COL = Math.floor(GOBBLER_HUT_INTERIOR_SIZE / 2);
+const GOBBLER_HUT_INTERIOR_DOOR_ROW = GOBBLER_HUT_INTERIOR_SIZE - 1;
 
 // Where each shop's door sits on Floro's own street — a later follow-up
 // ask ("instead of having the shops arranged how they are now, arrange
@@ -1328,8 +1342,8 @@ function gobblerHutInteriorDefinition(name: (typeof GOBBLER_VILLAGE_HUT_MAPS)[nu
   const door = GOBBLER_HUT_DOORS[name];
   return {
     name,
-    rows: SHOP_INTERIOR_SIZE,
-    cols: SHOP_INTERIOR_SIZE,
+    rows: GOBBLER_HUT_INTERIOR_SIZE,
+    cols: GOBBLER_HUT_INTERIOR_SIZE,
     // Unused metadata (see MapTerrain's own doc comment) — the real
     // texture comes from mapRender.ts's floorTextureFor (dirt, matching
     // the huts' own rustic feel, not the stone Floro/Kortho/Bramwick's
@@ -1337,8 +1351,8 @@ function gobblerHutInteriorDefinition(name: (typeof GOBBLER_VILLAGE_HUT_MAPS)[nu
     terrain: 'stone',
     exits: [
       {
-        row: SHOP_INTERIOR_DOOR_ROW,
-        col: SHOP_INTERIOR_MID_COL,
+        row: GOBBLER_HUT_INTERIOR_DOOR_ROW,
+        col: GOBBLER_HUT_INTERIOR_MID_COL,
         direction: 'south',
         toMap: 'Gobbler Village',
         toRow: door.row,
@@ -1356,8 +1370,8 @@ function gobblerHutDoorExits(): MapExit[] {
       col: door.col,
       direction: 'north',
       toMap: name,
-      toRow: SHOP_INTERIOR_DOOR_ROW,
-      toCol: SHOP_INTERIOR_MID_COL,
+      toRow: GOBBLER_HUT_INTERIOR_DOOR_ROW,
+      toCol: GOBBLER_HUT_INTERIOR_MID_COL,
       // Same "walk into the hut's own baked-in door" treatment Bramwick's
       // cottages already use — no separate door sprite.
       kind: 'open',
@@ -1394,9 +1408,12 @@ export const FLORO_GREAT_PLAINS_ROW = TOWN_MID_ROW;
 export const GREAT_PLAINS_HEXSTONE_ROW = 15;
 export const GREAT_PLAINS_HEXSTONE_HALF_WIDTH_TILES = 2;
 export const HEXSTONE_CAVERN_SIZE = GREAT_PLAINS_SIZE;
-// "From the southeast/south" — the south edge, offset toward the east
-// side of it rather than dead center.
-export const HEXSTONE_GREAT_PLAINS_COL = Math.round(HEXSTONE_CAVERN_SIZE * 0.75);
+// A later follow-up ask moved this connection's own Hexstone-side exit
+// from the south edge to the EAST edge ("update the cave exit out of
+// hexstone cavern to the great plains to be to the east") — kept at the
+// same 0.75-down-the-edge offset the old south-edge placement used, just
+// projected onto the new edge.
+export const HEXSTONE_GREAT_PLAINS_ROW = Math.round(HEXSTONE_CAVERN_SIZE * 0.75);
 
 // ---------- Brimstone Cave (a later follow-up ask: "add a cave
 // connection to the west of Bramwick... make it the same size as
@@ -1480,6 +1497,11 @@ export const MAPS: Record<MapName, MapDefinition> = {
     cols: GREAT_PLAINS_SIZE,
     terrain: 'grass',
     exits: [
+      // A later follow-up ask: "make an update so that the entrance to
+      // the labyrinth from the great plains is a cave entrance with no
+      // door, this cave entrance can be facing south" — `kind: 'open'`
+      // added (was a plain door before), same convention every other
+      // cave-mouth connection in this file already uses.
       {
         row: 0,
         col: GREAT_PLAINS_MID_COL,
@@ -1487,6 +1509,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toMap: 'Labyrinth',
         toRow: LABYRINTH_SIZE - 1,
         toCol: LABYRINTH_MID_COL,
+        kind: 'open',
       },
       // A later follow-up ask: "it should have a dirt road connection at
       // the top right/north east with sign 'Floro'... it should connect
@@ -1513,8 +1536,11 @@ export const MAPS: Record<MapName, MapDefinition> = {
         col: 0,
         direction: 'west',
         toMap: 'Hexstone Cavern',
-        toRow: HEXSTONE_CAVERN_SIZE - 2,
-        toCol: HEXSTONE_GREAT_PLAINS_COL,
+        // A later follow-up ask moved Hexstone Cavern's own exit from its
+        // south edge to its east edge (see HEXSTONE_GREAT_PLAINS_ROW's own
+        // doc comment) — this lands the player near that same spot now.
+        toRow: HEXSTONE_GREAT_PLAINS_ROW,
+        toCol: HEXSTONE_CAVERN_SIZE - 2,
         halfWidthTiles: GREAT_PLAINS_HEXSTONE_HALF_WIDTH_TILES,
         spread: 'row',
       }),
@@ -1526,6 +1552,9 @@ export const MAPS: Record<MapName, MapDefinition> = {
     cols: LABYRINTH_SIZE,
     terrain: 'stone',
     exits: [
+      // A later follow-up ask: "from inside of the labyrinth, remove the
+      // door and make it a cave entrance that faces north" — same
+      // `kind: 'open'` fix as the reciprocal Great Plains exit above.
       {
         row: LABYRINTH_SIZE - 1,
         col: LABYRINTH_MID_COL,
@@ -1533,6 +1562,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toMap: 'Great Plains',
         toRow: 0,
         toCol: GREAT_PLAINS_MID_COL,
+        kind: 'open',
       },
     ],
   },
@@ -1547,17 +1577,21 @@ export const MAPS: Record<MapName, MapDefinition> = {
     exits: [
       // A later follow-up ask: "make it have a connection to the great
       // plains from the southeast/south... a cave entrance/exit sprite
-      // with a sign next to it 'The Great Plains'" — south edge, offset
-      // toward the east (see HEXSTONE_GREAT_PLAINS_COL's own doc comment).
+      // with a sign next to it 'The Great Plains'" — originally the south
+      // edge; a still-later follow-up ask ("update the cave exit out of
+      // hexstone cavern to the great plains to be to the east") moved it
+      // to the east edge instead (see HEXSTONE_GREAT_PLAINS_ROW's own doc
+      // comment), with the cave-mouth sprite itself now facing west (see
+      // WorldScene's own rendering).
       ...roadBandExits({
-        row: HEXSTONE_CAVERN_SIZE - 1,
-        col: HEXSTONE_GREAT_PLAINS_COL,
-        direction: 'south',
+        row: HEXSTONE_GREAT_PLAINS_ROW,
+        col: HEXSTONE_CAVERN_SIZE - 1,
+        direction: 'east',
         toMap: 'Great Plains',
         toRow: GREAT_PLAINS_HEXSTONE_ROW,
         toCol: 1,
         halfWidthTiles: GREAT_PLAINS_HEXSTONE_HALF_WIDTH_TILES,
-        spread: 'col',
+        spread: 'row',
       }),
     ],
   },

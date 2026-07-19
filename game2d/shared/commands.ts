@@ -23,4 +23,13 @@ export const CHAT_COMMANDS: ChatCommandInfo[] = [
   { usage: '/decline', description: 'decline a pending party invite' },
   { usage: '/leave', description: 'leave your current party' },
   { usage: '/party', description: 'list your current party members' },
+  // A later follow-up ask — each just opens the Map modal to a specific
+  // tab. Unlike every command above, these are caught client-side (see
+  // src/ui/log.ts's own MAP_MODAL_CHAT_COMMANDS) and never actually reach
+  // the server at all; still listed here since this file is the one
+  // shared source of truth for both the server's /help text and the
+  // client's own Help modal.
+  { usage: '/who', description: 'open the Map modal with the Who tab focused' },
+  { usage: '/where', description: 'open the Map modal with the Where tab focused' },
+  { usage: '/map', description: 'open the Map modal with the World Map tab focused' },
 ];

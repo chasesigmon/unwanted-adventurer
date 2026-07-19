@@ -189,6 +189,37 @@ export function armorVsMagicalFor(intelligence: number, wisdom: number, equipmen
   return BASE_ARMOR_VS_MAGICAL + Math.floor(intelligence / ARMOR_VS_MAGICAL_PER_INTELLIGENCE) + Math.floor(wisdom / ARMOR_VS_MAGICAL_PER_WISDOM) + equipmentBonus;
 }
 
+// A later follow-up ask replaced the old flat "subtract armor straight off
+// the damage" mitigation with a percentage-based curve — the flat version
+// let a single unlucky (or just under-leveled) hit get reduced to exactly
+// 0 the moment armor caught up to raw damage, an all-or-nothing cliff
+// rather than a gradual "armor helps, but never trivializes a hit"
+// mitigation. Also fixes a real bug the flat version had been hiding: a
+// monster with its own flat `attackDamage` (see monster.ts) was bypassing
+// armor reduction ENTIRELY (see game.gateway.ts's resolveMonsterCounterAttack) —
+// this is the one shared helper every physical AND magical armor
+// reduction now goes through, so that bug can't recur species-by-species.
+// The exact constant (16) is reverse-engineered from the report that
+// prompted this change: "the imp did 5 damage to a level 15 with Armor vs
+// Physical of 9... should have been more like 3.2" — 5 * 16/(9+16) =
+// 3.2 exactly, so ARMOR_MITIGATION_K = 16 is the one value that matches
+// that worked example precisely, not an arbitrary round number.
+// Deliberately left un-rounded here — the mitigation fraction itself is
+// fractional by construction, and "don't show decimal points for any
+// stat to a player, but keep track of it" means the ROUNDING happens once,
+// at the point a number actually becomes a discrete event a player sees
+// (a hit landing, a combat message) — every call site below (punchDamage,
+// and each spell-damage site in game.gateway.ts) rounds its own final
+// total exactly once, rather than this shared helper rounding an
+// intermediate figure a caller might still be combining with other terms.
+export const ARMOR_MITIGATION_K = 16;
+export function armorMitigationFraction(armor: number): number {
+  return armor / (armor + ARMOR_MITIGATION_K);
+}
+export function applyArmorMitigation(rawDamage: number, armor: number): number {
+  return Math.max(0, rawDamage * (1 - armorMitigationFraction(armor)));
+}
+
 export function punchDamage(
   attacker: CombatantStats,
   defender: CombatantStats,
@@ -197,7 +228,7 @@ export function punchDamage(
   defenderArmorVsPhysical: number = BASE_ARMOR_VS_PHYSICAL
 ): number {
   const raw = baseDamage(attacker.strength, attacker.level) + attributeBonus(attacker, defender) + skillBonus(punchSkillPercent) + weaponBonus;
-  return Math.max(0, raw - defenderArmorVsPhysical);
+  return Math.round(applyArmorMitigation(raw, defenderArmorVsPhysical));
 }
 
 // Flat damage bonus while a given item is equipped in its slot — matches
@@ -521,8 +552,25 @@ export function monsterDamageReduction(monsterClass: MonsterClass, skills: Recor
 
 // --- Leveling — identical shape to the text game's leveling.ts ---
 
+// A later follow-up ask: "the experience needed to level up... I think is
+// not balanced. Examine the experience gained from monsters and come up
+// with a formula for how much experience is needed at each level." The
+// old level*100 curve was tuned against a monster roster whose own exp
+// rewards hadn't been rescaled consistently as species were leveled up
+// (see MONSTER_EXP_REWARD_PER_LEVEL in monster.ts) — once that's fixed,
+// a same-level kill is worth roughly EXP_RATIO_MULTIPLIER *
+// MONSTER_EXP_REWARD_PER_LEVEL * level exp (see expGainFor below), which
+// scales linearly with level exactly the way this curve does — so the
+// curve SHAPE (linear in level) stays the same as before, just at a
+// bigger per-level constant, which keeps "roughly how many kills to reach
+// the next level" constant across the whole 1-40 range instead of
+// leveling trivially fast early and grinding to a crawl late (or vice
+// versa). TNL_PER_LEVEL(250) is chosen so a level fighting same-level
+// monsters takes on the order of 8 kills — see tests/verify-balance-sim.mjs
+// for the simulated 1-10 grind this was tuned against.
+const TNL_PER_LEVEL = 250;
 export function maxTnlForLevel(level: number): number {
-  return level * 100;
+  return level * TNL_PER_LEVEL;
 }
 
 // A later follow-up ask: "the max player level right now should be 40" —
@@ -626,16 +674,36 @@ export function intelligenceSpellBonus(intelligence: number): number {
 // is weighed against that new max of 24.2 on and on" (a later follow-up
 // ask) — a COMPOUNDING multiplier (baseDamage * 1.1^intelligence), not a
 // flat per-point bonus (20 + 2 + 2.2 + ... would NOT match "weighed
-// against the NEW max" each time). Applied to every damage-dealing
-// spell's own base figure (arcane bolt, the 4 elemental bolts, kinetic
-// strike, sap health, the wand's own basic ranged bolt — see each of
-// their own call sites in game.gateway.ts) — deliberately NOT melee
-// punch/counter-attack damage, which isn't spellcasting. Uses the
-// caster's TOTAL effective intelligence (base + equipment, same
-// intelligenceEquipmentBonus every other intelligence-driven formula
-// here already folds in), rounded once at the end rather than per step.
-export function intelligenceScaledSpellDamage(baseDamage: number, intelligence: number): number {
-  return Math.round(baseDamage * Math.pow(1.1, intelligence));
+// against the NEW max" each time).
+//
+// A still-later follow-up ask ("make it so that all spells do increased
+// damage with player level AND with intelligence") layers a second, LINEAR
+// multiplier on top for level — kept linear (not also compounding)
+// deliberately: the training-point economy caps how much intelligence a
+// character can realistically stack (a level-40 character has earned only
+// ~11 lifetime training points total — see TRAINING_POINTS_PER_5_LEVELS —
+// so effective intelligence rarely exceeds the low teens even fully
+// invested), which already keeps the existing compounding factor tame in
+// practice (1.1^12 ≈ 3.1x); layering a SECOND compounding factor on top of
+// that for level would blow the two up together into a wildly swingy
+// total multiplier by level 40, when what was actually asked for is
+// simply "consistently stronger over time," not another exponential. 2%
+// per level (LEVEL_SPELL_DAMAGE_PERCENT_PER_LEVEL) adds up to +80% at the
+// level cap — a meaningful, steady payoff for leveling without dwarfing
+// the intelligence term.
+//
+// Applied to every damage-dealing spell's own base figure (arcane bolt,
+// the 4 elemental bolts, kinetic strike, sap health, the wand's own basic
+// ranged bolt — see each of their own call sites in game.gateway.ts) —
+// deliberately NOT melee punch/counter-attack damage, which isn't
+// spellcasting. Uses the caster's TOTAL effective intelligence (base +
+// equipment, same intelligenceEquipmentBonus every other intelligence-
+// driven formula here already folds in), rounded once at the very end
+// rather than at each step.
+export const LEVEL_SPELL_DAMAGE_PERCENT_PER_LEVEL = 0.02;
+export function scaledSpellDamage(baseDamage: number, level: number, intelligence: number): number {
+  const levelMultiplier = 1 + level * LEVEL_SPELL_DAMAGE_PERCENT_PER_LEVEL;
+  return baseDamage * Math.pow(1.1, intelligence) * levelMultiplier;
 }
 
 // "Luck should give a player extra chance to succeed at casting. Luck x
@@ -689,8 +757,71 @@ export function expGainFor(baseReward: number, killerLevel: number, victimLevel:
   return Math.max(1, Math.round(baseReward * ratio));
 }
 
-export const WILD_GOBLIN_EXP_REWARD = 8;
-export const WILD_SKELETON_EXP_REWARD = 10;
+// A later follow-up ask: "examine all of the monsters created so far...
+// make it so monsters have base stats for that level" — auditing every
+// species' own hand-set expReward turned up a real, unintentional bug:
+// several species (wild-skeleton-grounds, wild-goblin-grounds) had been
+// LEVELED UP in a past session (from their original level-1 baseline to
+// 5/7) without their expReward ever being rescaled to match, so a level-5
+// "tougher" monster was still only worth a level-1 amount of exp. The
+// project's OWN higher-level dungeon tiers (level 12/17/20/25/35) turn out
+// to already fit a clean ~13-exp-per-level line almost exactly (150/12 ≈
+// 12.5, 220/17 ≈ 12.9, 260/20 = 13, 320/25 = 12.8, 450/35 ≈ 12.9) — this
+// formalizes that already-implicit constant and applies it uniformly to
+// EVERY species (see monster.ts), superseding the old species-by-species
+// hand-set numbers (including the imp's own deliberate level-1 bump from
+// an earlier ask — with a coherent per-level curve now driving both sides
+// of the ratio, that one-off boost is no longer needed to keep early
+// leveling from crawling; see maxTnlForLevel's own doc comment).
+export const MONSTER_EXP_REWARD_PER_LEVEL = 13;
+export function monsterExpRewardForLevel(level: number): number {
+  return Math.round(MONSTER_EXP_REWARD_PER_LEVEL * level);
+}
+
+// A "rare" monster (see monster.ts's own isRare) is meant to be a real
+// step up from an ordinary same-level encounter — tougher AND more
+// rewarding — without the runaway compounding a past session's own
+// per-level-squared math produced (one rare's hp/damage had crept well
+// past even the level-35 endgame tier despite being level 7). A flat,
+// modest multiplier on top of the ordinary per-level formulas keeps "a
+// rare is a notable step up" true without that blowup.
+export const RARE_MONSTER_STAT_MULTIPLIER = 1.5;
+export const RARE_MONSTER_HP_MULTIPLIER = 1.8;
+
+// Same reasoning as monsterExpRewardForLevel above, fit to the same
+// well-tuned dungeon-tier anchors (12/180hp, 17/250hp, 25/350hp, 35/500hp
+// all land within a point or two of 14.5/level).
+export const MONSTER_HP_PER_LEVEL = 14.5;
+export function monsterHpForLevel(level: number): number {
+  return Math.round(MONSTER_HP_PER_LEVEL * level);
+}
+
+// Same reasoning again, fit to the same anchors' own attackDamage figures
+// (12/20, 17/28, 25/38, 35/50 all land close to this line).
+export function monsterAttackDamageForLevel(level: number): number {
+  return Math.round(1.5 * level + 3);
+}
+
+// Every monster's own CombatantStats attributes (strength/dexterity/
+// intelligence/wisdom/constitution/luck) used to be pinned at
+// MONSTER_BASE_ATTRIBUTE(1, see monster.ts — duplicated here as a literal
+// rather than imported, since this file is deliberately dependency-free)
+// forever regardless of level — meaning armorVsPhysicalFor/
+// armorVsMagicalFor (both driven by these same attributes) computed the
+// exact same tiny flat armor value for a level-1 imp and a level-35
+// endgame goblin alike. A later follow-up ask ("monsters also have armor
+// vs physical & armor vs magical depending on equipment and stats... give
+// monsters at different levels base stats for that level") fixes this by
+// growing every attribute 1:1 with the monster's own level — reusing the
+// exact same armor formulas a player already has, no new mechanism
+// needed, just no-longer-frozen inputs.
+const MONSTER_BASE_ATTRIBUTE_FOR_SCALING = 1;
+export function monsterAttributeForLevel(level: number): number {
+  return MONSTER_BASE_ATTRIBUTE_FOR_SCALING + level;
+}
+
+export const WILD_GOBLIN_EXP_REWARD = monsterExpRewardForLevel(1);
+export const WILD_SKELETON_EXP_REWARD = monsterExpRewardForLevel(1);
 // ~7x a wild goblin kill (the monster this project actually spawns) at
 // any matching level pairing — see expGainFor's doc comment above.
 export const PLAYER_KILL_EXP_REWARD = WILD_GOBLIN_EXP_REWARD * 7;

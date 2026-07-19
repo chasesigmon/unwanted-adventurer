@@ -67,24 +67,35 @@ export class Player {
   @Column({ type: 'int' })
   col!: number;
 
-  @Column({ type: 'int', default: 1 })
+  // A later follow-up balance pass ("examine the player's stats and
+  // increase or decrease things based on balance") bumped every starting
+  // attribute from 1 to 5 — at 1, a stat contributes NOTHING to any of its
+  // own formulas until a player has sunk enough training points to clear
+  // that formula's own divisor (e.g. armorVsPhysicalFor's floor(dexterity
+  // /10)), which with only ~11 lifetime training points by level 40 (see
+  // TRAINING_POINTS_PER_5_LEVELS) meant most stats sat at 1 — contributing
+  // literally nothing — for a player's entire career unless deliberately
+  // stacked. 5 gives every fresh character a small, real baseline in
+  // every stat's own formula from character creation on, without
+  // touching the training-point income rate itself.
+  @Column({ type: 'int', default: 5 })
   strength!: number;
 
-  @Column({ type: 'int', default: 1 })
+  @Column({ type: 'int', default: 5 })
   intelligence!: number;
 
-  @Column({ type: 'int', default: 1 })
+  @Column({ type: 'int', default: 5 })
   wisdom!: number;
 
-  @Column({ type: 'int', default: 1 })
+  @Column({ type: 'int', default: 5 })
   dexterity!: number;
 
-  @Column({ type: 'int', default: 1 })
+  @Column({ type: 'int', default: 5 })
   constitution!: number;
 
   // No mechanical effect yet — reserved for future use, deliberately not
   // wired into anything (level-up bonuses, combat formulas, ...) yet.
-  @Column({ type: 'int', default: 1 })
+  @Column({ type: 'int', default: 5 })
   luck!: number;
 
   // Drinks of water remaining in the player's canteen (see

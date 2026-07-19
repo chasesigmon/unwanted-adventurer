@@ -231,7 +231,21 @@ export const SHAMAN_ENHANCE_DAMAGE_SKILL = 'enhance damage';
 export const SHAMAN_ENHANCE_DAMAGE_MANA_COST = 15;
 export const SHAMAN_ENHANCE_DAMAGE_DURATION_MS = 3 * 60 * 1000;
 export const SHAMAN_ENHANCE_DAMAGE_COOLDOWN_MS = 4 * 60 * 1000;
-export const SHAMAN_ENHANCE_DAMAGE_BONUS = 5;
+// A later follow-up ask: "update the shaman enhance damage spell to do
+// increasingly more damage both as the player levels and its damage
+// increase should also go up with intelligence" — was a flat +5 forever.
+// Kept as a simple additive formula (not compounding, unlike spell
+// damage's own scaledSpellDamage) since this is a flat bonus layered on
+// top of ordinary melee damage, not a spell's own base figure — floor(level
+// /4) + floor(intelligence/4) grows it gradually, landing back at exactly
+// +5 for a fresh level-1/intelligence-1 shaman (unchanged starting
+// experience) and reaching +5+10+3=18 by level 40 with a fully-invested
+// intelligence (~12, the realistic training-point-limited ceiling — see
+// scaledSpellDamage's own doc comment).
+export const SHAMAN_ENHANCE_DAMAGE_BASE_BONUS = 5;
+export function shamanEnhanceDamageBonusFor(level: number, intelligence: number): number {
+  return SHAMAN_ENHANCE_DAMAGE_BASE_BONUS + Math.floor(level / 4) + Math.floor(intelligence / 4);
+}
 
 // The Elementalist specialization's own 4 level-15 spells (a later
 // follow-up ask) — same targeted-bolt shape as Arcane Bolt (same range,
@@ -337,7 +351,13 @@ export const BATTLEMAGE_ENHANCED_DAMAGE_BONUS = 5;
 // spell shape.
 export const KINETIC_STRIKE_SKILL = 'kinetic strike';
 export const KINETIC_STRIKE_MANA_COST = 10;
-export const KINETIC_STRIKE_DAMAGE = 5;
+// A later follow-up balance pass ("examine the base damage for all
+// spells... increase or decrease based on balanced judgement") bumped
+// this from 5 to 8 — costing MORE mana than every elemental bolt (10 vs
+// 7) while hitting for HALF their base damage (5 vs 10) wasn't justified
+// by the knockback alone, which is a positioning tool, not a damage
+// multiplier the way the bolts' own burn/slow/stun effects double as.
+export const KINETIC_STRIKE_DAMAGE = 8;
 export const KINETIC_STRIKE_KNOCKBACK_TILES = 7;
 export const KINETIC_STRIKE_COOLDOWN_MS = 1 * 3000;
 

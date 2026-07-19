@@ -1,6 +1,12 @@
 import type { MapName, MonsterKind, MonsterClass } from '../../shared/constants.js';
 import type { CombatantStats } from '../combat/formulas.js';
-import { WILD_GOBLIN_EXP_REWARD, WILD_SKELETON_EXP_REWARD } from '../combat/formulas.js';
+import {
+  monsterExpRewardForLevel,
+  monsterHpForLevel,
+  monsterAttackDamageForLevel,
+  RARE_MONSTER_STAT_MULTIPLIER,
+  RARE_MONSTER_HP_MULTIPLIER,
+} from '../combat/formulas.js';
 import { PUNCH_SKILL, DAGGER_SKILL } from '../../shared/skills.js';
 import { GRIMOAK_GROUNDS_EXTENSION_MIN_COL } from '../../shared/maps.js';
 
@@ -185,6 +191,23 @@ export function skillsForCarriedItems(carriedItems: string[]): Record<string, nu
   return skills;
 }
 
+// A later follow-up ask ("examine all of the monsters created so far and
+// see if some should have more or less hp, more or less damage... give
+// monsters at different levels base stats for that level") audited every
+// species below against combat/formulas.ts's own monsterHpForLevel/
+// monsterAttackDamageForLevel/monsterExpRewardForLevel — a clean per-level
+// line those functions' own doc comments show the higher-level dungeon
+// tiers (12/17/25/35) were ALREADY implicitly following almost exactly.
+// Every species now computes its hp/damage/exp straight from its own
+// `level` through those shared functions instead of a hand-typed number,
+// so the whole roster stays internally consistent and any future new
+// tier only needs a level, not a fresh round of guessing. The one
+// deliberate exception is the three original level-1 species' hp (goblin/
+// skeleton/imp) — kept at their existing, explicitly pacing-tuned values
+// (see each entry's own comment) rather than dropping to the formula's
+// own ~15, since that bump was a real fix for these dying in 1-2 hits;
+// dire wolf/bear's hp(200) is also kept literal, since the user gave that
+// exact figure directly for dire wolf and "similar stats" for bear.
 export const MONSTER_SPECIES: MonsterSpecies[] = [
   {
     kind: 'wild goblin',
@@ -193,11 +216,10 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     maxCount: 15,
     // Bumped up from 15 (item 20) — a level 1-3 player was killing these
     // in just a couple of tick-resolved hits, over almost as soon as it
-    // started. Combined with the new Armor Class system (see
-    // combat/formulas.ts) blunting a bit of every hit too, this stretches
-    // an early fight out to a real handful of combat ticks.
+    // started. Kept as a literal (not monsterHpForLevel(1)'s own ~15) —
+    // see this array's own doc comment above.
     startingHp: 24,
-    expReward: WILD_GOBLIN_EXP_REWARD,
+    expReward: monsterExpRewardForLevel(1),
     // A later follow-up ask: "7 coins on death" + "30% chance for any
     // wild goblin to drop studded armor, studded helmet, boots of
     // quickness" — each item rolled independently, same shape
@@ -215,9 +237,9 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     monsterClass: 'undead',
     homeMap: 'Labyrinth',
     maxCount: 10,
-    // Same reasoning as wild goblin above — bumped from 20.
+    // Same reasoning as wild goblin above — bumped from 20, kept literal.
     startingHp: 32,
-    expReward: WILD_SKELETON_EXP_REWARD,
+    expReward: monsterExpRewardForLevel(1),
     // A later follow-up ask: "5 coins on death" + "35% chance for any
     // wild skeleton to drop opal earrings, opal ring, bone ring, opal
     // necklace" — each item rolled independently, same as the existing
@@ -237,22 +259,24 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     monsterClass: 'normal',
     homeMap: 'Grimoak Grounds',
     // 40 of them, spread across the whole grounds outside the castle (a
-    // follow-up ask). 30 hp (a later follow-up ask) — expReward feeds the
-    // SAME expGainFor() ratio formula every other monster kill already
-    // uses (see game.gateway.ts's resolveHitOnMonster), so a player can
-    // already level up from imp kills with no separate leveling logic
-    // needed.
+    // follow-up ask). 30 hp kept literal (see this array's own doc
+    // comment) — expReward feeds the SAME expGainFor() ratio formula
+    // every other monster kill already uses (see game.gateway.ts's
+    // resolveHitOnMonster), so a player can already level up from imp
+    // kills with no separate leveling logic needed.
     maxCount: 40,
     startingHp: 30,
-    // A follow-up ask: "the imps should give more than 3 exp at level 1
-    // compared to the players level 3... more like between 20 and 40" —
-    // 4 fed through expGainFor's own ratio formula at that exact pairing
-    // (imp level 1, killer level 3) rounded down to just 3 exp, barely
-    // worth the fight for 40 roaming imps. 30 lands at 25 for that same
-    // pairing, comfortably in range (and scales the same proportional
-    // way every other monster's own expReward already does at every
-    // OTHER level pairing — see expGainFor's own doc comment).
-    expReward: 30,
+    // A past follow-up ask deliberately bumped this to 30 (2.3x the plain
+    // level-1 rate) purely for early accessibility, back when the TNL
+    // curve and monster exp rewards weren't yet consistent with each
+    // other. Now that BOTH sides of that ratio are tied to the same
+    // per-level formula (see maxTnlForLevel/monsterExpRewardForLevel's own
+    // doc comments) and the level 1-10 grind has been simulated (see
+    // tests/verify-balance-sim.mjs) to confirm early leveling already
+    // paces well without it, that one-off boost is no longer needed —
+    // superseded here so the imp lines up with every other level-1
+    // species instead of quietly outpacing them for no in-fiction reason.
+    expReward: monsterExpRewardForLevel(1),
     // A later follow-up ask: "3 coins on death" + "35% chance for any
     // imp to drop cloth armor, cloth helmet, cloth boots, cloth
     // vambraces, cloth greaves" — each piece rolled independently.
@@ -269,9 +293,10 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     // goblin/skeleton does — see MonsterManagerService.stepPatrol.
     patrolRangeTiles: 3,
     // "The imps have a physical attack/punch that should do 5 damage per
-    // hit. They should move into range to hit the player if aggro'd" (a
-    // later follow-up ask) — see Monster.attackDamage's own doc comment.
-    attackDamage: 5,
+    // hit" (a past follow-up ask) — monsterAttackDamageForLevel(1) lands
+    // on this exact figure already, so the formula and the original
+    // explicit spec agree with no override needed.
+    attackDamage: monsterAttackDamageForLevel(1),
   },
   // The Grimoak Grounds' new 25%-wider eastern strip (a follow-up ask) —
   // a distinct, tougher population of the same 2 kinds already roaming
@@ -291,9 +316,13 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     minSpawnCol: GRIMOAK_GROUNDS_EXTENSION_MIN_COL,
     maxCount: 15,
     level: 5,
-    startingHp: 100,
-    expReward: WILD_SKELETON_EXP_REWARD,
-    attackDamage: 10,
+    // Was a flat 100/10 exp, unchanged since this species was leveled up
+    // to 5 in an earlier session — a real bug this pass fixes (see this
+    // file's own top-of-array doc comment): a "tougher" level-5 monster
+    // was still only worth a level-1 amount of exp.
+    startingHp: monsterHpForLevel(5),
+    expReward: monsterExpRewardForLevel(5),
+    attackDamage: monsterAttackDamageForLevel(5),
     // Same coin/jewelry drop table as the original Labyrinth population
     // above — "the wild skeletons" covers both.
     goldReward: 5,
@@ -314,9 +343,11 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     minSpawnCol: GRIMOAK_GROUNDS_EXTENSION_MIN_COL,
     maxCount: 15,
     level: 7,
-    startingHp: 130,
-    expReward: WILD_GOBLIN_EXP_REWARD,
-    attackDamage: 15,
+    // Same fix as wild-skeleton-grounds above — was a flat 130hp/8exp
+    // never rescaled for this species' own level-7 tier.
+    startingHp: monsterHpForLevel(7),
+    expReward: monsterExpRewardForLevel(7),
+    attackDamage: monsterAttackDamageForLevel(7),
     // Same coin/armor drop table as the original Great Plains population
     // above — "the wild goblins" covers both.
     goldReward: 7,
@@ -329,7 +360,11 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
   // 3 rare variants (a later follow-up ask) — one of each kind at once
   // (maxCount: 1), a bigger sprite scale (see WorldScene's own monster
   // rendering keying off isRare), more hp/damage than an ordinary one of
-  // its kind, a much richer guaranteed haul (fixed-count mana crystals +
+  // its kind (RARE_MONSTER_HP_MULTIPLIER/RARE_MONSTER_STAT_MULTIPLIER —
+  // see combat/formulas.ts's own doc comment for why these replaced a
+  // past session's runaway compounding per-level math, which had left a
+  // level-7 "rare" trash monster hitting harder than the level-35 endgame
+  // tier), a much richer guaranteed haul (fixed-count mana crystals +
   // gold + a real shot at real equipment, not just a percentage roll on
   // ordinary drops), and slow to come back once killed
   // (respawnDelayMs — see MonsterManagerService's own nextRespawnAllowedAt).
@@ -341,27 +376,12 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     maxCount: 1,
     isRare: true,
     respawnDelayMs: 60_000,
-    // "The rare imp should be level 3 with equivalent stats" (a later
-    // follow-up ask) — it used to have no explicit `level` at all (so it
-    // defaulted to MONSTER_LEVEL, i.e. 1, same as the ordinary imp it's a
-    // rarer/tougher version of), despite already hitting harder/tankier
-    // than a level-1 imp should. Hp/attackDamage rescaled here using the
-    // same per-level growth this file's own wild-goblin-grounds entry
-    // shows for the SAME species-family jump (level 1 hp 24 -> level 7 hp
-    // 130 is ~1.32x per level; 1.32^2 ≈ 1.75x for a level 1->3 jump),
-    // applied on top of the existing rare-vs-ordinary multiplier this
-    // entry already had (2x hp, 1.8x attackDamage over the plain imp's 30
-    // hp/5 dmg). expReward/goldReward deliberately left as-is, matching
-    // that same wild-goblin-grounds precedent (its own level-7 variant
-    // reuses the exact same WILD_GOBLIN_EXP_REWARD/goldReward as the
-    // level-1 one) — expGainFor's own level-ratio formula (see
-    // game.gateway.ts) already scales actual exp payout for a killer's
-    // level vs this monster's now-correct level 3, without needing the
-    // base reward number itself touched.
+    // "The rare imp should be level 3 with equivalent stats" (a past
+    // follow-up ask).
     level: 3,
-    startingHp: 105,
-    expReward: 90,
-    attackDamage: 16,
+    startingHp: Math.round(monsterHpForLevel(3) * RARE_MONSTER_HP_MULTIPLIER),
+    expReward: Math.round(monsterExpRewardForLevel(3) * RARE_MONSTER_STAT_MULTIPLIER),
+    attackDamage: Math.round(monsterAttackDamageForLevel(3) * RARE_MONSTER_STAT_MULTIPLIER),
     goldReward: 10,
     carriedItemRolls: [
       ...Array.from({ length: 10 }, () => ({ label: 'lesser mana crystal', chance: 1 })),
@@ -384,18 +404,10 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     // population in, not scattered across the whole grounds (imp
     // territory).
     // "The rare wild skeleton should be level 7... with stats that
-    // resemble that level" (a later follow-up ask) — same rescaling
-    // methodology rare-imp's own level fix above already used: the
-    // hp/attackDamage this entry had before (70/12, implicitly level 1)
-    // already encodes its own rare-vs-ordinary multiplier, so that pair
-    // is treated as the level-1 baseline and grown by the same ~1.33x-
-    // per-level compounding rate wild-skeleton-grounds' own level-1->5
-    // jump (32hp -> 100hp) implies, raised to the 6th power for a
-    // level 1->7 jump (1.33^6 ≈ 5.53). expReward/goldReward deliberately
-    // left as-is, matching wild-goblin-grounds' own precedent (a species'
-    // higher-level variant reuses the same base reward numbers — expGainFor's
-    // level-ratio formula already scales the actual payout for the
-    // killer's level vs this monster's now-correct one).
+    // resemble that level" (a past follow-up ask) — hp/attackDamage here
+    // superseded from that ask's own runaway compounding math (388hp/66
+    // dmg, well past even the level-35 tier's own numbers) with the
+    // shared rare formula, per this array's own top-of-file doc comment.
     id: 'rare-wild-skeleton',
     kind: 'wild skeleton',
     monsterClass: 'undead',
@@ -405,9 +417,9 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     isRare: true,
     respawnDelayMs: 60_000,
     level: 7,
-    startingHp: 388,
-    expReward: 130,
-    attackDamage: 66,
+    startingHp: Math.round(monsterHpForLevel(7) * RARE_MONSTER_HP_MULTIPLIER),
+    expReward: Math.round(monsterExpRewardForLevel(7) * RARE_MONSTER_STAT_MULTIPLIER),
+    attackDamage: Math.round(monsterAttackDamageForLevel(7) * RARE_MONSTER_STAT_MULTIPLIER),
     goldReward: 15,
     carriedItemRolls: [
       ...Array.from({ length: 10 }, () => ({ label: 'superior mana crystal', chance: 1 })),
@@ -417,10 +429,9 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
   },
   {
     // Same fix/reasoning as rare-wild-skeleton above, "the rare wild
-    // goblin should be level 9" — its own 55/10 hp/attackDamage baseline
-    // grown by wild-goblin-grounds' own implied ~1.33x-per-level rate
-    // (24hp level 1 -> 130hp level 7), raised to the 8th power for a
-    // level 1->9 jump (1.33^8 ≈ 9.79).
+    // goblin should be level 9" — superseded from its own past runaway
+    // 538hp/98dmg (also past the level-35 tier's own numbers) with the
+    // shared rare formula.
     id: 'rare-wild-goblin',
     kind: 'wild goblin',
     monsterClass: 'normal',
@@ -430,9 +441,9 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     isRare: true,
     respawnDelayMs: 60_000,
     level: 9,
-    startingHp: 538,
-    expReward: 110,
-    attackDamage: 98,
+    startingHp: Math.round(monsterHpForLevel(9) * RARE_MONSTER_HP_MULTIPLIER),
+    expReward: Math.round(monsterExpRewardForLevel(9) * RARE_MONSTER_STAT_MULTIPLIER),
+    attackDamage: Math.round(monsterAttackDamageForLevel(9) * RARE_MONSTER_STAT_MULTIPLIER),
     goldReward: 20,
     carriedItemRolls: [
       ...Array.from({ length: 20 }, () => ({ label: 'superior mana crystal', chance: 1 })),
@@ -446,7 +457,10 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
   // pieces of equipment and rare wands not available in the shop."
   // Reuses the 3 existing monster kinds at escalating stats/loot rather
   // than standing up brand new creature types/sprites — "it can be
-  // refined later."
+  // refined later." hp/damage/exp were ALREADY very close to the shared
+  // per-level formula (see this array's own top-of-file doc comment) —
+  // now computed from it directly instead of the near-identical hand-set
+  // numbers, so the two can never quietly drift apart again.
   {
     id: 'sunken-crypt-skeleton',
     kind: 'wild skeleton',
@@ -454,9 +468,9 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     homeMap: 'Sunken Crypt',
     maxCount: 8,
     level: 12,
-    startingHp: 180,
-    expReward: 150,
-    attackDamage: 20,
+    startingHp: monsterHpForLevel(12),
+    expReward: monsterExpRewardForLevel(12),
+    attackDamage: monsterAttackDamageForLevel(12),
     goldReward: 10,
     // Phase E's own "aggro radius" ask — notices an approaching
     // player from a few tiles out, not just on actual contact.
@@ -473,9 +487,9 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     homeMap: 'Goblin Warcamp',
     maxCount: 8,
     level: 17,
-    startingHp: 250,
-    expReward: 220,
-    attackDamage: 28,
+    startingHp: monsterHpForLevel(17),
+    expReward: monsterExpRewardForLevel(17),
+    attackDamage: monsterAttackDamageForLevel(17),
     goldReward: 15,
     // Phase E's own "aggro radius" ask — notices an approaching
     // player from a few tiles out, not just on actual contact.
@@ -492,9 +506,9 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     homeMap: 'Imp Hollow',
     maxCount: 8,
     level: 25,
-    startingHp: 350,
-    expReward: 320,
-    attackDamage: 38,
+    startingHp: monsterHpForLevel(25),
+    expReward: monsterExpRewardForLevel(25),
+    attackDamage: monsterAttackDamageForLevel(25),
     goldReward: 20,
     // Phase E's own "aggro radius" ask — notices an approaching
     // player from a few tiles out, not just on actual contact.
@@ -511,9 +525,9 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     homeMap: 'Ashen Wastes',
     maxCount: 8,
     level: 35,
-    startingHp: 500,
-    expReward: 450,
-    attackDamage: 50,
+    startingHp: monsterHpForLevel(35),
+    expReward: monsterExpRewardForLevel(35),
+    attackDamage: monsterAttackDamageForLevel(35),
     goldReward: 30,
     // Phase E's own "aggro radius" ask — notices an approaching
     // player from a few tiles out, not just on actual contact.
@@ -527,10 +541,10 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
   // (while meancing gnarly looking wolves bigger than normal wolves)
   // that have 200 hp and do appropriate damage for a level 20 mob...
   // give appropriate experience" — 200 hp is the user's own explicit
-  // figure; expReward/attackDamage/goldReward are interpolated between
-  // this file's own existing level-17 (220 exp/28 dmg) and level-25 (320
-  // exp/38 dmg) entries above, landing where a level 20 naturally falls
-  // on that same curve.
+  // figure, kept literal; expReward/attackDamage now come from the same
+  // shared per-level formula every other species uses (this array's own
+  // past interpolation happened to already land almost exactly on it —
+  // 260 exp matches monsterExpRewardForLevel(20) exactly).
   {
     kind: 'dire wolf',
     monsterClass: 'normal',
@@ -538,8 +552,8 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     maxCount: 10,
     level: 20,
     startingHp: 200,
-    expReward: 260,
-    attackDamage: 32,
+    expReward: monsterExpRewardForLevel(20),
+    attackDamage: monsterAttackDamageForLevel(20),
     goldReward: 17,
     aggroRadiusTiles: 5,
   },
@@ -556,8 +570,8 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     maxCount: 8,
     level: 20,
     startingHp: 200,
-    expReward: 260,
-    attackDamage: 32,
+    expReward: monsterExpRewardForLevel(20),
+    attackDamage: monsterAttackDamageForLevel(20),
     goldReward: 17,
     aggroRadiusTiles: 5,
   },

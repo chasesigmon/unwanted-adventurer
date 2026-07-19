@@ -15,7 +15,8 @@ import {
   isWithinRadius,
 } from '../../shared/lighting.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
-import { MONSTER_SPECIES, MONSTER_LEVEL, MONSTER_BASE_ATTRIBUTE, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
+import { MONSTER_SPECIES, MONSTER_LEVEL, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
+import { monsterAttributeForLevel } from '../combat/formulas.js';
 import { vendorsForMap, vendorCounterFootprintFor } from '../worlds/vendors.js';
 import { teachersForMap, teacherDeskFootprintFor } from '../worlds/teachers.js';
 import { isChestBlocked } from '../../shared/spells.js';
@@ -382,6 +383,31 @@ export class MonsterManagerService {
     return true;
   }
 
+  // A later follow-up ask: "hostile monsters that aggro within a certain
+  // distance of the player do not start out near the entrance or exit of
+  // an area, so that a player is not instantly attacked as soon as they
+  // walk in" — every MapExit a map defines is a spot a player can appear
+  // at (theirs OR the reciprocal toRow/toCol on the OTHER side of a
+  // connection, both covered since this runs once per map against that
+  // map's own exits list). Wider than MIN_SPAWN_SPACING's own
+  // clump-avoidance radius on purpose — that one only keeps monsters off
+  // each other, this one specifically buys a player a few clear steps
+  // before anything can already be standing on top of them.
+  private static readonly SPAWN_EXIT_BUFFER_TILES = 6;
+
+  private isFarEnoughFromExits(mapName: MapName, row: number, col: number): boolean {
+    const exits = getMap(mapName).exits;
+    for (const exit of exits) {
+      if (
+        Math.abs(exit.row - row) < MonsterManagerService.SPAWN_EXIT_BUFFER_TILES &&
+        Math.abs(exit.col - col) < MonsterManagerService.SPAWN_EXIT_BUFFER_TILES
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private randomFreeTile(mapName: MapName, minCol = 0): { row: number; col: number } | null {
     const map = getMap(mapName);
     for (let attempt = 0; attempt < 60; attempt++) {
@@ -394,9 +420,21 @@ export class MonsterManagerService {
       // for a PLAYER crossing to the castle door, so this only applies
       // to spawn placement, not isFree's own movement-collision check.
       if (isWithinMoatFootprint(mapName, row, col)) continue;
-      if (this.isFree(mapName, row, col) && this.isFarEnoughFromOthers(mapName, row, col)) return { row, col };
+      if (this.isFree(mapName, row, col) && this.isFarEnoughFromOthers(mapName, row, col) && this.isFarEnoughFromExits(mapName, row, col)) {
+        return { row, col };
+      }
     }
-    // The map's too crowded to satisfy the spacing preference within
+    // Relax the "far from other monsters" spacing preference first, but
+    // keep the exit buffer — a crowded map should sooner let two monsters
+    // stand closer together than let one spawn right on top of a player
+    // who just walked in.
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const row = Math.floor(Math.random() * map.rows);
+      const col = minCol + Math.floor(Math.random() * (map.cols - minCol));
+      if (isWithinMoatFootprint(mapName, row, col)) continue;
+      if (this.isFree(mapName, row, col) && this.isFarEnoughFromExits(mapName, row, col)) return { row, col };
+    }
+    // The map's too crowded/small to satisfy even the exit buffer within
     // budget — fall back to just finding anywhere free at all.
     for (let attempt = 0; attempt < 60; attempt++) {
       const row = Math.floor(Math.random() * map.rows);
@@ -414,6 +452,14 @@ export class MonsterManagerService {
     const carriedItems = (species.carriedItemRolls ?? [])
       .filter((roll) => Math.random() < roll.chance)
       .map((roll) => roll.label);
+    const level = species.level ?? MONSTER_LEVEL;
+    // A later follow-up ask ("give monsters at different levels base
+    // stats for that level") — every attribute used to be pinned at
+    // MONSTER_BASE_ATTRIBUTE(1) forever regardless of level, which meant
+    // armorVsPhysicalFor/armorVsMagicalFor (both driven by these same
+    // attributes) computed the exact same tiny armor value for every
+    // monster in the game. See monsterAttributeForLevel's own doc comment.
+    const attribute = monsterAttributeForLevel(level);
 
     const monster: Monster = {
       id: randomUUID(),
@@ -429,13 +475,13 @@ export class MonsterManagerService {
       goldReward: species.goldReward ?? 0,
       isRare: species.isRare,
       respawnDelayMs: species.respawnDelayMs,
-      level: species.level ?? MONSTER_LEVEL,
-      strength: MONSTER_BASE_ATTRIBUTE,
-      intelligence: MONSTER_BASE_ATTRIBUTE,
-      wisdom: MONSTER_BASE_ATTRIBUTE,
-      dexterity: MONSTER_BASE_ATTRIBUTE,
-      constitution: MONSTER_BASE_ATTRIBUTE,
-      luck: MONSTER_BASE_ATTRIBUTE,
+      level,
+      strength: attribute,
+      intelligence: attribute,
+      wisdom: attribute,
+      dexterity: attribute,
+      constitution: attribute,
+      luck: attribute,
       carriedItems,
       skills: skillsForCarriedItems(carriedItems),
       spawnRow: tile.row,
