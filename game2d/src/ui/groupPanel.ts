@@ -7,7 +7,14 @@
 import { network } from '../state.js';
 import { logCombatMessage } from './log.js';
 import { repositionTargetPanel } from './targetPanel.js';
-import { FOLLOWER_EQUIPMENT_SLOTS, type PetSnapshot, type AnimatedMonsterSnapshot, type PetCommand, type FollowerEquipmentSlot } from '../../shared/pets.js';
+import {
+  FOLLOWER_EQUIPMENT_SLOTS,
+  type PetSnapshot,
+  type AnimatedMonsterSnapshot,
+  type TamedBeastSnapshot,
+  type PetCommand,
+  type FollowerEquipmentSlot,
+} from '../../shared/pets.js';
 
 const groupPanel = document.getElementById('group-panel') as HTMLDivElement;
 const groupMembers = document.getElementById('group-members') as HTMLDivElement;
@@ -226,15 +233,28 @@ function buildMemberCard(
 // WorldScene needing its own separate public getter for the same thing.
 let currentPet: PetSnapshot | null = null;
 let currentAnimatedMonsters: AnimatedMonsterSnapshot[] = [];
+let currentTamedBeast: TamedBeastSnapshot | null = null;
 
 export function getFollowers(): { pet: PetSnapshot | null; animatedMonsters: AnimatedMonsterSnapshot[] } {
   return { pet: currentPet, animatedMonsters: currentAnimatedMonsters };
 }
 
-export function updateGroupPanel(pet: PetSnapshot | null, animatedMonsters: AnimatedMonsterSnapshot[] = []): void {
+// An empty placeholder — the Druid's own Tame Beast has no give/equip UI
+// (not asked for), unlike a real pet/animated monster's own
+// buildFollowerItemsSection.
+function emptyItemsSection(): HTMLDivElement {
+  return document.createElement('div');
+}
+
+export function updateGroupPanel(
+  pet: PetSnapshot | null,
+  animatedMonsters: AnimatedMonsterSnapshot[] = [],
+  tamedBeast: TamedBeastSnapshot | null = null
+): void {
   currentPet = pet;
   currentAnimatedMonsters = animatedMonsters;
-  if (!pet && animatedMonsters.length === 0) {
+  currentTamedBeast = tamedBeast;
+  if (!pet && animatedMonsters.length === 0 && !tamedBeast) {
     groupPanel.hidden = true;
     groupMembers.innerHTML = '';
     repositionTargetPanel();
@@ -255,9 +275,31 @@ export function updateGroupPanel(pet: PetSnapshot | null, animatedMonsters: Anim
         (command) =>
           network.petCommand(command).then((ack) => {
             if (!ack.ok && ack.message) logCombatMessage(ack.message);
-            else if (ack.ok && ack.pet) updateGroupPanel(ack.pet, animatedMonsters);
+            else if (ack.ok && ack.pet) updateGroupPanel(ack.pet, animatedMonsters, currentTamedBeast);
           }),
         buildFollowerItemsSection('pet', undefined, pet.inventory, pet.equipment, pet.alive)
+      )
+    );
+  }
+
+  if (tamedBeast) {
+    groupMembers.appendChild(
+      buildMemberCard(
+        `${tamedBeast.name} (Lv ${tamedBeast.level})`,
+        tamedBeast.hp,
+        tamedBeast.maxHp,
+        true,
+        tamedBeast.command,
+        undefined,
+        (command) =>
+          network.tamedBeastCommand(command).then((ack) => {
+            if (!ack.ok && ack.message) logCombatMessage(ack.message);
+          }),
+        emptyItemsSection(),
+        () =>
+          network.removeTamedBeast().then((ack) => {
+            if (!ack.ok && ack.message) logCombatMessage(ack.message);
+          })
       )
     );
   }

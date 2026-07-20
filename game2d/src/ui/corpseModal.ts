@@ -35,6 +35,10 @@ let currentCorpseId: string | null = null;
 let currentCorpseItems: string[] = [];
 let currentCorpseKind: string | undefined;
 let currentCorpseKilledBy: string | undefined;
+// Item 16: a player's own death corpse now carries their gold too — shown
+// as an informational line above the item list (not an individually
+// clickable "item", since gold isn't one) and swept up by Grab All.
+let currentCorpseGold = 0;
 
 // Must match game.gateway.ts's own EAT_BRAINS_COOLDOWN_TICKS — needed
 // client-side purely to size the cooldown wipe's denominator, since the
@@ -111,12 +115,20 @@ function updateSacrificeButton(): void {
 // empty item list just means nothing left to grab, not "close the modal".
 function renderCorpseModal(): void {
   corpseItemList.innerHTML = '';
-  corpseGrabAllBtn.hidden = currentCorpseItems.length === 0;
+  corpseGrabAllBtn.hidden = currentCorpseItems.length === 0 && currentCorpseGold === 0;
+  if (currentCorpseGold > 0) {
+    const goldLi = document.createElement('li');
+    goldLi.className = 'inventory-empty';
+    goldLi.textContent = `${currentCorpseGold} gold (Grab All to collect)`;
+    corpseItemList.appendChild(goldLi);
+  }
   if (currentCorpseItems.length === 0) {
-    const li = document.createElement('li');
-    li.className = 'inventory-empty';
-    li.textContent = 'Nothing left to grab.';
-    corpseItemList.appendChild(li);
+    if (currentCorpseGold === 0) {
+      const li = document.createElement('li');
+      li.className = 'inventory-empty';
+      li.textContent = 'Nothing left to grab.';
+      corpseItemList.appendChild(li);
+    }
     return;
   }
   currentCorpseItems.forEach((item, index) => {
@@ -129,12 +141,13 @@ function renderCorpseModal(): void {
   });
 }
 
-export function openCorpseModal(corpseId: string, items: string[], kind: string, killedBy: string | undefined): void {
+export function openCorpseModal(corpseId: string, items: string[], kind: string, killedBy: string | undefined, gold: number | undefined = 0): void {
   closeAllModals();
   currentCorpseId = corpseId;
   currentCorpseItems = [...items];
   currentCorpseKind = kind;
   currentCorpseKilledBy = killedBy;
+  currentCorpseGold = gold ?? 0;
   corpseModalTitle.textContent = `${kind} corpse`;
   corpseModal.hidden = false;
   updateInputCaptured();
@@ -225,11 +238,14 @@ corpseGrabAllBtn.addEventListener('click', () => {
         if (ack.message) logCombatMessage(ack.message);
         return;
       }
-      logCombatMessage(`You pick up the ${stackedItemsLabel(currentCorpseItems)}.`);
+      if (currentCorpseItems.length > 0) logCombatMessage(`You pick up the ${stackedItemsLabel(currentCorpseItems)}.`);
+      if (ack.gold !== undefined && currentCorpseGold > 0) logCombatMessage(`You pick up ${currentCorpseGold} gold.`);
       currentCorpseItems = [];
-      if (myProfile && ack.inventory) {
-        setMyProfile({ ...myProfile, inventory: ack.inventory });
+      currentCorpseGold = 0;
+      if (myProfile && (ack.inventory || ack.gold !== undefined)) {
+        setMyProfile({ ...myProfile, inventory: ack.inventory ?? myProfile.inventory, gold: ack.gold ?? myProfile.gold });
         refreshOpenModals();
+        updateStatusBar();
       }
       // The corpse itself now sticks around empty — keep the modal open
       // in case a monster corpse is about to be sacrificed instead.

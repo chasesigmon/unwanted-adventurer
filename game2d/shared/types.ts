@@ -2,7 +2,7 @@ import type { Server, Socket } from 'socket.io';
 import type { Gender, HairColor, MapName, Race, SkinTone, Direction, MonsterKind, MonsterClass, HouseName, SpecializationPath } from './constants.js';
 import type { EquipmentSlot } from './equipment.js';
 import type { QuestProgress } from './quests.js';
-import type { PetSnapshot, PetCommand, AnimatedMonsterSnapshot, FollowerEquipmentSlot, PetCorpseSnapshot } from './pets.js';
+import type { PetSnapshot, PetCommand, AnimatedMonsterSnapshot, FollowerEquipmentSlot, PetCorpseSnapshot, TamedBeastSnapshot } from './pets.js';
 
 // Never persisted across sessions (a fresh connection always starts
 // 'awake') — matches the text game's own restState, which the same
@@ -70,6 +70,10 @@ export interface PlayerSnapshot {
   // shared/lighting.ts's emitsLight/hasFullVision.
   hasLight: boolean;
   gold: number;
+  // Item 17: a single balance shared across Kortho's and Floro's own Bank
+  // vendors — deposit is free, withdrawal costs a flat 5% fee (see
+  // game.gateway.ts's handleDepositGold/handleWithdrawGold).
+  bankedGold: number;
   // Slime-only leftovers from the since-removed /mimic and /revert
   // commands (a later follow-up ask) — mimicableRaces/mimicForm can no
   // longer be set to anything meaningful, kept only because dropping the
@@ -341,6 +345,11 @@ export interface MonsterSnapshot {
   // scale client-side (see WorldScene's own monster rendering); absent
   // for every ordinary monster.
   isRare?: boolean;
+  // A later follow-up ask ("level 8 falcons... that fly around") — drives
+  // a small airborne y-offset client-side (see WorldScene's own monster
+  // rendering) instead of sitting flush on the ground like every other
+  // monster.
+  flies?: boolean;
 }
 
 // Left behind when a monster, the training dummy, or a real player dies.
@@ -360,8 +369,10 @@ export interface CorpseSnapshot {
   // A flat coin drop (a later follow-up ask: "the imps should drop 3
   // coins every time on death... skeletons 5... goblins 7") — added
   // straight to the looter's own gold on handleLoot, not an inventory
-  // item (gold was never a stackable item string to begin with). Absent/0
-  // for anything that doesn't drop coins (player/training-dummy corpses).
+  // item (gold was never a stackable item string to begin with). Item 16
+  // extended this to a player's own death corpse too (their full gold
+  // total, stripped the same way their inventory/equipment are) — absent/0
+  // only for the training dummy now.
   gold?: number;
   map: MapName;
   row: number;
@@ -392,6 +403,21 @@ export interface CorpseSnapshot {
   // absent for every monster/NPC corpse, which has no single "owner" to
   // report back to.
   ownerUsername?: string;
+}
+
+// A later follow-up ask: "if a player drops an item on the ground that a
+// treasure chest appears that contains the item... upon removing all
+// items from a treasure chest that appears from dropped items, it should
+// completely disappear. If a player drops multiple items in the same
+// spot or within 10 feet of an already existing treasure chest, then
+// those items should also go into that existing treasure chest." Anyone
+// can loot it (same as a monster corpse) — no single owner is tracked.
+export interface DroppedItemChestSnapshot {
+  id: string;
+  map: MapName;
+  row: number;
+  col: number;
+  items: string[];
 }
 
 export interface SyncPayload {
@@ -537,6 +563,13 @@ export interface MapStatePayload {
   // entry the moment it dies (see PetManagerService.getSnapshotsForMap's
   // own alive-only filter) so it can expire instead of lingering forever.
   petCorpses: PetCorpseSnapshot[];
+  // The Druid's own Tame Beast spell (a later follow-up ask) — same
+  // "usually just your own, another player's shows too but only they can
+  // command it" shape as pets/animated monsters above.
+  tamedBeasts: TamedBeastSnapshot[];
+  // Dropped-item treasure chests (a later follow-up ask) — lootable by
+  // anyone, same as a monster corpse.
+  droppedChests: DroppedItemChestSnapshot[];
 }
 
 export interface PetCommandAck {
@@ -642,6 +675,33 @@ export interface PunchPayload {
 export interface LootAck {
   ok: boolean;
   inventory?: string[];
+  // Item 16: set only when the corpse actually carried gold (grab-all
+  // sweeps it up alongside every item) — the client's own displayed gold
+  // otherwise wouldn't update until the next unrelated stat-tick sync.
+  gold?: number;
+  message?: string;
+}
+
+// Item 12: dropping an item onto the ground (or merging into an existing
+// dropped-item chest within 10 tiles) — see server/worlds/
+// dropped-item-manager.service.ts. The chest itself arrives to every
+// nearby client through the ordinary map:state broadcast's own
+// `droppedChests` field, not through this ack.
+export interface DropItemAck {
+  ok: boolean;
+  inventory?: string[];
+  message?: string;
+}
+
+// Looting a dropped-item chest (grab-one or grab-all) — same shape as
+// LootAck, reused as its own type since a chest disappearing entirely
+// once emptied is chest-specific behavior the client needs to react to
+// (see droppedChestModal.ts), unlike an ordinary corpse which sticks
+// around empty.
+export interface LootDroppedChestAck {
+  ok: boolean;
+  inventory?: string[];
+  chestGone?: boolean;
   message?: string;
 }
 
@@ -661,6 +721,32 @@ export interface SellAck {
   ok: boolean;
   inventory?: string[];
   gold?: number;
+  message?: string;
+}
+
+// Item 17's Bank vendor — deposit is always free; withdrawal charges a
+// flat 5% fee (see game.gateway.ts's BANK_WITHDRAWAL_FEE_PERCENT). One
+// shared balance regardless of which town's Bank you're standing in.
+export interface BankAck {
+  ok: boolean;
+  gold?: number;
+  bankedGold?: number;
+  message?: string;
+}
+
+// Item 30's Kortho/Floro Inn "Stay and rest" service — a flat 5-gold fee,
+// full hp/mana/mv heal on success. The client plays its own 2-second
+// black cutscreen (see restCutscene.ts) driven off this ack, not a
+// server-side delay.
+export interface RestAtInnAck {
+  ok: boolean;
+  gold?: number;
+  hp?: number;
+  maxHp?: number;
+  mana?: number;
+  maxMana?: number;
+  mv?: number;
+  maxMv?: number;
   message?: string;
 }
 
@@ -714,6 +800,12 @@ export interface CastSpellAck {
   mana?: number;
   skills?: Record<string, number>;
   message?: string;
+  // The "identify" spell's own result (a later follow-up ask) — present
+  // only on a successful cast; the client already has every item's own
+  // description/equipment-bonus text locally (see skillMeta.ts/
+  // equipment.ts), so the server only needs to confirm which item this
+  // was, not resend its description.
+  itemLabel?: string;
   // Barrier's own fixed dome origin (a later follow-up ask) — present
   // only on a successful FRESH barrier cast, so the caster's own client
   // can draw the dome centered on the exact server-authoritative cast
@@ -916,8 +1008,21 @@ export interface ClientToServerEvents {
   // "click one item" path) rather than everything at once — the corpse
   // itself is removed once its last item is taken.
   lootItem: (payload: { corpseId: string; itemIndex: number }, ack: (res: LootAck) => void) => void;
+  // Item 12: drops one inventory item onto the ground beneath the player,
+  // creating (or merging into) a dropped-item chest — see
+  // dropped-item-manager.service.ts.
+  dropItem: (itemIndex: number, ack: (res: DropItemAck) => void) => void;
+  lootDroppedChest: (chestId: string, ack: (res: LootDroppedChestAck) => void) => void;
+  lootDroppedChestItem: (payload: { chestId: string; itemIndex: number }, ack: (res: LootDroppedChestAck) => void) => void;
   buyItem: (payload: { vendorId: string; itemLabel: string }, ack: (res: BuyAck) => void) => void;
   sellItem: (payload: { vendorId: string; itemIndex: number }, ack: (res: SellAck) => void) => void;
+  // Item 17: Kortho's/Floro's own Bank vendor — one shared balance, free
+  // deposit, a 5% withdrawal fee. Depositing `amount: undefined` deposits
+  // everything currently carried.
+  depositGold: (payload: { amount?: number }, ack: (res: BankAck) => void) => void;
+  withdrawGold: (payload: { amount?: number }, ack: (res: BankAck) => void) => void;
+  // Item 30: Kortho's/Floro's own Inn "Stay and rest" service.
+  restAtInn: (ack: (res: RestAtInnAck) => void) => void;
   // Commanding your own pet (a later follow-up ask) — "stay by side,
   // attack, sleep" (plus 'follow', the default the moment it's bought).
   petCommand: (command: PetCommand, ack: (res: PetCommandAck) => void) => void;
@@ -990,6 +1095,16 @@ export interface ClientToServerEvents {
   // Hemomancer's own targeted spell (a later follow-up ask) — same
   // target shape as augue/the elemental bolts/kinetic strike.
   castSapHealth: (payload: AugueTargetPayload, ack: (res: CastSpellAck) => void) => void;
+  // The Druid's own Tame Beast (a later follow-up ask) — always a
+  // monster target (the only kind a "beast" can be).
+  castTameBeast: (payload: { targetId: string }, ack: (res: CastSpellAck) => void) => void;
+  // The Utility Classroom's own "identify" spell (a later follow-up ask)
+  // — targets an inventory item by index, not a player/npc/monster.
+  castIdentify: (payload: { itemIndex: number }, ack: (res: CastSpellAck) => void) => void;
+  // Same follow/stay/sleep/attack shape as petCommand above, and a plain
+  // voluntary permanent release.
+  tamedBeastCommand: (command: string, ack: (res: { ok: boolean; message?: string }) => void) => void;
+  removeTamedBeast: (ack: (res: { ok: boolean; message?: string }) => void) => void;
   // The Summoner's own monster-summons modal pick (a later follow-up
   // ask) — no target selection needed, just which kind to summon.
   castMonsterSummons: (payload: { monsterKind: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
@@ -1155,6 +1270,7 @@ export interface SocketData {
   // reconnect same as restState/sleepingInBed above.
   dancing: boolean;
   gold: number;
+  bankedGold: number;
   mimicableRaces: (Race | MonsterKind)[];
   mimicForm: (Race | MonsterKind) | null;
   // Zombie-only Eat Brains cooldown — a world-tick number (see

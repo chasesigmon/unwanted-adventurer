@@ -56,10 +56,22 @@ export const shopModalTitle = document.getElementById('shop-modal-title') as HTM
 export const shopGreeting = document.getElementById('shop-greeting') as HTMLDivElement;
 export const shopGoldLine = document.getElementById('shop-gold-line') as HTMLDivElement;
 export const shopItemList = document.getElementById('shop-item-list') as HTMLUListElement;
+// Item 12's dropped-item treasure chest — see droppedChestModal.ts.
+export const droppedChestModal = document.getElementById('dropped-chest-modal') as HTMLDivElement;
+export const droppedChestModalTitle = document.getElementById('dropped-chest-modal-title') as HTMLHeadingElement;
+export const droppedChestItemList = document.getElementById('dropped-chest-item-list') as HTMLUListElement;
+export const droppedChestGrabAllBtn = document.getElementById('dropped-chest-grab-all') as HTMLButtonElement;
 export const targetInfoModal = document.getElementById('target-info-modal') as HTMLDivElement;
 export const targetInfoTitle = document.getElementById('target-info-title') as HTMLHeadingElement;
 export const targetInfoBody = document.getElementById('target-info-body') as HTMLDivElement;
 export const targetInfoConsideration = document.getElementById('target-info-consideration') as HTMLDivElement;
+// The "identify" spell's own small result window (a later follow-up ask)
+// — same "title + modal-stats body" shape as the target info modal above,
+// just for an inventory item's name/stats/description instead of a
+// combat target.
+export const identifyModal = document.getElementById('identify-modal') as HTMLDivElement;
+export const identifyTitle = document.getElementById('identify-title') as HTMLHeadingElement;
+export const identifyBody = document.getElementById('identify-body') as HTMLDivElement;
 export const autopilotModal = document.getElementById('autopilot-modal') as HTMLDivElement;
 export const autopilotInput = document.getElementById('autopilot-input') as HTMLInputElement;
 export const autopilotStatusEl = document.getElementById('autopilot-status') as HTMLDivElement;
@@ -119,8 +131,10 @@ export const ALL_MODALS = [
   helpModal,
   corpseModal,
   petCorpseModal,
+  droppedChestModal,
   shopModal,
   targetInfoModal,
+  identifyModal,
   autopilotModal,
   chestModal,
   recallModal,

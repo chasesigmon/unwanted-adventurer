@@ -4,7 +4,7 @@ import type { Repository } from 'typeorm';
 import { Player } from './player.entity.js';
 import type { Gender, HairColor, MapName, Race, SkinTone, HouseName, SpecializationPath } from '../../shared/constants.js';
 import type { QuestProgress } from '../../shared/quests.js';
-import type { PetSnapshot } from '../../shared/pets.js';
+import type { PetSnapshot, TamedBeastSnapshot } from '../../shared/pets.js';
 
 export interface NewPlayerInput {
   username: string;
@@ -77,6 +77,7 @@ export interface PlayerStatsUpdate {
   inventory?: string[];
   equipment?: Record<string, string>;
   gold?: number;
+  bankedGold?: number;
   mimicableRaces?: string[];
   mimicForm?: string | null;
   deathCount?: number;
@@ -98,6 +99,9 @@ export interface PlayerStatsUpdate {
   // group... shouldn't disappear" — see player.entity.ts's own `pet`
   // column doc comment.
   pet?: PetSnapshot | null;
+  // Tame Beast (a later follow-up ask) — see player.entity.ts's own
+  // `tamedBeast` column doc comment.
+  tamedBeast?: TamedBeastSnapshot | null;
 }
 
 @Injectable()

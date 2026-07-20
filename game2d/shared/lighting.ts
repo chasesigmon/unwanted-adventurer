@@ -98,8 +98,10 @@ export const LIGHT_RADIUS_TILES = 4;
 // The lucem spell's own wand-light radius — 25% bigger than a plain
 // torch's (a follow-up ask: "expand the light from lucem by another 25%
 // of what it already is," on top of it previously just reusing
-// LIGHT_RADIUS_TILES outright).
-export const LUCEM_LIGHT_RADIUS_TILES = Math.round(LIGHT_RADIUS_TILES * 1.25);
+// LIGHT_RADIUS_TILES outright), plus a further +1 tile (item 26: "slightly
+// increase the size of the light radius... the 'light' spell provides at
+// night time").
+export const LUCEM_LIGHT_RADIUS_TILES = Math.round(LIGHT_RADIUS_TILES * 1.25) + 1;
 
 // How close a player needs to be to a vendor to open/use its shop — its
 // own constant so widening the light radius above doesn't also widen how

@@ -236,6 +236,10 @@ export function punchDamage(
 // bigger made-up number.
 export const WEAPON_DAMAGE_BONUS: Record<string, number> = {
   'bone dagger': 2,
+  // Gobbler Village's own hut bosses (item 22) — the Warrior's sword and
+  // the Chieftain's club, one tier apart, both above bone dagger's own +2.
+  'Muckfang Blade': 4,
+  'Skullcrush Cudgel': 5,
 };
 
 // Any equipped weapon whose name contains "dagger" also adds
@@ -273,6 +277,13 @@ export const ARMOR_ITEM_PHYSICAL_BONUS: Record<string, number> = {
   'cloth gauntlets': 1,
   'studded armor': 3,
   'studded helmet': 3,
+  // A later follow-up ask ("update the wild goblins to drop studded armor
+  // of each type") — the studded set only ever covered torso/head; these
+  // 4 fill out the same full 6-piece coverage cloth already has.
+  'studded gauntlets': 3,
+  'studded greaves': 3,
+  'studded vambraces': 3,
+  'studded boots': 3,
   // The 4 portal dungeons' own armor pieces (a later follow-up ask) —
   // one per tier, each noticeably stronger than the last, rescaled onto
   // the same direct-reduction scale as cloth/studded above.
@@ -280,6 +291,16 @@ export const ARMOR_ITEM_PHYSICAL_BONUS: Record<string, number> = {
   "warlord's greaves": 4,
   'obsidian helm': 5,
   'dragon scale armor': 6,
+  // Brimstone Cave's own trolls (a later follow-up ask: "leather armor
+  // for torso, helmet, gauntlets, vambraces, greaves, boots... Armor vs
+  // Physical of 4 for each") — a full 6-piece set like cloth/studded,
+  // one tier above studded's own +3.
+  'leather armor': 4,
+  'leather helmet': 4,
+  'leather gauntlets': 4,
+  'leather vambraces': 4,
+  'leather greaves': 4,
+  'leather boots': 4,
 };
 
 // No item grants this yet — see this section's own doc comment above.
@@ -359,6 +380,36 @@ export function intelligenceEquipmentBonus(equipment: Record<string, string>): n
   }
   return bonus;
 }
+
+// Item 29's woodland ring ("a woodland fairy... drop that when equipped
+// grants +1 constitution") — same live "applied at the one place
+// constitution actually feeds a combat roll" treatment as the dexterity/
+// intelligence jewelry bonuses above, not baked into the stored attribute
+// (constitution otherwise only ever changes maxHp at level-up time, a
+// one-time calculation this equip/unequip toggle shouldn't retroactively
+// disturb).
+const JEWELRY_CONSTITUTION_BONUS: Record<string, number> = {
+  'a woodland ring': 1,
+};
+
+export function constitutionEquipmentBonus(equipment: Record<string, string>): number {
+  let bonus = 0;
+  for (const item of Object.values(equipment)) {
+    bonus += JEWELRY_CONSTITUTION_BONUS[item] ?? 0;
+  }
+  return bonus;
+}
+
+// Item 22's Gobbler Necromancer's own wand ("should give +10 mana when
+// equipped") — unlike the jewelry bonuses above (applied live at a
+// specific combat-calc call site), max mana has no per-tick "recompute
+// from base" call site to hook into (it's a stored value, only ever
+// changed at level-up) — see game.gateway.ts's own equip/unequip delta
+// application, which adds/removes this amount from client.data.maxMana
+// directly at the moment the wand is equipped/unequipped.
+export const MANA_ITEM_BONUS: Record<string, number> = {
+  'Grimrot Wand': 10,
+};
 
 // A later follow-up ask: "if a player is wearing a ring on one hand then
 // tries to wear another ring, put it on the other hand; if the player is

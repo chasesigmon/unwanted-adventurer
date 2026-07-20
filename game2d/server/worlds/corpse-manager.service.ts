@@ -44,6 +44,17 @@ const BODY_PART_LABEL: Record<Race | MonsterKind, string> = {
   'demon imp': 'imp horn',
   'dire wolf': 'dire wolf fang',
   bear: 'bear claw',
+  wolf: 'wolf fang',
+  moose: 'moose antler',
+  falcon: 'falcon feather',
+  gobbler: 'gobbler tooth',
+  'gobbler necromancer': 'gobbler necromancer bone charm',
+  'gobbler warrior': 'gobbler warrior tooth',
+  'gobbler chieftain': 'gobbler chieftain tusk',
+  'coven witch': 'coven witch hex mark',
+  troll: 'troll hide',
+  'rune beast': 'rune beast shard',
+  'woodland fairy': 'fairy wing',
 };
 
 export function bodyPartLabelFor(kind: Race | MonsterKind): string {

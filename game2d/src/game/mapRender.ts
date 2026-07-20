@@ -4,6 +4,7 @@ import Phaser from 'phaser';
 import type { MapName, Direction } from '../../shared/constants.js';
 import { FLORO_SHOP_MAPS, GRIMOAK_CASTLE_MAPS, BRAMWICK_SHOP_MAPS, KORTHO_SHOP_MAPS, GOBBLER_VILLAGE_HUT_MAPS } from '../../shared/constants.js';
 import type { FacingGroup } from '../characterSprites.js';
+import type { PetKind } from '../../shared/pets.js';
 
 export const TILE_SIZE = 32;
 // Classrooms (see shared/constants.ts's CLASSROOM_MAPS) are laid out at a
@@ -165,7 +166,6 @@ export const CLASSROOM_SYMBOL_TEXTURE_KEYS: Partial<Record<MapName, string>> = {
   // symbol is purely decorative — no reason to redraw it).
   Specialization: 'classroom-symbol-elemental',
   'Defense Classroom': 'classroom-symbol-defense',
-  'Summoning Classroom': 'classroom-symbol-summoning',
   'Utility Classroom': 'classroom-symbol-utility',
   'Offense Classroom': 'classroom-symbol-offense',
 };
@@ -282,10 +282,17 @@ export const QUEST_ICON_IN_PROGRESS_FRAME = 2;
 // multi-direction walk-cycle sheet a real character/monster uses (see
 // characterSprites.ts) — a much lighter-weight "creature", not a whole
 // new playable race.
-export const PET_TEXTURE_KEYS: Record<'puppy' | 'kitten' | 'piglet', string> = {
+// Item 15's own 3 new Kortho-only pets — same 24x24 2-frame shape as the
+// original 3, no evolved form (see EVOLVABLE_PET_KINDS's own doc comment
+// in shared/pets.ts — PET_EVOLVED_TEXTURE_KEYS below deliberately stays
+// narrowly typed to just the original 3 kinds).
+export const PET_TEXTURE_KEYS: Record<PetKind, string> = {
   puppy: 'pet-puppy',
   kitten: 'pet-kitten',
   piglet: 'pet-piglet',
+  griffin: 'pet-griffin',
+  elemental: 'pet-elemental',
+  phoenix: 'pet-phoenix',
 };
 export const PET_FRAME_WIDTH = 24;
 export const PET_FRAME_HEIGHT = 24;

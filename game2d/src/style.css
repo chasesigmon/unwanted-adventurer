@@ -706,6 +706,30 @@ body {
   border-radius: 3px;
 }
 
+/* Item 11's Equip/Use/Drop menu — same compact button-row look as
+   inventory-give-row above, just left-aligned since it's the row's
+   primary action rather than a secondary one. */
+.inventory-action-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.inventory-action-row button {
+  background: #1e1e2a;
+  border: 1px solid #444;
+  color: #ccc;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.inventory-action-row button:hover {
+  background: #2a2a3a;
+}
+
 /* A follow-up ask: "selected targets/enemies should appear below any
    other open labels" — pushed down to make room for the group panel
    above it. `top` is recomputed in JS from the group panel's own real
@@ -1302,6 +1326,18 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: #888;
+}
+
+/* Item 17's Bank amount input — plain number field matching the shop
+   modal's own dark theme. */
+.shop-bank-amount {
+  width: 100%;
+  background: #1e1e2a;
+  border: 1px solid #444;
+  color: #eee;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 3px;
 }
 
 #shop-greeting {
@@ -2032,6 +2068,19 @@ body {
   font-size: 28px;
   font-weight: 600;
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+}
+
+/* Item 30's Inn rest cutscreen — fully opaque black, above every modal
+   (including the shop modal that triggered it) and the respawn overlay. */
+#rest-overlay {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  z-index: 70;
+}
+
+#rest-overlay:not([hidden]) {
+  display: block;
 }
 
 /* ---------- Custom tooltip (item 4) ---------- */

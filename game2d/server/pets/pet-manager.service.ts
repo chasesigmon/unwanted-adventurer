@@ -12,6 +12,7 @@ import {
   PET_EVOLVED_NAME,
   PET_EVOLUTION_HP_BONUS,
   PET_EVOLUTION_ATTACK_BONUS,
+  EVOLVABLE_PET_KINDS,
   FOLLOWER_ATTACK_COOLDOWN_MS,
   computeFollowerStep,
   type FollowerEquipmentSlot,
@@ -74,8 +75,8 @@ export class PetManagerService {
       name: PET_KIND_LABELS[kind],
       level: 1,
       exp: 0,
-      hp: PET_STARTING_HP,
-      maxHp: PET_STARTING_HP,
+      hp: PET_STARTING_HP[kind],
+      maxHp: PET_STARTING_HP[kind],
       map,
       row,
       col,
@@ -248,7 +249,11 @@ export class PetManagerService {
     pet.exp = exp;
 
     let evolved = false;
-    if (pet.level >= PET_EVOLUTION_LEVEL && pet.name === PET_KIND_LABELS[pet.kind]) {
+    if (
+      pet.level >= PET_EVOLUTION_LEVEL &&
+      pet.name === PET_KIND_LABELS[pet.kind] &&
+      (EVOLVABLE_PET_KINDS as readonly string[]).includes(pet.kind)
+    ) {
       pet.name = PET_EVOLVED_NAME[pet.kind];
       pet.maxHp += PET_EVOLUTION_HP_BONUS;
       pet.hp += PET_EVOLUTION_HP_BONUS;

@@ -1,7 +1,7 @@
 import type { MapName } from '../../shared/constants.js';
 import { FLORO_SHOP_MAPS, KORTHO_SHOP_MAPS } from '../../shared/constants.js';
 import type { VendorSnapshot } from '../../shared/types.js';
-import { CUP_OF_WATER_ITEM, JERKY_ITEM, CANTEEN_ITEM, SALMON_ITEM, HP_POTION_ITEM, MP_POTION_ITEM } from '../../shared/items.js';
+import { CUP_OF_WATER_ITEM, JERKY_ITEM, CANTEEN_ITEM, SALMON_ITEM, HP_POTION_ITEM, MP_POTION_ITEM, LINIMENT_ITEM } from '../../shared/items.js';
 import { CANOE_ITEM, RAFT_ITEM, BOAT_PRICE } from '../../shared/boats.js';
 
 // Deterministic (not Math.random) so a vendor's appearance/name stays
@@ -122,7 +122,17 @@ const VENDOR_SEEDS: VendorSeed[] = [
     map: 'Floro General Store',
     row: 3,
     col: 15,
-    items: [{ label: 'torch', price: 3 }],
+    // Item 31: "make sure they sell the same items as the Bramwick
+    // general store and they should also sell the potions like the
+    // Bramwick potion store" — plus Liniment, offered by all 3.
+    items: [
+      { label: 'torch', price: 3 },
+      { label: CANTEEN_ITEM, price: 6 },
+      { label: SALMON_ITEM, price: 5 },
+      { label: HP_POTION_ITEM, price: 3 },
+      { label: MP_POTION_ITEM, price: 3 },
+      { label: LINIMENT_ITEM, price: 5 },
+    ],
     greeting: 'Bit of everything in here. Torches sell well this time of year.',
   },
   {
@@ -190,7 +200,15 @@ const VENDOR_SEEDS: VendorSeed[] = [
     map: 'Kortho General Store',
     row: 3,
     col: 15,
-    items: [{ label: 'torch', price: 3 }],
+    // Item 31: same parity as Floro's own General Store above.
+    items: [
+      { label: 'torch', price: 3 },
+      { label: CANTEEN_ITEM, price: 6 },
+      { label: SALMON_ITEM, price: 5 },
+      { label: HP_POTION_ITEM, price: 3 },
+      { label: MP_POTION_ITEM, price: 3 },
+      { label: LINIMENT_ITEM, price: 5 },
+    ],
     greeting: 'Bit of everything in here. Torches sell well this time of year.',
   },
   {
@@ -217,8 +235,16 @@ const VENDOR_SEEDS: VendorSeed[] = [
     map: 'Kortho Pet Salesman',
     row: 3,
     col: 15,
-    items: [],
-    greeting: "No creatures for sale just yet, but I'm always looking for stock.",
+    // Item 15: "add a 'young griffin', 'lesser elemental', and 'young
+    // phoenix'... don't add these pets to Floro" — Kortho's own pet
+    // salesman specifically, not Bramwick's Pet Shop or Floro's own
+    // (still empty) salesman.
+    items: [
+      { label: 'griffin', price: 50 },
+      { label: 'elemental', price: 50 },
+      { label: 'phoenix', price: 50 },
+    ],
+    greeting: 'Exotic stock, fresh in — a griffin, an elemental, a phoenix. Not cheap, but worth every coin.',
   },
   // A later follow-up ask: "change one of the shops in Kortho to be a
   // 'Boat Shop'" — sells the small canoe/large raft (see shared/boats.ts)
@@ -247,10 +273,12 @@ const VENDOR_SEEDS: VendorSeed[] = [
     map: 'Bramwick General Shop',
     row: 2,
     col: 5,
-    // A later follow-up ask stocked the shelves for real.
+    // A later follow-up ask stocked the shelves for real. Item 31 added
+    // Liniment, offered by all 3 General Stores (Bramwick/Kortho/Floro).
     items: [
       { label: CANTEEN_ITEM, price: 6 },
       { label: SALMON_ITEM, price: 5 },
+      { label: LINIMENT_ITEM, price: 5 },
     ],
     greeting: 'A bit of everything — a fresh canteen, a salmon for the road, whatever you need.',
   },
@@ -383,7 +411,28 @@ export function vendorCounterFootprintFor(vendor: VendorSnapshot): Array<{ row: 
 // rewards, ...) so selling junk is still worth something rather than
 // being silently rejected.
 const FALLBACK_SELL_PRICE = 1;
+// A later follow-up ask ("update the studded armor to sell for 3 each,
+// cloth armor should sell for 1 each") pins an exact sell price for items
+// no vendor actually stocks for purchase (monster drops), where the
+// derive-from-buy-price formula below would otherwise always fall
+// through to the flat FALLBACK_SELL_PRICE for both sets alike — checked
+// first, ahead of that derivation.
+const SPECIFIC_SELL_PRICE: Record<string, number> = {
+  'studded armor': 3,
+  'studded helmet': 3,
+  'studded gauntlets': 3,
+  'studded greaves': 3,
+  'studded vambraces': 3,
+  'studded boots': 3,
+  'cloth armor': 1,
+  'cloth helmet': 1,
+  'cloth boots': 1,
+  'cloth vambraces': 1,
+  'cloth greaves': 1,
+  'cloth gauntlets': 1,
+};
 export function sellValueFor(itemLabel: string): number {
+  if (SPECIFIC_SELL_PRICE[itemLabel] !== undefined) return SPECIFIC_SELL_PRICE[itemLabel];
   const prices = VENDORS.flatMap((v) => v.items.filter((i) => i.label === itemLabel).map((i) => i.price));
   if (prices.length === 0) return FALLBACK_SELL_PRICE;
   return Math.max(1, Math.floor(Math.min(...prices) / 2));

@@ -59,8 +59,27 @@ export const EQUIPMENT_ITEM_BONUS_LABEL: Record<string, string> = {
   'cloth vambraces': '+4 armor class',
   'cloth greaves': '+4 armor class',
   'cloth gauntlets': '+4 armor class',
-  'studded armor': '+8 armor class',
-  'studded helmet': '+8 armor class',
+  // A later follow-up ask ("update the wild goblins to drop studded armor
+  // of each type") filled out the rest of the studded set to match cloth's
+  // own full 6-piece coverage — same +3 Armor vs Physical every studded
+  // piece already gives (see combat/formulas.ts's ARMOR_ITEM_PHYSICAL_BONUS).
+  // Also corrected these two existing labels' own stale "armor class"
+  // wording left over from before that stat was split into Armor vs
+  // Physical/Magical.
+  'studded armor': '+3 Armor vs Physical',
+  'studded helmet': '+3 Armor vs Physical',
+  'studded gauntlets': '+3 Armor vs Physical',
+  'studded greaves': '+3 Armor vs Physical',
+  'studded vambraces': '+3 Armor vs Physical',
+  'studded boots': '+3 Armor vs Physical',
+  // Brimstone Cave's own trolls (a later follow-up ask) — a full 6-piece
+  // set, one tier above studded's own +3.
+  'leather armor': '+4 Armor vs Physical',
+  'leather helmet': '+4 Armor vs Physical',
+  'leather gauntlets': '+4 Armor vs Physical',
+  'leather vambraces': '+4 Armor vs Physical',
+  'leather greaves': '+4 Armor vs Physical',
+  'leather boots': '+4 Armor vs Physical',
   'chainmail vambraces': '+6 armor class',
   "warlord's greaves": '+10 armor class',
   'obsidian helm': '+12 armor class',
@@ -77,6 +96,12 @@ export const EQUIPMENT_ITEM_BONUS_LABEL: Record<string, string> = {
   'wand of embers': '+2 intelligence',
   'wand of shadows': '+3 intelligence',
   'wand of the ashen king': '+2 dexterity, +4 intelligence',
+  // Gobbler Village's own 3 hut bosses (item 22).
+  'Grimrot Wand': '+10 max mana',
+  'Muckfang Blade': '+4 damage',
+  'Skullcrush Cudgel': '+5 damage',
+  // Item 29's woodland fairy drop.
+  'a woodland ring': '+1 constitution',
 };
 
 export const EQUIPMENT_SLOT_LABELS: Record<EquipmentSlot, string> = {
@@ -126,6 +151,16 @@ export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
   'cloth gauntlets': 'gauntlets',
   'studded armor': 'torso',
   'studded helmet': 'head',
+  'studded gauntlets': 'gauntlets',
+  'studded greaves': 'greaves',
+  'studded vambraces': 'vambraces',
+  'studded boots': 'boots',
+  'leather armor': 'torso',
+  'leather helmet': 'head',
+  'leather gauntlets': 'gauntlets',
+  'leather vambraces': 'vambraces',
+  'leather greaves': 'greaves',
+  'leather boots': 'boots',
   'boots of quickness': 'boots',
   'opal earrings': 'earrings',
   'opal necklace': 'necklace',
@@ -149,4 +184,14 @@ export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
   'obsidian helm': 'head',
   'wand of the ashen king': 'weapon',
   'dragon scale armor': 'torso',
+  // Gobbler Village's own 3 hut bosses (item 22) — uniquely named weapons
+  // themed to the village/creatures, dropped by the Necromancer/Warrior/
+  // Chieftain respectively.
+  'Grimrot Wand': 'weapon',
+  'Muckfang Blade': 'weapon',
+  'Skullcrush Cudgel': 'weapon',
+  // Item 29's woodland fairy drop — same "placeholder slot only, the real
+  // left/right is resolved dynamically at equip time" treatment as opal
+  // ring/bone ring above (see isRingItem/resolveRingSlot).
+  'a woodland ring': 'leftRing',
 };

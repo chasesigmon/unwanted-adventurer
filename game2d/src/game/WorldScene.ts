@@ -118,6 +118,9 @@ import {
   LESSER_SELF_HEAL_SKILL,
   WISP_TRANSFORMATION_SKILL,
   WISP_MOVE_COOLDOWN_FACTOR,
+  TAME_BEAST_SKILL,
+  TAME_BEAST_RANGE_TILES,
+  IDENTIFY_SKILL,
   KINETIC_STRIKE_SKILL,
   SAP_HEALTH_SKILL,
   MONSTER_SUMMONS_SKILL,
@@ -334,15 +337,17 @@ import { refreshCharSheetIfOpen } from '../ui/charSheet.js';
 import { openCorpseModal, stackedItemsLabel, updateEatBrainsButton } from '../ui/corpseModal.js';
 import { openPetCorpseModal } from '../ui/petCorpseModal.js';
 import { openChestModal } from '../ui/chestModal.js';
+import { openDroppedChestModal } from '../ui/droppedChestModal.js';
 import { openBedModal } from '../ui/bedModal.js';
 import { openBenchModal } from '../ui/benchModal.js';
 import { openShopModal } from '../ui/shopModal.js';
 import { openTargetInfoModal } from '../ui/targetInfoModal.js';
+import { openIdentifyModal } from '../ui/identifyModal.js';
 import { notifyMapChanged } from '../ui/mapModal.js';
 import { openNpcDialogueModal, openSpecializationDialogue, openHouseChoiceDialogue, openTeacherLearnDialogue } from '../ui/npcDialogueModal.js';
 import { hideTargetPanel, updateTargetPanel, updateLockTargetPanel } from '../ui/targetPanel.js';
 import { updateGroupPanel } from '../ui/groupPanel.js';
-import type { PetSnapshot, AnimatedMonsterSnapshot } from '../../shared/pets.js';
+import type { PetSnapshot, AnimatedMonsterSnapshot, TamedBeastSnapshot } from '../../shared/pets.js';
 import { PET_EVOLVED_NAME } from '../../shared/pets.js';
 import { openRecallModal } from '../ui/recallModal.js';
 import { openMonsterSummonsModal } from '../ui/monsterSummonsModal.js';
@@ -355,6 +360,12 @@ const autopilotStatusEl = document.getElementById('autopilot-status') as HTMLDiv
 // never destroyed/recreated for the life of the map (maxCount: 1, no
 // class of monster besides these 3 ever toggles isRare on/off).
 const RARE_MONSTER_TINT = 0xffd166;
+
+// A later follow-up ask ("level 8 falcons... that fly around") — a small
+// permanent upward pixel offset so a flying monster visibly hovers above
+// the ground plane instead of standing flush on it like every other
+// monster (see the monster-rendering loop in applyMapState/moveOrSnap).
+const FLYING_MONSTER_Y_OFFSET = -14;
 
 export class WorldScene extends Phaser.Scene {
   private network!: NetworkManager;
@@ -494,6 +505,10 @@ export class WorldScene extends Phaser.Scene {
   // grass elsewhere (floorTextureFor has no per-tile-region concept, see
   // its own doc comment).
   private korthoSeaSprites: Phaser.GameObjects.GameObject[] = [];
+  // Item 20's animated wave water — a separate reference from
+  // korthoSeaSprites above (which still gets destroyed/cleared the same
+  // way) purely so update() has a typed handle to scroll each frame.
+  private korthoWaterSprite: Phaser.GameObjects.TileSprite | null = null;
   // Hexstone Cavern's own cave-mouth entrance sprite (a later follow-up
   // ask) — one per map that has one (Great Plains' own west exit,
   // Hexstone Cavern's own south exit), same destroy/recreate-per-
@@ -590,6 +605,7 @@ export class WorldScene extends Phaser.Scene {
   // A player's own companion pet (a later follow-up ask) — keyed by pet
   // id, same lifetime/cleanup shape as monsterSprites above.
   private petSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  private tamedBeastSprites = new Map<string, Phaser.GameObjects.Sprite>();
   // A later follow-up ask: "the corpses of pets should be selectable"
   // — same seen-set create/update/cleanup shape as every other transient
   // entity here.
@@ -601,11 +617,16 @@ export class WorldScene extends Phaser.Scene {
   // updateGroupPanel every applyMapState, same source of truth.
   private myPet: PetSnapshot | null = null;
   private myAnimatedMonsters: AnimatedMonsterSnapshot[] = [];
+  private myTamedBeast: TamedBeastSnapshot | null = null;
   // Murus lapideus's own summoned stone blocks (a later follow-up ask) —
   // rendered with an hp bar like an NPC/monster, but not player-clickable
   // (not asked for).
   private stoneBlockSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private corpseSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  // Item 12's dropped-item treasure chests — same per-id sprite Map shape
+  // as corpseSprites above, textured with the secret room's own unlocked-
+  // chest art rather than generating a dedicated sprite for this.
+  private droppedChestSprites = new Map<string, Phaser.GameObjects.Sprite>();
   // Shopkeepers etc. — static and never a combat target, so no HP bar and
   // no occupancy/collision handling beyond what the server already does.
   private vendorSprites = new Map<string, Phaser.GameObjects.Sprite>();
@@ -682,12 +703,22 @@ export class WorldScene extends Phaser.Scene {
     // sandy sprite to use for the land on both sides") plus its dock.
     this.load.svg('sand', '/sand-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     this.load.svg('dock', '/dock-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    // Item 20: "polish [the Shimmering Sea] up and make it look more
+    // interactive with moving waves like an ocean" — replaces the old flat
+    // two-tone Graphics fill with a scrolling wave-patterned tileSprite
+    // (see korthoWaterSprite's own animation in update()).
+    this.load.svg('water-wave', '/water-wave-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     // Hexstone Cavern's own rocky floor + cave-mouth entrance sprite (a
     // later follow-up ask).
     this.load.svg('cave', '/cave-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     // Runestone Way's own impassable-looking off-road ground (a later
     // follow-up ask).
     this.load.svg('boulder-field', '/boulder-field-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    // Item 25: Direfell's own haunted-forest floor — this load call was
+    // missing entirely (floorTextureFor already returned the 'haunted-
+    // forest' key, but nothing ever registered it with Phaser's loader,
+    // so it silently fell back to a placeholder texture instead).
+    this.load.svg('haunted-forest', '/haunted-forest-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
     this.load.image(CAVE_ENTRANCE_TEXTURE_KEY, '/cave-entrance.png');
     // Grimoak Grounds' own stretch of road leading up to it (a later
     // follow-up ask: "clearly have a different colored dirt road from
@@ -939,6 +970,7 @@ export class WorldScene extends Phaser.Scene {
       // this handler too, same as teachers were.
       const overVendor = [...this.vendorSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
       const overCorpse = [...this.corpseSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
+      const overDroppedChest = [...this.droppedChestSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
       // A follow-up ask: "on hover make the cursor a pointer" for benches
       // — a plain pointer, not the bed's own SLEEP_CURSOR, since resting
       // on a bench (unlike sleeping) doesn't black out the screen.
@@ -953,7 +985,7 @@ export class WorldScene extends Phaser.Scene {
                 ? 'pointer'
                 : overTeacher
                   ? 'help'
-                  : overVendor || overCorpse || overBench || overPortal
+                  : overVendor || overCorpse || overDroppedChest || overBench || overPortal
                     ? 'pointer'
                     : '';
     });
@@ -1033,6 +1065,13 @@ export class WorldScene extends Phaser.Scene {
   }
 
   update(): void {
+    // Item 20: the Shimmering Sea's own scroll — a slow horizontal drift
+    // plus a gentle vertical bob, cheap enough to just run unconditionally
+    // (the sprite only ever exists on Kortho, see renderMap).
+    if (this.korthoWaterSprite) {
+      this.korthoWaterSprite.tilePositionX += 0.15;
+      this.korthoWaterSprite.tilePositionY = Math.sin(this.time.now / 900) * 2;
+    }
     this.updateCameraScroll();
     this.repositionHpBars();
     this.updateDarkFog();
@@ -1899,7 +1938,7 @@ export class WorldScene extends Phaser.Scene {
   // directions), or left alone if it's standing pat. Turns what would
   // otherwise be an instant teleport-jump into something that reads as a
   // step.
-  private moveOrSnap(sprite: Phaser.GameObjects.Sprite, kind: SpriteKind, row: number, col: number): void {
+  private moveOrSnap(sprite: Phaser.GameObjects.Sprite, kind: SpriteKind, row: number, col: number, yOffset = 0): void {
     const prevRow = sprite.getData('row') as number;
     const prevCol = sprite.getData('col') as number;
     sprite.setData('row', row);
@@ -1912,6 +1951,7 @@ export class WorldScene extends Phaser.Scene {
     const facing: Facing = Math.abs(dRow) >= Math.abs(dCol) ? (dRow < 0 ? 'up' : 'down') : dCol < 0 ? 'left' : 'right';
     sprite.setData('facing', facing);
     const pos = this.tilePosition(row, col);
+    pos.y += yOffset;
 
     // A later follow-up bug fix: "imps still are not moving toward the
     // player... their sprite stays in the same place while getting
@@ -2214,6 +2254,8 @@ export class WorldScene extends Phaser.Scene {
     this.stoneBlockSprites.clear();
     for (const sprite of this.corpseSprites.values()) sprite.destroy();
     this.corpseSprites.clear();
+    for (const sprite of this.droppedChestSprites.values()) sprite.destroy();
+    this.droppedChestSprites.clear();
     for (const sprite of this.vendorSprites.values()) sprite.destroy();
     this.vendorSprites.clear();
     for (const sprite of this.vendorFrontSprites.values()) sprite.destroy();
@@ -2321,6 +2363,7 @@ export class WorldScene extends Phaser.Scene {
     this.roadTiles = [];
     for (const sprite of this.korthoSeaSprites) sprite.destroy();
     this.korthoSeaSprites = [];
+    this.korthoWaterSprite = null;
     for (const sprite of this.caveEntranceSprites) sprite.destroy();
     this.caveEntranceSprites = [];
     if (mapName === 'Bramwick') {
@@ -2688,22 +2731,22 @@ export class WorldScene extends Phaser.Scene {
           .setOrigin(0, 0)
           .setDepth(-0.99)
       );
-      const seaGraphics = this.add.graphics().setDepth(-0.98);
-      seaGraphics.fillStyle(0x1f7a93, 1);
-      seaGraphics.fillRect(
-        KORTHO_SEA_COL_START * TILE_SIZE,
-        0,
-        (KORTHO_SEA_COL_END - KORTHO_SEA_COL_START + 1) * TILE_SIZE,
-        TOWN_SIZE * TILE_SIZE
-      );
-      // A later "shimmering" pass — faint lighter bands across the water,
-      // same "cheap 2-tone variation, not a real shader" treatment this
-      // project's other flat-color fills (the moat) get by.
-      seaGraphics.fillStyle(0x2f95ad, 0.5);
-      for (let c = KORTHO_SEA_COL_START; c <= KORTHO_SEA_COL_END; c += 3) {
-        seaGraphics.fillRect(c * TILE_SIZE, 0, TILE_SIZE, TOWN_SIZE * TILE_SIZE);
-      }
-      this.korthoSeaSprites.push(seaGraphics);
+      // Item 20: a scrolling wave-patterned tileSprite instead of the old
+      // flat 2-tone Graphics fill — see update()'s own korthoWaterSprite
+      // scroll, "cheap animation, not a real shader" same as everywhere
+      // else in this file that fakes motion this way.
+      const waterSprite = this.add
+        .tileSprite(
+          KORTHO_SEA_COL_START * TILE_SIZE,
+          0,
+          (KORTHO_SEA_COL_END - KORTHO_SEA_COL_START + 1) * TILE_SIZE,
+          TOWN_SIZE * TILE_SIZE,
+          'water-wave'
+        )
+        .setOrigin(0, 0)
+        .setDepth(-0.98);
+      this.korthoSeaSprites.push(waterSprite);
+      this.korthoWaterSprite = waterSprite;
       this.korthoSeaSprites.push(
         this.add
           .tileSprite(
@@ -3739,18 +3782,23 @@ export class WorldScene extends Phaser.Scene {
       // its kind is shown (target panel, tooltip) so it doesn't just read
       // as "a slightly larger imp" at a glance.
       const displayLabel = m.isRare ? `Rare ${m.kind}` : m.kind;
+      // A later follow-up ask ("level 8 falcons... that fly around") — a
+      // small permanent airborne y-offset instead of sitting flush on the
+      // ground like every other monster, applied at both initial spawn
+      // and every subsequent move (see moveOrSnap's own yOffset param).
+      const flyOffset = m.flies ? FLYING_MONSTER_Y_OFFSET : 0;
       let sprite = this.monsterSprites.get(m.id);
       if (!sprite) {
         const pos = this.tilePosition(m.row, m.col);
         sprite = this.add
-          .sprite(pos.x, pos.y, textureKeyFor(m.kind), idleFrameFor(m.kind, 'down'))
+          .sprite(pos.x, pos.y + flyOffset, textureKeyFor(m.kind), idleFrameFor(m.kind, 'down'))
           .setScale(m.isRare ? CHAR_SCALE * 1.35 : CHAR_SCALE);
         if (m.isRare) sprite.setTint(RARE_MONSTER_TINT);
         sprite.setData('row', m.row);
         sprite.setData('col', m.col);
         this.monsterSprites.set(m.id, sprite);
       } else {
-        this.moveOrSnap(sprite, m.kind, m.row, m.col);
+        this.moveOrSnap(sprite, m.kind, m.row, m.col, flyOffset);
       }
       sprite.setData('kind', m.kind);
       sprite.setData('label', displayLabel);
@@ -3816,7 +3864,18 @@ export class WorldScene extends Phaser.Scene {
     const seenPets = new Set<string>();
     for (const pet of state.pets) {
       seenPets.add(pet.id);
-      const petOffset = followerFanOffsetFor(`pet:${pet.id}`);
+      // Item 15: "these pets... fly next to the player" — a small
+      // permanent hover offset, same idea as monsters' own
+      // FLYING_MONSTER_Y_OFFSET, added on top of the ordinary fan-out
+      // spacing below. followerFanOffsetFor returns a shared object
+      // reused across every follower at that same fan index — copied
+      // into a fresh object here rather than mutated in place, or every
+      // OTHER follower sharing that index would inherit this hover too.
+      const rawPetOffset = followerFanOffsetFor(`pet:${pet.id}`);
+      const petOffset =
+        pet.kind === 'griffin' || pet.kind === 'elemental' || pet.kind === 'phoenix'
+          ? { x: rawPetOffset.x, y: rawPetOffset.y + FLYING_MONSTER_Y_OFFSET }
+          : rawPetOffset;
       // A later follow-up ask: "create a sprite that is slightly larger
       // and modelled differently for each respective pet" for its own
       // evolved form (PET_EVOLUTION_LEVEL) — real distinct art now (see
@@ -3826,7 +3885,14 @@ export class WorldScene extends Phaser.Scene {
       // PetManagerService.grantExp uses server-side to decide whether to
       // rename it in the first place).
       const isEvolved = pet.name === PET_EVOLVED_NAME[pet.kind];
-      const petTextureKey = isEvolved ? PET_EVOLVED_TEXTURE_KEYS[pet.kind] : PET_TEXTURE_KEYS[pet.kind];
+      // Item 15's own 3 new kinds have no evolved form at all (see
+      // EVOLVABLE_PET_KINDS) — PET_EVOLVED_TEXTURE_KEYS stays narrowly
+      // typed to just the original 3, so this re-checks kind alongside
+      // isEvolved to let TS narrow the lookup safely.
+      const petTextureKey =
+        isEvolved && (pet.kind === 'puppy' || pet.kind === 'kitten' || pet.kind === 'piglet')
+          ? PET_EVOLVED_TEXTURE_KEYS[pet.kind]
+          : PET_TEXTURE_KEYS[pet.kind];
       let sprite = this.petSprites.get(pet.id);
       if (!sprite) {
         const pos = this.tilePosition(pet.row, pet.col);
@@ -3838,6 +3904,22 @@ export class WorldScene extends Phaser.Scene {
         sprite.setData('row', pet.row);
         sprite.setData('col', pet.col);
         sprite.setData('evolved', isEvolved);
+        // Item 15's lesser elemental — "many more colors like a rainbow
+        // that are pulsating/flickering/rotating" — its own 6-frame
+        // spritesheet (see gen-new-pet-sprites.mjs) played as a real
+        // looping animation, unlike every other pet's plain static frame.
+        if (pet.kind === 'elemental') {
+          const animKey = `${petTextureKey}-cycle`;
+          if (!this.anims.exists(animKey)) {
+            this.anims.create({
+              key: animKey,
+              frames: this.anims.generateFrameNumbers(petTextureKey, { start: 0, end: 5 }),
+              frameRate: 6,
+              repeat: -1,
+            });
+          }
+          sprite.play(animKey);
+        }
         this.petSprites.set(pet.id, sprite);
         // A later follow-up ask: "make it so other players pets are
         // selectable and they can be double clicked in order to see more
@@ -3914,6 +3996,64 @@ export class WorldScene extends Phaser.Scene {
         if (this.selectedPetId === id) this.clearPetTarget();
       }
     }
+
+    // The Druid's own Tame Beast (a later follow-up ask) — same create-
+    // or-update + click-to-target shape as a pet above (reusing
+    // setPetTarget/clearPetTarget/selectedPetId — a simple companion
+    // creature, same as a pet, just sourced from taming instead of a
+    // shop), but rendered with the tamed monster's own REAL sprite (see
+    // textureKeyFor/idleFrameFor) rather than a dedicated pet spritesheet.
+    const seenTamedBeasts = new Set<string>();
+    for (const beast of state.tamedBeasts) {
+      seenTamedBeasts.add(beast.id);
+      const beastOffset = followerFanOffsetFor(`tamedBeast:${beast.id}`);
+      let sprite = this.tamedBeastSprites.get(beast.id);
+      if (!sprite) {
+        const pos = this.tilePosition(beast.row, beast.col);
+        sprite = this.add
+          .sprite(pos.x + beastOffset.x, pos.y + beastOffset.y, textureKeyFor(beast.kind), idleFrameFor(beast.kind, 'down'))
+          .setOrigin(0.5, 0.9)
+          .setDepth(-0.4)
+          .setInteractive({ useHandCursor: true });
+        sprite.setData('row', beast.row);
+        sprite.setData('col', beast.col);
+        this.tamedBeastSprites.set(beast.id, sprite);
+        sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+          if (isInputCaptured() || !pointer.leftButtonDown()) return;
+          const beastSprite = this.tamedBeastSprites.get(beast.id);
+          if (!beastSprite) return;
+          const label = (beastSprite.getData('label') as string | undefined) ?? beast.name;
+          const beastLevel = (beastSprite.getData('level') as number | undefined) ?? beast.level;
+          const hp = (beastSprite.getData('hp') as number | undefined) ?? beast.hp;
+          const maxHp = (beastSprite.getData('maxHp') as number | undefined) ?? beast.maxHp;
+          this.setPetTarget(beast.id, label, beastLevel, hp, maxHp);
+        });
+      } else {
+        const prevRow = sprite.getData('row') as number;
+        const prevCol = sprite.getData('col') as number;
+        if (prevRow !== beast.row || prevCol !== beast.col) {
+          sprite.setData('row', beast.row);
+          sprite.setData('col', beast.col);
+          const pos = this.tilePosition(beast.row, beast.col);
+          pos.x += beastOffset.x;
+          pos.y += beastOffset.y;
+          this.tweens.add({ targets: sprite, x: pos.x, y: pos.y, duration: REMOTE_STEP_TWEEN_MS, ease: 'Linear' });
+        }
+      }
+      sprite.setData('label', beast.name);
+      sprite.setData('level', beast.level);
+      sprite.setData('hp', beast.hp);
+      sprite.setData('maxHp', beast.maxHp);
+      this.ensureHpBar(sprite, beast.hp, beast.maxHp);
+    }
+    for (const [id, sprite] of this.tamedBeastSprites) {
+      if (!seenTamedBeasts.has(id)) {
+        this.destroyEntitySprite(sprite);
+        this.tamedBeastSprites.delete(id);
+        if (this.selectedPetId === id) this.clearPetTarget();
+      }
+    }
+
     // Animated monsters (a later follow-up ask's necromancer spell) —
     // same create-or-update + seen-set cleanup shape as pets above,
     // reusing the ordinary monster spritesheet/idle frame for its kind
@@ -4011,7 +4151,10 @@ export class WorldScene extends Phaser.Scene {
       // Reflects whatever form the pet actually died in (a corpse is a
       // one-time snapshot, so this never needs to swap texture later the
       // way a live pet's own sprite does above).
-      const corpseTextureKey = pc.name === PET_EVOLVED_NAME[pc.kind] ? PET_EVOLVED_TEXTURE_KEYS[pc.kind] : PET_TEXTURE_KEYS[pc.kind];
+      const corpseTextureKey =
+        pc.name === PET_EVOLVED_NAME[pc.kind] && (pc.kind === 'puppy' || pc.kind === 'kitten' || pc.kind === 'piglet')
+          ? PET_EVOLVED_TEXTURE_KEYS[pc.kind]
+          : PET_TEXTURE_KEYS[pc.kind];
       const sprite = this.add
         .sprite(pos.x, pos.y, corpseTextureKey)
         .setOrigin(0.5, 0.9)
@@ -4053,7 +4196,8 @@ export class WorldScene extends Phaser.Scene {
     // to 2 animated monsters".
     this.myPet = state.pets.find((p) => p.ownerUsername === this.myUsername) ?? null;
     this.myAnimatedMonsters = state.animatedMonsters.filter((m) => m.ownerUsername === this.myUsername);
-    updateGroupPanel(this.myPet, this.myAnimatedMonsters);
+    this.myTamedBeast = state.tamedBeasts.find((b) => b.ownerUsername === this.myUsername) ?? null;
+    updateGroupPanel(this.myPet, this.myAnimatedMonsters, this.myTamedBeast);
 
     // Murus lapideus's own stone blocks (a later follow-up ask) — same
     // create-or-update + seen-set cleanup shape as monsters above, since
@@ -4127,7 +4271,7 @@ export class WorldScene extends Phaser.Scene {
         // same grab-all-or-pick-items loot modal — autopilot bypasses it
         // entirely below, grabbing straight away so automation doesn't
         // stall waiting on a modal.
-        openCorpseModal(c.id, c.items, c.kind, c.killedBy);
+        openCorpseModal(c.id, c.items, c.kind, c.killedBy, c.gold);
       });
       this.corpseSprites.set(c.id, sprite);
 
@@ -4143,6 +4287,36 @@ export class WorldScene extends Phaser.Scene {
         sprite.destroy();
         this.corpseSprites.delete(id);
         if (this.selectedCorpseId === id) this.clearCorpseTarget();
+      }
+    }
+
+    // Item 12's dropped-item chests — lootable by anyone, so no
+    // killedBy-style ownership check, just reach.
+    const seenDroppedChests = new Set<string>();
+    for (const chest of state.droppedChests) {
+      seenDroppedChests.add(chest.id);
+      if (this.droppedChestSprites.has(chest.id)) continue;
+
+      const pos = this.tilePosition(chest.row, chest.col);
+      const sprite = this.add
+        .sprite(pos.x, pos.y, CHEST_UNLOCKED_TEXTURE_KEY)
+        .setOrigin(0.5, 0.85)
+        .setDepth(-1)
+        .setInteractive({ useHandCursor: true });
+      sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (isInputCaptured() || !pointer.leftButtonDown()) return;
+        if (!this.isWithinLootReach(chest.row, chest.col)) {
+          logCombatMessage("You're too far away to reach that.");
+          return;
+        }
+        openDroppedChestModal(chest.id, chest.items);
+      });
+      this.droppedChestSprites.set(chest.id, sprite);
+    }
+    for (const [id, sprite] of this.droppedChestSprites) {
+      if (!seenDroppedChests.has(id)) {
+        sprite.destroy();
+        this.droppedChestSprites.delete(id);
       }
     }
 
@@ -4813,9 +4987,12 @@ export class WorldScene extends Phaser.Scene {
       // entirely by their own pointerdown listeners) isn't "empty
       // ground", just not a combat-targetable entity; leave the
       // COMBAT target alone (unchanged, long-standing behavior).
-      const hitCombatPassthrough = [...this.corpseSprites.values(), ...this.vendorSprites.values(), ...this.petSprites.values()].some((s) =>
-        s.getBounds().contains(pointer.worldX, pointer.worldY)
-      );
+      const hitCombatPassthrough = [
+        ...this.corpseSprites.values(),
+        ...this.vendorSprites.values(),
+        ...this.petSprites.values(),
+        ...this.droppedChestSprites.values(),
+      ].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
       if (!hitCombatPassthrough && this.targetKind) this.clearTarget();
       // The lock target (a follow-up ask) stays selected until the
       // player clicks elsewhere in the game world — a door/chest click
@@ -5153,6 +5330,29 @@ export class WorldScene extends Phaser.Scene {
       this.useItemTargetedSkill(skillName);
       return;
     }
+    // Identify (a later follow-up ask) — same "targeted inventory item"
+    // shape as drink/pour above, but opens a result window on success
+    // instead of just logging a message.
+    if (skillName === IDENTIFY_SKILL) {
+      if (!myProfile || !this.targetItemName) {
+        logCombatMessage('Select an item in your inventory first.');
+        return;
+      }
+      const itemIndex = myProfile.inventory.indexOf(this.targetItemName);
+      if (itemIndex === -1) {
+        logCombatMessage("You don't have that anymore.");
+        this.clearItemTarget();
+        return;
+      }
+      void this.network.castIdentify(itemIndex).then((ack) => {
+        if (ack.message) logCombatMessage(ack.message);
+        if (!ack.ok || !myProfile) return;
+        setMyProfile({ ...myProfile, mana: ack.mana ?? myProfile.mana, skills: ack.skills ?? myProfile.skills });
+        this.updateOwnBars();
+        if (ack.itemLabel) openIdentifyModal(ack.itemLabel);
+      });
+      return;
+    }
     // Resera (a later follow-up ask) targets a door or chest, not a
     // player/npc/monster — a wholly separate targeting concept (see
     // lockTarget, set by clicking a door or the chest sprite in
@@ -5332,6 +5532,26 @@ export class WorldScene extends Phaser.Scene {
       const targetId = this.targetId;
       this.tryRangedAction(targetKind, targetId, SPELL_ATTACK_RANGE_TILES, () => {
         void this.network.castSapHealth({ targetKind, targetId }).then((ack) => {
+          if (ack.message) {
+            showCenterToast(ack.message);
+            logCombatMessage(ack.message);
+          }
+        });
+      });
+      return;
+    }
+    // The Druid's own Tame Beast (a later follow-up ask) — same ranged,
+    // walk-into-range shape as augue/kinetic strike, but only ever
+    // against a monster (a beast) — "requires having a 'beast' selected
+    // first."
+    if (skillName === TAME_BEAST_SKILL) {
+      if (this.targetKind !== 'monster' || !this.targetId) {
+        showCenterToast('Select a beast to tame first.');
+        return;
+      }
+      const targetId = this.targetId;
+      this.tryRangedAction('monster', targetId, TAME_BEAST_RANGE_TILES, () => {
+        void this.network.castTameBeast(targetId).then((ack) => {
           if (ack.message) {
             showCenterToast(ack.message);
             logCombatMessage(ack.message);

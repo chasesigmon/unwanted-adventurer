@@ -168,7 +168,6 @@ export const GRIMOAK_CASTLE_MAPS = [
   // Secretissima already uses for the same reason).
   'Specialization',
   'Defense Classroom',
-  'Summoning Classroom',
   'Utility Classroom',
   'Offense Classroom',
   // The secret bonus room (a follow-up ask) — a small locked room behind
@@ -207,7 +206,11 @@ export const GRIMOAK_CASTLE_MAPS = [
 // NOT here anymore (a later follow-up ask: "this room should not be
 // considered a classroom") — see this file's own GRIMOAK_CASTLE_MAPS
 // comment for why.
-export const CLASSROOM_MAPS = ['Defense Classroom', 'Summoning Classroom', 'Utility Classroom', 'Offense Classroom'] as const;
+// A later follow-up ask ("remove the Summoning classroom") dropped it
+// from this list entirely — see teachers.ts for where its own stone wall
+// spell moved (the Defense teacher) and shared/maps.ts's
+// ENTRANCE_NORTH_DOORS for the re-spaced classroom doors.
+export const CLASSROOM_MAPS = ['Defense Classroom', 'Utility Classroom', 'Offense Classroom'] as const;
 
 // The 4 house common rooms — standard ROOM_ROWS/COLS-sized, unlike the
 // shrunk classrooms above. Used to give them the same "closer to the
@@ -434,10 +437,36 @@ export type Direction = (typeof DIRECTIONS)[number];
 // in the great plains add level 20 bears" — 'bear' reuses the same
 // species entry shape as every other wild monster (see server/monsters/
 // monster.ts), just its own sprite/stats.
-export const MONSTER_KINDS = ['wild goblin', 'wild skeleton', 'imp', 'demon imp', 'dire wolf', 'bear'] as const;
+export const MONSTER_KINDS = [
+  'wild goblin',
+  'wild skeleton',
+  'imp',
+  'demon imp',
+  'dire wolf',
+  'bear',
+  'wolf',
+  'moose',
+  'falcon',
+  'gobbler',
+  'gobbler necromancer',
+  'gobbler warrior',
+  'gobbler chieftain',
+  'coven witch',
+  'troll',
+  'rune beast',
+  'woodland fairy',
+] as const;
 export type MonsterKind = (typeof MONSTER_KINDS)[number];
 
 // Same idea as the text game's own monster classification — determines
 // which resistance skill (lesser normal/undead monster resistance)
 // reduces a monster's counter-attack damage against the player who hit it.
-export type MonsterClass = 'normal' | 'undead';
+// 'beast' (a later follow-up ask: "classify the wolves, bears, and dire
+// wolves... as beast") is a pure taxonomy tag for now — every check
+// against monsterClass elsewhere already treats anything that isn't
+// 'undead' as the ordinary "normal" resistance bucket (a plain ternary,
+// not an exhaustive switch), so a beast's counter-attack is mitigated the
+// same way a normal monster's is; the tag's own immediate purpose is
+// Tame Beast's own "requires a beast selected" targeting check (see
+// game.gateway.ts's handleCastTameBeast).
+export type MonsterClass = 'normal' | 'undead' | 'beast';

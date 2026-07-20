@@ -1,14 +1,10 @@
-// Pixel-art generator for the bear monster (a later follow-up ask: "in
-// the great plains add level 20 bears (similar stats to the dire
-// wolves)"). Same rig as gen-dire-wolf-sprites.mjs (110x140 frame, 4
-// rows down/up/left/right, 8 cols/row: 4 walk then 4 swipe/bite frames,
-// quadruped front/back vs profile shape) — bulkier and rounder than the
-// wolf, warm brown fur instead of ash-gray, small round ears, dark eyes
-// (no glow), no visible fangs.
-//
-// Run with `node tools/gen-bear-sprites.mjs` from game2d/; requires the
-// `pngjs` devDependency (already installed for the other gen-*.mjs
-// scripts).
+// Pixel-art generator for the "bear" monster (Great Plains — a later
+// follow-up ask: "improve the bear sprite on the great plains, it is
+// very sloppy"). Same 110x140/4-row/8-col rig as every other monster
+// here, redrawn with real roundness (corner-trimmed silhouettes instead
+// of flat rectangles), 3-tone fur shading for actual volume, a visible
+// snout/nose, and a real muzzle + claws — a deliberate step up from the
+// original's flatter, blockier pass.
 import { PNG } from 'pngjs';
 import { writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -33,6 +29,19 @@ function createGrid() {
       for (let yy = y; yy < y + h; yy++) {
         for (let xx = x; xx < x + w; xx++) {
           if (yy >= 0 && yy < ROWS && xx >= 0 && xx < COLS) cells[yy][xx] = color;
+        }
+      }
+    },
+    // Fills a rectangle but trims the 4 single-cell corners — a cheap
+    // "rounded rect" that reads as noticeably softer/rounder than a hard
+    // rectangle at this resolution.
+    fillRounded(x, y, w, h, color) {
+      for (let yy = y; yy < y + h; yy++) {
+        for (let xx = x; xx < x + w; xx++) {
+          const cornerX = xx === x || xx === x + w - 1;
+          const cornerY = yy === y || yy === y + h - 1;
+          if (cornerX && cornerY) continue;
+          if (yy >= 0 && yy < ROWS && xx >= 0 && xx < COLS) this.cells[yy][xx] = color;
         }
       }
     },
@@ -79,14 +88,17 @@ function rasterizeCharacterSheet(frameGrids, outPath) {
   console.log(`Wrote ${outPath} (${frameWidth * 8}x${frameHeight * 4})`);
 }
 
-// ---------- Palette — bulky and warm-toned, unlike the dire wolf's ash
-// gray. ----------
-const FUR = 0x6b4a30;
-const FUR_DARK = 0x4a3220;
-const FUR_LIGHT = 0x8a6644;
-const SNOUT = 0x2e2018;
-const EYE = 0x1c140e;
-const CLAW = 0xe8e0d0;
+// ---------- Palette — a real 3-tone fur shading pass (dark/mid/light)
+// on top of the original's flatter 2-tone look, plus a warm snout patch
+// and a distinct nose. ----------
+const FUR_DARK = 0x3a2a1c;
+const FUR = 0x5c4230;
+const FUR_MID = 0x6f5138;
+const FUR_LIGHT = 0x8a6a4a;
+const SNOUT = 0xa8815a;
+const NOSE = 0x1c140e;
+const EYE = 0x140d08;
+const CLAW = 0xe8dcc0;
 
 const WALK_POSES = [
   { frontSwing: 1, backSwing: -1, bob: 0 },
@@ -94,21 +106,19 @@ const WALK_POSES = [
   { frontSwing: -1, backSwing: 1, bob: 0 },
   { frontSwing: 0, backSwing: 0, bob: -1 },
 ];
-// A swiping claw strike instead of a punch — same 4-beat shape every
-// other monster's own attack uses.
 const SWIPE_POSES = [{ lunge: -1 }, { lunge: 1 }, { lunge: 3 }, { lunge: 1 }];
 
-// 'down'/'up' — a front/back view: a big, bulky foreshortened body low in
-// the frame, round head+small ears above it, 4 thick legs splayed
-// beneath, a stubby tail only visible from the back ('up').
+// 'down'/'up' — a big, bulky, ROUNDED front/back view: 3-tone shaded
+// body, a round head with small rounded ears, a visible snout patch +
+// nose, thick legs, a stubby tail from the back.
 function drawFrontBack(grid, { facing, frontSwing, backSwing, bob, lunge }) {
   const bodyW = 16;
-  const bodyH = 10;
+  const bodyH = 11;
   const bodyX = Math.round((COLS - bodyW) / 2);
-  const bodyY = 13 + bob;
+  const bodyY = 12 + bob;
 
   if (facing === 'up') {
-    grid.fillRect(bodyX + bodyW - 3, bodyY + bodyH - 1, 3, 3, FUR_DARK);
+    grid.fillRounded(bodyX + bodyW - 4, bodyY + bodyH - 2, 4, 4, FUR_DARK);
   }
 
   const legY = bodyY + bodyH - 1;
@@ -119,54 +129,52 @@ function drawFrontBack(grid, { facing, frontSwing, backSwing, bob, lunge }) {
   drawLeg(bodyX + 3, backSwing);
   drawLeg(bodyX + bodyW - 7, backSwing * -1);
 
-  for (let row = 0; row < bodyH; row++) {
-    const shade = row < bodyH - 3 ? FUR : FUR_DARK;
-    grid.fillRect(bodyX, bodyY + row, bodyW, 1, shade);
-  }
-  grid.fillRect(bodyX + 3, bodyY + 1, bodyW - 6, 3, FUR_LIGHT);
+  // 3-tone body: dark base, mid torso, a lighter belly/chest patch.
+  grid.fillRounded(bodyX, bodyY, bodyW, bodyH, FUR_DARK);
+  grid.fillRounded(bodyX + 1, bodyY, bodyW - 2, bodyH - 3, FUR);
+  grid.fillRounded(bodyX + 3, bodyY + 1, bodyW - 6, 4, FUR_MID);
+  grid.fillRect(bodyX + 4, bodyY + 5, bodyW - 8, 2, FUR_LIGHT);
 
-  // Big round head, small round ears — a bear's own broad, rounded
-  // silhouette rather than the wolf's pointed one.
+  // Big round head, small rounded ears.
   const headW = 13;
-  const headH = 9;
+  const headH = 10;
   const headX = Math.round((COLS - headW) / 2);
-  const headY = bodyY - headH + 3;
-  grid.fillRect(headX - 1, headY - 2, 3, 3, FUR_DARK);
-  grid.fillRect(headX + headW - 2, headY - 2, 3, 3, FUR_DARK);
-  grid.fillRect(headX, headY, headW, headH, FUR);
+  const headY = bodyY - headH + 4;
+  grid.fillRounded(headX - 2, headY - 3, 4, 4, FUR_DARK);
+  grid.fillRounded(headX + headW - 2, headY - 3, 4, 4, FUR_DARK);
+  grid.fillRounded(headX, headY, headW, headH, FUR);
+  grid.fillRounded(headX + 2, headY + 1, headW - 4, headH - 5, FUR_MID);
 
   if (facing === 'down') {
-    grid.fillRect(headX + 4, headY + headH - 2, headW - 8, 3, SNOUT);
-    grid.set(headX + 4, headY + 3, EYE);
-    grid.set(headX + headW - 5, headY + 3, EYE);
+    grid.fillRounded(headX + 3, headY + headH - 4, headW - 6, 5, SNOUT);
+    grid.fillRect(headX + headW / 2 - 1, headY + headH - 2, 2, 2, NOSE);
+    grid.set(headX + 3, headY + 3, EYE);
+    grid.set(headX + headW - 4, headY + 3, EYE);
     if (lunge !== null) {
-      grid.fillRect(headX - 2 - lunge, headY + headH + 1, 3, 2, CLAW);
-      grid.fillRect(headX + headW - 1 + lunge, headY + headH + 1, 3, 2, CLAW);
+      grid.fillRect(headX - 2 - lunge, headY + headH + 2, 3, 2, CLAW);
+      grid.fillRect(headX + headW - 1 + lunge, headY + headH + 2, 3, 2, CLAW);
     }
   }
 }
 
-// 'left'/'right' — bulky side profile: a broad hump-backed body, round
-// head with short snout, 4 thick legs, a stubby tail.
+// 'left'/'right' — rounded bulky profile: humped back, round head, short
+// snout with a visible nose, 3-tone shading.
 function drawProfile(grid, { facing, frontSwing, backSwing, bob, lunge }) {
   const dir = facing === 'right' ? 1 : -1;
   const bodyW = 17;
-  const bodyH = 9;
+  const bodyH = 10;
   const bodyX = Math.round((COLS - bodyW) / 2);
   const bodyY = 11 + bob;
-  const headSide = dir === 1 ? bodyX + bodyW - 1 : bodyX;
   const tailSide = dir === 1 ? bodyX : bodyX + bodyW - 1;
 
-  grid.fillRect(tailSide - (dir === 1 ? 2 : 0), bodyY, 3, 3, FUR_DARK);
+  grid.fillRounded(tailSide - (dir === 1 ? 2 : 0), bodyY + 1, 3, 4, FUR_DARK);
 
-  // A humped back — one row taller in the middle, the bear's own
-  // silhouette cue.
+  // Humped back — a taller silhouette in the middle third.
   grid.fillRect(bodyX + 4, bodyY - 1, bodyW - 8, 1, FUR);
-  for (let row = 0; row < bodyH; row++) {
-    const shade = row < bodyH - 3 ? FUR : FUR_DARK;
-    grid.fillRect(bodyX, bodyY + row, bodyW, 1, shade);
-  }
-  grid.fillRect(bodyX + (dir === 1 ? 2 : bodyW - 9), bodyY + 2, 7, 3, FUR_LIGHT);
+  grid.fillRounded(bodyX, bodyY, bodyW, bodyH, FUR_DARK);
+  grid.fillRounded(bodyX + 1, bodyY, bodyW - 2, bodyH - 3, FUR);
+  grid.fillRounded(bodyX + (dir === 1 ? 2 : bodyW - 10), bodyY + 2, 8, 4, FUR_MID);
+  grid.fillRect(bodyX + (dir === 1 ? 3 : bodyW - 8), bodyY + 4, 5, 2, FUR_LIGHT);
 
   const legY = bodyY + bodyH - 1;
   const legH = ROWS - legY - 2;
@@ -180,19 +188,22 @@ function drawProfile(grid, { facing, frontSwing, backSwing, bob, lunge }) {
   drawLeg(backX1, backSwing);
   drawLeg(backX2, backSwing * -1);
 
-  // Round head with a short snout (much stubbier than the wolf's).
-  const headW = 10;
-  const headH = 9;
-  const headX = dir === 1 ? headSide - headW + 4 : headSide - 4;
+  // Round head with a short snout and a visible nose tip.
+  const headW = 11;
+  const headH = 10;
+  const headSide2 = dir === 1 ? bodyX + bodyW - 1 : bodyX;
+  const headX = dir === 1 ? headSide2 - headW + 4 : headSide2 - 4;
   const headY = bodyY - headH + 4;
-  grid.fillRect(headX, headY, headW, headH, FUR);
-  grid.fillRect(dir === 1 ? headX + headW - 3 : headX, headY - 2, 3, 3, FUR_DARK);
-  const snoutW = 3;
-  const snoutX = dir === 1 ? headX + headW : headX - snoutW;
-  grid.fillRect(snoutX, headY + 4, snoutW, 3, SNOUT);
+  grid.fillRounded(headX, headY, headW, headH, FUR_DARK);
+  grid.fillRounded(headX + 1, headY, headW - 2, headH - 2, FUR);
+  grid.fillRounded(dir === 1 ? headX + headW - 4 : headX, headY - 2, 4, 4, FUR_DARK);
+  const snoutW = 4;
+  const snoutX = dir === 1 ? headX + headW - 1 : headX - snoutW + 1;
+  grid.fillRounded(snoutX, headY + 4, snoutW, 4, SNOUT);
+  grid.fillRect(dir === 1 ? snoutX + snoutW - 2 : snoutX, headY + 5, 2, 2, NOSE);
   grid.set(headX + (dir === 1 ? 3 : headW - 4), headY + 3, EYE);
   if (lunge !== null) {
-    grid.fillRect(snoutX + dir * (lunge + 2), headY + bodyH - 3, 3, 2, CLAW);
+    grid.fillRect(snoutX + dir * (lunge + 2), headY + bodyH - 4, 3, 2, CLAW);
   }
 }
 

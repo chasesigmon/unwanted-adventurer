@@ -31,6 +31,9 @@ export interface PlayerState extends Location, Attributes {
   equipment: Record<string, string>;
   restState: RestState;
   gold: number;
+  // Item 17: a single shared balance across Kortho's and Floro's own Bank
+  // vendors — see game.gateway.ts's handleDepositGold/handleWithdrawGold.
+  bankedGold: number;
   mimicableRaces: (Race | MonsterKind)[];
   mimicForm: (Race | MonsterKind) | null;
   eatBrainsReadyAtTick: number;

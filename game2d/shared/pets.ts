@@ -13,22 +13,47 @@
 import type { MapName, MonsterKind, Race } from './constants.js';
 import { isWaterBlocked } from './maps.js';
 
-export const PET_KINDS = ['puppy', 'kitten', 'piglet'] as const;
+// Item 15: "add a 'young griffin', 'lesser elemental', and 'young
+// phoenix'" to Kortho's own pet shop specifically (see server/worlds/
+// vendors.ts's kortho-pet-salesman — NOT Floro's, per the user's own
+// explicit "don't add these pets to Floro").
+export const PET_KINDS = ['puppy', 'kitten', 'piglet', 'griffin', 'elemental', 'phoenix'] as const;
 export type PetKind = (typeof PET_KINDS)[number];
 
 export const PET_KIND_LABELS: Record<PetKind, string> = {
   puppy: 'Puppy',
   kitten: 'Kitten',
   piglet: 'Piglet',
+  griffin: 'Young Griffin',
+  elemental: 'Lesser Elemental',
+  phoenix: 'Young Phoenix',
 };
+
+// Item 15: "these pets should start at level 1 and have higher base
+// stats than the pets from Bramwick" — PET_STARTING_HP used to be one
+// flat number for every kind; now per-kind, with the original 3
+// unchanged and the new 3 noticeably higher.
+export const PET_STARTING_HP: Record<PetKind, number> = {
+  puppy: 50,
+  kitten: 50,
+  piglet: 50,
+  griffin: 90,
+  elemental: 90,
+  phoenix: 90,
+};
+
+// Which pet kinds actually have real "evolved form" art (PET_EVOLUTION_LEVEL,
+// PET_EVOLVED_NAME/PET_EVOLVED_TEXTURE_KEYS below) — griffin/elemental/
+// phoenix deliberately have NO evolved form yet (no new art was asked
+// for), so they're excluded here; PetManagerService.grantExp gates the
+// entire evolve-in-place mechanic on this list, same "arts-generation is
+// its own separate task" scope-down this project already made once.
+export const EVOLVABLE_PET_KINDS = ['puppy', 'kitten', 'piglet'] as const;
 
 // "Commandable like stay by side or attack or sleep" — 'follow' is the
 // default the moment a pet is purchased ("should follow the player").
 export const PET_COMMANDS = ['follow', 'stay', 'sleep', 'attack'] as const;
 export type PetCommand = (typeof PET_COMMANDS)[number];
-
-export const PET_STARTING_HP = 50;
-export const PET_PRICE = 15;
 
 // A follow-up ask's 'z' hotkey ("send the follower to auto attack the
 // target") gave the 'attack' command real teeth — flat, same for every
@@ -71,10 +96,16 @@ export const PET_EVOLUTION_LEVEL = 5;
 // (see PetManagerService.grantExp, which passes this into the shared
 // applyExpGain curve instead of the player's default).
 export const PET_MAX_LEVEL = 20;
+// Required for every PetKind (TypeScript needs a total record even though
+// EVOLVABLE_PET_KINDS above means grantExp never actually assigns these 3
+// placeholder names to a real griffin/elemental/phoenix pet).
 export const PET_EVOLVED_NAME: Record<PetKind, string> = {
   puppy: 'Dog',
   kitten: 'Cat',
   piglet: 'Boar',
+  griffin: 'Young Griffin',
+  elemental: 'Lesser Elemental',
+  phoenix: 'Young Phoenix',
 };
 export const PET_EVOLUTION_HP_BONUS = 25;
 export const PET_EVOLUTION_ATTACK_BONUS = 3;
@@ -216,6 +247,35 @@ export interface PetCorpseSnapshot {
   row: number;
   col: number;
   items: string[];
+}
+
+// The Druid's own "Tame Beast" spell (a later follow-up ask) — "similar
+// to a pet... does not disappear after logins and remains with the
+// player until it is killed or until the player removes it" (so
+// persisted the same way a pet is, see player.entity.ts's own
+// tamedBeast column), but "unlike pets, when the tamed beast is killed
+// then it disappears from the group forever" — the opposite of a pet's
+// own "stays in the group as fallen forever" behavior, closer to an
+// AnimatedMonsterSnapshot's own "lasts until it is killed" shape. Kept as
+// its own type/manager (TamedBeastManagerService) rather than reusing
+// either existing one — it needs pet-style PERSISTENCE with
+// animated-monster-style PERMANENT REMOVAL ON DEATH, a combination
+// neither existing manager has.
+export interface TamedBeastSnapshot {
+  id: string;
+  ownerUsername: string;
+  kind: MonsterKind;
+  name: string;
+  level: number;
+  hp: number;
+  maxHp: number;
+  attackDamage: number;
+  map: MapName;
+  row: number;
+  col: number;
+  command: PetCommand;
+  attackTargetKind?: 'monster' | 'player';
+  attackTargetId?: string;
 }
 
 // Same TTL every OTHER corpse in this game already uses (see

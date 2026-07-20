@@ -84,3 +84,11 @@ export const SALMON_HUNGER_RESTORE_PERCENT = 30;
 export const HP_POTION_ITEM = 'hp potion';
 export const MP_POTION_ITEM = 'mp potion';
 export const POTION_RESTORE_AMOUNT = 20;
+
+// Item 31: sold by all three General Stores (Bramwick, Kortho, Floro) —
+// same "single-use, gone the instant it's consumed" shape as jerky/salmon
+// above, restoring a flat amount of mv (movement points aren't a 0-100
+// scale like hunger/thirst either, but a flat restore matches the potions'
+// own convention rather than hunger/thirst's percent one).
+export const LINIMENT_ITEM = 'liniment';
+export const LINIMENT_MV_RESTORE_AMOUNT = 10;

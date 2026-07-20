@@ -92,9 +92,12 @@ export const CHOOSE_HOUSE_QUEST_ID = 'choose-house';
 // exact map to populate each classroom teacher's own teachesSkills list,
 // so the Learn Spells quest's objectives and what a teacher actually
 // offers can never drift apart.
+// A later follow-up ask ("remove the Summoning classroom and make the
+// 'stone wall' spell available to learn from the Defense teacher")
+// folded stone wall into Defense Classroom's own list instead of its
+// former dedicated entry.
 export const CLASSROOM_SPELLS: Record<string, string[]> = {
-  'Defense Classroom': [AEGIS_SKILL],
-  'Summoning Classroom': [STONE_WALL_SKILL],
+  'Defense Classroom': [AEGIS_SKILL, STONE_WALL_SKILL],
   'Utility Classroom': [WATERFILL_SKILL, LIGHT_SKILL, HASTE_SKILL, UNLOCK_SKILL],
   'Offense Classroom': [ARCANE_BOLT_SKILL, STUN_SKILL, DISARM_SKILL],
 };

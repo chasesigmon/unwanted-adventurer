@@ -343,12 +343,34 @@
           </div>
         </div>
 
+        <!-- Item 12's dropped-item treasure chest — same "grab-all/pick-
+             one" shape as the pet corpse modal above, but with no
+             sacrifice button and, unlike either corpse modal, the chest
+             disappears completely (and this modal closes) the instant its
+             last item is taken, since it isn't a persistent corpse. -->
+        <div id="dropped-chest-modal" class="modal" hidden>
+          <div class="modal-box">
+            <button type="button" class="modal-close">&times;</button>
+            <h2 id="dropped-chest-modal-title">Chest</h2>
+            <ul id="dropped-chest-item-list" class="inventory-list"></ul>
+            <button type="button" id="dropped-chest-grab-all">Grab all</button>
+          </div>
+        </div>
+
         <div id="target-info-modal" class="modal" hidden>
           <div class="modal-box">
             <button type="button" class="modal-close">&times;</button>
             <h2 id="target-info-title">Target</h2>
             <div id="target-info-body" class="modal-stats"></div>
             <div id="target-info-consideration"></div>
+          </div>
+        </div>
+
+        <div id="identify-modal" class="modal" hidden>
+          <div class="modal-box">
+            <button type="button" class="modal-close">&times;</button>
+            <h2 id="identify-title">Item</h2>
+            <div id="identify-body" class="modal-stats"></div>
           </div>
         </div>
 
@@ -391,6 +413,11 @@
         <div id="respawn-overlay" hidden>
           <div id="respawn-overlay-text"></div>
         </div>
+
+        <!-- Item 30's Inn "Stay and rest" service — a plain 2-second
+             black cutscreen, no text, distinct from respawn-overlay above
+             (fully opaque, not the death countdown's translucent dark). -->
+        <div id="rest-overlay" hidden></div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

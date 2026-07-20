@@ -18,6 +18,7 @@ import {
   ENHANCED_UNDEAD_DAMAGE_SKILL,
   LESSER_SELF_HEAL_SKILL,
   WISP_TRANSFORMATION_SKILL,
+  TAME_BEAST_SKILL,
   BATTLEMAGE_ENHANCED_ARMOR_SKILL,
   BATTLEMAGE_ENHANCED_DAMAGE_SKILL,
   KINETIC_STRIKE_SKILL,
@@ -28,6 +29,7 @@ import {
   INVISIBILITY_SKILL,
   CREATE_DUPLICATE_SKILL,
   FLIGHT_SKILL,
+  IDENTIFY_SKILL,
 } from '../../shared/skills.js';
 
 // Static, permanent classroom occupants (a follow-up ask: "Add teacher
@@ -152,15 +154,6 @@ export const TEACHERS: TeacherSnapshot[] = [
     robeColorKey: 'steel',
   },
   {
-    id: 'summoning-teacher',
-    name: 'Professor Nyx',
-    map: 'Summoning Classroom',
-    row: 2,
-    col: 9,
-    teachesSkills: CLASSROOM_SPELLS['Summoning Classroom'],
-    robeColorKey: 'plum',
-  },
-  {
     id: 'utilization-teacher',
     name: 'Professor Wren',
     map: 'Utility Classroom',
@@ -174,7 +167,7 @@ export const TEACHERS: TeacherSnapshot[] = [
     // level 25") sits here too for the same reason — it has no
     // specialization requirement of its own, so the Utility Classroom (no
     // specialization gate on the room itself either) is the natural home.
-    teachesSkills: [...(CLASSROOM_SPELLS['Utility Classroom'] ?? []), RECALL_SKILL, FLIGHT_SKILL],
+    teachesSkills: [...(CLASSROOM_SPELLS['Utility Classroom'] ?? []), RECALL_SKILL, FLIGHT_SKILL, IDENTIFY_SKILL],
     robeColorKey: 'olive',
   },
   { id: 'offense-teacher', name: 'Professor Kastellan', map: 'Offense Classroom', row: 2, col: 9, teachesSkills: CLASSROOM_SPELLS['Offense Classroom'], robeColorKey: 'maroon' },
@@ -248,14 +241,14 @@ export const TEACHERS: TeacherSnapshot[] = [
   },
   // A later follow-up ask gave the Druid specialist actual click
   // behavior too: lesser self heal + wisp transformation (both level 10,
-  // druid-only).
+  // druid-only). A still-later follow-up ask added Tame Beast, same tier.
   {
     id: 'druid-teacher',
     name: 'Professor Thornwood',
     map: 'Druid Chamber',
     row: 2,
     col: 9,
-    teachesSkills: [LESSER_SELF_HEAL_SKILL, WISP_TRANSFORMATION_SKILL],
+    teachesSkills: [LESSER_SELF_HEAL_SKILL, WISP_TRANSFORMATION_SKILL, TAME_BEAST_SKILL],
     robeColorKey: 'forest',
   },
   // A later follow-up ask gave the Diabolist specialist actual click

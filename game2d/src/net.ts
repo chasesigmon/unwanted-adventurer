@@ -9,8 +9,12 @@ import type {
   PunchPayload,
   CombatEventPayload,
   LootAck,
+  DropItemAck,
+  LootDroppedChestAck,
   BuyAck,
   SellAck,
+  BankAck,
+  RestAtInnAck,
   PetCommandAck,
   CommandFollowerAttackAck,
   FollowerItemAck,
@@ -416,6 +420,45 @@ export class NetworkManager extends EventTarget {
     });
   }
 
+  dropItem(itemIndex: number): Promise<DropItemAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('dropItem', itemIndex, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  lootDroppedChest(chestId: string): Promise<LootDroppedChestAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('lootDroppedChest', chestId, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  lootDroppedChestItem(chestId: string, itemIndex: number): Promise<LootDroppedChestAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('lootDroppedChestItem', { chestId, itemIndex }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
   buyItem(vendorId: string, itemLabel: string): Promise<BuyAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
@@ -437,6 +480,47 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('sellItem', { vendorId, itemIndex }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // Item 17's Bank vendor — amount omitted deposits/withdraws everything.
+  depositGold(amount?: number): Promise<BankAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('depositGold', { amount }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  withdrawGold(amount?: number): Promise<BankAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('withdrawGold', { amount }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // Item 30's Kortho/Floro Inn "Stay and rest" service.
+  restAtInn(): Promise<RestAtInnAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('restAtInn', (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });
@@ -764,6 +848,58 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('castKineticStrike', target, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castIdentify(itemIndex: number): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castIdentify', { itemIndex }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  castTameBeast(targetId: string): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castTameBeast', { targetId }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  tamedBeastCommand(command: string): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('tamedBeastCommand', command, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  removeTamedBeast(): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('removeTamedBeast', (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

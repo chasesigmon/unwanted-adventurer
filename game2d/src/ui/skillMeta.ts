@@ -54,6 +54,11 @@ import {
   LESSER_SELF_HEAL_AMOUNT,
   WISP_TRANSFORMATION_SKILL,
   WISP_TRANSFORMATION_MANA_COST,
+  TAME_BEAST_SKILL,
+  TAME_BEAST_MANA_COST,
+  TAME_BEAST_RANGE_TILES,
+  IDENTIFY_SKILL,
+  IDENTIFY_MANA_COST,
   BATTLEMAGE_ENHANCED_ARMOR_SKILL,
   BATTLEMAGE_ENHANCED_ARMOR_BONUS,
   BATTLEMAGE_ENHANCED_DAMAGE_SKILL,
@@ -162,6 +167,8 @@ export function isUsableSkill(skillName: string): boolean {
     skillName === LESSER_HEAL_SKILL ||
     skillName === LESSER_SELF_HEAL_SKILL ||
     skillName === WISP_TRANSFORMATION_SKILL ||
+    skillName === TAME_BEAST_SKILL ||
+    skillName === IDENTIFY_SKILL ||
     skillName === KINETIC_STRIKE_SKILL ||
     skillName === SAP_HEALTH_SKILL ||
     skillName === MONSTER_SUMMONS_SKILL ||
@@ -229,6 +236,8 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
   [ENHANCED_UNDEAD_DAMAGE_SKILL]: `Cleric-only: a flat +${ENHANCED_UNDEAD_DAMAGE_BONUS} bonus added to your ranged/physical attacks against anything classified undead (wild skeletons, and any skeleton-race player).`,
   [LESSER_SELF_HEAL_SKILL]: `Druid-only. No target needed — heals yourself for ${LESSER_SELF_HEAL_AMOUNT} hp. Costs ${LESSER_SELF_HEAL_MANA_COST} mana; a successful cast has its own 5-second cooldown. Success chance scales with skill percent, intelligence, and luck.`,
   [WISP_TRANSFORMATION_SKILL]: `Druid-only. No target needed — transforms you into a shimmering wisp of light for 2 minutes: you can't attack while transformed, but move 20% faster. Costs ${WISP_TRANSFORMATION_MANA_COST} mana; a successful cast has its own 3-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [TAME_BEAST_SKILL]: `Druid-only. Select a beast (wolf, bear, dire wolf, moose, falcon, ...) within ${TAME_BEAST_RANGE_TILES} tiles and no more than 3 levels above you — on a successful cast it joins your group permanently, until it's killed or you remove it. Costs ${TAME_BEAST_MANA_COST} mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [IDENTIFY_SKILL]: `Select an item in your inventory first, then click this to reveal its full name, stats, and description in a small window. Costs ${IDENTIFY_MANA_COST} mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
   [BATTLEMAGE_ENHANCED_ARMOR_SKILL]: `Battlemage-only: a chance (scaling with skill percent) to reduce a hit you take from a monster by ${BATTLEMAGE_ENHANCED_ARMOR_BONUS}. Grows every hit you take, landed or avoided.`,
   [BATTLEMAGE_ENHANCED_DAMAGE_SKILL]: `Battlemage-only: a chance (scaling with skill percent) to add +${BATTLEMAGE_ENHANCED_DAMAGE_BONUS} to a ranged/physical attack you make. Grows every attack you make, hit or miss.`,
   [KINETIC_STRIKE_SKILL]: `Battlemage-only. Strikes your selected target (a monster) from up to 7 tiles away for ${KINETIC_STRIKE_DAMAGE} base damage (compounding +10% per point of intelligence) and knocks it back ${KINETIC_STRIKE_KNOCKBACK_TILES} tiles. Costs ${KINETIC_STRIKE_MANA_COST} mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
@@ -264,6 +273,21 @@ export const ITEM_DESCRIPTIONS: Record<string, string> = {
   'mana crystal': 'A steadily glowing crystal. No use yet; hold onto it.',
   'greater mana crystal': 'A brightly glowing crystal, dense with power. No use yet; hold onto it.',
   'superior mana crystal': 'A brilliant, near-blinding crystal — the rarest tier. No use yet; hold onto it.',
+  // Item 32: shop items previously had no hover description at all.
+  'a cup of water': 'A simple cup of water. Consume it to ease your thirst a little.',
+  'some jerky': 'A strip of dried jerky. Consume it to ease your hunger a little.',
+  salmon: 'A fresh-caught salmon. Consume it to fill your belly nicely.',
+  'hp potion': 'A bottled potion. Consume it to recover some health.',
+  'mp potion': 'A bottled potion. Consume it to recover some mana.',
+  liniment: 'A soothing rub for tired legs. Consume it to recover some movement points.',
+  // Gobbler Village's own hut bosses (item 22).
+  'Grimrot Wand': "The Gobbler Necromancer's own wand, still faintly humming. Equip it as a weapon.",
+  'Muckfang Blade': "The Gobbler Warrior's own crude but wicked blade. Equip it as a weapon.",
+  'Skullcrush Cudgel': "The Gobbler Chieftain's own massive club. Equip it as a weapon.",
+  // Item 29's woodland fairy drop.
+  'a woodland ring': 'A delicate ring woven from living vine. Equip it as a ring.',
+  // Item 28's rune beast drop — a future mechanic, no use yet.
+  'a glowing rune': 'A softly glowing stone rune. No use yet; hold onto it.',
 };
 
 export function itemTooltip(item: string): string {
@@ -371,6 +395,8 @@ const SKILL_CATEGORY_MAP: Record<string, SkillCategory> = {
   [LESSER_HEAL_SKILL]: 'Utility',
   [LESSER_SELF_HEAL_SKILL]: 'Utility',
   [WISP_TRANSFORMATION_SKILL]: 'Utility',
+  [TAME_BEAST_SKILL]: 'Utility',
+  [IDENTIFY_SKILL]: 'Utility',
   [BATTLEMAGE_ENHANCED_ARMOR_SKILL]: 'Defense',
   [BATTLEMAGE_ENHANCED_DAMAGE_SKILL]: 'Offense',
   [KINETIC_STRIKE_SKILL]: 'Offense',

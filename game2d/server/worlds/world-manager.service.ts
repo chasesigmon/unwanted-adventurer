@@ -304,6 +304,7 @@ export class WorldManagerService {
         invisibleActive: state.invisibleActive,
         dancing: state.dancing,
         gold: state.gold,
+        bankedGold: state.bankedGold,
         mimicableRaces: state.mimicableRaces,
         mimicForm: state.mimicForm,
         eatBrainsReadyAtTick: state.eatBrainsReadyAtTick,
@@ -333,6 +334,6 @@ export class WorldManagerService {
     // follow-up asks) live entirely in GameGateway, not here — always
     // empty at this layer; GameGateway's mapStateFor wraps every call
     // site to fill in the real values afterward.
-    return { mapName, players, npcs, monsters, corpses, vendors, teachers, stoneBlocks: [], pets: [], animatedMonsters: [], petCorpses: [] };
+    return { mapName, players, npcs, monsters, corpses, vendors, teachers, stoneBlocks: [], pets: [], animatedMonsters: [], petCorpses: [], tamedBeasts: [], droppedChests: [] };
   }
 }

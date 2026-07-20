@@ -10,7 +10,7 @@ import {
   type SpecializationPath,
 } from '../../shared/constants.js';
 import type { QuestProgress } from '../../shared/quests.js';
-import type { PetSnapshot } from '../../shared/pets.js';
+import type { PetSnapshot, TamedBeastSnapshot } from '../../shared/pets.js';
 
 // Position fields place a character back where it left off; attribute/
 // vital/level/skill fields back the combat system (see
@@ -157,6 +157,13 @@ export class Player {
   @Column({ type: 'int', default: 20 })
   gold!: number;
 
+  // Item 17: banked gold — a single shared balance regardless of which
+  // town's Bank you deposited at (Kortho and Floro both read/write this
+  // same column), separate from carried `gold` above so a death corpse
+  // (item 16) never exposes it.
+  @Column({ name: 'banked_gold', type: 'int', default: 0 })
+  bankedGold!: number;
+
   // Leftover columns from the since-removed /mimic and /revert commands
   // (a later follow-up ask) — no longer populated with anything
   // meaningful, kept only to avoid a live DB column-drop migration.
@@ -267,6 +274,14 @@ export class Player {
   // the group" — reviving one is a still-future mechanic.
   @Column({ type: 'jsonb', nullable: true, default: null })
   pet!: PetSnapshot | null;
+
+  // The Druid's own "Tame Beast" spell (a later follow-up ask) — same
+  // persist-across-logins shape as `pet` above, but null once the tamed
+  // beast dies (see TamedBeastManagerService.applyDamage) rather than
+  // sticking around fallen — see shared/pets.ts's own TamedBeastSnapshot
+  // doc comment for the full reasoning.
+  @Column({ name: 'tamed_beast', type: 'jsonb', nullable: true, default: null })
+  tamedBeast!: TamedBeastSnapshot | null;
 
   @Column({ name: 'last_login', type: 'timestamptz', default: () => 'now()' })
   lastLogin!: Date;

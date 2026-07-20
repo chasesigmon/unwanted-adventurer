@@ -1,6 +1,14 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
-import { getMap, isCastleExteriorBlocked, isMoatBlocked, isWithinMoatFootprint, isGateTile, isStairsSideBlocked } from '../../shared/maps.js';
+import {
+  getMap,
+  isCastleExteriorBlocked,
+  isMoatBlocked,
+  isWithinMoatFootprint,
+  isGateTile,
+  isStairsSideBlocked,
+  isRunestoneWayOffRoadBlocked,
+} from '../../shared/maps.js';
 import { isTreeTile } from '../../shared/trees.js';
 import {
   isFireplaceBlocked,
@@ -20,7 +28,7 @@ import { monsterAttributeForLevel } from '../combat/formulas.js';
 import { vendorsForMap, vendorCounterFootprintFor } from '../worlds/vendors.js';
 import { teachersForMap, teacherDeskFootprintFor } from '../worlds/teachers.js';
 import { isChestBlocked } from '../../shared/spells.js';
-import type { MapName } from '../../shared/constants.js';
+import type { MapName, MonsterKind } from '../../shared/constants.js';
 import type { MonsterSnapshot } from '../../shared/types.js';
 
 export type OccupancyChecker = (mapName: MapName, row: number, col: number) => boolean;
@@ -46,10 +54,15 @@ export type StoneBlockDamager = (id: string, amount: number, attackerLabel: stri
 // callback-injection reasoning as StoneBlockLocator above.
 export type FollowerLocator = (
   ownerUsername: string
-) => { followerKind: 'pet' | 'animatedMonster'; followerId?: string; mapName: MapName; row: number; col: number } | undefined;
+) => { followerKind: 'pet' | 'animatedMonster' | 'tamedBeast'; followerId?: string; mapName: MapName; row: number; col: number } | undefined;
 // Returns the follower's REMAINING hp after the hit, or undefined if it
 // no longer exists (already killed/removed/unsummoned).
-export type FollowerDamager = (ownerUsername: string, followerKind: 'pet' | 'animatedMonster', followerId: string | undefined, amount: number) => number | undefined;
+export type FollowerDamager = (
+  ownerUsername: string,
+  followerKind: 'pet' | 'animatedMonster' | 'tamedBeast',
+  followerId: string | undefined,
+  amount: number
+) => number | undefined;
 
 // A much smaller version of the text game's own monster-manager.service.ts
 // — no engaged-in-combat tracking (a punch here is a single instant
@@ -199,7 +212,10 @@ export class MonsterManagerService {
   // both PetManagerService and AnimatedMonsterManagerService. Keyed by
   // monsterId (which monster is aggro'd onto which owner's follower),
   // mirroring stoneBlockAggro's own shape.
-  private followerAggro = new Map<string, { ownerUsername: string; followerKind: 'pet' | 'animatedMonster'; followerId?: string; lastContactTick: number }>();
+  private followerAggro = new Map<
+    string,
+    { ownerUsername: string; followerKind: 'pet' | 'animatedMonster' | 'tamedBeast'; followerId?: string; lastContactTick: number }
+  >();
   private locateFollower: FollowerLocator = () => undefined;
   private damageFollower: FollowerDamager = () => undefined;
   private static readonly MONSTER_VS_FOLLOWER_DAMAGE = 5;
@@ -301,7 +317,7 @@ export class MonsterManagerService {
     for (let i = 0; i < tiles; i++) {
       const nextRow = monster.row + stepRow;
       const nextCol = monster.col + stepCol;
-      if (!this.isFree(monster.mapName, nextRow, nextCol)) break;
+      if (!this.isFree(monster.mapName, nextRow, nextCol, monster.kind)) break;
       monster.row = nextRow;
       monster.col = nextCol;
     }
@@ -323,10 +339,17 @@ export class MonsterManagerService {
     return n;
   }
 
-  private isFree(mapName: MapName, row: number, col: number): boolean {
+  private isFree(mapName: MapName, row: number, col: number, kind?: MonsterKind): boolean {
     const map = getMap(mapName);
     if (row < 0 || row >= map.rows || col < 0 || col >= map.cols) return false;
     if (map.exits.some((e) => e.row === row && e.col === col)) return false;
+    // Item 28: "along the rocky part of Runestone Way" — inverted from
+    // every other species' own collision rule (isRunestoneWayOffRoadBlocked
+    // normally BLOCKS the rocky off-road band); a rune beast instead lives
+    // there and can never step onto the walkable road band itself.
+    if (kind === 'rune beast') {
+      if (mapName !== 'Runestone Way' || !isRunestoneWayOffRoadBlocked(mapName, row, col)) return false;
+    }
     if (isTreeTile(mapName, row, col)) return false;
     if (isCastleExteriorBlocked(mapName, row, col)) return false;
     if (isMoatBlocked(mapName, row, col)) return false;
@@ -408,7 +431,7 @@ export class MonsterManagerService {
     return true;
   }
 
-  private randomFreeTile(mapName: MapName, minCol = 0): { row: number; col: number } | null {
+  private randomFreeTile(mapName: MapName, minCol = 0, kind?: MonsterKind): { row: number; col: number } | null {
     const map = getMap(mapName);
     for (let attempt = 0; attempt < 60; attempt++) {
       const row = Math.floor(Math.random() * map.rows);
@@ -420,7 +443,7 @@ export class MonsterManagerService {
       // for a PLAYER crossing to the castle door, so this only applies
       // to spawn placement, not isFree's own movement-collision check.
       if (isWithinMoatFootprint(mapName, row, col)) continue;
-      if (this.isFree(mapName, row, col) && this.isFarEnoughFromOthers(mapName, row, col) && this.isFarEnoughFromExits(mapName, row, col)) {
+      if (this.isFree(mapName, row, col, kind) && this.isFarEnoughFromOthers(mapName, row, col) && this.isFarEnoughFromExits(mapName, row, col)) {
         return { row, col };
       }
     }
@@ -432,7 +455,7 @@ export class MonsterManagerService {
       const row = Math.floor(Math.random() * map.rows);
       const col = minCol + Math.floor(Math.random() * (map.cols - minCol));
       if (isWithinMoatFootprint(mapName, row, col)) continue;
-      if (this.isFree(mapName, row, col) && this.isFarEnoughFromExits(mapName, row, col)) return { row, col };
+      if (this.isFree(mapName, row, col, kind) && this.isFarEnoughFromExits(mapName, row, col)) return { row, col };
     }
     // The map's too crowded/small to satisfy even the exit buffer within
     // budget — fall back to just finding anywhere free at all.
@@ -440,13 +463,13 @@ export class MonsterManagerService {
       const row = Math.floor(Math.random() * map.rows);
       const col = minCol + Math.floor(Math.random() * (map.cols - minCol));
       if (isWithinMoatFootprint(mapName, row, col)) continue;
-      if (this.isFree(mapName, row, col)) return { row, col };
+      if (this.isFree(mapName, row, col, kind)) return { row, col };
     }
     return null;
   }
 
   private spawnOne(species: MonsterSpecies): void {
-    const tile = this.randomFreeTile(species.homeMap, species.minSpawnCol ?? 0);
+    const tile = this.randomFreeTile(species.homeMap, species.minSpawnCol ?? 0, species.kind);
     if (!tile) return;
 
     const carriedItems = (species.carriedItemRolls ?? [])
@@ -472,7 +495,9 @@ export class MonsterManagerService {
       hp: species.startingHp,
       maxHp: species.startingHp,
       expReward: species.expReward,
-      goldReward: species.goldReward ?? 0,
+      goldReward: species.goldRewardRange
+        ? species.goldRewardRange[0] + Math.floor(Math.random() * (species.goldRewardRange[1] - species.goldRewardRange[0] + 1))
+        : species.goldReward ?? 0,
       isRare: species.isRare,
       respawnDelayMs: species.respawnDelayMs,
       level,
@@ -494,7 +519,9 @@ export class MonsterManagerService {
           }
         : {}),
       ...(species.attackDamage !== undefined ? { attackDamage: species.attackDamage } : {}),
+      ...(species.attackRangeTiles !== undefined ? { attackRangeTiles: species.attackRangeTiles } : {}),
       ...(species.aggroRadiusTiles !== undefined ? { aggroRadiusTiles: species.aggroRadiusTiles } : {}),
+      ...(species.flies ? { flies: true as const } : {}),
     };
     this.monsters.set(monster.id, monster);
   }
@@ -544,7 +571,7 @@ export class MonsterManagerService {
       const delta = deltas[Math.floor(Math.random() * deltas.length)]!;
       const nextRow = monster.row + delta.dr;
       const nextCol = monster.col + delta.dc;
-      if (this.isFree(monster.mapName, nextRow, nextCol)) {
+      if (this.isFree(monster.mapName, nextRow, nextCol, monster.kind)) {
         monster.row = nextRow;
         monster.col = nextCol;
         changedMaps.add(monster.mapName);
@@ -612,7 +639,7 @@ export class MonsterManagerService {
       if (Math.abs(nextAlong - spawnAlong) > monster.patrolRangeTiles!) return false;
       const nextRow = axis === 'row' ? nextAlong : monster.row;
       const nextCol = axis === 'col' ? nextAlong : monster.col;
-      if (!this.isFree(monster.mapName, nextRow, nextCol)) return false;
+      if (!this.isFree(monster.mapName, nextRow, nextCol, monster.kind)) return false;
       monster.row = nextRow;
       monster.col = nextCol;
       changedMaps.add(monster.mapName);
@@ -789,20 +816,20 @@ export class MonsterManagerService {
     const stepCol = stepRow === 0 ? Math.sign(dCol) : 0;
     let nextRow = monster.row + stepRow;
     let nextCol = monster.col + stepCol;
-    if (!this.isFree(monster.mapName, nextRow, nextCol)) {
+    if (!this.isFree(monster.mapName, nextRow, nextCol, monster.kind)) {
       const altRow = stepRow === 0 && dRow !== 0 ? monster.row + Math.sign(dRow) : monster.row;
       const altCol = stepCol === 0 && dCol !== 0 ? monster.col + Math.sign(dCol) : monster.col;
-      if ((altRow !== monster.row || altCol !== monster.col) && this.isFree(monster.mapName, altRow, altCol)) {
+      if ((altRow !== monster.row || altCol !== monster.col) && this.isFree(monster.mapName, altRow, altCol, monster.kind)) {
         nextRow = altRow;
         nextCol = altCol;
       } else {
-        const step = this.findNextStepToward(monster.mapName, monster.row, monster.col, targetRow, targetCol);
+        const step = this.findNextStepToward(monster.mapName, monster.row, monster.col, targetRow, targetCol, monster.kind);
         if (!step) return false; // no route found within budget — stand still this tick
         nextRow = step.row;
         nextCol = step.col;
       }
     }
-    if (this.isFree(monster.mapName, nextRow, nextCol)) {
+    if (this.isFree(monster.mapName, nextRow, nextCol, monster.kind)) {
       monster.row = nextRow;
       monster.col = nextCol;
       changedMaps.add(monster.mapName);
@@ -823,7 +850,8 @@ export class MonsterManagerService {
     fromRow: number,
     fromCol: number,
     targetRow: number,
-    targetCol: number
+    targetCol: number,
+    kind?: MonsterKind
   ): { row: number; col: number } | null {
     const deltas = Object.values(DIRECTION_DELTAS);
     const visited = new Set<string>([`${fromRow},${fromCol}`]);
@@ -831,7 +859,7 @@ export class MonsterManagerService {
     for (const d of deltas) {
       const row = fromRow + d.dr;
       const col = fromCol + d.dc;
-      if (!this.isFree(mapName, row, col)) continue;
+      if (!this.isFree(mapName, row, col, kind)) continue;
       const key = `${row},${col}`;
       if (visited.has(key)) continue;
       visited.add(key);
@@ -851,7 +879,7 @@ export class MonsterManagerService {
         const col = current.col + d.dc;
         const key = `${row},${col}`;
         if (visited.has(key)) continue;
-        if (!this.isFree(mapName, row, col)) continue;
+        if (!this.isFree(mapName, row, col, kind)) continue;
         visited.add(key);
         queue.push({ row, col, firstStep: current.firstStep });
       }
@@ -885,6 +913,20 @@ export class MonsterManagerService {
   // Returns the monster's post-hit state and whether it died. Dead
   // monsters are removed immediately; respawnBelowMax tops the species
   // back up on its own schedule.
+  // The Druid's own "Tame Beast" spell (a later follow-up ask) — a tamed
+  // monster leaves the wild population entirely (it's part of the
+  // player's own group now, tracked by TamedBeastManagerService instead),
+  // but this is NOT a death: no corpse, no respawnDelayMs cooldown — its
+  // own species just respawns a fresh one on the ordinary schedule, same
+  // as if this one had simply wandered off.
+  removeMonster(id: string): Monster | undefined {
+    const monster = this.monsters.get(id);
+    if (!monster) return undefined;
+    this.monsters.delete(id);
+    this.aggro.delete(id);
+    return monster;
+  }
+
   applyDamage(id: string, amount: number): { monster: Monster; died: boolean } | undefined {
     const monster = this.monsters.get(id);
     if (!monster) return undefined;
@@ -920,6 +962,7 @@ export class MonsterManagerService {
         maxHp: m.maxHp,
         carriedItems: m.carriedItems,
         isRare: m.isRare,
+        flies: m.flies,
       });
     }
     return snapshots;

@@ -19,6 +19,8 @@ import { CorpseManagerService, bodyPartLabelFor } from '../worlds/corpse-manager
 import { PetManagerService } from '../pets/pet-manager.service.js';
 import { AnimatedMonsterManagerService } from '../pets/animated-monster-manager.service.js';
 import { PetCorpseManagerService } from '../pets/pet-corpse-manager.service.js';
+import { TamedBeastManagerService } from '../pets/tamed-beast-manager.service.js';
+import { DroppedItemManagerService } from '../worlds/dropped-item-manager.service.js';
 import {
   PET_KINDS,
   PET_COMMANDS,
@@ -96,6 +98,8 @@ import {
   magicalArmorEquipmentBonus,
   dexterityEquipmentBonus,
   intelligenceEquipmentBonus,
+  constitutionEquipmentBonus,
+  MANA_ITEM_BONUS,
   scaledSpellDamage,
   applyArmorMitigation,
   isRingItem,
@@ -135,6 +139,8 @@ import type {
   RestState,
   BuyAck,
   SellAck,
+  BankAck,
+  RestAtInnAck,
   PetCommandAck,
   CommandFollowerAttackAck,
   FollowerItemAck,
@@ -221,6 +227,12 @@ import {
   WISP_TRANSFORMATION_SKILL,
   WISP_TRANSFORMATION_MANA_COST,
   WISP_TRANSFORMATION_DURATION_MS,
+  TAME_BEAST_SKILL,
+  TAME_BEAST_MANA_COST,
+  TAME_BEAST_RANGE_TILES,
+  TAME_BEAST_MAX_LEVEL_ABOVE_PLAYER,
+  IDENTIFY_SKILL,
+  IDENTIFY_MANA_COST,
   BATTLEMAGE_ENHANCED_ARMOR_SKILL,
   BATTLEMAGE_ENHANCED_ARMOR_BONUS,
   BATTLEMAGE_ENHANCED_DAMAGE_SKILL,
@@ -274,6 +286,8 @@ import {
   HP_POTION_ITEM,
   MP_POTION_ITEM,
   POTION_RESTORE_AMOUNT,
+  LINIMENT_ITEM,
+  LINIMENT_MV_RESTORE_AMOUNT,
 } from '../../shared/items.js';
 import { questDefinition, QUESTS, LEARN_SPELLS_QUEST_ID, allObjectivesDone } from '../../shared/quests.js';
 import { RECALL_POINTS, recallPointForMap, recallPointById } from '../../shared/recall.js';
@@ -559,6 +573,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     private readonly petManager: PetManagerService,
     private readonly animatedMonsterManager: AnimatedMonsterManagerService,
     private readonly petCorpseManager: PetCorpseManagerService,
+    private readonly tamedBeastManager: TamedBeastManagerService,
+    private readonly droppedItemManager: DroppedItemManagerService,
     private readonly worldClock: WorldClockService,
     private readonly authService: AuthService,
     private readonly sessionStore: SessionStoreService,
@@ -642,11 +658,30 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       (ownerUsername) => {
         const animated = this.animatedMonsterManager.getSnapshotsForOwner(ownerUsername).find((m) => m.alive);
         if (animated) return { followerKind: 'animatedMonster', followerId: animated.id, mapName: animated.map, row: animated.row, col: animated.col };
+        // The Druid's own Tame Beast (a later follow-up ask) — "until it
+        // is killed" needs a real way to actually take damage; reuses
+        // this exact same aggro-redirect mechanism pets/animated monsters
+        // already have, rather than building a parallel one.
+        const tamedBeast = this.tamedBeastManager.getSnapshotForOwner(ownerUsername);
+        if (tamedBeast) return { followerKind: 'tamedBeast', followerId: undefined, mapName: tamedBeast.map, row: tamedBeast.row, col: tamedBeast.col };
         const pet = this.petManager.getSnapshotForOwner(ownerUsername);
         if (pet?.alive) return { followerKind: 'pet', followerId: undefined, mapName: pet.map, row: pet.row, col: pet.col };
         return undefined;
       },
       (ownerUsername, followerKind, followerId, amount) => {
+        if (followerKind === 'tamedBeast') {
+          const result = this.tamedBeastManager.applyDamage(ownerUsername, amount);
+          if (result?.died) {
+            const ownerSocketId = this.activeConnections.getActiveSocketId(ownerUsername);
+            const ownerSocket = ownerSocketId ? (this.server.sockets.sockets.get(ownerSocketId) as GameSocket | undefined) : undefined;
+            if (ownerSocket) {
+              this.systemMessage(ownerSocket, 'Your tamed beast has been slain and is gone forever.');
+              void this.persistStats(ownerSocket);
+            }
+            return undefined;
+          }
+          return this.tamedBeastManager.getSnapshotForOwner(ownerUsername)?.hp;
+        }
         if (followerKind === 'animatedMonster') {
           // "Summons/animate dead should not get corpses and should
           // disappear on death" — already true (applyDamage splices a
@@ -716,6 +751,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const followerTargetLocator = (kind: 'monster' | 'player', id: string) => this.locateCombatTarget(kind, id);
     this.petManager.setTargetLocator(followerTargetLocator);
     this.animatedMonsterManager.setTargetLocator(followerTargetLocator);
+    this.tamedBeastManager.setTargetLocator(followerTargetLocator);
 
     // Phase C's own "speed-matching" ask — a pet/animated monster used to
     // only step once per MONSTER_TICK_INTERVAL_MS (3s, the same tick
@@ -739,8 +775,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     setInterval(() => {
       const petMaps = this.petManager.tickAll();
       const animatedMonsterMaps = this.animatedMonsterManager.tickAll();
+      const tamedBeastMaps = this.tamedBeastManager.tickAll();
       const monsterChaseMaps = this.monsterManager.chaseAggroTargets(this.combatTickCount);
-      for (const mapName of new Set<MapName>([...petMaps, ...animatedMonsterMaps, ...monsterChaseMaps])) {
+      for (const mapName of new Set<MapName>([...petMaps, ...animatedMonsterMaps, ...tamedBeastMaps, ...monsterChaseMaps])) {
         this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
       }
 
@@ -758,6 +795,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
       for (const contact of this.animatedMonsterManager.checkContacts()) {
         this.resolveFollowerContact(contact.ownerUsername, contact.targetKind, contact.targetId, 'animatedMonster', contact.id);
+      }
+      for (const contact of this.tamedBeastManager.checkContacts()) {
+        this.resolveFollowerContact(contact.ownerUsername, contact.targetKind, contact.targetId, 'tamedBeast');
       }
     }, FOLLOWER_STEP_MS);
 
@@ -861,6 +901,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     // Phase C's "sleep/wake" ask — same cadence players regen on.
     for (const mapName of this.petManager.regenAll()) {
+      this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
+    }
+    for (const mapName of this.tamedBeastManager.regenAll()) {
       this.server.to(mapName).emit('map:state', this.mapStateFor(mapName));
     }
     this.scheduleStatTick();
@@ -1028,6 +1071,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       wispActiveUntil: client.data.wispActiveUntil,
       invisibleActiveUntil: client.data.invisibleActiveUntil,
       gold: client.data.gold,
+      bankedGold: client.data.bankedGold,
       mimicableRaces: client.data.mimicableRaces,
       mimicForm: client.data.mimicForm,
       eatBrainsReadyAtTick: client.data.eatBrainsReadyAtTick,
@@ -1412,6 +1456,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     col: number = targetClient.data.col
   ): void {
     const items = [...targetClient.data.inventory, ...Object.values(targetClient.data.equipment)];
+    // Item 16: a player's own gold drops into their corpse too, same as
+    // the gear above — lootable by whoever's allowed to loot this corpse
+    // at all (see canLootCorpse), not just handed straight to the killer.
     this.corpseManager.spawn(
       targetClient.data.race,
       targetClient.data.level,
@@ -1420,7 +1467,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       row,
       col,
       killedByUsername,
-      undefined,
+      targetClient.data.gold || undefined,
       undefined,
       undefined,
       undefined,
@@ -1428,7 +1475,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     );
     targetClient.data.inventory = [];
     targetClient.data.equipment = {};
-    this.worldManager.updateState(targetClient.data.username, { inventory: [], equipment: {} });
+    targetClient.data.gold = 0;
+    this.worldManager.updateState(targetClient.data.username, { inventory: [], equipment: {}, gold: 0 });
   }
 
   // A later follow-up ask: "if a player lands on water from flight
@@ -1454,6 +1502,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     state.pets = this.petManager.getSnapshotsForMap(mapName);
     state.animatedMonsters = this.animatedMonsterManager.getSnapshotsForMap(mapName);
     state.petCorpses = this.petCorpseManager.getSnapshotsForMap(mapName);
+    state.tamedBeasts = this.tamedBeastManager.getSnapshotsForMap(mapName);
+    state.droppedChests = this.droppedItemManager.getSnapshotsForMap(mapName);
     return state;
   }
 
@@ -1529,6 +1579,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         inventory: client.data.inventory,
         equipment: client.data.equipment,
         gold: client.data.gold,
+        bankedGold: client.data.bankedGold,
         mimicableRaces: client.data.mimicableRaces,
         mimicForm: client.data.mimicForm,
         deathCount: client.data.deathCount,
@@ -1556,6 +1607,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         // NOT null just because it died (see PetManagerService's own
         // getSnapshotForOwner, deliberately unfiltered by `alive`).
         pet: this.petManager.getSnapshotForOwner(client.data.username) ?? null,
+        // Tame Beast (a later follow-up ask) — same piggyback-on-persistStats
+        // shape as `pet` above; null once it's gone (killed or released).
+        tamedBeast: this.tamedBeastManager.getSnapshotForOwner(client.data.username) ?? null,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2020,7 +2074,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { avoided: true, verb: dodged ? 'dodge' : 'parry', skill: dodged ? DODGE_SKILL : PARRY_SKILL };
     }
 
-    const blockChance = computeShieldBlockChance(defenderSkills, defenderEquipment, defenderStats.constitution);
+    const blockChance = computeShieldBlockChance(
+      defenderSkills,
+      defenderEquipment,
+      defenderStats.constitution + constitutionEquipmentBonus(defenderEquipment)
+    );
     const attemptingBlock = blockChance > 0;
     const blocked = attemptingBlock && Math.random() < blockChance;
     return { avoided: blocked, verb: blocked ? 'block' : undefined, skill: attemptingBlock ? SHIELD_BLOCK_SKILL : undefined };
@@ -2477,8 +2535,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!client || client.data.map !== monster.mapName) continue;
       // Strict cardinal adjacency, same shape melee's own inRange check
       // uses — a monster mid-chase (still closing distance) shouldn't
-      // throw a punch from range.
-      if (Math.abs(client.data.row - monster.row) + Math.abs(client.data.col - monster.col) !== 1) continue;
+      // throw a punch from range. Items 22/24/29: a species with its own
+      // attackRangeTiles (a ranged/magical attacker) instead just needs to
+      // be within that many tiles, same Chebyshev-distance shape every
+      // other ranged check in this file (isWithinRadius) already uses.
+      const inAttackRange =
+        monster.attackRangeTiles !== undefined
+          ? isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, monster.attackRangeTiles)
+          : Math.abs(client.data.row - monster.row) + Math.abs(client.data.col - monster.col) === 1;
+      if (!inAttackRange) continue;
 
       monster.lastCounterAttackTick = now;
       const growthMessages: string[] = [];
@@ -2677,6 +2742,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     client.data.equipment = doc?.equipment ?? {};
     client.data.gold = doc?.gold ?? STARTING_GOLD;
+    client.data.bankedGold = doc?.bankedGold ?? 0;
     client.data.mimicableRaces = (doc?.mimicableRaces ?? []) as (Race | MonsterKind)[];
     client.data.mimicForm = (doc?.mimicForm ?? null) as (Race | MonsterKind) | null;
     client.data.deathCount = doc?.deathCount ?? 0;
@@ -2786,6 +2852,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (doc?.pet) {
       this.petManager.restore(username, doc.pet, client.data.map, client.data.row, client.data.col);
     }
+    // Same "don't disappear after logins" restore for the Druid's own
+    // Tame Beast (a later follow-up ask) — see TamedBeastManagerService's
+    // own doc comment.
+    if (doc?.tamedBeast) {
+      this.tamedBeastManager.restore(doc.tamedBeast, client.data.map, client.data.row, client.data.col);
+    }
 
     this.worldManager.addPlayer(username, {
       race: client.data.race,
@@ -2816,6 +2888,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       equipment: client.data.equipment,
       restState: client.data.restState,
       gold: client.data.gold,
+      bankedGold: client.data.bankedGold,
       mimicableRaces: client.data.mimicableRaces,
       mimicForm: client.data.mimicForm,
       eatBrainsReadyAtTick: client.data.eatBrainsReadyAtTick,
@@ -3303,6 +3376,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (targetKind === 'npc') return;
     this.petManager.syncAttackTarget(ownerUsername, targetKind, targetId);
     this.animatedMonsterManager.syncAttackTarget(ownerUsername, targetKind, targetId);
+    this.tamedBeastManager.syncAttackTarget(ownerUsername, targetKind, targetId);
   }
 
   // The other half of the fix above — every playerCombat.delete(...) call
@@ -3316,6 +3390,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.playerCombat.delete(username);
     this.petManager.clearAttackTarget(username);
     this.animatedMonsterManager.clearAttackTargetForOwner(username);
+    this.tamedBeastManager.clearAttackTarget(username);
   }
 
   // Where a live target actually is right now, for the adjacency check
@@ -3525,7 +3600,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     ownerUsername: string,
     targetKind: 'monster' | 'player',
     targetId: string,
-    followerType: 'pet' | 'animatedMonster',
+    followerType: 'pet' | 'animatedMonster' | 'tamedBeast',
     animatedMonsterId?: string
   ): void {
     const socketId = this.activeConnections.getActiveSocketId(ownerUsername);
@@ -3553,25 +3628,29 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const pet = followerType === 'pet' ? this.petManager.getSnapshotForOwner(ownerUsername) : undefined;
     const animatedMonster =
       followerType === 'animatedMonster' ? this.animatedMonsterManager.getSnapshotsForOwner(ownerUsername).find((m) => m.id === animatedMonsterId) : undefined;
+    const tamedBeast = followerType === 'tamedBeast' ? this.tamedBeastManager.getSnapshotForOwner(ownerUsername) : undefined;
     // Phase C's "give/equip" ask — a weapon equipped on a follower (see
     // shared/pets.ts's FOLLOWER_EQUIPMENT_SLOTS) adds a flat damage bonus
-    // on top of its own base attack. The follower's OWN armor (equipment
-    // slot) has no effect here — no monster in this game currently
-    // damages a follower back at all (applyDamage on either manager is
-    // never called from any monster-attack path), so there's nothing for
-    // a follower's armor to reduce yet; wiring monster-vs-follower
-    // retaliation is a separate, materially bigger combat-AI feature this
-    // ask didn't cover. The MONSTER's own armor, on the other hand, now
-    // does apply here (a later follow-up ask: "monsters also have armor
-    // vs physical & armor vs magical depending on equipment and stats" —
-    // that should mitigate every attacker, not just a player's own punch).
+    // on top of its own base attack (tamed beasts don't support give/
+    // equip, so no bonus for them). The MONSTER's own armor applies here
+    // (a later follow-up ask: "monsters also have armor vs physical &
+    // armor vs magical depending on equipment and stats" — mitigates
+    // every attacker, not just a player's own punch); a follower's own
+    // incoming damage is resolved separately (see monster-manager.
+    // service.ts's own followerAggro/damageFollower — MONSTER_VS_FOLLOWER_DAMAGE).
     const weaponBonus = (pet?.equipment.weapon ?? animatedMonster?.equipment.weapon) ? FOLLOWER_WEAPON_DAMAGE_BONUS : 0;
-    const rawDamage = (followerType === 'pet' ? PET_ATTACK_DAMAGE + (pet?.attackDamageBonus ?? 0) : (animatedMonster?.attackDamage ?? 0)) + weaponBonus;
+    const rawDamage =
+      (followerType === 'pet'
+        ? PET_ATTACK_DAMAGE + (pet?.attackDamageBonus ?? 0)
+        : followerType === 'tamedBeast'
+          ? (tamedBeast?.attackDamage ?? 0)
+          : (animatedMonster?.attackDamage ?? 0)) + weaponBonus;
     if (rawDamage <= 0) return;
     const monsterArmorVsPhysical = armorVsPhysicalFor(monster.dexterity, monster.strength, 0);
     const damage = Math.round(applyArmorMitigation(rawDamage, monsterArmorVsPhysical));
     if (damage <= 0) return;
-    const followerLabel = followerType === 'pet' ? (pet?.name ?? 'Your pet') : (animatedMonster?.name ?? 'Your ally');
+    const followerLabel =
+      followerType === 'pet' ? (pet?.name ?? 'Your pet') : followerType === 'tamedBeast' ? (tamedBeast?.name ?? 'Your tamed beast') : (animatedMonster?.name ?? 'Your ally');
 
     const result = this.monsterManager.applyDamage(monster.id, damage);
     if (!result) return;
@@ -4281,7 +4360,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleLoot(
     @ConnectedSocket() client: GameSocket,
     @MessageBody() corpseId: unknown
-  ): { ok: boolean; inventory?: string[]; message?: string } {
+  ): { ok: boolean; inventory?: string[]; gold?: number; message?: string } {
     if (typeof corpseId !== 'string') {
       return { ok: false, message: 'Invalid corpse.' };
     }
@@ -4309,13 +4388,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.inventory = [...client.data.inventory, ...items];
     // A flat coin drop (a later follow-up ask) — added straight to gold,
     // not another inventory item string.
-    if (corpse.gold) client.data.gold += corpse.gold;
+    const goldLooted = corpse.gold;
+    if (goldLooted) client.data.gold += goldLooted;
     this.worldManager.updateState(client.data.username, { inventory: client.data.inventory, gold: client.data.gold });
     void this.persistStats(client);
 
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
 
-    return { ok: true, inventory: client.data.inventory };
+    return { ok: true, inventory: client.data.inventory, gold: goldLooted ? client.data.gold : undefined };
   }
 
   // Monster-corpse-only "sacrifice it to the gods" — same reward formula
@@ -4414,6 +4494,101 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
 
     return { ok: true, inventory: client.data.inventory };
+  }
+
+  // Item 11's "Drop" action — removes one item from the player's own
+  // inventory and drops it on the ground beneath them, creating (or
+  // merging into) a dropped-item chest. See dropped-item-manager.service.ts
+  // for the merge-within-10-tiles rule.
+  @SubscribeMessage('dropItem')
+  handleDropItem(
+    @ConnectedSocket() client: GameSocket,
+    @MessageBody() itemIndex: unknown
+  ): { ok: boolean; inventory?: string[]; message?: string } {
+    if (typeof itemIndex !== 'number') {
+      return { ok: false, message: 'Invalid item.' };
+    }
+    const item = client.data.inventory[itemIndex];
+    if (item === undefined) {
+      return { ok: false, message: "You don't have that." };
+    }
+
+    client.data.inventory = client.data.inventory.filter((_, i) => i !== itemIndex);
+    this.droppedItemManager.dropItem(client.data.map, client.data.row, client.data.col, item);
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    void this.persistStats(client);
+
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+
+    return { ok: true, inventory: client.data.inventory };
+  }
+
+  // Item 12's chest loot modal — "grab all" path.
+  @SubscribeMessage('lootDroppedChest')
+  handleLootDroppedChest(
+    @ConnectedSocket() client: GameSocket,
+    @MessageBody() chestId: unknown
+  ): { ok: boolean; inventory?: string[]; chestGone?: boolean; message?: string } {
+    if (typeof chestId !== 'string') {
+      return { ok: false, message: 'Invalid chest.' };
+    }
+    const chest = this.droppedItemManager.getChest(chestId);
+    if (!chest || chest.map !== client.data.map) {
+      return { ok: false, message: "That's already gone." };
+    }
+    if (!this.isWithinLootReach(client, chest.row, chest.col)) {
+      return { ok: false, message: "You're too far away to reach that." };
+    }
+
+    const items = this.droppedItemManager.takeAll(chestId) ?? [];
+    client.data.inventory = [...client.data.inventory, ...items];
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    void this.persistStats(client);
+
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+
+    return { ok: true, inventory: client.data.inventory, chestGone: true };
+  }
+
+  // Item 12's chest loot modal — "click one item" path. Same reach/
+  // existence checks as handleLootDroppedChest, just against a single
+  // index — the chest disappears entirely once its last item is taken
+  // (see dropped-item-manager.service.ts's takeItem).
+  @SubscribeMessage('lootDroppedChestItem')
+  handleLootDroppedChestItem(
+    @ConnectedSocket() client: GameSocket,
+    @MessageBody() payload: unknown
+  ): { ok: boolean; inventory?: string[]; chestGone?: boolean; message?: string } {
+    if (
+      typeof payload !== 'object' ||
+      payload === null ||
+      typeof (payload as { chestId?: unknown }).chestId !== 'string' ||
+      typeof (payload as { itemIndex?: unknown }).itemIndex !== 'number'
+    ) {
+      return { ok: false, message: 'Invalid request.' };
+    }
+    const { chestId, itemIndex } = payload as { chestId: string; itemIndex: number };
+
+    const chest = this.droppedItemManager.getChest(chestId);
+    if (!chest || chest.map !== client.data.map) {
+      return { ok: false, message: "That's already gone." };
+    }
+    if (!this.isWithinLootReach(client, chest.row, chest.col)) {
+      return { ok: false, message: "You're too far away to reach that." };
+    }
+
+    const result = this.droppedItemManager.takeItem(chestId, itemIndex);
+    if (!result) {
+      return { ok: false, message: "That's already gone." };
+    }
+
+    client.data.inventory = [...client.data.inventory, result.item];
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    void this.persistStats(client);
+
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+
+    return { ok: true, inventory: client.data.inventory, chestGone: result.chestGone };
   }
 
   // A later follow-up ask: "the corpses of pets should be selectable...
@@ -4551,10 +4726,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: `You don't have enough gold (${item.price} needed).` };
     }
 
-    // The Pet Shop's own 3 items (a later follow-up ask) are special —
+    // The Pet Shop's own items (a later follow-up ask) are special —
     // buying one creates a real Pet, not an inventory item string, and
-    // "a player should only be allowed to have 1 pet at a time".
-    if (vendorId === 'bramwick-pet-shop' && (PET_KINDS as readonly string[]).includes(item.label)) {
+    // "a player should only be allowed to have 1 pet at a time". Item 15
+    // added Kortho's own pet salesman as a second pet-selling vendor
+    // (its own 3 exotic kinds only — see vendors.ts's kortho-pet-salesman).
+    if (
+      (vendorId === 'bramwick-pet-shop' || vendorId === 'kortho-pet-salesman') &&
+      (PET_KINDS as readonly string[]).includes(item.label)
+    ) {
       if (this.petManager.hasPet(client.data.username)) {
         return { ok: false, message: 'You already have a pet.' };
       }
@@ -4636,6 +4816,137 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
+  // Item 17's Bank vendor — a single balance shared between Kortho's and
+  // Floro's own Bank, keyed off whichever town's Bank the player is
+  // currently standing in, not a vendorId in the payload (there's only
+  // ever one relevant vendor: wherever they physically are).
+  private static readonly BANK_WITHDRAWAL_FEE_PERCENT = 5;
+
+  private bankVendorIdForMap(mapName: MapName): string | undefined {
+    if (mapName === 'Kortho Bank') return 'kortho-bank';
+    if (mapName === 'Floro Bank') return 'floro-bank';
+    return undefined;
+  }
+
+  private innVendorIdForMap(mapName: MapName): string | undefined {
+    if (mapName === 'Kortho Inn') return 'kortho-inn';
+    if (mapName === 'Floro Inn') return 'floro-inn';
+    return undefined;
+  }
+
+  @SubscribeMessage('depositGold')
+  handleDepositGold(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): BankAck {
+    const parsed = z.object({ amount: z.number().int().positive().optional() }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid request.' };
+    }
+    const vendorId = this.bankVendorIdForMap(client.data.map);
+    const vendor = vendorId ? findVendor(vendorId) : undefined;
+    if (!vendor) {
+      return { ok: false, message: "There's no bank here." };
+    }
+    if (!this.isClientWithinShopReach(client, vendor.row, vendor.col)) {
+      return { ok: false, message: "You're too far away to reach the bank." };
+    }
+
+    const amount = parsed.data.amount ?? client.data.gold;
+    if (amount <= 0 || amount > client.data.gold) {
+      return { ok: false, message: "You don't have that much gold." };
+    }
+
+    client.data.gold -= amount;
+    client.data.bankedGold += amount;
+    this.worldManager.updateState(client.data.username, { gold: client.data.gold, bankedGold: client.data.bankedGold });
+    void this.persistStats(client);
+
+    return {
+      ok: true,
+      gold: client.data.gold,
+      bankedGold: client.data.bankedGold,
+      message: `You deposit ${amount} gold. Banked: ${client.data.bankedGold}.`,
+    };
+  }
+
+  @SubscribeMessage('withdrawGold')
+  handleWithdrawGold(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): BankAck {
+    const parsed = z.object({ amount: z.number().int().positive().optional() }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid request.' };
+    }
+    const vendorId = this.bankVendorIdForMap(client.data.map);
+    const vendor = vendorId ? findVendor(vendorId) : undefined;
+    if (!vendor) {
+      return { ok: false, message: "There's no bank here." };
+    }
+    if (!this.isClientWithinShopReach(client, vendor.row, vendor.col)) {
+      return { ok: false, message: "You're too far away to reach the bank." };
+    }
+
+    const amount = parsed.data.amount ?? client.data.bankedGold;
+    if (amount <= 0 || amount > client.data.bankedGold) {
+      return { ok: false, message: "You don't have that much banked." };
+    }
+
+    const fee = Math.ceil((amount * GameGateway.BANK_WITHDRAWAL_FEE_PERCENT) / 100);
+    const received = amount - fee;
+    client.data.bankedGold -= amount;
+    client.data.gold += received;
+    this.worldManager.updateState(client.data.username, { gold: client.data.gold, bankedGold: client.data.bankedGold });
+    void this.persistStats(client);
+
+    return {
+      ok: true,
+      gold: client.data.gold,
+      bankedGold: client.data.bankedGold,
+      message: `You withdraw ${received} gold (a ${fee} gold, ${GameGateway.BANK_WITHDRAWAL_FEE_PERCENT}% fee).`,
+    };
+  }
+
+  // Item 30's Kortho/Floro Inn "Stay and rest" service — same "which town
+  // the player is physically standing in" vendor lookup as the Bank
+  // above, no payload needed.
+  private static readonly INN_REST_COST_GOLD = 5;
+
+  @SubscribeMessage('restAtInn')
+  handleRestAtInn(@ConnectedSocket() client: GameSocket): RestAtInnAck {
+    const vendorId = this.innVendorIdForMap(client.data.map);
+    const vendor = vendorId ? findVendor(vendorId) : undefined;
+    if (!vendor) {
+      return { ok: false, message: "There's no inn here." };
+    }
+    if (!this.isClientWithinShopReach(client, vendor.row, vendor.col)) {
+      return { ok: false, message: "You're too far away to reach the innkeeper." };
+    }
+    if (client.data.gold < GameGateway.INN_REST_COST_GOLD) {
+      return { ok: false, message: `You don't have enough gold (${GameGateway.INN_REST_COST_GOLD} needed).` };
+    }
+
+    client.data.gold -= GameGateway.INN_REST_COST_GOLD;
+    client.data.hp = client.data.maxHp;
+    client.data.mana = client.data.maxMana;
+    client.data.mv = client.data.maxMv;
+    this.worldManager.updateState(client.data.username, {
+      gold: client.data.gold,
+      hp: client.data.hp,
+      mana: client.data.mana,
+      mv: client.data.mv,
+    });
+    void this.persistStats(client);
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+
+    return {
+      ok: true,
+      gold: client.data.gold,
+      hp: client.data.hp,
+      maxHp: client.data.maxHp,
+      mana: client.data.mana,
+      maxMana: client.data.maxMana,
+      mv: client.data.mv,
+      maxMv: client.data.maxMv,
+      message: 'You rest at the inn, feeling fully restored.',
+    };
+  }
+
   // Commanding your own pet (a later follow-up ask) — "stay by side,
   // attack, sleep" — no reach check, an owner can redirect their pet
   // from anywhere, same as a real trained animal responding to its own
@@ -4663,6 +4974,39 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, pet };
   }
 
+  // Tame Beast (a later follow-up ask) — same follow/stay/sleep/attack
+  // shape as a pet's own petCommand.
+  @SubscribeMessage('tamedBeastCommand')
+  handleTamedBeastCommand(@ConnectedSocket() client: GameSocket, @MessageBody() command: unknown): { ok: boolean; message?: string } {
+    if (typeof command !== 'string' || !(PET_COMMANDS as readonly string[]).includes(command)) {
+      return { ok: false, message: 'Invalid command.' };
+    }
+    const beast = this.tamedBeastManager.setCommand(client.data.username, command as PetCommand);
+    if (!beast) {
+      return { ok: false, message: "You don't have a tamed beast." };
+    }
+    if (command === 'attack') {
+      const session = this.playerCombat.get(client.data.username);
+      if (session) this.syncFollowerAttackTargets(client.data.username, session.targetKind, session.targetId);
+    }
+    void this.persistStats(client);
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    return { ok: true };
+  }
+
+  // "Until... the player removes it" — a plain voluntary, permanent
+  // release, same "gone for good" shape as being killed.
+  @SubscribeMessage('removeTamedBeast')
+  handleRemoveTamedBeast(@ConnectedSocket() client: GameSocket): { ok: boolean; message?: string } {
+    if (!this.tamedBeastManager.getSnapshotForOwner(client.data.username)) {
+      return { ok: false, message: "You don't have a tamed beast." };
+    }
+    this.tamedBeastManager.remove(client.data.username);
+    void this.persistStats(client);
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    return { ok: true };
+  }
+
   // The 'z' hotkey (a later follow-up ask): "if the player has a pet/
   // summon/animated undead (follower) and... a selected target that can
   // be attacked... send the monster to auto attack the target." Commands
@@ -4688,7 +5032,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       .getSnapshotsForOwner(client.data.username)
       .filter((m) => m.alive)
       .map((m) => this.animatedMonsterManager.commandAttack(client.data.username, m.id, targetKind, targetId));
-    if (!pet && animatedMonsters.length === 0) {
+    const tamedBeast = this.tamedBeastManager.commandAttack(client.data.username, targetKind, targetId);
+    if (!pet && animatedMonsters.length === 0 && !tamedBeast) {
       return { ok: false, message: "You don't have a pet or summoned creature to send." };
     }
 
@@ -6003,6 +6348,143 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.emit('sync', { player: this.snapshotFor(client) });
     this.systemMessage(client, message);
     return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+  }
+
+  // The Druid's own "Tame Beast" spell (a later follow-up ask) — requires
+  // a live monster classified 'beast' selected first, within range and no
+  // more than TAME_BEAST_MAX_LEVEL_ABOVE_PLAYER levels above the caster.
+  // On success, the wild monster leaves the world roster entirely (see
+  // MonsterManagerService.removeMonster) and becomes a TamedBeastSnapshot
+  // in the caster's own group instead.
+  @SubscribeMessage('castTameBeast')
+  handleCastTameBeast(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    if (client.data.skills[TAME_BEAST_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the tame beast spell yet." };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    const parsed = z.object({ targetId: z.string() }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid target.' };
+    }
+    if (this.tamedBeastManager.getSnapshotForOwner(client.data.username)) {
+      return { ok: false, message: 'You already have a tamed beast. Remove it first.' };
+    }
+    const monster = this.monsterManager.getMonster(parsed.data.targetId);
+    if (!monster || monster.mapName !== client.data.map) {
+      return { ok: false, message: 'Your target is no longer here.' };
+    }
+    if (monster.monsterClass !== 'beast') {
+      return { ok: false, message: 'You can only tame a beast.' };
+    }
+    if (!isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, TAME_BEAST_RANGE_TILES)) {
+      return { ok: false, message: "You're too far away to tame that." };
+    }
+    if (monster.level > client.data.level + TAME_BEAST_MAX_LEVEL_ABOVE_PLAYER) {
+      return { ok: false, message: 'That beast is too high level for you to tame.' };
+    }
+
+    const cooldownUntil = client.data.skillCooldowns[TAME_BEAST_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Tame beast is still recharging (${secondsLeft}s left).` };
+    }
+    if (client.data.mana < TAME_BEAST_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast tame beast (${TAME_BEAST_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= TAME_BEAST_MANA_COST;
+
+    let message: string;
+    if (!this.rollSpellSuccess(client, TAME_BEAST_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else {
+      this.startSkillCooldown(client, TAME_BEAST_SKILL);
+      const removed = this.monsterManager.removeMonster(monster.id);
+      if (removed) {
+        this.tamedBeastManager.tame({
+          id: randomUUID(),
+          ownerUsername: client.data.username,
+          kind: removed.kind,
+          name: `Tamed ${removed.kind}`,
+          level: removed.level,
+          hp: removed.hp,
+          maxHp: removed.maxHp,
+          attackDamage: removed.attackDamage ?? 0,
+          map: removed.mapName,
+          row: removed.row,
+          col: removed.col,
+          command: 'follow',
+        });
+        this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      }
+      message = `You successfully tame the ${monster.kind}!`;
+    }
+
+    const growth = this.maybeGrowSpellSkill(client, TAME_BEAST_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+  }
+
+  // The Utility Classroom's own "identify" spell (a later follow-up ask)
+  // — "requires first selecting an item from the inventory and then
+  // using the identify spell... opens another small window with the
+  // name and stats and description of the item." The server only
+  // confirms WHICH item (see CastSpellAck's own itemLabel doc comment) —
+  // the client already has every item's own description/bonus text
+  // locally (see src/ui/identifyModal.ts).
+  @SubscribeMessage('castIdentify')
+  handleCastIdentify(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    if (client.data.skills[IDENTIFY_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the identify spell yet." };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    const parsed = z.object({ itemIndex: z.number().int() }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid item.' };
+    }
+    const item = client.data.inventory[parsed.data.itemIndex];
+    if (item === undefined) {
+      return { ok: false, message: "You don't have that item." };
+    }
+
+    const cooldownUntil = client.data.skillCooldowns[IDENTIFY_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Identify is still recharging (${secondsLeft}s left).` };
+    }
+    if (client.data.mana < IDENTIFY_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast identify (${IDENTIFY_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= IDENTIFY_MANA_COST;
+
+    let message: string;
+    let itemLabel: string | undefined;
+    if (!this.rollSpellSuccess(client, IDENTIFY_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else {
+      this.startSkillCooldown(client, IDENTIFY_SKILL);
+      itemLabel = item;
+      message = `You identify the ${item}.`;
+    }
+
+    const growth = this.maybeGrowSpellSkill(client, IDENTIFY_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, mana: client.data.mana, skills: client.data.skills, message, itemLabel };
   }
 
   // Flight (a later follow-up ask: "available to every specialization at
@@ -7758,6 +8240,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       messages.push('You drink the mp potion, recovering some mana.');
       return messages;
     }
+    // Item 31: sold by all 3 General Stores.
+    if (item === LINIMENT_ITEM) {
+      client.data.mv = Math.min(client.data.maxMv, client.data.mv + LINIMENT_MV_RESTORE_AMOUNT);
+      messages.push('You rub on the liniment, easing your legs a little.');
+      return messages;
+    }
     const grant = resistanceGrantForItem(item);
     if (grant) {
       if (client.data.skills[grant.skill] === undefined) {
@@ -7816,6 +8304,28 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     };
   }
 
+  // Item 22's Grimrot Wand ("+10 mana when equipped") — see
+  // combat/formulas.ts's MANA_ITEM_BONUS doc comment for why this is a
+  // direct maxMana delta rather than a live-recomputed bonus. Gaining
+  // credits the full delta to current mana too (same as a level-up would);
+  // losing only ever clamps current mana down to the new (lower) max,
+  // never subtracts further — so an equip/unequip/equip cycle can't be
+  // farmed for free mana.
+  private applyManaBonusDelta(client: GameSocket, removedItem: string | undefined, addedItem: string | undefined): void {
+    const removedBonus = removedItem ? (MANA_ITEM_BONUS[removedItem] ?? 0) : 0;
+    const addedBonus = addedItem ? (MANA_ITEM_BONUS[addedItem] ?? 0) : 0;
+    const delta = addedBonus - removedBonus;
+    if (delta === 0) return;
+    client.data.maxMana += delta;
+    client.data.mana = delta > 0 ? client.data.mana + delta : Math.min(client.data.mana, client.data.maxMana);
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, maxMana: client.data.maxMana });
+    void this.persistStats(client);
+    // UseItemAck doesn't carry mana/maxMana itself (see its own doc
+    // comment) — a fresh sync so the mana bar updates immediately instead
+    // of waiting on the next unrelated periodic tick.
+    client.emit('sync', { player: this.snapshotFor(client) });
+  }
+
   // Clicking an inventory item: the server alone decides whether it's
   // equippable (see combat/formulas.ts's EQUIPMENT_SLOT_FOR_ITEM) or just
   // a consumable body part. Equipping swaps out whatever was already in
@@ -7856,6 +8366,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       client.data.equipment = { ...client.data.equipment, [slot]: item };
       if (slot === 'shield' && previous === TORCH_ITEM) this.pauseTorch(client);
       if (slot === 'shield' && item === TORCH_ITEM) this.lightTorch(client);
+      this.applyManaBonusDelta(client, previous, item);
       return this.finishItemAction(client, inventory, 'equipped', []);
     }
 
@@ -7911,6 +8422,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const equipment = { ...client.data.equipment };
     delete equipment[slot];
     client.data.equipment = equipment;
+    this.applyManaBonusDelta(client, item, undefined);
     if (slot === 'shield' && item === TORCH_ITEM) this.pauseTorch(client);
     // Unequipping the wand while lucem is lit (a follow-up ask) — the
     // glow animation itself already checks equipment.weapon === WAND_ITEM

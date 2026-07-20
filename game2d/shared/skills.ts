@@ -29,6 +29,10 @@ export function practicePointCostFor(skill: string): number {
   // learn," its own explicit figure rather than falling out of the
   // ordinary level-tiered formula below (which tops out at 3).
   if (skill === FLIGHT_SKILL) return 5;
+  // Tame Beast (a later follow-up ask) — "should cost 3 practice points,"
+  // its own explicit figure; the level-10 tier below would otherwise
+  // give 2.
+  if (skill === TAME_BEAST_SKILL) return 3;
   const level = skillLevelRequirement(skill);
   if (level >= 15) return 3;
   if (level >= 5) return 2;
@@ -322,6 +326,33 @@ export const WISP_TRANSFORMATION_COOLDOWN_MS = 3 * 60 * 1000;
 // own 0.9 factor (10% faster) in WorldScene's effectiveMoveCooldownMs.
 export const WISP_MOVE_COOLDOWN_FACTOR = 0.8;
 
+// The Druid specialization's own level-10 "Tame Beast" spell (a later
+// follow-up ask) — requires a live monster classified 'beast' (see
+// shared/constants.ts's MonsterClass) selected as the target first;
+// converts it into a TamedBeastSnapshot in the caster's own group on a
+// successful cast (see game.gateway.ts's handleCastTameBeast). "7 feet
+// equivalent" matches this project's existing 1-tile-per-foot convention
+// (kinetic strike's own knockback, augue's own range, ...).
+export const TAME_BEAST_SKILL = 'tame beast';
+export const TAME_BEAST_MANA_COST = 30;
+export const TAME_BEAST_RANGE_TILES = 7;
+export const TAME_BEAST_COOLDOWN_MS = 5 * 1000;
+// "No more than 3 levels higher than the player" — the OTHER half ("or
+// that are lower level than the player") is already implied by this same
+// bound (a lower-level beast trivially satisfies "no more than 3 higher"
+// too), so this single constant is the whole rule.
+export const TAME_BEAST_MAX_LEVEL_ABOVE_PLAYER = 3;
+
+// The Utility Classroom's own level-10 "identify" spell (a later
+// follow-up ask) — "requires first selecting an item from the
+// inventory... opens another small window with the name, stats, and
+// description of the item." Available to every specialization (taught by
+// the Utility teacher, no SKILL_SPECIALIZATION_REQUIREMENT entry), same
+// as recall/flight.
+export const IDENTIFY_SKILL = 'identify';
+export const IDENTIFY_MANA_COST = 15;
+export const IDENTIFY_COOLDOWN_MS = 3 * 1000;
+
 // The Battlemage specialization's own 2 level-15 passives (a later
 // follow-up ask) — each a CHANCE (scaled off learned percent, same
 // scaledSkillChance formula hobgoblin's second/third attack already
@@ -543,6 +574,8 @@ export const SKILL_LEVEL_REQUIREMENT: Record<string, number> = {
   [ENHANCED_UNDEAD_DAMAGE_SKILL]: 10,
   [LESSER_SELF_HEAL_SKILL]: 10,
   [WISP_TRANSFORMATION_SKILL]: 10,
+  [TAME_BEAST_SKILL]: 10,
+  [IDENTIFY_SKILL]: 10,
   [BATTLEMAGE_ENHANCED_ARMOR_SKILL]: 10,
   [BATTLEMAGE_ENHANCED_DAMAGE_SKILL]: 10,
   [KINETIC_STRIKE_SKILL]: 10,
@@ -570,6 +603,7 @@ export const SKILL_SPECIALIZATION_REQUIREMENT: Partial<Record<string, Specializa
   [ENHANCED_UNDEAD_DAMAGE_SKILL]: 'cleric',
   [LESSER_SELF_HEAL_SKILL]: 'druid',
   [WISP_TRANSFORMATION_SKILL]: 'druid',
+  [TAME_BEAST_SKILL]: 'druid',
   [BATTLEMAGE_ENHANCED_ARMOR_SKILL]: 'battlemage',
   [BATTLEMAGE_ENHANCED_DAMAGE_SKILL]: 'battlemage',
   [KINETIC_STRIKE_SKILL]: 'battlemage',
@@ -607,6 +641,8 @@ export const LEARNABLE_SKILLS = [
   ENHANCED_UNDEAD_DAMAGE_SKILL,
   LESSER_SELF_HEAL_SKILL,
   WISP_TRANSFORMATION_SKILL,
+  TAME_BEAST_SKILL,
+  IDENTIFY_SKILL,
   BATTLEMAGE_ENHANCED_ARMOR_SKILL,
   BATTLEMAGE_ENHANCED_DAMAGE_SKILL,
   KINETIC_STRIKE_SKILL,
@@ -668,6 +704,8 @@ export const SKILL_COOLDOWN_MS: Partial<Record<string, number>> = {
   // "A 3 minute cooldown on success" (a later follow-up ask, for wisp
   // transformation).
   [WISP_TRANSFORMATION_SKILL]: WISP_TRANSFORMATION_COOLDOWN_MS,
+  [TAME_BEAST_SKILL]: TAME_BEAST_COOLDOWN_MS,
+  [IDENTIFY_SKILL]: IDENTIFY_COOLDOWN_MS,
   [KINETIC_STRIKE_SKILL]: KINETIC_STRIKE_COOLDOWN_MS,
   [SAP_HEALTH_SKILL]: SAP_HEALTH_COOLDOWN_MS,
   [MONSTER_SUMMONS_SKILL]: MONSTER_SUMMONS_COOLDOWN_MS,

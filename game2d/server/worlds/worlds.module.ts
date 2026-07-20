@@ -6,10 +6,21 @@ import { MonstersModule } from '../monsters/monsters.module.js';
 import { PetManagerService } from '../pets/pet-manager.service.js';
 import { AnimatedMonsterManagerService } from '../pets/animated-monster-manager.service.js';
 import { PetCorpseManagerService } from '../pets/pet-corpse-manager.service.js';
+import { TamedBeastManagerService } from '../pets/tamed-beast-manager.service.js';
+import { DroppedItemManagerService } from './dropped-item-manager.service.js';
 
 @Module({
   imports: [MonstersModule],
-  providers: [WorldManagerService, CorpseManagerService, WorldClockService, PetManagerService, AnimatedMonsterManagerService, PetCorpseManagerService],
+  providers: [
+    WorldManagerService,
+    CorpseManagerService,
+    WorldClockService,
+    PetManagerService,
+    AnimatedMonsterManagerService,
+    PetCorpseManagerService,
+    TamedBeastManagerService,
+    DroppedItemManagerService,
+  ],
   exports: [
     WorldManagerService,
     CorpseManagerService,
@@ -17,6 +28,8 @@ import { PetCorpseManagerService } from '../pets/pet-corpse-manager.service.js';
     PetManagerService,
     AnimatedMonsterManagerService,
     PetCorpseManagerService,
+    TamedBeastManagerService,
+    DroppedItemManagerService,
     MonstersModule,
   ],
 })

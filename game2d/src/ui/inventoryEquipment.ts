@@ -7,7 +7,7 @@ import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem } from '../../shared/ite
 import { FOLLOWER_EQUIPMENT_SLOTS } from '../../shared/pets.js';
 import type { UseItemAck } from '../../shared/types.js';
 import { attachTooltip } from './tooltip.js';
-import { itemTooltip } from './skillMeta.js';
+import { itemTooltip, ITEM_DESCRIPTIONS } from './skillMeta.js';
 import { logCombatMessage } from './log.js';
 import { showCenterToastLines } from './toast.js';
 import { updateStatusBar } from './statusBar.js';
@@ -40,6 +40,20 @@ function isFollowerEquippableItem(item: string): boolean {
   const slot = EQUIPMENT_SLOT_FOR_ITEM[item];
   return slot !== undefined && (FOLLOWER_EQUIPMENT_SLOTS as readonly string[]).includes(slot);
 }
+
+// Item 11: "left clicks on an item gives them the option to equip/use/
+// drop (equip if its equipment, use if its a consumable)." The server
+// alone decides equip-vs-consume once asked (see game.gateway.ts's own
+// handleUseItem doc comment) — this is purely which LABEL to show; both
+// buttons dispatch the exact same network.useItem call underneath.
+function isEquipmentItem(item: string): boolean {
+  return EQUIPMENT_SLOT_FOR_ITEM[item] !== undefined;
+}
+
+// Which stacked row (keyed by its first index) currently has its Equip/
+// Use/Drop menu expanded — at most one at a time, cleared whenever the
+// modal is freshly opened or a click lands outside any item row.
+let openMenuIndex: number | null = null;
 
 function giveItemToFollower(itemIndex: number, followerKind: 'pet' | 'animatedMonster', followerId: string | undefined): void {
   // FollowerItemAck carries no updated snapshot of its own (see its own
@@ -114,7 +128,11 @@ export function renderInventory(): void {
       // ground or closing the modal already do (see clearItemTarget's
       // other two call sites).
       activeScene?.clearItemTarget();
-      useInventoryItem(indices[0]!);
+      // Item 11: left-clicking a non-fillable item toggles a small
+      // Equip/Use/Drop menu instead of immediately dispatching — clicking
+      // the SAME already-open row again collapses it.
+      openMenuIndex = openMenuIndex === indices[0] ? null : indices[0]!;
+      renderInventory();
     });
     // The browser's own right-click context menu is never useful here —
     // captured and replaced with a forced consume, so an otherwise-
@@ -168,8 +186,58 @@ export function renderInventory(): void {
       giveRow.appendChild(giveBtn);
       li.appendChild(giveRow);
     }
+    // Item 11's Equip/Use/Drop menu — only shown for the row currently
+    // toggled open (see openMenuIndex above).
+    if (openMenuIndex === indices[0]) {
+      const menuRow = document.createElement('div');
+      menuRow.className = 'inventory-action-row';
+      menuRow.addEventListener('click', (e) => e.stopPropagation());
+      menuRow.addEventListener('contextmenu', (e) => e.stopPropagation());
+
+      const actionBtn = document.createElement('button');
+      actionBtn.type = 'button';
+      actionBtn.textContent = isEquipmentItem(item) ? 'Equip' : 'Use';
+      actionBtn.addEventListener('click', () => {
+        openMenuIndex = null;
+        useInventoryItem(indices[0]!);
+      });
+      menuRow.appendChild(actionBtn);
+
+      const dropBtn = document.createElement('button');
+      dropBtn.type = 'button';
+      dropBtn.textContent = 'Drop';
+      dropBtn.addEventListener('click', () => {
+        openMenuIndex = null;
+        dropInventoryItem(indices[0]!);
+      });
+      menuRow.appendChild(dropBtn);
+
+      li.appendChild(menuRow);
+    }
     inventoryList.appendChild(li);
   }
+}
+
+// Item 12: drops one item on the ground beneath the player, creating (or
+// merging into) a dropped-item chest — see droppedChestModal.ts/
+// WorldScene's own droppedChestSprites rendering for the loot side.
+function dropInventoryItem(index: number): void {
+  network
+    .dropItem(index)
+    .then((ack) => {
+      if (!ack.ok) {
+        if (ack.message) logCombatMessage(ack.message);
+        return;
+      }
+      if (myProfile && ack.inventory) {
+        setMyProfile({ ...myProfile, inventory: ack.inventory });
+        refreshOpenModals();
+      }
+      logCombatMessage('You drop it on the ground.');
+    })
+    .catch(() => {
+      /* nothing to show */
+    });
 }
 
 function applyUseItemAck(ack: UseItemAck): void {
@@ -241,7 +309,10 @@ function drinkInventoryItem(index: number): void {
     });
 }
 
-registerModalOpenHandler(inventoryModal, renderInventory);
+registerModalOpenHandler(inventoryModal, () => {
+  openMenuIndex = null;
+  renderInventory();
+});
 registerModalRefreshHandler(inventoryModal, renderInventory);
 
 // "Clicking anywhere on the inventory modal should also de-select the
@@ -255,6 +326,10 @@ registerModalRefreshHandler(inventoryModal, renderInventory);
 inventoryModal.addEventListener('click', (e) => {
   if ((e.target as HTMLElement).closest('.inventory-item')) return;
   activeScene?.clearItemTarget();
+  if (openMenuIndex !== null) {
+    openMenuIndex = null;
+    renderInventory();
+  }
 });
 
 // ---------- Equipment ----------
@@ -273,10 +348,15 @@ function renderEquipmentRow(slot: EquipmentSlot, label: string, item: string | u
   text.textContent = item ?? '(none)';
   // A later follow-up ask: "show what bonus a piece of gear actually
   // gives" — a hover tooltip on the item's own name, same convention
-  // every other tooltip-bearing label in this project already uses.
+  // every other tooltip-bearing label in this project already uses. Item
+  // 33 added the item's own plain description (same ITEM_DESCRIPTIONS
+  // table the Inventory modal already reads from) above the bonus line,
+  // when one exists for this item.
   const bonus = item ? EQUIPMENT_ITEM_BONUS_LABEL[item] : undefined;
-  if (bonus) {
-    attachTooltip(text, () => bonus);
+  const description = item ? ITEM_DESCRIPTIONS[item] : undefined;
+  const tooltip = [description, bonus].filter(Boolean).join('\n\n');
+  if (tooltip) {
+    attachTooltip(text, () => tooltip);
     text.style.cursor = 'help';
   }
   valueEl.appendChild(text);

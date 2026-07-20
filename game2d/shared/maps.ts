@@ -591,11 +591,15 @@ const GREAT_HALL_MID_ROW = Math.floor(GREAT_HALL_ROWS / 2);
 // this replaces). The house common rooms live on the EAST/WEST walls
 // instead (a follow-up ask: "only the classrooms should be to the
 // north") — see ENTRANCE_EAST_DOORS/ENTRANCE_WEST_DOORS below.
+// A later follow-up ask ("remove the Summoning classroom... update the
+// spacing between the classrooms and the specialization room") dropped
+// Summoning Classroom entirely (its own one spell, stone wall, moved to
+// the Defense teacher instead — see teachers.ts) and re-spread the
+// remaining 4 doors evenly across the same original 9-44 span.
 const ENTRANCE_NORTH_DOORS: Array<{ col: number; name: MapName }> = [
   { col: 9, name: 'Specialization' },
-  { col: 18, name: 'Defense Classroom' },
-  { col: 27, name: 'Summoning Classroom' },
-  { col: 35, name: 'Utility Classroom' },
+  { col: 21, name: 'Defense Classroom' },
+  { col: 32, name: 'Utility Classroom' },
   { col: 44, name: 'Offense Classroom' },
 ];
 
@@ -806,7 +810,6 @@ const DUSKWING_DORMS = dormsFor('Duskwing Dorms', DUSKWING_COMMON_ROOM);
 // shape/size, just no longer counted among "the classrooms."
 const SPECIALIZATION = classroomOffEntranceHall('Specialization');
 const DEFENSE = classroomOffEntranceHall('Defense Classroom');
-const SUMMONING = classroomOffEntranceHall('Summoning Classroom');
 const UTILIZATION = classroomOffEntranceHall('Utility Classroom');
 const OFFENSE = classroomOffEntranceHall('Offense Classroom');
 
@@ -1483,7 +1486,11 @@ export const BRAMWICK_SILVERBRANCH_ROW = Math.floor(BRAMWICK_SIZE / 2);
 // the user's own explicit "1 tile" ask. "Half the size of Kortho" reads
 // as half of Kortho's own original town square (TOWN_SIZE), not the much
 // longer sand/sea/sand-extended KORTHO_COLS. ----------
-export const DIREFELL_SIZE = Math.round(TOWN_SIZE / 2);
+// Item 21: "double the size of Direfell" — a later follow-up ask than the
+// "half the size of Kortho" one above, doubling that same half back out
+// rather than re-deriving straight from TOWN_SIZE, so the relationship
+// between the two asks stays visible here.
+export const DIREFELL_SIZE = Math.round(TOWN_SIZE / 2) * 2;
 // "Northeast/east" — Kortho's own far (east) sand strip, toward the
 // north/top of it.
 export const KORTHO_DIREFELL_ROW = 15;
@@ -2055,7 +2062,6 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Starfall Dorms': STARFALL_DORMS,
   Specialization: SPECIALIZATION,
   'Defense Classroom': DEFENSE,
-  'Summoning Classroom': SUMMONING,
   'Utility Classroom': UTILIZATION,
   'Offense Classroom': OFFENSE,
   'Caverna Secretissima': CAVERNA_SECRETISSIMA,
