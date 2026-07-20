@@ -5,7 +5,7 @@
 // already shown as tooltips/in the Equipment modal (see skillMeta.ts's
 // ITEM_DESCRIPTIONS/itemTooltip and equipment.ts's EQUIPMENT_ITEM_BONUS_LABEL)
 // rather than a separate data source.
-import { identifyModal, identifyTitle, identifyBody, closeAllModals, updateInputCaptured, appendStatRow } from './modalCore.js';
+import { identifyModal, identifyTitle, identifyBody, updateInputCaptured, appendStatRow } from './modalCore.js';
 import { ITEM_DESCRIPTIONS } from './skillMeta.js';
 import { EQUIPMENT_ITEM_BONUS_LABEL, EQUIPMENT_SLOT_FOR_ITEM, EQUIPMENT_SLOT_LABELS } from '../../shared/equipment.js';
 
@@ -20,7 +20,12 @@ export function openIdentifyModal(itemLabel: string): void {
   const descriptionEl = document.createElement('div');
   descriptionEl.textContent = description;
   identifyBody.appendChild(descriptionEl);
-  closeAllModals();
+  // Bug fix: this used to closeAllModals() first — casting identify only
+  // ever happens with an item already targeted in the (open) Inventory
+  // modal, so closing everything lost the context the result was about.
+  // Shown alongside it now instead (see style.css's #identify-modal
+  // override, which positions it beside the Inventory rather than
+  // dead-centered on top of it).
   identifyModal.hidden = false;
   updateInputCaptured();
 }

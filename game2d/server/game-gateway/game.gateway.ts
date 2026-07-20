@@ -2343,6 +2343,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return weaponBonusFor(client.data.equipment, client.data.skills);
   }
 
+  // The state-mutation core of reverting a beast transform — shared by
+  // the periodic expiry check below AND handleCastTransform's own manual
+  // cancel (casting Transform again while already transformed), so the
+  // hp/maxHp bonus reversal can't drift between the two paths.
+  private revertBeastTransform(client: GameSocket): void {
+    client.data.beastTransformActive = false;
+    client.data.beastTransformKind = null;
+    client.data.beastTransformUntil = null;
+    client.data.maxHp = Math.max(1, client.data.maxHp - BEAST_TRANSFORM_HP_BONUS);
+    client.data.hp = Math.min(client.data.hp, client.data.maxHp);
+  }
+
   // Item 11's Transform spell — same periodic-expiry shape as
   // checkWispTransformationExpiry above, but also reverts the flat hp/
   // armor bonus applied at cast time (see handleCastTransform).
@@ -2351,11 +2363,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!client.data.beastTransformActive || client.data.beastTransformUntil === null) return;
     if (Date.now() < client.data.beastTransformUntil) return;
 
-    client.data.beastTransformActive = false;
-    client.data.beastTransformKind = null;
-    client.data.beastTransformUntil = null;
-    client.data.maxHp = Math.max(1, client.data.maxHp - BEAST_TRANSFORM_HP_BONUS);
-    client.data.hp = Math.min(client.data.hp, client.data.maxHp);
+    this.revertBeastTransform(client);
     this.worldManager.updateState(client.data.username, {
       beastTransformActive: false,
       beastTransformKind: null,
@@ -4522,11 +4530,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // since that message is built client-side from what it OFFERED to
     // grab, not from what the server actually returned).
     const items = [...corpse.items];
+    // Bug fix: this used to be read AFTER clearItems below, but
+    // clearItems zeroes corpse.gold in place too (same "live reference"
+    // reasoning as `items` above, to stop a repeated grab-all re-granting
+    // it) — so goldLooted was always reading the just-zeroed value and
+    // Grab All never actually credited a corpse's flat coin drop at all
+    // (only Sacrifice, which computes its own separate reward, ever paid
+    // out). Captured here, before clearItems runs, same as items.
+    const goldLooted = corpse.gold;
     this.corpseManager.clearItems(corpseId);
     client.data.inventory = [...client.data.inventory, ...items];
     // A flat coin drop (a later follow-up ask) — added straight to gold,
     // not another inventory item string.
-    const goldLooted = corpse.gold;
     if (goldLooted) client.data.gold += goldLooted;
     this.worldManager.updateState(client.data.username, { inventory: client.data.inventory, gold: client.data.gold });
     void this.persistStats(client);
@@ -4632,6 +4647,41 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
 
     return { ok: true, inventory: client.data.inventory };
+  }
+
+  // Bug fix: a corpse's flat gold drop was only ever reachable via Grab
+  // All — the loot modal showed it as a plain, non-clickable line telling
+  // the player to use Grab All instead. Mirrors handleLootItem's own
+  // shape/checks, just for the gold instead of one item.
+  @SubscribeMessage('lootGold')
+  handleLootGold(@ConnectedSocket() client: GameSocket, @MessageBody() corpseId: unknown): { ok: boolean; gold?: number; message?: string } {
+    if (typeof corpseId !== 'string') {
+      return { ok: false, message: 'Invalid corpse.' };
+    }
+
+    const corpse = this.corpseManager.get(corpseId);
+    if (!corpse || corpse.map !== client.data.map) {
+      return { ok: false, message: "That's already gone." };
+    }
+    if (!this.isWithinLootReach(client, corpse.row, corpse.col)) {
+      return { ok: false, message: "You're too far away to reach that." };
+    }
+    if (!this.canLootCorpse(client, corpse)) {
+      return { ok: false, message: 'You cannot loot that corpse — it was killed by another player.' };
+    }
+
+    const goldLooted = this.corpseManager.takeGold(corpseId);
+    if (!goldLooted) {
+      return { ok: false, message: "There's no gold left to grab." };
+    }
+
+    client.data.gold += goldLooted;
+    this.worldManager.updateState(client.data.username, { gold: client.data.gold });
+    void this.persistStats(client);
+
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+
+    return { ok: true, gold: client.data.gold };
   }
 
   // Item 11's "Drop" action — removes one item from the player's own
@@ -6591,8 +6641,25 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
+    // Bug fix: casting Transform again while already transformed used to
+    // just reject outright — same "cast it again to cancel" toggle
+    // handleCastWispTransformation already gives its own transformation,
+    // reusing the shared revertBeastTransform so the hp/maxHp bonus
+    // reversal matches checkBeastTransformExpiry's exactly.
     if (client.data.beastTransformActive) {
-      return { ok: false, message: 'You are already transformed.' };
+      this.revertBeastTransform(client);
+      this.worldManager.updateState(client.data.username, {
+        beastTransformActive: false,
+        beastTransformKind: null,
+        maxHp: client.data.maxHp,
+        hp: client.data.hp,
+      });
+      void this.persistStats(client);
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      client.emit('sync', { player: this.snapshotFor(client) });
+      const message = 'You return to your normal form.';
+      this.systemMessage(client, message);
+      return { ok: true, message };
     }
     const parsed = z.object({ kind: z.string() }).safeParse(payload);
     if (!parsed.success || !client.data.tamedBeastKinds.includes(parsed.data.kind)) {

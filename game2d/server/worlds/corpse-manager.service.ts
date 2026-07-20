@@ -139,6 +139,20 @@ export class CorpseManagerService {
     corpse.gold = 0;
   }
 
+  // Grabs just a corpse's flat gold drop (the loot modal's gold line is
+  // now clickable on its own, like any item — see handleLootGold),
+  // leaving any remaining items untouched. Returns the amount actually
+  // taken (0 if there was none, or it was already grabbed), same
+  // "zero it so a second click can't re-grant it" reasoning as
+  // clearItems's own gold-clearing.
+  takeGold(id: string): number {
+    const corpse = this.corpses.get(id);
+    if (!corpse || !corpse.gold) return 0;
+    const gold = corpse.gold;
+    corpse.gold = 0;
+    return gold;
+  }
+
   // Removes and returns a single item from a corpse (for "click one item
   // in the loot modal" rather than grab-everything) — the corpse sticks
   // around even once empty, same as clearItems above.

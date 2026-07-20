@@ -117,9 +117,14 @@ function renderCorpseModal(): void {
   corpseItemList.innerHTML = '';
   corpseGrabAllBtn.hidden = currentCorpseItems.length === 0 && currentCorpseGold === 0;
   if (currentCorpseGold > 0) {
+    // Bug fix: this used to be a plain, non-clickable line telling the
+    // player to use Grab All instead — now clickable on its own, same as
+    // any item below (see grabCorpseGold/handleLootGold).
     const goldLi = document.createElement('li');
-    goldLi.className = 'inventory-empty';
-    goldLi.textContent = `${currentCorpseGold} gold (Grab All to collect)`;
+    goldLi.className = 'inventory-item';
+    goldLi.textContent = `${currentCorpseGold} gold`;
+    goldLi.title = 'Click to grab';
+    goldLi.addEventListener('click', () => grabCorpseGold());
     corpseItemList.appendChild(goldLi);
   }
   if (currentCorpseItems.length === 0) {
@@ -226,6 +231,32 @@ function grabCorpseItem(index: number): void {
     })
     .catch(() => {
       /* corpse likely already looted by someone else — nothing to show */
+    });
+}
+
+// Bug fix: grabs just the corpse's gold, same "one thing at a time" shape
+// as grabCorpseItem — the gold line used to be a plain, non-clickable
+// notice pointing at Grab All instead.
+function grabCorpseGold(): void {
+  if (!currentCorpseId) return;
+  network
+    .lootGold(currentCorpseId)
+    .then((ack) => {
+      if (!ack.ok) {
+        if (ack.message) logCombatMessage(ack.message);
+        return;
+      }
+      const gold = currentCorpseGold;
+      currentCorpseGold = 0;
+      if (myProfile && ack.gold !== undefined) {
+        setMyProfile({ ...myProfile, gold: ack.gold });
+        updateStatusBar();
+      }
+      logCombatMessage(`You pick up ${gold} gold.`);
+      renderCorpseModal();
+    })
+    .catch(() => {
+      /* nothing to show */
     });
 }
 

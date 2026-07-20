@@ -525,7 +525,10 @@ export class WorldScene extends Phaser.Scene {
   // fresh random point on its own map every few seconds, with a short
   // particle trail following behind it. Cleared/respawned on every map
   // change, same lifecycle as korthoSeaSprites above.
-  private static readonly WISP_COUNT = 8;
+  // Bumped from 8 alongside the speed/catch-up fix above (see
+  // WISP_SPEED's own doc comment) — a few more stay visible even while
+  // some are mid-transit toward the player's new position.
+  private static readonly WISP_COUNT = 12;
   private wisps: Array<{
     sprite: Phaser.GameObjects.Sprite;
     emitter: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -2107,8 +2110,35 @@ export class WorldScene extends Phaser.Scene {
       (SPECIALIZATION_CHAMBER_MAPS as readonly string[]).includes(this.currentMap);
     const isCommonRoomSized = (COMMON_ROOM_MAPS as readonly string[]).includes(this.currentMap) || this.currentMap === 'Great Hall';
     const isDormSized = (DORM_MAPS as readonly string[]).includes(this.currentMap);
-    const baseZoom = isClassroomSized ? CLASSROOM_ZOOM : isCommonRoomSized ? COMMON_ROOM_ZOOM : isDormSized ? DORM_ZOOM : 1;
+    // Bug fix: CLASSROOM_ZOOM/COMMON_ROOM_ZOOM/DORM_ZOOM (mapRender.ts) are
+    // each a FIXED multiplier calibrated against one particular reference
+    // screen size, on the assumption these small rooms always fully fit
+    // the viewport ("still fill up the whole screen" — no scrolling). On
+    // any window narrower/shorter than that reference (most real laptop
+    // screens are well under the ~1824x1248 a CLASSROOM_ZOOM=3 classroom
+    // needs), the fixed zoom overshoots the actual viewport, so
+    // cameraFollowsX/Y below flip to true and the camera starts
+    // scrolling/following inside what was supposed to be one always-
+    // visible room — cutting off the teacher/desks until the player walks
+    // toward them, and letting the player walk past the edge of the
+    // originally-rendered frame (reported bug: "the teacher is completely
+    // cut off and the player can move any direction off screen"). Capping
+    // the fixed constant at whatever zoom actually fits the CURRENT
+    // viewport guarantees these rooms are always fully visible and
+    // centered on any screen size, matching the original design intent.
+    const roomFitZoom = (fixedZoom: number): number => Math.min(fixedZoom, cam.width / pixelWidth, cam.height / pixelHeight);
+    const baseZoom = isClassroomSized
+      ? roomFitZoom(CLASSROOM_ZOOM)
+      : isCommonRoomSized
+        ? roomFitZoom(COMMON_ROOM_ZOOM)
+        : isDormSized
+          ? roomFitZoom(DORM_ZOOM)
+          : 1;
     // Item 10's zoom toggle — see PLAYER_ZOOM_IN_FACTOR's own doc comment.
+    // Zooming in manually past the room's own fit point is intentional (a
+    // closer look, accepting the camera now needs to follow/scroll) —
+    // cameraFollowsX/Y below correctly switches to tracking the player in
+    // that case rather than staying pinned to the pre-zoom centered view.
     const zoom = baseZoom * (this.zoomedIn ? PLAYER_ZOOM_IN_FACTOR : 1);
     cam.setZoom(zoom);
     cam.setBounds(0, 0, pixelWidth, pixelHeight);
@@ -2220,6 +2250,20 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
+  // Bug fix: at the old WISP_SPEED (0.4px/frame), a wisp spawned near
+  // where the player entered a big outdoor map could never actually catch
+  // up once the player walked any real distance away — the player moves
+  // MUCH faster than that, so wisps effectively only ever appeared near
+  // the map's entry door and nowhere else the player actually explored
+  // ("this either be faster or there should be more"). Bumped
+  // considerably faster, AND if a wisp somehow ends up very far from the
+  // player (a big/fast crossing of the map), it snaps directly to a fresh
+  // point near them instead of crawling the whole distance at the same
+  // gentle wander speed, which would still look "stuck" for a long
+  // stretch even at the higher speed.
+  private static readonly WISP_SPEED = 2.2;
+  private static readonly WISP_SNAP_DISTANCE_TILES = WorldScene.WISP_WANDER_RADIUS_TILES * 2;
+
   // Called every frame from update() — a gentle, organic wander: once a
   // wisp gets close to its current random target, it picks a fresh one
   // near wherever the player currently is (see randomPointNearPlayer),
@@ -2230,8 +2274,18 @@ export class WorldScene extends Phaser.Scene {
     if (this.wisps.length === 0) return;
     const pixelWidth = this.cameraMapPixelWidth;
     const pixelHeight = this.cameraMapPixelHeight;
-    const WISP_SPEED = 0.4;
+    const playerPos = this.tilePosition(this.row, this.col);
+    const snapDistancePx = WorldScene.WISP_SNAP_DISTANCE_TILES * TILE_SIZE;
     for (const wisp of this.wisps) {
+      const distFromPlayer = Phaser.Math.Distance.Between(wisp.sprite.x, wisp.sprite.y, playerPos.x, playerPos.y);
+      if (distFromPlayer > snapDistancePx) {
+        const next = this.randomPointNearPlayer(pixelWidth, pixelHeight);
+        wisp.sprite.setPosition(next.x, next.y);
+        wisp.targetX = next.x;
+        wisp.targetY = next.y;
+        wisp.emitter.setPosition(next.x, next.y);
+        continue;
+      }
       const dx = wisp.targetX - wisp.sprite.x;
       const dy = wisp.targetY - wisp.sprite.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
@@ -2240,8 +2294,8 @@ export class WorldScene extends Phaser.Scene {
         wisp.targetX = next.x;
         wisp.targetY = next.y;
       } else {
-        wisp.sprite.x += (dx / dist) * WISP_SPEED;
-        wisp.sprite.y += (dy / dist) * WISP_SPEED;
+        wisp.sprite.x += (dx / dist) * WorldScene.WISP_SPEED;
+        wisp.sprite.y += (dy / dist) * WorldScene.WISP_SPEED;
       }
       wisp.emitter.setPosition(wisp.sprite.x, wisp.sprite.y);
     }
@@ -4199,9 +4253,18 @@ export class WorldScene extends Phaser.Scene {
       let sprite = this.tamedBeastSprites.get(beast.id);
       if (!sprite) {
         const pos = this.tilePosition(beast.row, beast.col);
+        // Bug fix: this never set a scale at all, so a tamed beast
+        // rendered at its raw source-sprite size — much bigger than the
+        // SAME creature's wild version, which every other monster/
+        // animated-monster sprite explicitly scales down to CHAR_SCALE
+        // (see the wild-monster and animated-monster rendering loops).
+        // Slightly bigger than a normal monster (not the same size) so a
+        // tamed companion still reads as a little more imposing, per the
+        // ask: "just slightly bigger than the original creature."
         sprite = this.add
           .sprite(pos.x + beastOffset.x, pos.y + beastOffset.y, textureKeyFor(beast.kind), idleFrameFor(beast.kind, 'down'))
           .setOrigin(0.5, 0.9)
+          .setScale(CHAR_SCALE * 1.1)
           .setDepth(-0.4)
           .setInteractive({ useHandCursor: true });
         sprite.setData('row', beast.row);
@@ -5129,7 +5192,16 @@ export class WorldScene extends Phaser.Scene {
   // both a living follower and a currently selected monster/player target
   // (not an npc/door/chest/Blockman/corpse — those aren't attackable).
   commandFollowerAttack(): void {
-    const hasFollower = (this.myPet?.alive ?? false) || this.myAnimatedMonsters.some((m) => m.alive);
+    // Bug fix: this used to only check myPet/myAnimatedMonsters, so a
+    // player with ONLY a tamed beast (no shop-bought pet, no animated
+    // undead) always failed this client-side gate and never even reached
+    // the server's own commandFollowerAttack handler (which already
+    // correctly commands a tamed beast too — see game.gateway.ts). A
+    // tamed beast has no `alive` flag of its own (removed from the
+    // manager outright on death, unlike pet/animatedMonster, which keep
+    // their record with alive:false) — its mere presence here means it's
+    // alive.
+    const hasFollower = (this.myPet?.alive ?? false) || this.myAnimatedMonsters.some((m) => m.alive) || this.myTamedBeast !== null;
     if (!hasFollower) {
       logCombatMessage("You don't have a pet or summoned creature to send.");
       return;
@@ -5535,8 +5607,21 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     // Item 11's Transform spell — same "opens its own picker modal
-    // directly" shape as monster summons above.
+    // directly" shape as monster summons above. Bug fix: casting it again
+    // while ALREADY transformed reverts the druid back to normal (see
+    // handleCastTransform's own toggle-off) — skip straight to that
+    // instead of showing a "pick a beast" picker that's moot either way
+    // (the server ignores which one's picked once already transformed).
     if (skillName === TRANSFORM_SKILL) {
+      if (this.beastTransformKind !== null) {
+        void this.network.castTransform(this.beastTransformKind).then((ack) => {
+          if (ack.message) {
+            showCenterToast(ack.message);
+            logCombatMessage(ack.message);
+          }
+        });
+        return;
+      }
       openTransformModal();
       return;
     }

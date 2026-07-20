@@ -435,6 +435,19 @@ export class NetworkManager extends EventTarget {
     });
   }
 
+  lootGold(corpseId: string): Promise<LootAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('lootGold', corpseId, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
   dropItem(itemIndex: number): Promise<DropItemAck> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {

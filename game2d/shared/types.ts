@@ -1028,6 +1028,11 @@ export interface ClientToServerEvents {
   // "click one item" path) rather than everything at once — the corpse
   // itself is removed once its last item is taken.
   lootItem: (payload: { corpseId: string; itemIndex: number }, ack: (res: LootAck) => void) => void;
+  // Bug fix: a corpse's flat gold drop used to only be reachable via Grab
+  // All (a plain, non-clickable line in the loot modal) — grabs just the
+  // gold, same "one thing at a time" granularity lootItem gives items,
+  // leaving any remaining items in the corpse untouched.
+  lootGold: (corpseId: string, ack: (res: LootAck) => void) => void;
   // Item 12: drops one inventory item onto the ground beneath the player,
   // creating (or merging into) a dropped-item chest — see
   // dropped-item-manager.service.ts.

@@ -186,6 +186,40 @@ export function renderInventory(): void {
       giveRow.appendChild(giveBtn);
       li.appendChild(giveRow);
     }
+    // Bug fix: a fillable item's left-click is claimed for action-bar
+    // targeting (see the click handler above), so it never gets the
+    // ordinary Equip/Use/Drop menu below — shown here instead, as soon as
+    // the item IS targeted, so drink/pour/drop are all actually reachable
+    // rather than right-click-to-drink being the only thing that worked.
+    if (isFillableItem(item) && activeScene?.getItemTarget() === item) {
+      const fillableRow = document.createElement('div');
+      fillableRow.className = 'inventory-action-row';
+      fillableRow.addEventListener('click', (e) => e.stopPropagation());
+      fillableRow.addEventListener('contextmenu', (e) => e.stopPropagation());
+
+      const drinkBtn = document.createElement('button');
+      drinkBtn.type = 'button';
+      drinkBtn.textContent = 'Drink';
+      drinkBtn.addEventListener('click', () => drinkInventoryItem(indices[0]!));
+      fillableRow.appendChild(drinkBtn);
+
+      const pourBtn = document.createElement('button');
+      pourBtn.type = 'button';
+      pourBtn.textContent = 'Pour out';
+      pourBtn.addEventListener('click', () => pourInventoryItem(indices[0]!));
+      fillableRow.appendChild(pourBtn);
+
+      const dropFillableBtn = document.createElement('button');
+      dropFillableBtn.type = 'button';
+      dropFillableBtn.textContent = 'Drop';
+      dropFillableBtn.addEventListener('click', () => {
+        activeScene?.clearItemTarget();
+        dropInventoryItem(indices[0]!);
+      });
+      fillableRow.appendChild(dropFillableBtn);
+
+      li.appendChild(fillableRow);
+    }
     // Item 11's Equip/Use/Drop menu — only shown for the row currently
     // toggled open (see openMenuIndex above).
     if (openMenuIndex === indices[0]) {
@@ -300,6 +334,28 @@ function drinkInventoryItem(index: number): void {
       if (ack.message) logCombatMessage(ack.message);
       if (ack.ok && myProfile) {
         setMyProfile({ ...myProfile, canteenDrinks: ack.canteenDrinks ?? myProfile.canteenDrinks, thirst: ack.thirst ?? myProfile.thirst });
+        refreshOpenModals();
+        updateStatusBar();
+      }
+    })
+    .catch(() => {
+      /* nothing to show */
+    });
+}
+
+// Bug fix: left-clicking a fillable item (a canteen) only ever toggled
+// its action-bar target, with no way to actually drop it (handleUseItem
+// deliberately rejects it, see its own doc comment, and there was no
+// "Drop" affordance anywhere else for it) — right-click-to-drink was the
+// only thing that visibly did anything. Pour mirrors drinkInventoryItem
+// above for the same reason.
+function pourInventoryItem(index: number): void {
+  network
+    .pourItem(index)
+    .then((ack) => {
+      if (ack.message) logCombatMessage(ack.message);
+      if (ack.ok && myProfile) {
+        setMyProfile({ ...myProfile, canteenDrinks: ack.canteenDrinks ?? myProfile.canteenDrinks });
         refreshOpenModals();
         updateStatusBar();
       }

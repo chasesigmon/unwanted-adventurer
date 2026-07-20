@@ -1073,6 +1073,28 @@ body {
   cursor: pointer;
 }
 
+/* Bug fix: identifying an item used to close the Inventory modal outright
+   to show this result — casting identify only makes sense with an item
+   already targeted IN the inventory, so closing it lost the very context
+   the result was about. Shown alongside it instead: no full-screen
+   backdrop of its own (the Inventory's is still up behind it, doubling up
+   would just over-darken the screen), and positioned off to the right of
+   the Inventory's own centered box rather than dead-centered on top of
+   it. */
+#identify-modal {
+  background: transparent;
+  pointer-events: none;
+  justify-content: flex-start;
+}
+
+#identify-modal .modal-box {
+  position: absolute;
+  left: calc(50% + 190px);
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: auto;
+}
+
 .modal-close:hover {
   color: #eee;
 }
