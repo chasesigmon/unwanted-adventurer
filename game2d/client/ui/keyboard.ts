@@ -17,6 +17,7 @@ import {
   helpModal,
   questLogModal,
   toggleModal,
+  updateZoomButtonLabel,
 } from './modalCore.js';
 import { openChatInput, openChatInputWithSlash } from './log.js';
 import { dismissAutopilotModal } from './autopilotModal.js';
@@ -123,6 +124,12 @@ export function initGlobalKeyboardShortcuts(): void {
       // currently selected target (see WorldScene.commandFollowerAttack).
       e.preventDefault();
       activeScene?.commandFollowerAttack();
+    } else if (key === 'v') {
+      // Item 10's zoom toggle (see WorldScene.toggleZoom) — same corner-
+      // button-plus-hotkey shape as every other single-key toggle here.
+      e.preventDefault();
+      activeScene?.toggleZoom();
+      updateZoomButtonLabel();
     } else if (e.code === 'Space') {
       // The flight spell's own spacebar burst (a later follow-up ask) —
       // only meaningful while actually flying; WorldScene's own

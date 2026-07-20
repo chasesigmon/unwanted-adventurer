@@ -102,6 +102,10 @@ export const recallPoiList = document.getElementById('recall-poi-list') as HTMLU
 // above, just listing killedMonsterKinds instead of visitedPois.
 export const monsterSummonsModal = document.getElementById('monster-summons-modal') as HTMLDivElement;
 export const monsterSummonsList = document.getElementById('monster-summons-list') as HTMLUListElement;
+// Item 11's Transform spell picker — same plain clickable-list shape as
+// the monster summons picker above.
+export const transformModal = document.getElementById('transform-modal') as HTMLDivElement;
+export const transformList = document.getElementById('transform-list') as HTMLUListElement;
 // A Dorms bed's own sleep-confirmation prompt (a later follow-up ask) —
 // plain Yes/No, no list.
 export const bedModal = document.getElementById('bed-modal') as HTMLDivElement;
@@ -139,6 +143,7 @@ export const ALL_MODALS = [
   chestModal,
   recallModal,
   monsterSummonsModal,
+  transformModal,
   bedModal,
   benchModal,
   logoutConfirmModal,
@@ -345,6 +350,21 @@ equipmentBtn.addEventListener('click', () => toggleModal(equipmentModal));
 mapBtn.addEventListener('click', () => toggleModal(mapModal));
 affectsBtn.addEventListener('click', () => toggleModal(affectsModal));
 questLogBtn.addEventListener('click', () => toggleModal(questLogModal));
+
+// Item 10's zoom toggle — not a modal, just flips WorldScene's own
+// camera zoom; the button's label/tooltip flip to reflect the current
+// state (shared with keyboard.ts's own 'v' hotkey, so either path stays
+// in sync no matter which one the player used last).
+const zoomBtn = document.getElementById('zoom-btn') as HTMLButtonElement;
+export function updateZoomButtonLabel(): void {
+  const zoomedIn = activeScene?.isZoomedIn() ?? false;
+  zoomBtn.textContent = zoomedIn ? '🔎' : '🔍';
+  zoomBtn.dataset.tooltip = zoomedIn ? 'Zoom out (v)' : 'Zoom in (v)';
+}
+zoomBtn.addEventListener('click', () => {
+  activeScene?.toggleZoom();
+  updateZoomButtonLabel();
+});
 
 // A single shared collapse button (a follow-up ask), same plain
 // toggle-a-class shape as the top-right world-info-toggle.

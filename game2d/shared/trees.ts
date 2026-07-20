@@ -5,7 +5,7 @@ import type { MapName } from './constants.js';
 // both the server (movement/spawn collision) and the client (rendering)
 // need the EXACT same 30 tile positions, so this is computed from a fixed
 // seed (not Math.random()) rather than duplicated in each place. See
-// game2d/src/treeSprite.ts for the visual side.
+// game2d/client/game/mapRender.ts for the visual side (TREE_TEXTURE_KEY).
 const GREAT_PLAINS_TREE_COUNT = 30;
 
 // Mystical Timberland (a later follow-up ask: "lots of trees spread out,

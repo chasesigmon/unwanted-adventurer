@@ -119,6 +119,7 @@ import {
   WISP_TRANSFORMATION_SKILL,
   WISP_MOVE_COOLDOWN_FACTOR,
   TAME_BEAST_SKILL,
+  TRANSFORM_SKILL,
   TAME_BEAST_RANGE_TILES,
   IDENTIFY_SKILL,
   KINETIC_STRIKE_SKILL,
@@ -195,6 +196,7 @@ import {
   COMMON_ROOM_MAPS,
   DORM_MAPS,
   SPECIALIZATION_CHAMBER_MAPS,
+  WISP_ELIGIBLE_MAPS,
 } from '../../shared/constants.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { WAND_ITEM, isWandItem } from '../../shared/equipment.js';
@@ -351,6 +353,7 @@ import type { PetSnapshot, AnimatedMonsterSnapshot, TamedBeastSnapshot } from '.
 import { PET_EVOLVED_NAME } from '../../shared/pets.js';
 import { openRecallModal } from '../ui/recallModal.js';
 import { openMonsterSummonsModal } from '../ui/monsterSummonsModal.js';
+import { openTransformModal } from '../ui/transformModal.js';
 
 const autopilotStatusEl = document.getElementById('autopilot-status') as HTMLDivElement;
 
@@ -366,6 +369,18 @@ const RARE_MONSTER_TINT = 0xffd166;
 // the ground plane instead of standing flush on it like every other
 // monster (see the monster-rendering loop in applyMapState/moveOrSnap).
 const FLYING_MONSTER_Y_OFFSET = -14;
+// Item 9's ambient outdoor wisps — a distinct name/texture from the
+// Druid's own wisp-transformation sprite (WISP_TEXTURE_KEY/WISP_ANIM_KEY
+// above) despite the similar name; that one is a character-scale player
+// transformation, this one is a tiny, non-interactive background effect.
+const AMBIENT_WISP_TEXTURE_KEY = 'ambient-wisp';
+// Item 10's zoom toggle — "zooming in should allow the player to zoom
+// the gameplay in by 50%" — a flat multiplier applied ON TOP of whatever
+// per-map base zoom applyCameraBounds already computes (CLASSROOM_ZOOM/
+// COMMON_ROOM_ZOOM/DORM_ZOOM/1), so every room's existing "fill the
+// screen" sizing keeps working exactly as it does today; this just zooms
+// in further from wherever the player already was.
+const PLAYER_ZOOM_IN_FACTOR = 1.5;
 
 export class WorldScene extends Phaser.Scene {
   private network!: NetworkManager;
@@ -505,6 +520,18 @@ export class WorldScene extends Phaser.Scene {
   // grass elsewhere (floorTextureFor has no per-tile-region concept, see
   // its own doc comment).
   private korthoSeaSprites: Phaser.GameObjects.GameObject[] = [];
+  // Item 9's ambient wisps — purely decorative (no targeting, no
+  // collision, no server involvement at all): each one wanders to a
+  // fresh random point on its own map every few seconds, with a short
+  // particle trail following behind it. Cleared/respawned on every map
+  // change, same lifecycle as korthoSeaSprites above.
+  private static readonly WISP_COUNT = 8;
+  private wisps: Array<{
+    sprite: Phaser.GameObjects.Sprite;
+    emitter: Phaser.GameObjects.Particles.ParticleEmitter;
+    targetX: number;
+    targetY: number;
+  }> = [];
   // Item 20's animated wave water — a separate reference from
   // korthoSeaSprites above (which still gets destroyed/cleared the same
   // way) purely so update() has a typed handle to scroll each frame.
@@ -573,6 +600,10 @@ export class WorldScene extends Phaser.Scene {
   // commands entirely, so this can never be set to non-null anymore —
   // kept only so displayKind/effectiveSpriteKind's fallback stays total.
   private mimicForm: (Race | MonsterKind) | null = null;
+  // Item 11's Transform spell — checked BEFORE mimicForm in displayKind()
+  // below (a slime can't also be transformed, but if it somehow were,
+  // the beast form should win — it's the more recently-cast effect).
+  private beastTransformKind: MonsterKind | null = null;
   private facing: Facing = 'down';
   private currentMap: MapName = 'Great Plains';
   // See applyCameraBounds/updateCameraScroll's own doc comments — whether
@@ -583,6 +614,10 @@ export class WorldScene extends Phaser.Scene {
   private cameraFollowsY = true;
   private cameraMapPixelWidth = 0;
   private cameraMapPixelHeight = 0;
+  // Item 10's zoom toggle — false (the default) is "full zoom out, as the
+  // game is now" per the ask; see PLAYER_ZOOM_IN_FACTOR's own doc comment
+  // for how this actually changes the camera.
+  private zoomedIn = false;
   private row = 0;
   private col = 0;
   private myUsername = '';
@@ -850,6 +885,21 @@ export class WorldScene extends Phaser.Scene {
       });
     }
 
+    // Item 9's ambient outdoor wisps — a tiny soft white dot (a bright
+    // core + a softer outer glow), generated once via Graphics rather
+    // than loading an asset file, since this is just a couple of filled
+    // circles. "Ant size compared to the size of the game" — 12x12px
+    // before scaling, smaller than any real character/monster sprite.
+    if (!this.textures.exists(AMBIENT_WISP_TEXTURE_KEY)) {
+      const wispGraphics = this.add.graphics();
+      wispGraphics.fillStyle(0xffffff, 0.35);
+      wispGraphics.fillCircle(6, 6, 6);
+      wispGraphics.fillStyle(0xffffff, 0.9);
+      wispGraphics.fillCircle(6, 6, 2);
+      wispGraphics.generateTexture(AMBIENT_WISP_TEXTURE_KEY, 12, 12);
+      wispGraphics.destroy();
+    }
+
     this.player = this.add.sprite(0, 0, textureKeyFor('goblin'), idleFrameFor('goblin', 'down')).setScale(CHAR_SCALE);
     this.playerHpBar = this.add.graphics();
     this.playerManaBar = this.add.graphics();
@@ -1072,6 +1122,10 @@ export class WorldScene extends Phaser.Scene {
       this.korthoWaterSprite.tilePositionX += 0.15;
       this.korthoWaterSprite.tilePositionY = Math.sin(this.time.now / 900) * 2;
     }
+    // Item 9's ambient wisps — kept wandering unconditionally (same
+    // reasoning as the water scroll above), regardless of modals/combat/
+    // paralysis, since they're pure background flavor.
+    this.updateWisps();
     this.updateCameraScroll();
     this.repositionHpBars();
     this.updateDarkFog();
@@ -1104,11 +1158,35 @@ export class WorldScene extends Phaser.Scene {
     const now = Date.now();
     if (now - this.lastMoveAt < this.effectiveMoveCooldownMs()) return;
 
+    const left = this.moveKeys.a.isDown || this.cursorKeys.left.isDown;
+    const right = this.moveKeys.d.isDown || this.cursorKeys.right.isDown;
+    const up = this.moveKeys.w.isDown || this.cursorKeys.up.isDown;
+    const down = this.moveKeys.s.isDown || this.cursorKeys.down.isDown;
+
+    // Item 1: "press W+A at the same time to go northwest" — checked
+    // before the single-direction chain below, and before it too, since a
+    // real diagonal combo should win over treating it as just one of its
+    // two component keys. Opposite keys held together (e.g. w+s) cancel
+    // out to no diagonal, same as they already do for the single-key case
+    // below (neither branch fires).
+    let dRow: -1 | 1 | undefined;
+    let dCol: -1 | 1 | undefined;
+    if (up && !down) dRow = -1;
+    else if (down && !up) dRow = 1;
+    if (left && !right) dCol = -1;
+    else if (right && !left) dCol = 1;
+
+    if (dRow !== undefined && dCol !== undefined) {
+      this.lastMoveAt = now;
+      this.attemptDiagonalMove(dRow, dCol);
+      return;
+    }
+
     let direction: Direction | undefined;
-    if (this.moveKeys.a.isDown || this.cursorKeys.left.isDown) direction = 'west';
-    else if (this.moveKeys.d.isDown || this.cursorKeys.right.isDown) direction = 'east';
-    else if (this.moveKeys.w.isDown || this.cursorKeys.up.isDown) direction = 'north';
-    else if (this.moveKeys.s.isDown || this.cursorKeys.down.isDown) direction = 'south';
+    if (left) direction = 'west';
+    else if (right) direction = 'east';
+    else if (up) direction = 'north';
+    else if (down) direction = 'south';
 
     if (!direction) return;
     this.lastMoveAt = now;
@@ -1924,7 +2002,7 @@ export class WorldScene extends Phaser.Scene {
   // human — see effectiveSpriteKind). Every texture/animation lookup for
   // the LOCAL player goes through this instead of `race` directly.
   private displayKind(): SpriteKind {
-    return this.mimicForm ?? effectiveSpriteKind(this.race, this.gender, this.skinTone, this.hairColor);
+    return this.beastTransformKind ?? this.mimicForm ?? effectiveSpriteKind(this.race, this.gender, this.skinTone, this.hairColor);
   }
 
   private setIdle(): void {
@@ -2029,7 +2107,9 @@ export class WorldScene extends Phaser.Scene {
       (SPECIALIZATION_CHAMBER_MAPS as readonly string[]).includes(this.currentMap);
     const isCommonRoomSized = (COMMON_ROOM_MAPS as readonly string[]).includes(this.currentMap) || this.currentMap === 'Great Hall';
     const isDormSized = (DORM_MAPS as readonly string[]).includes(this.currentMap);
-    const zoom = isClassroomSized ? CLASSROOM_ZOOM : isCommonRoomSized ? COMMON_ROOM_ZOOM : isDormSized ? DORM_ZOOM : 1;
+    const baseZoom = isClassroomSized ? CLASSROOM_ZOOM : isCommonRoomSized ? COMMON_ROOM_ZOOM : isDormSized ? DORM_ZOOM : 1;
+    // Item 10's zoom toggle — see PLAYER_ZOOM_IN_FACTOR's own doc comment.
+    const zoom = baseZoom * (this.zoomedIn ? PLAYER_ZOOM_IN_FACTOR : 1);
     cam.setZoom(zoom);
     cam.setBounds(0, 0, pixelWidth, pixelHeight);
     // A later follow-up ask: "any map that is not large enough to cover
@@ -2054,6 +2134,20 @@ export class WorldScene extends Phaser.Scene {
     this.updateCameraScroll();
   }
 
+  // Item 10's zoom toggle — flips between the default "full zoom out, as
+  // the game is now" and 50% further zoomed in, then re-applies the
+  // current map's own camera bounds (its per-map base zoom, follow axes,
+  // and centering all still need recomputing against the new effective
+  // zoom — see applyCameraBounds).
+  toggleZoom(): void {
+    this.zoomedIn = !this.zoomedIn;
+    this.applyCameraBounds(this.cameraMapPixelWidth, this.cameraMapPixelHeight);
+  }
+
+  isZoomedIn(): boolean {
+    return this.zoomedIn;
+  }
+
   // See applyCameraBounds's own doc comment above for why this replaces
   // Phaser's built-in camera-follow entirely: an axis the whole map
   // already fits on screen along stays permanently centered; an axis too
@@ -2069,6 +2163,88 @@ export class WorldScene extends Phaser.Scene {
     cam.scrollY = this.cameraFollowsY
       ? Phaser.Math.Clamp(this.player.y - viewH / 2, 0, Math.max(0, this.cameraMapPixelHeight - viewH))
       : (this.cameraMapPixelHeight - viewH) / 2;
+  }
+
+  // Item 9's ambient wisps — purely decorative background flavor for
+  // outdoor maps (see WISP_ELIGIBLE_MAPS). Each wisp wanders to a fresh
+  // random point on the current map every few seconds (see
+  // updateWisps, called from update()) and trails a short fading stream
+  // of particles behind it using the same tiny glow texture as its own
+  // body, just smaller/faster-fading.
+  private destroyWisps(): void {
+    for (const wisp of this.wisps) {
+      wisp.sprite.destroy();
+      wisp.emitter.destroy();
+    }
+    this.wisps = [];
+  }
+
+  // Scattering wisps uniformly across an ENTIRE map (some of these span
+  // 100x100 tiles) made them almost never actually visible on screen at
+  // once — a small fixed count spreads far too thin over that much area.
+  // Instead, every wisp wanders within this radius of wherever the PLAYER
+  // currently is, re-centered on the player's live position each time a
+  // new wander target is picked (see updateWisps) — so they stay
+  // visibly nearby no matter how far the player walks across a big map.
+  private static readonly WISP_WANDER_RADIUS_TILES = 12;
+
+  private randomPointNearPlayer(pixelWidth: number, pixelHeight: number): { x: number; y: number } {
+    const radius = WorldScene.WISP_WANDER_RADIUS_TILES * TILE_SIZE;
+    const center = this.tilePosition(this.row, this.col);
+    return {
+      x: Phaser.Math.Clamp(center.x + Phaser.Math.Between(-radius, radius), 0, pixelWidth),
+      y: Phaser.Math.Clamp(center.y + Phaser.Math.Between(-radius, radius), 0, pixelHeight),
+    };
+  }
+
+  private spawnWisps(pixelWidth: number, pixelHeight: number): void {
+    for (let i = 0; i < WorldScene.WISP_COUNT; i++) {
+      const { x, y } = this.randomPointNearPlayer(pixelWidth, pixelHeight);
+      const sprite = this.add
+        .sprite(x, y, AMBIENT_WISP_TEXTURE_KEY)
+        .setDepth(2)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setScale(0.6 + Math.random() * 0.5);
+      // A short, fast-fading trail of the same tiny glow texture,
+      // following the wisp's own position every frame (see updateWisps).
+      const emitter = this.add.particles(x, y, AMBIENT_WISP_TEXTURE_KEY, {
+        lifespan: 350,
+        speed: 0,
+        scale: { start: 0.4, end: 0 },
+        alpha: { start: 0.5, end: 0 },
+        frequency: 60,
+        blendMode: Phaser.BlendModes.ADD,
+      });
+      emitter.setDepth(1);
+      this.wisps.push({ sprite, emitter, targetX: x, targetY: y });
+    }
+  }
+
+  // Called every frame from update() — a gentle, organic wander: once a
+  // wisp gets close to its current random target, it picks a fresh one
+  // near wherever the player currently is (see randomPointNearPlayer),
+  // never stopping. Non-interactive by construction (no setInteractive,
+  // never added to any targeting array), matching the ask's own "non
+  // targettable or attackable."
+  private updateWisps(): void {
+    if (this.wisps.length === 0) return;
+    const pixelWidth = this.cameraMapPixelWidth;
+    const pixelHeight = this.cameraMapPixelHeight;
+    const WISP_SPEED = 0.4;
+    for (const wisp of this.wisps) {
+      const dx = wisp.targetX - wisp.sprite.x;
+      const dy = wisp.targetY - wisp.sprite.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 4) {
+        const next = this.randomPointNearPlayer(pixelWidth, pixelHeight);
+        wisp.targetX = next.x;
+        wisp.targetY = next.y;
+      } else {
+        wisp.sprite.x += (dx / dist) * WISP_SPEED;
+        wisp.sprite.y += (dy / dist) * WISP_SPEED;
+      }
+      wisp.emitter.setPosition(wisp.sprite.x, wisp.sprite.y);
+    }
   }
 
   private renderMap(mapName: MapName): void {
@@ -2090,6 +2266,14 @@ export class WorldScene extends Phaser.Scene {
       .tileSprite(0, 0, pixelWidth, pixelHeight, floorTextureFor(mapName))
       .setOrigin(0, 0)
       .setDepth(-1);
+
+    // Item 9's ambient wisps — cleared unconditionally on every map
+    // change (even a non-eligible one) and re-spawned only if the NEW map
+    // actually qualifies.
+    this.destroyWisps();
+    if ((WISP_ELIGIBLE_MAPS as readonly string[]).includes(mapName)) {
+      this.spawnWisps(pixelWidth, pixelHeight);
+    }
 
     // A lock target/Blockman selection from the PREVIOUS map never
     // applies here.
@@ -3490,6 +3674,7 @@ export class WorldScene extends Phaser.Scene {
     this.hairColor = player.hairColor;
     this.skinTone = player.skinTone;
     this.mimicForm = player.mimicForm;
+    this.beastTransformKind = player.beastTransformActive ? (player.beastTransformKind ?? null) : null;
     this.row = player.row;
     this.col = player.col;
     // A later follow-up bug fix: "when the player goes to the 2nd Floor,
@@ -3680,7 +3865,11 @@ export class WorldScene extends Phaser.Scene {
 
       // A slime's mimicForm (if set) overrides its rendered appearance
       // entirely, while p.race stays the real, mechanical one underneath.
-      const displayKind: SpriteKind = p.mimicForm ?? effectiveSpriteKind(p.race, p.gender, p.skinTone, p.hairColor);
+      // Item 11's Transform spell wins over mimicForm too (same "more
+      // recently-cast effect" reasoning as the local player's own
+      // displayKind()).
+      const displayKind: SpriteKind =
+        (p.beastTransformActive ? p.beastTransformKind : null) ?? p.mimicForm ?? effectiveSpriteKind(p.race, p.gender, p.skinTone, p.hairColor);
       let sprite = this.otherPlayers.get(p.username);
       if (!sprite) {
         const pos = this.tilePosition(p.row, p.col);
@@ -4719,6 +4908,7 @@ export class WorldScene extends Phaser.Scene {
           this.hairColor = ack.player.hairColor;
           this.skinTone = ack.player.skinTone;
           this.mimicForm = ack.player.mimicForm;
+          this.beastTransformKind = ack.player.beastTransformActive ? (ack.player.beastTransformKind ?? null) : null;
           // A follow-up bug fix: "movement is not actually being
           // deducted when the player moves" — this used to only splice
           // in the new `map` field, silently discarding every OTHER
@@ -4776,6 +4966,55 @@ export class WorldScene extends Phaser.Scene {
         // call also rebuilt every OTHER open modal on every single move,
         // including the Skills panel's own icons — see
         // refreshCharSheetIfOpen's own doc comment).
+        refreshCharSheetIfOpen();
+        const pos = this.tilePosition(ack.player.row, ack.player.col);
+        this.tweens.add({
+          targets: this.player,
+          x: pos.x,
+          y: pos.y,
+          duration: this.effectiveMoveCooldownMs(),
+          onComplete: () => {
+            this.isMoving = false;
+            this.setIdle();
+          },
+        });
+      })
+      .catch(() => {
+        this.isMoving = false;
+        this.setIdle();
+      });
+  }
+
+  // Item 1: "move diagonally, e.g. W+A at the same time to go northwest."
+  // Same shape as attemptMove above, just against network.moveDiagonal
+  // and never checking for a map transition (diagonal steps can't cross
+  // one — see WorldManagerService.processDiagonalMove's own doc comment).
+  // The character rig only has 4 facing rows (no diagonal frames), so the
+  // horizontal component wins for which walk cycle/facing to show — same
+  // west/east-before-north/south precedence the single-key chain below
+  // already uses.
+  private attemptDiagonalMove(dRow: -1 | 1, dCol: -1 | 1): void {
+    const direction: Direction = dCol === -1 ? 'west' : dCol === 1 ? 'east' : dRow === -1 ? 'north' : 'south';
+    this.facing = facingForDirection(direction);
+    if (myProfile?.flightActive) this.player.setTexture(textureKeyFor(this.displayKind()), idleFrameFor(this.displayKind(), this.facing));
+    else this.player.play(walkAnimKey(this.displayKind(), this.facing), true);
+    this.isMoving = true;
+    if (myProfile?.celeritasActive || myProfile?.flightActive) this.spawnWindEffect(direction);
+
+    this.network
+      .moveDiagonal(dRow, dCol)
+      .then((ack) => {
+        if (!ack.ok) {
+          if (ack.message) logCombatMessage(ack.message);
+          this.isMoving = false;
+          this.setIdle();
+          return;
+        }
+
+        this.row = ack.player.row;
+        this.col = ack.player.col;
+        setMyProfile(ack.player);
+        this.updateOwnBars();
         refreshCharSheetIfOpen();
         const pos = this.tilePosition(ack.player.row, ack.player.col);
         this.tweens.add({
@@ -5293,6 +5532,12 @@ export class WorldScene extends Phaser.Scene {
     // (myProfile's own killedMonsterKinds).
     if (skillName === MONSTER_SUMMONS_SKILL) {
       openMonsterSummonsModal();
+      return;
+    }
+    // Item 11's Transform spell — same "opens its own picker modal
+    // directly" shape as monster summons above.
+    if (skillName === TRANSFORM_SKILL) {
+      openTransformModal();
       return;
     }
     // Barrier (a later follow-up ask) is a no-target toggle too — casting

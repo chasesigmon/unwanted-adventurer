@@ -33,6 +33,10 @@ export function practicePointCostFor(skill: string): number {
   // its own explicit figure; the level-10 tier below would otherwise
   // give 2.
   if (skill === TAME_BEAST_SKILL) return 3;
+  // Transform (a later follow-up ask) — "should cost 4 practice points to
+  // learn," its own explicit figure; the level-10 tier below would
+  // otherwise give 2.
+  if (skill === TRANSFORM_SKILL) return 4;
   const level = skillLevelRequirement(skill);
   if (level >= 15) return 3;
   if (level >= 5) return 2;
@@ -143,10 +147,11 @@ export const UNLOCK_SKILL = 'unlock';
 // (see SKILL_COOLDOWN_MS below).
 export const ARCANE_BOLT_SKILL = 'arcane bolt';
 // A later follow-up ask: all "bolt" spells cost 7 mana per cast — split
-// out from the general SPELL_ATTACK_MANA_COST (game.gateway.ts) so this
-// one "bolt"-named spell's cost can move independently of the other
-// spells (stupefaciunt, exarme, scutum, murus lapideus) that constant
-// still covers.
+// out from the generic SPELL_ATTACK_MANA_COST (game.gateway.ts), which
+// item 12's mana-cost audit later split apart entirely (see
+// STUPEFACIANT_MANA_COST/EXARME_MANA_COST/AEGIS_MANA_COST/
+// STONE_WALL_MANA_COST below) once it became clear that flat shared
+// number was covering 4 very differently-powered spells.
 export const ARCANE_BOLT_MANA_COST = 7;
 
 // Basic actions every human wizard starts knowing outright (item 7) —
@@ -162,7 +167,18 @@ export const POUR_SKILL = 'pour out';
 // disarms a weapon into the caster's own inventory instead. See
 // game.gateway.ts's handleCastStupefaciunt/handleCastExarme.
 export const STUN_SKILL = 'stun';
+// Item 12's mana-cost audit: split out from the generic SPELL_ATTACK_MANA_COST
+// (game.gateway.ts) that all 4 of these spells used to share flatly —
+// stun is a full lockdown of the target (can't act at all until it wears
+// off), a materially stronger effect than a plain damage bolt, so it now
+// costs more than ARCANE_BOLT_MANA_COST/ELEMENTAL_BOLT_MANA_COST (7) or a
+// simple debuff.
+export const STUPEFACIANT_MANA_COST = 16;
 export const DISARM_SKILL = 'disarm';
+// Exarme doesn't just debuff — it moves the target's own weapon into the
+// CASTER's inventory outright, a real (if temporary) item theft, pricier
+// than a stat-only debuff would be.
+export const EXARME_MANA_COST = 15;
 
 // The Defense Classroom's own podium (a later follow-up ask) — a no-
 // target toggle-like buff (always ON for its own fixed duration once
@@ -170,6 +186,11 @@ export const DISARM_SKILL = 'disarm';
 // shields the caster from a portion of incoming damage for a time. See
 // game.gateway.ts's handleCastScutum.
 export const AEGIS_SKILL = 'aegis';
+// Item 12's mana-cost audit — a fixed-duration damage-absorbing shield,
+// same power tier as barrier/invisibility (both 15), not the cheaper
+// generic SPELL_ATTACK_MANA_COST (10) it used to share with 3 very
+// differently-powered spells.
+export const AEGIS_MANA_COST = 15;
 
 // The Summoning Classroom's own podium (a later follow-up ask) — a
 // click-a-tile-on-the-map targeted spell (unlike every other spell here,
@@ -177,6 +198,11 @@ export const AEGIS_SKILL = 'aegis';
 // summons a temporary, defensive stone-block ally. See
 // game.gateway.ts's handleCastMurusLapideus.
 export const STONE_WALL_SKILL = 'stone wall';
+// Item 12's mana-cost audit — a real (if temporary/weaker) defensive
+// ally, same idea as animate dead/monster summons/summon demon imp but
+// noticeably less durable, so it's priced between those (15-20) and a
+// plain debuff, not the flat 10 it used to share with stun/exarme/aegis.
+export const STONE_WALL_MANA_COST = 12;
 
 // The Necromancer Chamber's own teacher — a one-time practice-point spend
 // (see SKILL_LEVEL_REQUIREMENT/SKILL_SPECIALIZATION_REQUIREMENT below —
@@ -185,7 +211,11 @@ export const STONE_WALL_SKILL = 'stone wall';
 // ask), and a click-a-corpse targeted spell rather than a click-a-tile
 // one (see game.gateway.ts's handleCastAnimateDead).
 export const ANIMATE_DEAD_SKILL = 'animate dead';
-export const ANIMATE_DEAD_MANA_COST = 15;
+// Item 12's mana-cost audit — bumped from 15 to sit alongside monster
+// summons/summon demon imp/create duplicate (all 20), the other "gain a
+// combat ally" spells; there was no real justification for animate dead
+// being priced lower than its own peers.
+export const ANIMATE_DEAD_MANA_COST = 20;
 export const ANIMATE_DEAD_COOLDOWN_MS = 3 * 60 * 1000;
 // "Only have 1 animated monster until they reach level 20, then they can
 // have 2."
@@ -343,6 +373,24 @@ export const TAME_BEAST_COOLDOWN_MS = 5 * 1000;
 // too), so this single constant is the whole rule.
 export const TAME_BEAST_MAX_LEVEL_ABOVE_PLAYER = 3;
 
+// Item 11: the Druid's own level-10 "Transform" spell — turns the caster
+// into any beast kind they've ever successfully tamed (see
+// shared/pets.ts's own tracking-system doc comment and game.gateway.ts's
+// handleCastTransform), for a fixed duration, with a real combat-mechanic
+// swap (a flat physical "beast paw" attack instead of the caster's own
+// weapon/wand, plus a temporary hp/armor boost) — see
+// BEAST_TRANSFORM_HP_BONUS/BEAST_TRANSFORM_ARMOR_BONUS below.
+export const TRANSFORM_SKILL = 'transform';
+export const TRANSFORM_MANA_COST = 40;
+export const TRANSFORM_DURATION_MS = 4 * 60 * 1000;
+export const TRANSFORM_COOLDOWN_MS = 5 * 60 * 1000;
+// "Enhanced health and armor" — flat bonuses applied for the transform's
+// own duration (see handleCastTransform/checkBeastTransformExpiry), not
+// scaled per-beast (every beast kind gives the same flat bump) — simple,
+// predictable, and easy to fully revert on expiry.
+export const BEAST_TRANSFORM_HP_BONUS = 60;
+export const BEAST_TRANSFORM_ARMOR_BONUS = 4;
+
 // The Utility Classroom's own level-10 "identify" spell (a later
 // follow-up ask) — "requires first selecting an item from the
 // inventory... opens another small window with the name, stats, and
@@ -350,7 +398,11 @@ export const TAME_BEAST_MAX_LEVEL_ABOVE_PLAYER = 3;
 // the Utility teacher, no SKILL_SPECIALIZATION_REQUIREMENT entry), same
 // as recall/flight.
 export const IDENTIFY_SKILL = 'identify';
-export const IDENTIFY_MANA_COST = 15;
+// Item 12's mana-cost audit — lowered from 15: identify has zero combat
+// impact and zero risk (no target to fumble against, just a pure
+// information readout), so it shouldn't cost as much as spells that
+// actually damage/buff/debuff something. Priced below lesser heal (10).
+export const IDENTIFY_MANA_COST = 8;
 export const IDENTIFY_COOLDOWN_MS = 3 * 1000;
 
 // The Battlemage specialization's own 2 level-15 passives (a later
@@ -575,6 +627,7 @@ export const SKILL_LEVEL_REQUIREMENT: Record<string, number> = {
   [LESSER_SELF_HEAL_SKILL]: 10,
   [WISP_TRANSFORMATION_SKILL]: 10,
   [TAME_BEAST_SKILL]: 10,
+  [TRANSFORM_SKILL]: 10,
   [IDENTIFY_SKILL]: 10,
   [BATTLEMAGE_ENHANCED_ARMOR_SKILL]: 10,
   [BATTLEMAGE_ENHANCED_DAMAGE_SKILL]: 10,
@@ -604,6 +657,7 @@ export const SKILL_SPECIALIZATION_REQUIREMENT: Partial<Record<string, Specializa
   [LESSER_SELF_HEAL_SKILL]: 'druid',
   [WISP_TRANSFORMATION_SKILL]: 'druid',
   [TAME_BEAST_SKILL]: 'druid',
+  [TRANSFORM_SKILL]: 'druid',
   [BATTLEMAGE_ENHANCED_ARMOR_SKILL]: 'battlemage',
   [BATTLEMAGE_ENHANCED_DAMAGE_SKILL]: 'battlemage',
   [KINETIC_STRIKE_SKILL]: 'battlemage',
@@ -642,6 +696,7 @@ export const LEARNABLE_SKILLS = [
   LESSER_SELF_HEAL_SKILL,
   WISP_TRANSFORMATION_SKILL,
   TAME_BEAST_SKILL,
+  TRANSFORM_SKILL,
   IDENTIFY_SKILL,
   BATTLEMAGE_ENHANCED_ARMOR_SKILL,
   BATTLEMAGE_ENHANCED_DAMAGE_SKILL,
@@ -705,6 +760,7 @@ export const SKILL_COOLDOWN_MS: Partial<Record<string, number>> = {
   // transformation).
   [WISP_TRANSFORMATION_SKILL]: WISP_TRANSFORMATION_COOLDOWN_MS,
   [TAME_BEAST_SKILL]: TAME_BEAST_COOLDOWN_MS,
+  [TRANSFORM_SKILL]: TRANSFORM_COOLDOWN_MS,
   [IDENTIFY_SKILL]: IDENTIFY_COOLDOWN_MS,
   [KINETIC_STRIKE_SKILL]: KINETIC_STRIKE_COOLDOWN_MS,
   [SAP_HEALTH_SKILL]: SAP_HEALTH_COOLDOWN_MS,

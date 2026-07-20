@@ -19,6 +19,7 @@ import {
   LESSER_SELF_HEAL_SKILL,
   WISP_TRANSFORMATION_SKILL,
   TAME_BEAST_SKILL,
+  TRANSFORM_SKILL,
   BATTLEMAGE_ENHANCED_ARMOR_SKILL,
   BATTLEMAGE_ENHANCED_DAMAGE_SKILL,
   KINETIC_STRIKE_SKILL,
@@ -248,7 +249,7 @@ export const TEACHERS: TeacherSnapshot[] = [
     map: 'Druid Chamber',
     row: 2,
     col: 9,
-    teachesSkills: [LESSER_SELF_HEAL_SKILL, WISP_TRANSFORMATION_SKILL, TAME_BEAST_SKILL],
+    teachesSkills: [LESSER_SELF_HEAL_SKILL, WISP_TRANSFORMATION_SKILL, TAME_BEAST_SKILL, TRANSFORM_SKILL],
     robeColorKey: 'forest',
   },
   // A later follow-up ask gave the Diabolist specialist actual click

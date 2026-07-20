@@ -63,6 +63,13 @@ export interface PlayerState extends Location, Attributes {
   // "other nearby players need to see the sprite swap too" reasoning as
   // scutumActive/barrierActive above.
   wispActive: boolean;
+  // Item 11's Transform spell — same "other nearby players need to see
+  // the sprite swap too" reasoning as wispActive above; kind rides along
+  // too since other players need to know WHICH beast to render, not just
+  // that a transform is active (see world-manager.service.ts's own
+  // getMapState builder).
+  beastTransformActive: boolean;
+  beastTransformKind: MonsterKind | null;
   // Flight's own toggle (a later follow-up ask) — same "other nearby
   // players need to see the floating visual/wind trail too" reasoning as
   // wispActive above.

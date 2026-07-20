@@ -61,7 +61,7 @@ export const STARTING_MV = STARTING_VITAL;
 // regens but doesn't gate anything yet (a deliberate first-pass scope,
 // same as a few other "earnable now, inert until wired to something"
 // mechanics already in this project).
-export const MV_COST_PER_TILE = 0.2;
+export const MV_COST_PER_TILE = 0.5;
 export const STARTING_LEVEL = 1;
 // A goblin can't level past this without evolving — matches the text
 // game's own GOBLIN_MAX_LEVEL exactly. (Skeleton/zombie/dragonborn/slime

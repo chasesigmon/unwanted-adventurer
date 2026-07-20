@@ -5,7 +5,6 @@
 // drag-to-resize + persisted size/position (item 6).
 import { network } from '../state.js';
 import { setupCollapsible } from './collapsible.js';
-import { openMapModalToTab } from './mapModal.js';
 
 const COMBAT_LOG_MAX_LINES = 60;
 
@@ -339,7 +338,18 @@ chatInput.addEventListener('keydown', (e) => {
     const text = chatInput.value.trim();
     chatInput.value = '';
     const mapTab = MAP_MODAL_CHAT_COMMANDS[text.toLowerCase()];
-    if (mapTab) openMapModalToTab(mapTab);
+    // A dynamic import here (not a static one at the top of this file) —
+    // deliberately: modalCore.ts imports FROM this file (chatInputFocused/
+    // registerChatFocusListener), and mapModal.ts imports FROM modalCore.ts,
+    // so a static import of mapModal.ts here would form a real circular
+    // dependency (modalCore -> log -> mapModal -> modalCore). Depending on
+    // which module happens to be pulled into the graph first, that cycle
+    // can throw "Cannot access '...' before initialization" and crash the
+    // ENTIRE script before any handlers ever attach (this is exactly what
+    // broke the login/register screen — a real bug this fix resolves). A
+    // dynamic import breaks the cycle since it resolves asynchronously,
+    // after every module's own top-level code has already finished.
+    if (mapTab) void import('./mapModal.js').then(({ openMapModalToTab }) => openMapModalToTab(mapTab));
     else if (text) network.chat(text);
     chatInput.blur();
   } else if (e.key === 'Escape') {

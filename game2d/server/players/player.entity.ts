@@ -283,6 +283,15 @@ export class Player {
   @Column({ name: 'tamed_beast', type: 'jsonb', nullable: true, default: null })
   tamedBeast!: TamedBeastSnapshot | null;
 
+  // Item 11's Transform spell — "there needs to be a tracking system for
+  // unique beasts a druid tames" — every distinct MonsterKind this player
+  // has ever successfully tamed (see handleCastTameBeast), independent of
+  // whether that specific tamed beast is still alive/active; Transform
+  // lets them become any kind in this list, not just their current one.
+  // Same "unique kinds ever seen" shape as killedMonsterKinds above.
+  @Column({ name: 'tamed_beast_kinds', type: 'jsonb', default: () => "'[]'" })
+  tamedBeastKinds!: string[];
+
   @Column({ name: 'last_login', type: 'timestamptz', default: () => 'now()' })
   lastLogin!: Date;
 

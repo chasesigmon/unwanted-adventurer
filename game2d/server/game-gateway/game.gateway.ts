@@ -89,6 +89,7 @@ import {
   expGainFor,
   applyExpGain,
   weaponBonusFor,
+  monsterAttackDamageForLevel,
   EQUIPMENT_SLOT_FOR_ITEM,
   EQUIPMENT_SLOTS,
   WEAPON_DAMAGE_BONUS,
@@ -185,9 +186,13 @@ import {
   UNLOCK_SKILL,
   SPELL_ATTACK_RANGE_TILES,
   STUN_SKILL,
+  STUPEFACIANT_MANA_COST,
   DISARM_SKILL,
+  EXARME_MANA_COST,
   AEGIS_SKILL,
+  AEGIS_MANA_COST,
   STONE_WALL_SKILL,
+  STONE_WALL_MANA_COST,
   ANIMATE_DEAD_SKILL,
   ANIMATE_DEAD_MANA_COST,
   ANIMATE_DEAD_HP_MULTIPLIER,
@@ -231,6 +236,11 @@ import {
   TAME_BEAST_MANA_COST,
   TAME_BEAST_RANGE_TILES,
   TAME_BEAST_MAX_LEVEL_ABOVE_PLAYER,
+  TRANSFORM_SKILL,
+  TRANSFORM_MANA_COST,
+  TRANSFORM_DURATION_MS,
+  BEAST_TRANSFORM_HP_BONUS,
+  BEAST_TRANSFORM_ARMOR_BONUS,
   IDENTIFY_SKILL,
   IDENTIFY_MANA_COST,
   BATTLEMAGE_ENHANCED_ARMOR_SKILL,
@@ -409,10 +419,6 @@ const WAND_BOLT_RANGE_TILES = SPELL_ATTACK_RANGE_TILES;
 // Resera costs mana like every other cast (not explicitly requested, but
 // consistent with lucem/celeritas/augue).
 const RESERA_CAST_MANA_COST = 10;
-// "Both spells [stupefaciunt/exarme] should cost 10 mana"/"the spell
-// [scutum] should cost 10 mana" — one shared constant since all three
-// (and murus lapideus, see below) land on the exact same figure.
-const SPELL_ATTACK_MANA_COST = 10;
 // "Cause them to be stunned in place for 2 combat ticks."
 const STUPEFACIUNT_STUN_TICKS = 2;
 // "Lasts for 1 minute" (scutum's own shield duration — a FIXED duration,
@@ -831,6 +837,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         this.checkBarrierExpiry(client);
         this.checkEnhanceDamageExpiry(client);
         this.checkWispTransformationExpiry(client);
+        this.checkBeastTransformExpiry(client);
         this.checkInvisibilityExpiry(client);
         this.checkFlightExpiry(client);
         this.checkRespawnCountdown(client);
@@ -1063,6 +1070,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       enhanceDamageActive: client.data.enhanceDamageActive,
       wispActive: client.data.wispActive,
       invisibleActive: client.data.invisibleActive,
+      beastTransformActive: client.data.beastTransformActive,
+      beastTransformKind: client.data.beastTransformKind,
+      beastTransformUntil: client.data.beastTransformUntil,
+      tamedBeastKinds: client.data.tamedBeastKinds,
       wandLitUntil: client.data.wandLitUntil,
       celeritasActiveUntil: client.data.celeritasActiveUntil,
       scutumActiveUntil: client.data.scutumActiveUntil,
@@ -1079,7 +1090,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       armorVsPhysical: armorVsPhysicalFor(
         client.data.dexterity + dexterityEquipmentBonus(client.data.equipment),
         client.data.strength,
-        physicalArmorEquipmentBonus(client.data.equipment)
+        physicalArmorEquipmentBonus(client.data.equipment) + this.beastTransformArmorBonus(client)
       ),
       armorVsMagical: armorVsMagicalFor(
         client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment),
@@ -1597,6 +1608,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         visitedPois: client.data.visitedPois,
         recallPointId: client.data.recallPointId,
         killedMonsterKinds: client.data.killedMonsterKinds,
+        tamedBeastKinds: client.data.tamedBeastKinds,
         // A follow-up bug fix: "the pet is a permanent part of the
         // player's group... it disappears after updates" — persistStats
         // already fires after nearly every pet-mutating action (buy,
@@ -2309,6 +2321,53 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.systemMessage(client, 'You transform back into your regular form.');
   }
 
+  // "Enhanced armor" while transformed — added into the SAME equipment-
+  // bonus slot armorVsPhysicalFor already takes at every player-defending
+  // call site, same "live-computed, not stored" treatment the dexterity/
+  // intelligence equipment bonuses already get.
+  private beastTransformArmorBonus(client: GameSocket): number {
+    return client.data.beastTransformActive ? BEAST_TRANSFORM_ARMOR_BONUS : 0;
+  }
+
+  // "The same kind of attack mechanism as the beast... no longer magical
+  // ranged" — while transformed, the player's own basic attack (punch/
+  // weapon-skill) deals a flat physical "beast paw" bonus (the tamed
+  // beast's own per-level attack power) instead of their actual equipped
+  // weapon/dagger-skill bonus. Falls back to the ordinary weaponBonusFor
+  // whenever no transform is active, so every existing call site can just
+  // swap to this helper unconditionally.
+  private attackBonusFor(client: GameSocket): number {
+    if (client.data.beastTransformActive && client.data.beastTransformKind) {
+      return monsterAttackDamageForLevel(client.data.level);
+    }
+    return weaponBonusFor(client.data.equipment, client.data.skills);
+  }
+
+  // Item 11's Transform spell — same periodic-expiry shape as
+  // checkWispTransformationExpiry above, but also reverts the flat hp/
+  // armor bonus applied at cast time (see handleCastTransform).
+  private checkBeastTransformExpiry(client: GameSocket): void {
+    if (!client.data.username || !this.worldManager.getLocation(client.data.username)) return;
+    if (!client.data.beastTransformActive || client.data.beastTransformUntil === null) return;
+    if (Date.now() < client.data.beastTransformUntil) return;
+
+    client.data.beastTransformActive = false;
+    client.data.beastTransformKind = null;
+    client.data.beastTransformUntil = null;
+    client.data.maxHp = Math.max(1, client.data.maxHp - BEAST_TRANSFORM_HP_BONUS);
+    client.data.hp = Math.min(client.data.hp, client.data.maxHp);
+    this.worldManager.updateState(client.data.username, {
+      beastTransformActive: false,
+      beastTransformKind: null,
+      maxHp: client.data.maxHp,
+      hp: client.data.hp,
+    });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    this.systemMessage(client, 'You transform back into your regular form.');
+  }
+
   // Flight (a later follow-up ask) — same periodic-expiry shape as wisp
   // transformation above (DOES need the worldManager thread, since other
   // nearby players' clients need to stop rendering the floating visual/
@@ -2461,7 +2520,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const defenderArmorVsPhysical = armorVsPhysicalFor(
       client.data.dexterity + dexterityEquipmentBonus(client.data.equipment),
       client.data.strength,
-      physicalArmorEquipmentBonus(client.data.equipment)
+      physicalArmorEquipmentBonus(client.data.equipment) + this.beastTransformArmorBonus(client)
     );
     // A species with its own flat attackDamage (a later follow-up ask:
     // "the imps have a physical attack/punch that should do 5 damage per
@@ -2837,6 +2896,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.specialization = doc?.specialization ?? null;
     client.data.visitedPois = doc?.visitedPois ?? [];
     client.data.killedMonsterKinds = doc?.killedMonsterKinds ?? [];
+    // Item 11's Transform spell — tamedBeastKinds is persisted (a lifetime
+    // history), the transform state itself is not (same "resets on
+    // reconnect" tradeoff every other timed self-buff in this game makes
+    // — wispActive, celeritasActive, ...).
+    client.data.tamedBeastKinds = doc?.tamedBeastKinds ?? [];
+    client.data.beastTransformActive = false;
+    client.data.beastTransformKind = null;
+    client.data.beastTransformUntil = null;
     client.data.recallPointId = doc?.recallPointId ?? null;
     // Reconnecting mid-lake (rare, but possible if the connection dropped
     // while riding a boat) should still show the boat sprite rather than
@@ -2901,6 +2968,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       scutumActive: client.data.scutumActive,
       barrierActive: client.data.barrierActive,
       wispActive: client.data.wispActive,
+      beastTransformActive: client.data.beastTransformActive,
+      beastTransformKind: client.data.beastTransformKind,
       invisibleActive: client.data.invisibleActive,
       dancing: client.data.dancing,
       flightActive: client.data.flightActive,
@@ -3075,6 +3144,67 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, player: this.snapshotFor(client), message, mapState: result.transitioned ? newMapState : undefined };
   }
 
+  // Item 1: "move diagonally, e.g. W+A to go northwest" — same shape as
+  // handleMove above, minus everything that only matters for a
+  // transition (town/house/specialization/secret-door gates, exit
+  // handling) since a diagonal step never transitions maps (see
+  // WorldManagerService.processDiagonalMove's own doc comment). Barrier
+  // confinement and paralysis/dead/rate-limit/water-boat handling are all
+  // still checked, same as an ordinary move.
+  @SubscribeMessage('moveDiagonal')
+  async handleMoveDiagonal(@ConnectedSocket() client: GameSocket, @MessageBody() rawPayload: unknown): Promise<MoveAck> {
+    const limiter = this.commandLimiters.get(client.id);
+    if (limiter && !limiter.tryConsume()) {
+      return { ok: false, player: this.snapshotFor(client), message: 'Slow down — too many moves.' };
+    }
+    if (this.isParalyzed(`player:${client.data.username}`)) {
+      return { ok: false, player: this.snapshotFor(client), message: "You are paralyzed by a skeleton's glare and cannot move!" };
+    }
+    if (client.data.respawningUntil !== null) {
+      return { ok: false, player: this.snapshotFor(client), message: 'You are dead and respawning...' };
+    }
+
+    const parsed = z.object({ dRow: z.union([z.literal(-1), z.literal(1)]), dCol: z.union([z.literal(-1), z.literal(1)]) }).safeParse(rawPayload);
+    if (!parsed.success) {
+      return { ok: false, player: this.snapshotFor(client), message: 'Unknown direction.' };
+    }
+
+    this.wakeIfNeeded(client);
+    this.stopDancingIfNeeded(client);
+
+    const { username } = client.data;
+    const loc = this.worldManager.getLocation(username);
+    if (loc) {
+      const ownBarrier = this.activeBarriers.get(username);
+      if (ownBarrier) {
+        const nextRow = loc.row + parsed.data.dRow;
+        const nextCol = loc.col + parsed.data.dCol;
+        if (ownBarrier.mapName !== loc.mapName || !this.isWithinBarrierZone(loc.mapName, nextRow, nextCol)) {
+          return { ok: false, player: this.snapshotFor(client), message: 'Your barrier holds you in place.' };
+        }
+      }
+    }
+
+    const canCrossWater = client.data.flightActive || pickBoatItem(client.data.inventory) !== undefined;
+    const result = this.worldManager.processDiagonalMove(username, parsed.data.dRow, parsed.data.dCol, canCrossWater);
+    if (!result) {
+      return { ok: false, player: this.snapshotFor(client), message: 'Your session was lost. Please reconnect.' };
+    }
+    if (!result.ok) {
+      return { ok: false, player: this.snapshotFor(client), message: "You can't go that way." };
+    }
+
+    client.data.row = result.row;
+    client.data.col = result.col;
+    client.data.mv = Math.max(0, client.data.mv - MV_COST_PER_TILE);
+    this.syncBoatState(client);
+    this.worldManager.updateState(username, { mv: client.data.mv, inBoat: client.data.inBoat });
+    void this.persistPosition(client);
+
+    this.server.to(result.mapName).emit('map:state', this.mapStateFor(result.mapName));
+    return { ok: true, player: this.snapshotFor(client) };
+  }
+
   // Kill-count quest objectives (a follow-up ask's imp-extermination
   // quest, and any future one shaped like it) PLUS Summoner's own unique-
   // kind kill-tracking (a later follow-up ask: "once the player becomes
@@ -3199,6 +3329,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (client.data.wispActive) {
       const message = "You can't attack while in wisp form.";
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
+    // Item 11: "no longer magical ranged" — a transformed beast fights
+    // with its own physical paw attack (see attackBonusFor's own use in
+    // the ordinary punch/melee path), not the caster's wand.
+    if (client.data.beastTransformActive) {
+      const message = "You can't use ranged wand attacks while transformed.";
       this.systemMessage(client, message);
       return { ok: false, message };
     }
@@ -3877,7 +4015,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const growthMessages: string[] = [];
     const attackSkill = this.attackGrowthSkill(client);
     const attackSkillPercent = client.data.skills[attackSkill] ?? STARTING_SKILL_PERCENT;
-    const weaponBonus = weaponBonusFor(client.data.equipment, client.data.skills);
+    const weaponBonus = this.attackBonusFor(client);
     // Monsters carry weapon/shield-shaped loot but never "wear" it for AC
     // purposes — just their own base+dexterity AC (item 18).
     const monsterArmorVsPhysical = armorVsPhysicalFor(monster.dexterity, monster.strength, 0);
@@ -4052,7 +4190,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         this.attackerStatsFor(client),
         defenderStats,
         attackSkillPercent,
-        weaponBonusFor(client.data.equipment, client.data.skills),
+        this.attackBonusFor(client),
         npcArmorVsPhysical
       );
       const boneSkillPercent = client.data.skills[BONE_FINGER_STRIKE_SKILL] ?? STARTING_SKILL_PERCENT;
@@ -4076,7 +4214,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
             this.attackerStatsFor(client),
             defenderStats,
             attackSkillPercent,
-            weaponBonusFor(client.data.equipment, client.data.skills),
+            this.attackBonusFor(client),
             npcArmorVsPhysical
           ) + enhancedBonus;
         const defense = this.resolveDefense(defenderStats, {}, {}, this.attackerStatsFor(client));
@@ -4209,7 +4347,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const defenderArmorVsPhysical = armorVsPhysicalFor(
       targetClient.data.dexterity + dexterityEquipmentBonus(targetClient.data.equipment),
       targetClient.data.strength,
-      physicalArmorEquipmentBonus(targetClient.data.equipment)
+      physicalArmorEquipmentBonus(targetClient.data.equipment) + this.beastTransformArmorBonus(targetClient)
     );
 
     let damage = 0;
@@ -4220,7 +4358,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         this.attackerStatsFor(client),
         defenderStats,
         attackSkillPercent,
-        weaponBonusFor(client.data.equipment, client.data.skills),
+        this.attackBonusFor(client),
         defenderArmorVsPhysical
       );
       const boneSkillPercent = client.data.skills[BONE_FINGER_STRIKE_SKILL] ?? STARTING_SKILL_PERCENT;
@@ -4245,7 +4383,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
             this.attackerStatsFor(client),
             defenderStats,
             attackSkillPercent,
-            weaponBonusFor(client.data.equipment, client.data.skills),
+            this.attackBonusFor(client),
             defenderArmorVsPhysical
           ) + enhancedBonus;
         const defense = this.resolveDefense(defenderStats, targetClient.data.skills, targetClient.data.equipment, this.attackerStatsFor(client));
@@ -5419,8 +5557,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // branch below) was missing entirely; every other spell here already
     // costs mana regardless of success or fumble. A later follow-up ask
     // made all "bolt" spells cost 7 mana specifically, its own
-    // ARCANE_BOLT_MANA_COST rather than the shared SPELL_ATTACK_MANA_COST
-    // the other non-bolt spells below still use.
+    // ARCANE_BOLT_MANA_COST (item 12's mana-cost audit later gave stun/
+    // exarme/aegis/stone wall their own dedicated costs too, once the flat
+    // shared SPELL_ATTACK_MANA_COST they used to share turned out to be
+    // covering 4 very differently-powered spells).
     if (client.data.mana < ARCANE_BOLT_MANA_COST) {
       return { ok: false, message: `You don't have enough mana to cast arcane bolt (${ARCANE_BOLT_MANA_COST} needed).` };
     }
@@ -6417,12 +6557,87 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           col: removed.col,
           command: 'follow',
         });
+        // Item 11's own tracking system — "any beast they have tamed
+        // before," a lifetime history independent of whether THIS
+        // specific tamed beast is still alive/active later.
+        if (!client.data.tamedBeastKinds.includes(removed.kind)) {
+          client.data.tamedBeastKinds = [...client.data.tamedBeastKinds, removed.kind];
+        }
         this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
       }
       message = `You successfully tame the ${monster.kind}!`;
     }
 
     const growth = this.maybeGrowSpellSkill(client, TAME_BEAST_SKILL);
+    if (growth) message = `${message} ${growth}`;
+
+    this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.systemMessage(client, message);
+    return { ok: true, mana: client.data.mana, skills: client.data.skills, message };
+  }
+
+  // Item 11's Transform spell — "give the player the option to choose
+  // from any beast they have tamed before" (see tamedBeastKinds' own
+  // tracking-system doc comment on player.entity.ts), not just their
+  // currently-active tamed beast. Same "no in-world target, client's own
+  // modal already narrowed the choice" shape as castMonsterSummons.
+  @SubscribeMessage('castTransform')
+  handleCastTransform(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
+    if (client.data.skills[TRANSFORM_SKILL] === undefined) {
+      return { ok: false, message: "You don't know the transform spell yet." };
+    }
+    if (!isWandItem(client.data.equipment.weapon)) {
+      return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    if (client.data.beastTransformActive) {
+      return { ok: false, message: 'You are already transformed.' };
+    }
+    const parsed = z.object({ kind: z.string() }).safeParse(payload);
+    if (!parsed.success || !client.data.tamedBeastKinds.includes(parsed.data.kind)) {
+      return { ok: false, message: "You haven't tamed one of those yet." };
+    }
+
+    const cooldownUntil = client.data.skillCooldowns[TRANSFORM_SKILL];
+    if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
+      const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { ok: false, message: `Transform is still recharging (${secondsLeft}s left).` };
+    }
+    if (client.data.mana < TRANSFORM_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast transform (${TRANSFORM_MANA_COST} needed).` };
+    }
+
+    client.data.mana -= TRANSFORM_MANA_COST;
+
+    let message: string;
+    if (!this.rollSpellSuccess(client, TRANSFORM_SKILL)) {
+      message = 'You fumble the incantation and nothing happens.';
+    } else {
+      this.startSkillCooldown(client, TRANSFORM_SKILL);
+      // Mutually exclusive with wisp transformation — can't be both forms
+      // at once.
+      if (client.data.wispActive) {
+        client.data.wispActive = false;
+        client.data.wispActiveUntil = null;
+      }
+      client.data.beastTransformActive = true;
+      client.data.beastTransformKind = parsed.data.kind as MonsterKind;
+      client.data.beastTransformUntil = Date.now() + TRANSFORM_DURATION_MS;
+      client.data.maxHp += BEAST_TRANSFORM_HP_BONUS;
+      client.data.hp += BEAST_TRANSFORM_HP_BONUS;
+      this.worldManager.updateState(client.data.username, {
+        wispActive: false,
+        beastTransformActive: true,
+        beastTransformKind: client.data.beastTransformKind,
+        maxHp: client.data.maxHp,
+        hp: client.data.hp,
+      });
+      this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+      message = `You transform into a ${parsed.data.kind}!`;
+    }
+
+    const growth = this.maybeGrowSpellSkill(client, TRANSFORM_SKILL);
     if (growth) message = `${message} ${growth}`;
 
     this.worldManager.updateState(client.data.username, { mana: client.data.mana, skills: client.data.skills });
@@ -6624,8 +6839,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!parsed.success) {
       return { ok: false, message: 'Invalid target.' };
     }
-    if (client.data.mana < SPELL_ATTACK_MANA_COST) {
-      return { ok: false, message: `You don't have enough mana to cast stun (${SPELL_ATTACK_MANA_COST} needed).` };
+    if (client.data.mana < STUPEFACIANT_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast stun (${STUPEFACIANT_MANA_COST} needed).` };
     }
 
     if (parsed.data.targetKind === 'npc') {
@@ -6636,7 +6851,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, SPELL_ATTACK_RANGE_TILES)) {
         return { ok: false, message: "You're too far away to hit that with stun." };
       }
-      client.data.mana -= SPELL_ATTACK_MANA_COST;
+      client.data.mana -= STUPEFACIANT_MANA_COST;
       this.startSkillCooldown(client, STUN_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
       const label = npc.label ?? 'training dummy';
@@ -6669,7 +6884,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!isWithinRadius(client.data.row, client.data.col, targetLoc.row, targetLoc.col, SPELL_ATTACK_RANGE_TILES)) {
         return { ok: false, message: "You're too far away to hit that with stun." };
       }
-      client.data.mana -= SPELL_ATTACK_MANA_COST;
+      client.data.mana -= STUPEFACIANT_MANA_COST;
       this.startSkillCooldown(client, STUN_SKILL);
       this.startAutoAttackAfterSpell(client, 'player', targetUsername);
       const succeeded = this.rollSpellSuccess(client, STUN_SKILL);
@@ -6699,7 +6914,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: "You're too far away to hit that with stun." };
     }
 
-    client.data.mana -= SPELL_ATTACK_MANA_COST;
+    client.data.mana -= STUPEFACIANT_MANA_COST;
     this.startSkillCooldown(client, STUN_SKILL);
     this.startAutoAttackAfterSpell(client, 'monster', monster.id);
     const stunSucceeded = this.rollSpellSuccess(client, STUN_SKILL);
@@ -6739,8 +6954,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!parsed.success) {
       return { ok: false, message: 'Invalid target.' };
     }
-    if (client.data.mana < SPELL_ATTACK_MANA_COST) {
-      return { ok: false, message: `You don't have enough mana to cast disarm (${SPELL_ATTACK_MANA_COST} needed).` };
+    if (client.data.mana < EXARME_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast disarm (${EXARME_MANA_COST} needed).` };
     }
     if (parsed.data.targetKind === 'npc') {
       const npc = NPCS.find((n) => n.id === parsed.data.targetId);
@@ -6750,7 +6965,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, SPELL_ATTACK_RANGE_TILES)) {
         return { ok: false, message: "You're too far away to hit that with disarm." };
       }
-      client.data.mana -= SPELL_ATTACK_MANA_COST;
+      client.data.mana -= EXARME_MANA_COST;
       this.startSkillCooldown(client, DISARM_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
       const succeeded = this.rollSpellSuccess(client, DISARM_SKILL);
@@ -6806,7 +7021,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!targetClient) {
         return { ok: false, message: 'Your target is no longer here.' };
       }
-      client.data.mana -= SPELL_ATTACK_MANA_COST;
+      client.data.mana -= EXARME_MANA_COST;
       this.startSkillCooldown(client, DISARM_SKILL);
       this.startAutoAttackAfterSpell(client, 'player', targetUsername);
       let message: string;
@@ -6849,7 +7064,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: "You're too far away to hit that with disarm." };
     }
 
-    client.data.mana -= SPELL_ATTACK_MANA_COST;
+    client.data.mana -= EXARME_MANA_COST;
     this.startSkillCooldown(client, DISARM_SKILL);
     this.startAutoAttackAfterSpell(client, 'monster', monster.id);
     let message: string;
@@ -6910,13 +7125,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, message);
       return { ok: false, message };
     }
-    if (client.data.mana < SPELL_ATTACK_MANA_COST) {
-      const message = `You don't have enough mana to cast scutum (${SPELL_ATTACK_MANA_COST} needed).`;
+    if (client.data.mana < AEGIS_MANA_COST) {
+      const message = `You don't have enough mana to cast scutum (${AEGIS_MANA_COST} needed).`;
       this.systemMessage(client, message);
       return { ok: false, message };
     }
 
-    client.data.mana -= SPELL_ATTACK_MANA_COST;
+    client.data.mana -= AEGIS_MANA_COST;
     // A later follow-up ask: scutum's own 2-minute cooldown only starts
     // on an actual SUCCESSFUL cast — unlike every other spell here, a
     // 2-minute lockout on top of a fumble would be brutal, so a fumbled
@@ -6989,11 +7204,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (occupied) {
       return { ok: false, message: "There's already something there." };
     }
-    if (client.data.mana < SPELL_ATTACK_MANA_COST) {
-      return { ok: false, message: `You don't have enough mana to cast stone wall (${SPELL_ATTACK_MANA_COST} needed).` };
+    if (client.data.mana < STONE_WALL_MANA_COST) {
+      return { ok: false, message: `You don't have enough mana to cast stone wall (${STONE_WALL_MANA_COST} needed).` };
     }
 
-    client.data.mana -= SPELL_ATTACK_MANA_COST;
+    client.data.mana -= STONE_WALL_MANA_COST;
 
     let message: string;
     if (!this.rollSpellSuccess(client, STONE_WALL_SKILL)) {

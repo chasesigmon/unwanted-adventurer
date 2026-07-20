@@ -95,6 +95,7 @@ export interface PlayerStatsUpdate {
   visitedPois?: string[];
   recallPointId?: string | null;
   killedMonsterKinds?: string[];
+  tamedBeastKinds?: string[];
   // A follow-up bug fix: "the pet is a permanent part of the player's
   // group... shouldn't disappear" — see player.entity.ts's own `pet`
   // column doc comment.

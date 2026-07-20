@@ -1,6 +1,6 @@
 # game2d — Grimoak Academy
 
-Phaser3 (client, `src/`) + NestJS/Socket.io (server, `server/`) 2D wizarding-school
+Phaser3 (client, `client/`) + NestJS/Socket.io (server, `server/`) 2D wizarding-school
 MMO. Shared code importable from both sides lives in `shared/`.
 
 ## Working in this repo
@@ -13,10 +13,29 @@ MMO. Shared code importable from both sides lives in `shared/`.
 - Run `npm run typecheck` (tsc over both `tsconfig.server.json` and
   `tsconfig.json`) after every meaningful edit, and `npx vite build --mode
   development` to confirm the client bundles cleanly.
-- `npm run dev` runs the tsx backend (`:3001`) + Vite dev server (`:5173`)
-  together, auto-killing anything already bound to those ports first.
+- `npm run dev` runs the tsx backend (`:3001`) + Vite dev server (`:5175`
+  — a deliberately non-default port, see `vite.config.ts`'s own comment on
+  why; the client is NOT at `:5173` despite that being Vite's usual
+  default) together, auto-killing anything already bound to `:3001`/`:5173`
+  first — note the `free-ports` npm script only targets those two ports,
+  not `:5175` itself, so a stale/orphaned Vite process bound to `:5175` (or
+  any port Vite auto-incremented to because `:5175` was already taken)
+  can survive a `npm run dev` restart; check `lsof -ti tcp:5175` and kill
+  any leftover process by hand if the dev client seems stale.
 - This is a **Phaser + vanilla TypeScript** frontend, not React — don't reach
   for React patterns/libraries here.
+- **Circular imports between client UI modules can silently crash the
+  ENTIRE page** (a real incident: `modalCore.ts` → `log.ts` → `mapModal.ts`
+  → `modalCore.ts` threw "Cannot access '...' before initialization" the
+  instant that cycle resolved in this order, which killed every script on
+  the page before any click/submit handler ever attached — including the
+  login screen, which shares no code with the module that actually broke).
+  If a battle-tested screen (login, character select) suddenly stops
+  responding to clicks with no visible error, suspect a newly-introduced
+  circular import over a logic bug in the screen itself — check the
+  browser console first. Prefer a dynamic `import()` inside the one
+  call site that needs the cyclic module over a static top-level import
+  when adding a new cross-module UI reference.
 
 ## Assets
 

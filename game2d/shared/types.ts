@@ -134,6 +134,13 @@ export interface PlayerSnapshot {
   // effectiveMoveCooldownMs).
   wispActive: boolean;
   wispActiveUntil?: number | null;
+  // Item 11's Transform spell — same "every nearby player needs to see
+  // the sprite swap" reasoning as wispActive above; beastTransformKind
+  // rides along on the SAME broadcast snapshot (not just the self-only
+  // optional copy above) since other players need to know WHICH beast to
+  // render, not just that a transform is active.
+  beastTransformActive: boolean;
+  beastTransformKind?: MonsterKind | null;
   // Illusionist's invisibility (a later follow-up ask) — same
   // fixed-duration self-buff shape as scutum/barrier/wisp, threaded
   // through PlayerState/world-manager's broadcast snapshot for the
@@ -292,6 +299,14 @@ export interface PlayerSnapshot {
   // (see game.gateway.ts's recordMonsterKill), read by the monster
   // summons modal.
   killedMonsterKinds?: string[];
+  // Item 11's Transform spell — same "optional, self-only" shape as
+  // killedMonsterKinds above, read by the transform beast-picker modal.
+  tamedBeastKinds?: string[];
+  // The exact expiry timestamp — self-only (see beastTransformActive/
+  // beastTransformKind above for the fields every OTHER nearby player's
+  // own snapshot also carries, same "flag vs. flag+expiry" split
+  // wandLit/wandLitUntil already establishes).
+  beastTransformUntil?: number | null;
 }
 
 // A static (never-moving) map occupant — the "test/dummy" skeleton in the
@@ -991,6 +1006,11 @@ export interface ServerToClientEvents {
 
 export interface ClientToServerEvents {
   move: (direction: Direction, ack: (res: MoveAck) => void) => void;
+  // Item 1: "move diagonally, e.g. pressing W+A at the same time to go
+  // northwest" — a separate event from plain cardinal `move` above (see
+  // WorldManagerService.processDiagonalMove's own doc comment for why
+  // Direction itself isn't widened to 8 values for this).
+  moveDiagonal: (payload: { dRow: -1 | 1; dCol: -1 | 1 }, ack: (res: MoveAck) => void) => void;
   // Also resolves combat server-side: if a punch in this direction lands
   // on an NPC/monster/player standing exactly one tile ahead, damage is
   // applied and a 'combat' event is broadcast — no separate "attack"
@@ -1098,6 +1118,10 @@ export interface ClientToServerEvents {
   // The Druid's own Tame Beast (a later follow-up ask) — always a
   // monster target (the only kind a "beast" can be).
   castTameBeast: (payload: { targetId: string }, ack: (res: CastSpellAck) => void) => void;
+  // Item 11's Transform spell — no in-world target; `kind` is one of the
+  // caster's own tamedBeastKinds, picked from the client's own beast-
+  // picker modal.
+  castTransform: (payload: { kind: string }, ack: (res: CastSpellAck) => void) => void;
   // The Utility Classroom's own "identify" spell (a later follow-up ask)
   // — targets an inventory item by index, not a player/npc/monster.
   castIdentify: (payload: { itemIndex: number }, ack: (res: CastSpellAck) => void) => void;
@@ -1320,6 +1344,12 @@ export interface SocketData {
   // Druid's wisp transformation — see PlayerSnapshot's own wispActive.
   wispActive: boolean;
   wispActiveUntil: number | null;
+  // Item 11's Transform spell — see PlayerSnapshot's own beastTransformActive.
+  beastTransformActive: boolean;
+  beastTransformKind: MonsterKind | null;
+  beastTransformUntil: number | null;
+  // Item 11's own tracking system — every distinct beast kind ever tamed.
+  tamedBeastKinds: string[];
   // Illusionist's invisibility — see PlayerSnapshot's own invisibleActive.
   invisibleActive: boolean;
   invisibleActiveUntil: number | null;

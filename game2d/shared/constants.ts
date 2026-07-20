@@ -373,6 +373,30 @@ export const STARTING_MAP: MapName = 'Grimoak Grounds';
 // street into a shop doesn't re-gate you, you're already inside the town.
 export const TOWN_MAPS: MapName[] = ['Floro', 'Kortho'];
 
+// Item 9: "a little magical effect in all of the outside areas (not in
+// towns or grimoak castle)... small wisps flying around" — every real
+// overworld/wilderness map, explicitly excluding both towns (TOWN_MAPS)
+// and the castle (GRIMOAK_CASTLE_MAPS) per the ask, plus every shop/hut/
+// portal-dungeon interior (none of those read as "outside"). Bramwick and
+// Gobbler Village are settlements too but aren't in TOWN_MAPS — included
+// here anyway since neither is a real town-with-shops the way Floro/
+// Kortho are, and both otherwise look and feel like the wild outdoor
+// zones this ask is about.
+export const WISP_ELIGIBLE_MAPS: MapName[] = [
+  'Great Plains',
+  'Labyrinth',
+  'Grimoak Grounds',
+  'Road to Kortho',
+  'Road to Floro',
+  'Mystical Timberland',
+  'Gobbler Village',
+  'Hexstone Cavern',
+  'Brimstone Cave',
+  'Runestone Way',
+  'Silverbranch Road',
+  'Direfell',
+];
+
 // The short building suffix for the map modal's Where tab (item 13) —
 // "<username> - Blacksmith" for someone inside a shop, vs. just
 // "<username>" for someone standing on the street itself (null here).

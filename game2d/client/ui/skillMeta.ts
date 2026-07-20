@@ -26,10 +26,15 @@ import {
   ARCANE_BOLT_SKILL,
   UNLOCK_SKILL,
   STUN_SKILL,
+  STUPEFACIANT_MANA_COST,
   DISARM_SKILL,
+  EXARME_MANA_COST,
   AEGIS_SKILL,
+  AEGIS_MANA_COST,
   STONE_WALL_SKILL,
+  STONE_WALL_MANA_COST,
   ANIMATE_DEAD_SKILL,
+  ANIMATE_DEAD_MANA_COST,
   RECALL_SKILL,
   RECALL_MANA_COST,
   BARRIER_SKILL,
@@ -57,6 +62,9 @@ import {
   TAME_BEAST_SKILL,
   TAME_BEAST_MANA_COST,
   TAME_BEAST_RANGE_TILES,
+  TRANSFORM_SKILL,
+  TRANSFORM_MANA_COST,
+  TRANSFORM_DURATION_MS,
   IDENTIFY_SKILL,
   IDENTIFY_MANA_COST,
   BATTLEMAGE_ENHANCED_ARMOR_SKILL,
@@ -168,6 +176,7 @@ export function isUsableSkill(skillName: string): boolean {
     skillName === LESSER_SELF_HEAL_SKILL ||
     skillName === WISP_TRANSFORMATION_SKILL ||
     skillName === TAME_BEAST_SKILL ||
+    skillName === TRANSFORM_SKILL ||
     skillName === IDENTIFY_SKILL ||
     skillName === KINETIC_STRIKE_SKILL ||
     skillName === SAP_HEALTH_SKILL ||
@@ -215,16 +224,11 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
     'Hurls a bolt of flame at your selected target (a monster) from up to 7 tiles away. Deals 20 base damage, compounding +10% per point of intelligence; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.',
   [UNLOCK_SKILL]:
     'Unlocks a targeted door or chest. Left-click the door/chest first, then use this. Costs mana; success chance scales with skill percent, intelligence, and luck.',
-  [STUN_SKILL]:
-    'Stuns your selected target (a monster) in place for 2 combat ticks, from up to 7 tiles away. Costs 10 mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.',
-  [DISARM_SKILL]:
-    "Disarms your selected target's weapon (a monster) into your own inventory, from up to 7 tiles away. Costs 10 mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.",
-  [AEGIS_SKILL]:
-    'No target needed — surrounds you with a protective shield that reduces all damage by 3 for 1 minute. Costs 10 mana; success chance scales with skill percent, intelligence, and luck — its own 2-minute cooldown only starts on a successful cast.',
-  [STONE_WALL_SKILL]:
-    'Click this, then click a spot on the map within 10 feet — summons a stone block ally there for 30 seconds (or until destroyed) that draws monster aggro and absorbs hits. Costs 10 mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.',
-  [ANIMATE_DEAD_SKILL]:
-    "Necromancer-only. Requires a monster's corpse selected first (left-click it — not a player's corpse), then use this to raise it from up to 7 feet away — an animated ally under your command (follow/stay/sleep/attack), with 2x its hp when alive and the same attack. Lasts until it's slain or you log off; limited to 1 at a time (2 at level 20+). Costs 15 mana; has its own 3-minute cooldown. Success chance scales with skill percent, intelligence, and luck.",
+  [STUN_SKILL]: `Stuns your selected target (a monster) in place for 2 combat ticks, from up to 7 tiles away. Costs ${STUPEFACIANT_MANA_COST} mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [DISARM_SKILL]: `Disarms your selected target's weapon (a monster) into your own inventory, from up to 7 tiles away. Costs ${EXARME_MANA_COST} mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [AEGIS_SKILL]: `No target needed — surrounds you with a protective shield that reduces all damage by 3 for 1 minute. Costs ${AEGIS_MANA_COST} mana; success chance scales with skill percent, intelligence, and luck — its own 2-minute cooldown only starts on a successful cast.`,
+  [STONE_WALL_SKILL]: `Click this, then click a spot on the map within 10 feet — summons a stone block ally there for 30 seconds (or until destroyed) that draws monster aggro and absorbs hits. Costs ${STONE_WALL_MANA_COST} mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [ANIMATE_DEAD_SKILL]: `Necromancer-only. Requires a monster's corpse selected first (left-click it — not a player's corpse), then use this to raise it from up to 7 feet away — an animated ally under your command (follow/stay/sleep/attack), with 2x its hp when alive and the same attack. Lasts until it's slain or you log off; limited to 1 at a time (2 at level 20+). Costs ${ANIMATE_DEAD_MANA_COST} mana; has its own 3-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
   [RECALL_SKILL]: `Opens a list of every major point of interest you've already visited — click one to teleport there instantly, along with your pet/animated monsters. Costs ${RECALL_MANA_COST} mana; a successful cast has its own 2-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
   [BARRIER_SKILL]: `No target needed — summons a ${BARRIER_RADIUS_TILES}-tile-radius dome centered on you that fully blocks monster attacks and confines your own movement to its edge for 2 minutes. Cast again anytime (even on cooldown) to cancel it early for free. Costs ${BARRIER_MANA_COST} mana; a fresh cast has its own 4-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
   [SHAMAN_ENHANCE_DAMAGE_SKILL]: `Shaman-only. No target needed — adds +${SHAMAN_ENHANCE_DAMAGE_BASE_BONUS} or more to your basic ranged/physical attack damage for 3 minutes (grows with your own level and intelligence). Costs ${SHAMAN_ENHANCE_DAMAGE_MANA_COST} mana; a fresh cast has its own 4-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
@@ -237,6 +241,7 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
   [LESSER_SELF_HEAL_SKILL]: `Druid-only. No target needed — heals yourself for ${LESSER_SELF_HEAL_AMOUNT} hp. Costs ${LESSER_SELF_HEAL_MANA_COST} mana; a successful cast has its own 5-second cooldown. Success chance scales with skill percent, intelligence, and luck.`,
   [WISP_TRANSFORMATION_SKILL]: `Druid-only. No target needed — transforms you into a shimmering wisp of light for 2 minutes: you can't attack while transformed, but move 20% faster. Costs ${WISP_TRANSFORMATION_MANA_COST} mana; a successful cast has its own 3-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
   [TAME_BEAST_SKILL]: `Druid-only. Select a beast (wolf, bear, dire wolf, moose, falcon, ...) within ${TAME_BEAST_RANGE_TILES} tiles and no more than 3 levels above you — on a successful cast it joins your group permanently, until it's killed or you remove it. Costs ${TAME_BEAST_MANA_COST} mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
+  [TRANSFORM_SKILL]: `Druid-only. Opens a list of every beast kind you've ever tamed — pick one to transform into it for ${TRANSFORM_DURATION_MS / 60000} minutes: enhanced hp and armor, and your attack becomes that beast's own physical paw strike instead of your normal weapon/wand (ranged wand attacks are disabled while transformed). Costs ${TRANSFORM_MANA_COST} mana; 5-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
   [IDENTIFY_SKILL]: `Select an item in your inventory first, then click this to reveal its full name, stats, and description in a small window. Costs ${IDENTIFY_MANA_COST} mana; has its own cooldown. Success chance scales with skill percent, intelligence, and luck.`,
   [BATTLEMAGE_ENHANCED_ARMOR_SKILL]: `Battlemage-only: a chance (scaling with skill percent) to reduce a hit you take from a monster by ${BATTLEMAGE_ENHANCED_ARMOR_BONUS}. Grows every hit you take, landed or avoided.`,
   [BATTLEMAGE_ENHANCED_DAMAGE_SKILL]: `Battlemage-only: a chance (scaling with skill percent) to add +${BATTLEMAGE_ENHANCED_DAMAGE_BONUS} to a ranged/physical attack you make. Grows every attack you make, hit or miss.`,
@@ -396,6 +401,7 @@ const SKILL_CATEGORY_MAP: Record<string, SkillCategory> = {
   [LESSER_SELF_HEAL_SKILL]: 'Utility',
   [WISP_TRANSFORMATION_SKILL]: 'Utility',
   [TAME_BEAST_SKILL]: 'Utility',
+  [TRANSFORM_SKILL]: 'Utility',
   [IDENTIFY_SKILL]: 'Utility',
   [BATTLEMAGE_ENHANCED_ARMOR_SKILL]: 'Defense',
   [BATTLEMAGE_ENHANCED_DAMAGE_SKILL]: 'Offense',

@@ -19,6 +19,7 @@ import {
   isStandingTorchBlocked,
 } from '../../shared/lighting.js';
 import {
+  getMap,
   isCastleExteriorBlocked,
   isWaterBlocked,
   isRunestoneWayOffRoadBlocked,
@@ -236,6 +237,35 @@ export class WorldManagerService {
     return result;
   }
 
+  // Item 1: "move diagonally, e.g. W+A to go northwest" — a deliberately
+  // separate path from processMove/resolveMove above rather than
+  // widening Direction itself to 8 values (which every OTHER exhaustive
+  // switch/Record<Direction, ...> in this codebase — sprite facing,
+  // monster wander, door/exit definitions — would then need new cases
+  // for, for a purely player-input convenience feature). A diagonal step
+  // never checks map exits at all: every real exit is anchored to one
+  // cardinal direction at one specific tile, so a diagonal step just
+  // moves within the current map or is rejected at its edge/an occupied
+  // tile, exactly like resolveMove's own "no exit" branch.
+  processDiagonalMove(username: string, dRow: -1 | 1, dCol: -1 | 1, flying = false): MoveResult | null {
+    const loc = this.playerLocation.get(username);
+    if (!loc) return null;
+
+    const map = getMap(loc.mapName);
+    const nextRow = loc.row + dRow;
+    const nextCol = loc.col + dCol;
+    if (nextRow < 0 || nextRow >= map.rows || nextCol < 0 || nextCol >= map.cols) {
+      return { ok: false, transitioned: false, mapName: loc.mapName, row: loc.row, col: loc.col };
+    }
+    if (this.isOccupied(loc.mapName, nextRow, nextCol, username, flying)) {
+      return { ok: false, transitioned: false, mapName: loc.mapName, row: loc.row, col: loc.col };
+    }
+
+    loc.row = nextRow;
+    loc.col = nextCol;
+    return { ok: true, transitioned: false, mapName: loc.mapName, row: nextRow, col: nextCol };
+  }
+
   // The flight spell's own spacebar burst (a later follow-up ask) — same
   // flying-bypasses-water rule as processMove above, but exposed publicly
   // since the burst isn't a single-tile directional move (see
@@ -298,6 +328,8 @@ export class WorldManagerService {
         scutumActive: state.scutumActive,
         barrierActive: state.barrierActive,
         wispActive: state.wispActive,
+        beastTransformActive: state.beastTransformActive,
+        beastTransformKind: state.beastTransformKind,
         flightActive: state.flightActive,
         inBoat: state.inBoat,
         specialization: state.specialization ?? undefined,

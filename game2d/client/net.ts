@@ -318,6 +318,21 @@ export class NetworkManager extends EventTarget {
     });
   }
 
+  // Item 1: diagonal movement (e.g. W+A held together) — same shape/
+  // timeout-guard reasoning as move() above.
+  moveDiagonal(dRow: -1 | 1, dCol: -1 | 1): Promise<MoveAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.timeout(5000).emit('moveDiagonal', { dRow, dCol }, (err: Error | null, res?: MoveAck) => {
+        if (err || !res) reject(new Error('No response from server.'));
+        else resolve(res);
+      });
+    });
+  }
+
   // No ack — purely cosmetic, so there's nothing worth waiting on.
   punch(direction: Direction): void {
     this.socket?.emit('punch', direction);
@@ -874,6 +889,21 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('castTameBeast', { targetId }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // Item 11's Transform spell — kind is one of myProfile's own
+  // tamedBeastKinds, picked from the transform picker modal.
+  castTransform(kind: string): Promise<CastSpellAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('castTransform', { kind }, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });
