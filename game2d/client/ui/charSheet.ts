@@ -13,9 +13,11 @@ import {
 } from './modalCore.js';
 import { attachTooltip } from './tooltip.js';
 import type { AllocatableStat } from '../../shared/types.js';
+import { maxTnlForLevel } from '../../shared/leveling.js';
 
 const CHAR_SHEET_STAT_DESCRIPTIONS: Record<string, string> = {
-  Exp: 'Experience earned toward your next level. Each level requires level x 100 exp.',
+  Exp: 'Experience earned toward your next level. Each level requires level x 250 exp.',
+  'Exp TNL': 'Experience still needed to reach your next level ("to next level") — counts down as you gain exp.',
   // Parry isn't implemented yet (may be added later) — dropped from
   // this description (a follow-up ask).
   Strength: 'Increases your base melee damage.',
@@ -128,6 +130,12 @@ export function renderCharSheet(): void {
   appendStatRow(charSheetBody, 'Specialization', myProfile.specialization ?? 'None');
   appendStatRow(charSheetBody, 'Level', myProfile.level);
   appendStatRow(charSheetBody, 'Exp', myProfile.exp, CHAR_SHEET_STAT_DESCRIPTIONS.Exp);
+  // A later follow-up ask: "have EXP TNL (to next level) so the player
+  // knows how far away they are" — derived from the same curve the
+  // server actually levels up against (shared/leveling.ts), refreshed
+  // every re-render alongside Exp/Level above, so it updates the instant
+  // exp changes rather than needing its own separate wiring.
+  appendStatRow(charSheetBody, 'Exp TNL', maxTnlForLevel(myProfile.level) - myProfile.exp, CHAR_SHEET_STAT_DESCRIPTIONS['Exp TNL']);
   appendStatRow(charSheetBody, 'HP', `${myProfile.hp}/${myProfile.maxHp}`);
   appendStatRow(charSheetBody, 'Mana', `${myProfile.mana}/${myProfile.maxMana}`);
   // A follow-up ask: "add movement to the character sheet" — same

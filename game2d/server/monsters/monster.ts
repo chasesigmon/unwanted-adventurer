@@ -738,11 +738,17 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
   },
 
   // ---------- Item 24: Hexstone Cavern's own Coven Witch ----------
+  // Bug fix: "I only saw like 1 coven witch inside of hexstone cavern,
+  // there should be a lot since the cavern is fairly large" — coven
+  // witches are the ONLY species populating this map (HEXSTONE_CAVERN_SIZE
+  // matches GREAT_PLAINS_SIZE, which splits its own monster density
+  // across several species), so 6 spread across that much space read as
+  // nearly empty. Bumped well past the old count to actually fill it.
   {
     kind: 'coven witch',
     monsterClass: 'normal',
     homeMap: 'Hexstone Cavern',
-    maxCount: 6,
+    maxCount: 20,
     level: 25,
     startingHp: monsterHpForLevel(25),
     expReward: monsterExpRewardForLevel(25),
@@ -774,6 +780,36 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
       { label: 'leather vambraces', chance: 0.12 },
       { label: 'leather greaves', chance: 0.12 },
       { label: 'leather boots', chance: 0.12 },
+    ],
+  },
+
+  // ---------- The Labyrinth's own level-30 orcs (a later follow-up ask)
+  // ---------- "It's a big place so there should be plenty of orcs" —
+  // a high maxCount for a large map with no other species to share it
+  // with (same reasoning as Hexstone Cavern's own coven-witch bump
+  // above). Gold scaled closer to the elite wild goblin's ~2x-level
+  // ratio than troll's own ~1.25x, since a level-30 threat this deep in
+  // the maze should feel like a meaningfully better payout than the
+  // early-game monsters. Chainmail drop chances mirror troll's own
+  // leather-set convention exactly (see shared/equipment.ts's own doc
+  // comment on the "bracers" vs "vambraces" naming).
+  {
+    kind: 'orc',
+    monsterClass: 'normal',
+    homeMap: 'Labyrinth',
+    maxCount: 30,
+    level: 30,
+    startingHp: monsterHpForLevel(30),
+    expReward: monsterExpRewardForLevel(30),
+    attackDamage: monsterAttackDamageForLevel(30),
+    goldRewardRange: [50, 65],
+    carriedItemRolls: [
+      { label: 'chainmail armor', chance: 0.12 },
+      { label: 'chainmail helmet', chance: 0.12 },
+      { label: 'chainmail gauntlets', chance: 0.12 },
+      { label: 'chainmail bracers', chance: 0.12 },
+      { label: 'chainmail greaves', chance: 0.12 },
+      { label: 'chainmail boots', chance: 0.12 },
     ],
   },
 

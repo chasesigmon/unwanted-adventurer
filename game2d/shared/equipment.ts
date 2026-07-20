@@ -81,6 +81,20 @@ export const EQUIPMENT_ITEM_BONUS_LABEL: Record<string, string> = {
   'leather greaves': '+4 Armor vs Physical',
   'leather boots': '+4 Armor vs Physical',
   'chainmail vambraces': '+6 armor class',
+  // The Labyrinth's own level-30 orcs (a later follow-up ask) — "chainmail
+  // armor of all the same pieces as studded armor... Armor vs Physical +7"
+  // — a full 6-piece set one tier above leather's own +4, matching
+  // studded's naming pattern exactly EXCEPT the forearm piece: "chainmail
+  // vambraces" already exists above as an unrelated single portal-dungeon
+  // item (+6 armor class, its own older stat system) — reusing that exact
+  // name here would silently collide with (and reprice) that item, so
+  // this set's forearm piece is "chainmail bracers" instead.
+  'chainmail armor': '+7 Armor vs Physical',
+  'chainmail helmet': '+7 Armor vs Physical',
+  'chainmail gauntlets': '+7 Armor vs Physical',
+  'chainmail greaves': '+7 Armor vs Physical',
+  'chainmail bracers': '+7 Armor vs Physical',
+  'chainmail boots': '+7 Armor vs Physical',
   "warlord's greaves": '+10 armor class',
   'obsidian helm': '+12 armor class',
   'dragon scale armor': '+16 armor class',
@@ -178,6 +192,15 @@ export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
   // PORTAL_DUNGEON_MAPS species entries).
   'wand of frost': 'weapon',
   'chainmail vambraces': 'vambraces',
+  // The Labyrinth's own level-30 orcs — see EQUIPMENT_ITEM_BONUS_LABEL's
+  // own doc comment on why the forearm piece is "bracers" not
+  // "vambraces" here.
+  'chainmail armor': 'torso',
+  'chainmail helmet': 'head',
+  'chainmail gauntlets': 'gauntlets',
+  'chainmail greaves': 'greaves',
+  'chainmail bracers': 'vambraces',
+  'chainmail boots': 'boots',
   'wand of embers': 'weapon',
   "warlord's greaves": 'greaves',
   'wand of shadows': 'weapon',

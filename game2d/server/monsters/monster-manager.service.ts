@@ -10,6 +10,7 @@ import {
   isRunestoneWayOffRoadBlocked,
 } from '../../shared/maps.js';
 import { isTreeTile } from '../../shared/trees.js';
+import { isLabyrinthWallTile } from '../../shared/labyrinthMaze.js';
 import {
   isFireplaceBlocked,
   isBenchBlocked,
@@ -351,6 +352,7 @@ export class MonsterManagerService {
       if (mapName !== 'Runestone Way' || !isRunestoneWayOffRoadBlocked(mapName, row, col)) return false;
     }
     if (isTreeTile(mapName, row, col)) return false;
+    if (isLabyrinthWallTile(mapName, row, col)) return false;
     if (isCastleExteriorBlocked(mapName, row, col)) return false;
     if (isMoatBlocked(mapName, row, col)) return false;
     // "It should not work for imps" — the castle gate never opens for a

@@ -91,6 +91,7 @@ import {
   DIREFELL_SIZE,
 } from '../../shared/maps.js';
 import { treePositionsFor } from '../../shared/trees.js';
+import { labyrinthWallPositions } from '../../shared/labyrinthMaze.js';
 import {
   PUNCH_SKILL,
   DAGGER_SKILL,
@@ -183,6 +184,8 @@ import {
   SILVERBRANCH_BRAMWICK_SIGN_POSITION,
   KORTHO_DIREFELL_SIGN_POSITION,
   DIREFELL_KORTHO_SIGN_POSITION,
+  GREAT_PLAINS_LABYRINTH_SIGN_POSITION,
+  LABYRINTH_GREAT_PLAINS_SIGN_POSITION,
   standingTorchPositionsFor,
 } from '../../shared/lighting.js';
 import {
@@ -197,6 +200,7 @@ import {
   DORM_MAPS,
   SPECIALIZATION_CHAMBER_MAPS,
   WISP_ELIGIBLE_MAPS,
+  isFlyingBeastKind,
 } from '../../shared/constants.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { WAND_ITEM, isWandItem } from '../../shared/equipment.js';
@@ -525,9 +529,9 @@ export class WorldScene extends Phaser.Scene {
   // fresh random point on its own map every few seconds, with a short
   // particle trail following behind it. Cleared/respawned on every map
   // change, same lifecycle as korthoSeaSprites above.
-  // Bumped from 8 alongside the speed/catch-up fix above (see
-  // WISP_SPEED's own doc comment) — a few more stay visible even while
-  // some are mid-transit toward the player's new position.
+  // Bumped from an original 8 — spread across the whole visible screen
+  // (see randomPointInView) rather than clustered near the player, this
+  // many reads as "the world is full of them" without feeling sparse.
   private static readonly WISP_COUNT = 12;
   private wisps: Array<{
     sprite: Phaser.GameObjects.Sprite;
@@ -715,6 +719,10 @@ export class WorldScene extends Phaser.Scene {
   // the same way treeSprites are, just from torchWallPositionsFor instead
   // of treePositionsFor.
   private wallTorchSprites: Phaser.GameObjects.Sprite[] = [];
+  // The Labyrinth's own maze walls (a later follow-up ask) — real,
+  // server-enforced collision (see shared/labyrinthMaze.ts), rendered the
+  // same "one sprite per tile" way treeSprites are.
+  private labyrinthWallSprites: Phaser.GameObjects.Sprite[] = [];
 
   private autopilotActive = false;
   private autopilotTargetKind: MonsterKind | null = null;
@@ -1541,7 +1549,7 @@ export class WorldScene extends Phaser.Scene {
     this.updateScutumGlow('self', this.player, Boolean(myProfile?.scutumActive));
     this.updateBarrierVisual();
     this.updateWispVisual('self', this.player, Boolean(myProfile?.wispActive));
-    this.updateFlightVisual('self', this.player, Boolean(myProfile?.flightActive));
+    this.updateFlightVisual('self', this.player, Boolean(myProfile?.flightActive) || this.isMyBeastFlying());
     this.updateBoatVisual('self', this.player, myProfile?.inBoat, this.facing);
     // Invisibility (a later follow-up ask) — "make the player's sprite
     // slightly faded while the spell is active," for the CASTER'S OWN
@@ -1563,6 +1571,12 @@ export class WorldScene extends Phaser.Scene {
     // just never wired up for these two before now.
     for (const sprite of this.petSprites.values()) this.repositionBarFor(sprite);
     for (const sprite of this.animatedMonsterSprites.values()) this.repositionBarFor(sprite);
+    // Bug fix: the tamed beast's own hp bar Graphics object was created
+    // (see ensureHpBar's call site in the tamed-beast rendering loop) but
+    // never actually POSITIONED anywhere — missing from this list, it just
+    // sat whereever Phaser defaults a fresh Graphics object to, never
+    // visibly following the beast at all.
+    for (const sprite of this.tamedBeastSprites.values()) this.repositionBarFor(sprite);
   }
 
   // Scutum's blue-ish shield sphere (a later follow-up ask) — visible to
@@ -2084,6 +2098,21 @@ export class WorldScene extends Phaser.Scene {
   // browser can cross that threshold either way for the same map.
   private applyCameraBounds(pixelWidth: number, pixelHeight: number): void {
     const cam = this.cameras.main;
+    // Bug fix: the HUD chrome (status bar/log panel) used to overlap the
+    // game canvas as separate absolutely-positioned DOM overlays with no
+    // coordination with the camera at all — map-edge content near the
+    // very top/bottom of the canvas rendered directly BEHIND that chrome,
+    // effectively invisible ("the classroom doors and everything are cut
+    // off... the player can move off screen"). Several in-camera fixes
+    // (an inset cam.setViewport, then padding the scroll clamp, then
+    // expanding cam.setBounds to match) each ran into a confirmed Phaser
+    // quirk where content rendered off-canvas near a scroll-clamp edge for
+    // reasons that never resolved to a clean formula. Fixed at the CSS
+    // layer instead (see style.css's #game-container/--hud-top-margin/
+    // --hud-bottom-margin) — #game-container is now inset by real, empty
+    // page space, so Phaser's own RESIZE scale manager sizes the canvas
+    // itself to the smaller box automatically. cam.width/cam.height below
+    // already reflect that smaller size with no changes needed here.
     // Classrooms (a follow-up ask) are laid out at a third of the
     // standard room's tile footprint but still need to "fill up the
     // whole screen" — zooming in compensates for the smaller grid so the
@@ -2209,27 +2238,36 @@ export class WorldScene extends Phaser.Scene {
     this.wisps = [];
   }
 
-  // Scattering wisps uniformly across an ENTIRE map (some of these span
-  // 100x100 tiles) made them almost never actually visible on screen at
-  // once — a small fixed count spreads far too thin over that much area.
-  // Instead, every wisp wanders within this radius of wherever the PLAYER
-  // currently is, re-centered on the player's live position each time a
-  // new wander target is picked (see updateWisps) — so they stay
-  // visibly nearby no matter how far the player walks across a big map.
-  private static readonly WISP_WANDER_RADIUS_TILES = 12;
+  // Bug fix: wandering within a tight radius of the player made wisps
+  // read as "following the player around" rather than ambient background
+  // magic — the ask was for them to feel like they're "everywhere" in
+  // this magical world, distributed across the WHOLE screen rather than
+  // clustered on top of the player. Sampling from the camera's own
+  // current worldView (the exact visible world rectangle, already
+  // accounting for scroll/zoom) achieves that directly: wisps spread
+  // across whatever's actually on screen, and naturally relocate as the
+  // player walks and the view scrolls (see updateWisps), with no need to
+  // track the player's own position at all. Inset by a small margin so
+  // one doesn't spawn/relocate exactly at the view's own edge, where it'd
+  // immediately count as "outside" again next frame.
+  private static readonly WISP_VIEW_MARGIN_TILES = 2;
 
-  private randomPointNearPlayer(pixelWidth: number, pixelHeight: number): { x: number; y: number } {
-    const radius = WorldScene.WISP_WANDER_RADIUS_TILES * TILE_SIZE;
-    const center = this.tilePosition(this.row, this.col);
+  private randomPointInView(pixelWidth: number, pixelHeight: number): { x: number; y: number } {
+    const view = this.cameras.main.worldView;
+    const margin = WorldScene.WISP_VIEW_MARGIN_TILES * TILE_SIZE;
+    const minX = Phaser.Math.Clamp(view.x + margin, 0, pixelWidth);
+    const maxX = Phaser.Math.Clamp(view.x + view.width - margin, 0, pixelWidth);
+    const minY = Phaser.Math.Clamp(view.y + margin, 0, pixelHeight);
+    const maxY = Phaser.Math.Clamp(view.y + view.height - margin, 0, pixelHeight);
     return {
-      x: Phaser.Math.Clamp(center.x + Phaser.Math.Between(-radius, radius), 0, pixelWidth),
-      y: Phaser.Math.Clamp(center.y + Phaser.Math.Between(-radius, radius), 0, pixelHeight),
+      x: Phaser.Math.Between(Math.min(minX, maxX), Math.max(minX, maxX)),
+      y: Phaser.Math.Between(Math.min(minY, maxY), Math.max(minY, maxY)),
     };
   }
 
   private spawnWisps(pixelWidth: number, pixelHeight: number): void {
     for (let i = 0; i < WorldScene.WISP_COUNT; i++) {
-      const { x, y } = this.randomPointNearPlayer(pixelWidth, pixelHeight);
+      const { x, y } = this.randomPointInView(pixelWidth, pixelHeight);
       const sprite = this.add
         .sprite(x, y, AMBIENT_WISP_TEXTURE_KEY)
         .setDepth(2)
@@ -2250,36 +2288,31 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
-  // Bug fix: at the old WISP_SPEED (0.4px/frame), a wisp spawned near
-  // where the player entered a big outdoor map could never actually catch
-  // up once the player walked any real distance away — the player moves
-  // MUCH faster than that, so wisps effectively only ever appeared near
-  // the map's entry door and nowhere else the player actually explored
-  // ("this either be faster or there should be more"). Bumped
-  // considerably faster, AND if a wisp somehow ends up very far from the
-  // player (a big/fast crossing of the map), it snaps directly to a fresh
-  // point near them instead of crawling the whole distance at the same
-  // gentle wander speed, which would still look "stuck" for a long
-  // stretch even at the higher speed.
-  private static readonly WISP_SPEED = 2.2;
-  private static readonly WISP_SNAP_DISTANCE_TILES = WorldScene.WISP_WANDER_RADIUS_TILES * 2;
+  // Bug fix: "a little too fast" — dialed back down from an earlier
+  // follow-up fix's 2.2 (itself a bump from an original 0.4 that was too
+  // slow to keep up with the player at all before this full-screen
+  // rework removed the need to keep up with the player specifically).
+  private static readonly WISP_SPEED = 1;
 
   // Called every frame from update() — a gentle, organic wander: once a
   // wisp gets close to its current random target, it picks a fresh one
-  // near wherever the player currently is (see randomPointNearPlayer),
-  // never stopping. Non-interactive by construction (no setInteractive,
-  // never added to any targeting array), matching the ask's own "non
+  // somewhere else currently on screen (see randomPointInView), never
+  // stopping. Non-interactive by construction (no setInteractive, never
+  // added to any targeting array), matching the ask's own "non
   // targettable or attackable."
   private updateWisps(): void {
     if (this.wisps.length === 0) return;
     const pixelWidth = this.cameraMapPixelWidth;
     const pixelHeight = this.cameraMapPixelHeight;
-    const playerPos = this.tilePosition(this.row, this.col);
-    const snapDistancePx = WorldScene.WISP_SNAP_DISTANCE_TILES * TILE_SIZE;
+    const view = this.cameras.main.worldView;
     for (const wisp of this.wisps) {
-      const distFromPlayer = Phaser.Math.Distance.Between(wisp.sprite.x, wisp.sprite.y, playerPos.x, playerPos.y);
-      if (distFromPlayer > snapDistancePx) {
-        const next = this.randomPointNearPlayer(pixelWidth, pixelHeight);
+      // The camera scrolling (the player walking) can leave a wisp
+      // outside the NEW visible area — relocate it into view instead of
+      // making it crawl all the way back, which would leave it out of
+      // sight for a long stretch on a big map.
+      const outsideView = wisp.sprite.x < view.x || wisp.sprite.x > view.x + view.width || wisp.sprite.y < view.y || wisp.sprite.y > view.y + view.height;
+      if (outsideView) {
+        const next = this.randomPointInView(pixelWidth, pixelHeight);
         wisp.sprite.setPosition(next.x, next.y);
         wisp.targetX = next.x;
         wisp.targetY = next.y;
@@ -2290,7 +2323,7 @@ export class WorldScene extends Phaser.Scene {
       const dy = wisp.targetY - wisp.sprite.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < 4) {
-        const next = this.randomPointNearPlayer(pixelWidth, pixelHeight);
+        const next = this.randomPointInView(pixelWidth, pixelHeight);
         wisp.targetX = next.x;
         wisp.targetY = next.y;
       } else {
@@ -2555,6 +2588,23 @@ export class WorldScene extends Phaser.Scene {
           ease: 'Sine.easeInOut',
         });
         this.treeSprites.push(sprite);
+      }
+    }
+
+    // The Labyrinth's own maze walls (a later follow-up ask: "update the
+    // Labyrinth to be like an actual labyrinth with stone walls and
+    // paths, like a big maze") — real collision (see
+    // shared/labyrinthMaze.ts's isLabyrinthWallTile, already wired into
+    // WorldManagerService.isOccupied/MonsterManagerService.isFree), one
+    // stone-block sprite per wall tile, same "recreate on every renderMap"
+    // lifecycle as treeSprites/wallTorchSprites above.
+    for (const sprite of this.labyrinthWallSprites) sprite.destroy();
+    this.labyrinthWallSprites = [];
+    if (mapName === 'Labyrinth') {
+      for (const { row, col } of labyrinthWallPositions()) {
+        const pos = this.tilePosition(row, col);
+        const sprite = this.add.sprite(pos.x, pos.y, STONE_BLOCK_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
+        this.labyrinthWallSprites.push(sprite);
       }
     }
 
@@ -3487,6 +3537,12 @@ export class WorldScene extends Phaser.Scene {
       // "a sign next to it 'The Great Plains'").
       { map: 'Great Plains', position: GREAT_PLAINS_HEXSTONE_SIGN_POSITION, label: 'Hexstone Cavern' },
       { map: 'Hexstone Cavern', position: HEXSTONE_GREAT_PLAINS_SIGN_POSITION, label: 'The Great Plains' },
+      // Bug fix: "there is no sign in the great plains for the labyrinth
+      // and there is no sign in the labyrinth for the great plains" — the
+      // north/south cave-mouth connection between them never got its own
+      // sign pair like every other connection here already has.
+      { map: 'Great Plains', position: GREAT_PLAINS_LABYRINTH_SIGN_POSITION, label: 'Labyrinth' },
+      { map: 'Labyrinth', position: LABYRINTH_GREAT_PLAINS_SIGN_POSITION, label: 'The Great Plains' },
       // Bramwick's own 3 new connections' sign(s) (a later follow-up
       // ask): Brimstone Cave (both sides), Runestone Way/"Boulder Pass"
       // (Bramwick's own side only — nothing was asked for at the far
@@ -3955,7 +4011,11 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('equipment', p.equipment);
       sprite.setData('scutumActive', p.scutumActive);
       sprite.setData('wispActive', p.wispActive);
-      sprite.setData('flightActive', p.flightActive);
+      // Item 11's Transform spell: a transformed-into-a-flier other
+      // player (e.g. a falcon) should visually fly for everyone watching
+      // too, not just themselves — same derived OR isMyBeastFlying()
+      // uses for the local player.
+      sprite.setData('flightActive', p.flightActive || (p.beastTransformActive && isFlyingBeastKind(p.beastTransformKind ?? null)));
       sprite.setData('inBoat', p.inBoat ?? null);
       sprite.setData('specialization', p.specialization ?? null);
       this.ensureHpBar(sprite, p.hp, p.maxHp);
@@ -4934,10 +4994,10 @@ export class WorldScene extends Phaser.Scene {
     // but instead floating/flying along") — holds the idle frame instead
     // of the walk cycle; the wind trail (same effect celeritas uses)
     // doubles as the flying visual cue.
-    if (myProfile?.flightActive) this.player.setTexture(textureKeyFor(this.displayKind()), idleFrameFor(this.displayKind(), this.facing));
+    if (myProfile?.flightActive || this.isMyBeastFlying()) this.player.setTexture(textureKeyFor(this.displayKind()), idleFrameFor(this.displayKind(), this.facing));
     else this.player.play(walkAnimKey(this.displayKind(), this.facing), true);
     this.isMoving = true;
-    if (myProfile?.celeritasActive || myProfile?.flightActive) this.spawnWindEffect(direction);
+    if (myProfile?.celeritasActive || myProfile?.flightActive || this.isMyBeastFlying()) this.spawnWindEffect(direction);
 
     this.network
       .move(direction)
@@ -5059,10 +5119,10 @@ export class WorldScene extends Phaser.Scene {
   private attemptDiagonalMove(dRow: -1 | 1, dCol: -1 | 1): void {
     const direction: Direction = dCol === -1 ? 'west' : dCol === 1 ? 'east' : dRow === -1 ? 'north' : 'south';
     this.facing = facingForDirection(direction);
-    if (myProfile?.flightActive) this.player.setTexture(textureKeyFor(this.displayKind()), idleFrameFor(this.displayKind(), this.facing));
+    if (myProfile?.flightActive || this.isMyBeastFlying()) this.player.setTexture(textureKeyFor(this.displayKind()), idleFrameFor(this.displayKind(), this.facing));
     else this.player.play(walkAnimKey(this.displayKind(), this.facing), true);
     this.isMoving = true;
-    if (myProfile?.celeritasActive || myProfile?.flightActive) this.spawnWindEffect(direction);
+    if (myProfile?.celeritasActive || myProfile?.flightActive || this.isMyBeastFlying()) this.spawnWindEffect(direction);
 
     this.network
       .moveDiagonal(dRow, dCol)
@@ -5487,6 +5547,19 @@ export class WorldScene extends Phaser.Scene {
   private static readonly DEX_MOVE_SPEED_PERCENT_PER_POINT = 0.015;
   private static readonly MIN_MOVE_COOLDOWN_FACTOR = 0.4;
 
+  // Item 11's Transform spell (a later follow-up ask): "the druid when it
+  // transforms into a beast that can fly should be flying at that point"
+  // — mechanically identical to the real Flight spell (water-crossing,
+  // idle-hover visual, movement speed), just derived from
+  // beastTransformActive/beastTransformKind instead of its own separate
+  // timer, so it can never drift from (or outlive) the transform itself.
+  // Used everywhere the LOCAL player's own myProfile?.flightActive was
+  // checked; see isFlyingBeastKind's own doc comment for why this can't
+  // be a server-sent field.
+  private isMyBeastFlying(): boolean {
+    return Boolean(myProfile?.beastTransformActive) && isFlyingBeastKind(myProfile?.beastTransformKind ?? null);
+  }
+
   private effectiveMoveCooldownMs(): number {
     let base = myProfile?.celeritasActive ? Math.round(MOVE_COOLDOWN_MS * 0.9) : MOVE_COOLDOWN_MS;
     // A later follow-up ask's wild-goblin drop, "boots of quickness...
@@ -5501,8 +5574,15 @@ export class WorldScene extends Phaser.Scene {
     // Flight (a later follow-up ask: "increase the player's movement speed
     // similar to the speed of wisp transformation") — reuses wisp's own
     // factor exactly, stacking multiplicatively with everything above the
-    // same way celeritas/boots/wisp already do with each other.
-    if (myProfile?.flightActive) base = Math.round(base * FLIGHT_MOVE_COOLDOWN_FACTOR);
+    // same way celeritas/boots/wisp already do with each other. A beast
+    // transform into a flying-capable kind (a falcon) gets this same cut
+    // too, on the same "flying moves faster" reasoning.
+    if (myProfile?.flightActive || this.isMyBeastFlying()) base = Math.round(base * FLIGHT_MOVE_COOLDOWN_FACTOR);
+    // Item 11's Transform spell: "increase the movement speed of the
+    // druid by the same amount as haste" — celeritas's own exact 10% cut,
+    // for ANY beast transform (not just a flying one), stacking
+    // multiplicatively with everything above.
+    if (myProfile?.beastTransformActive) base = Math.round(base * 0.9);
     // Every character starts at 1 dexterity (server/combat/formulas.ts's
     // STARTING_ATTRIBUTE) — only points ABOVE that baseline speed you up.
     const dexterity = myProfile?.dexterity ?? 1;

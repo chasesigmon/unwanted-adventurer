@@ -76,22 +76,6 @@ const VENDOR_SEEDS: VendorSeed[] = [
     ],
     greeting: 'Water and jerky, fresh enough — keep your strength up between classes.',
   },
-  {
-    id: 'labyrinth-shopkeeper',
-    name: 'Shopkeeper',
-    map: 'Labyrinth',
-    // Directly in front of (same column as) the Labyrinth's own
-    // entrance — the door back to the Great Plains is at
-    // (LABYRINTH_SIZE-1, LABYRINTH_MID_COL) = (59, 30) (see
-    // shared/maps.ts) — set back from it by roughly the "20 feet" asked
-    // for, using this project's own established ~2.5ft/tile scale (see
-    // shared/lighting.ts's original "10 foot diameter" == 4-tile-diameter
-    // light radius), i.e. 8 tiles north of the door.
-    row: 51,
-    col: 30,
-    items: [{ label: 'torch', price: 3 }],
-    greeting: "I serve any and all with coin! Don't forget your torches for night in the wilderness!",
-  },
   // --- Floro town, phase 1 (item 13) — one shopkeeper per shop
   // interior (see shared/maps.ts's FLORO_SHOP_DOORS/shopInteriorDefinition),
   // standing just inside the door at the room's back wall. Only the
@@ -355,10 +339,8 @@ export const VENDORS: VendorSnapshot[] = VENDOR_SEEDS.map((seed) => {
   return {
     id: seed.id,
     // A shopkeeper's own generated first name, with their role/title
-    // still shown alongside it — e.g. "Bram the Blacksmith" — except the
-    // Labyrinth vendor, whose plain "Shopkeeper" label predates this and
-    // isn't role-flavored the same way.
-    name: seed.name === 'Shopkeeper' ? seed.name : `${nameFor(seed.id, gender)} the ${seed.name}`,
+    // still shown alongside it — e.g. "Bram the Blacksmith".
+    name: `${nameFor(seed.id, gender)} the ${seed.name}`,
     map: seed.map,
     row: seed.row,
     col: seed.col,

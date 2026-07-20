@@ -5,6 +5,8 @@
 // from the text game).
 import { isWandItem } from '../../shared/equipment.js';
 import type { MonsterClass, Race } from '../../shared/constants.js';
+import { maxTnlForLevel } from '../../shared/leveling.js';
+export { maxTnlForLevel } from '../../shared/leveling.js';
 export { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, EQUIPMENT_SLOT_FOR_ITEM, type EquipmentSlot } from '../../shared/equipment.js';
 import {
   STARTING_SKILL_PERCENT,
@@ -301,6 +303,18 @@ export const ARMOR_ITEM_PHYSICAL_BONUS: Record<string, number> = {
   'leather vambraces': 4,
   'leather greaves': 4,
   'leather boots': 4,
+  // The Labyrinth's own level-30 orcs (a later follow-up ask): "chainmail
+  // armor of all the same pieces as studded armor... Armor vs Physical +
+  // 7" — a full 6-piece set one tier above leather's own +4 (see
+  // shared/equipment.ts's own doc comment on why the forearm piece is
+  // named "chainmail bracers" rather than the already-taken "chainmail
+  // vambraces").
+  'chainmail armor': 7,
+  'chainmail helmet': 7,
+  'chainmail gauntlets': 7,
+  'chainmail greaves': 7,
+  'chainmail bracers': 7,
+  'chainmail boots': 7,
 };
 
 // No item grants this yet — see this section's own doc comment above.
@@ -616,13 +630,12 @@ export function monsterDamageReduction(monsterClass: MonsterClass, skills: Recor
 // bigger per-level constant, which keeps "roughly how many kills to reach
 // the next level" constant across the whole 1-40 range instead of
 // leveling trivially fast early and grinding to a crawl late (or vice
-// versa). TNL_PER_LEVEL(250) is chosen so a level fighting same-level
-// monsters takes on the order of 8 kills — see tests/verify-balance-sim.mjs
-// for the simulated 1-10 grind this was tuned against.
-const TNL_PER_LEVEL = 250;
-export function maxTnlForLevel(level: number): number {
-  return level * TNL_PER_LEVEL;
-}
+// versa). maxTnlForLevel now lives in shared/leveling.ts (re-exported
+// above) so the client can show "exp to next level" on the character
+// sheet without importing server-only code — TNL_PER_LEVEL(250) is
+// chosen so a level fighting same-level monsters takes on the order of 8
+// kills — see tests/verify-balance-sim.mjs for the simulated 1-10 grind
+// this was tuned against.
 
 // A later follow-up ask: "the max player level right now should be 40" —
 // a hard overall cap (on top of, not instead of, a goblin's own separate

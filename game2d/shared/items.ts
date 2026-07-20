@@ -77,6 +77,22 @@ export const MAX_HUNGER_THIRST = 100;
 export const SALMON_ITEM = 'salmon';
 export const SALMON_HUNGER_RESTORE_PERCENT = 30;
 
+// Bug fix: the inventory's Equip/Use/Drop menu labeled every non-
+// equippable item's action button "Use," even a plain drink or meal —
+// themed instead ("Drink"/"Eat") for anything classified as a water or
+// food source, generalized here so any FUTURE item added to either list
+// automatically gets the same treatment without touching the UI again.
+export const DRINKABLE_ITEMS: readonly string[] = [CUP_OF_WATER_ITEM];
+export const EDIBLE_ITEMS: readonly string[] = [JERKY_ITEM, SALMON_ITEM];
+
+export function isDrinkableItem(item: string): boolean {
+  return DRINKABLE_ITEMS.includes(item);
+}
+
+export function isEdibleItem(item: string): boolean {
+  return EDIBLE_ITEMS.includes(item);
+}
+
 // A later follow-up ask's Bramwick Potions shop items — flat hp/mana
 // amounts (not a percent of max, unlike hunger/thirst above, since
 // max hp/mana both grow with level/attributes while hunger/thirst stay a

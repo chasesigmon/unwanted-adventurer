@@ -59,6 +59,9 @@ import {
   BRAMWICK_RUNESTONE_COL,
   BRAMWICK_SILVERBRANCH_ROW,
   SILVERBRANCH_ROAD_MID_ROW,
+  GREAT_PLAINS_MID_COL,
+  LABYRINTH_MID_COL,
+  LABYRINTH_SIZE,
 } from './maps.js';
 
 // "Late hours of night and early hours of morning" — a narrower, darker
@@ -871,6 +874,21 @@ export const GREAT_PLAINS_FLORO_SIGN_POSITION = { row: GREAT_PLAINS_FLORO_ROW - 
 // other connection above, offset off the road band (which spans
 // ±GREAT_PLAINS_HEXSTONE_HALF_WIDTH_TILES) so neither sign sits on the
 // cave-entrance tiles themselves.
+// Bug fix: "there is no sign in the great plains for the labyrinth and
+// there is no sign in the labyrinth for the great plains" — the
+// north/south cave-mouth connection between them (see shared/maps.ts's
+// own exits) never got the same sign-pair treatment every other
+// connection here already has. The exit is a single north/south tile
+// (not a wide road band like the others), so the sign sits beside it
+// via a COLUMN offset instead of the usual row offset — same
+// SIGN_TOP_EDGE_ROW/col-4 shape BRAMWICK_RUNESTONE_SIGN_POSITION already
+// uses for its own north-facing exit.
+export const GREAT_PLAINS_LABYRINTH_SIGN_POSITION = { row: SIGN_TOP_EDGE_ROW, col: GREAT_PLAINS_MID_COL - 4 };
+// The Labyrinth's own exit sits on its SOUTH edge (last row) instead of
+// the north/top edge every other SIGN_TOP_EDGE_ROW sign is anchored to —
+// mirrored off the bottom instead.
+export const LABYRINTH_GREAT_PLAINS_SIGN_POSITION = { row: LABYRINTH_SIZE - 1 - SIGN_TOP_EDGE_ROW, col: LABYRINTH_MID_COL - 4 };
+
 export const GREAT_PLAINS_HEXSTONE_SIGN_POSITION = { row: GREAT_PLAINS_HEXSTONE_ROW + 4, col: 0 };
 // A later follow-up ask moved this connection's own Hexstone-side exit
 // from the south edge to the east edge (see HEXSTONE_GREAT_PLAINS_ROW's
@@ -964,11 +982,15 @@ export function isBramwickSignBlocked(mapName: MapName, row: number, col: number
   if (mapName === 'Great Plains') {
     return (
       (row === GREAT_PLAINS_FLORO_SIGN_POSITION.row && col === GREAT_PLAINS_FLORO_SIGN_POSITION.col) ||
-      (row === GREAT_PLAINS_HEXSTONE_SIGN_POSITION.row && col === GREAT_PLAINS_HEXSTONE_SIGN_POSITION.col)
+      (row === GREAT_PLAINS_HEXSTONE_SIGN_POSITION.row && col === GREAT_PLAINS_HEXSTONE_SIGN_POSITION.col) ||
+      (row === GREAT_PLAINS_LABYRINTH_SIGN_POSITION.row && col === GREAT_PLAINS_LABYRINTH_SIGN_POSITION.col)
     );
   }
   if (mapName === 'Hexstone Cavern') {
     return row === HEXSTONE_GREAT_PLAINS_SIGN_POSITION.row && col === HEXSTONE_GREAT_PLAINS_SIGN_POSITION.col;
+  }
+  if (mapName === 'Labyrinth') {
+    return row === LABYRINTH_GREAT_PLAINS_SIGN_POSITION.row && col === LABYRINTH_GREAT_PLAINS_SIGN_POSITION.col;
   }
   return false;
 }

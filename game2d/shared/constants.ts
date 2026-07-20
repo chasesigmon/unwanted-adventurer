@@ -479,8 +479,23 @@ export const MONSTER_KINDS = [
   'troll',
   'rune beast',
   'woodland fairy',
+  'orc',
 ] as const;
 export type MonsterKind = (typeof MONSTER_KINDS)[number];
+
+// Item 11's Transform spell (a later follow-up ask): "the druid when it
+// transforms into a beast that can fly should be flying at that point...
+// the falcon should be flying." Mirrors server/monsters/monster.ts's own
+// per-species `flies: true` flag (falcon is currently the only one) as an
+// independent, shared source of truth — that file lives under server/ and
+// isn't importable from the client, and this is the one place both the
+// transform-flight grant (server) and the Affects panel/tooltip (client)
+// need to agree on which tamed-beast kinds count as fliers.
+export const FLYING_MONSTER_KINDS: readonly MonsterKind[] = ['falcon'];
+
+export function isFlyingBeastKind(kind: MonsterKind | null | undefined): boolean {
+  return kind != null && (FLYING_MONSTER_KINDS as readonly string[]).includes(kind);
+}
 
 // Same idea as the text game's own monster classification — determines
 // which resistance skill (lesser normal/undead monster resistance)

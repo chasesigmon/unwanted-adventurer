@@ -301,7 +301,7 @@ import {
 } from '../../shared/items.js';
 import { questDefinition, QUESTS, LEARN_SPELLS_QUEST_ID, allObjectivesDone } from '../../shared/quests.js';
 import { RECALL_POINTS, recallPointForMap, recallPointById } from '../../shared/recall.js';
-import { MONSTER_KINDS } from '../../shared/constants.js';
+import { MONSTER_KINDS, isFlyingBeastKind } from '../../shared/constants.js';
 import type { Direction, MapName, MonsterClass, MonsterKind, Race } from '../../shared/constants.js';
 
 const directionSchema = z.enum(DIRECTIONS);
@@ -2329,6 +2329,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return client.data.beastTransformActive ? BEAST_TRANSFORM_ARMOR_BONUS : 0;
   }
 
+  // "The druid when it transforms into a beast that can fly should be
+  // flying at that point... for example the falcon" — derived rather than
+  // stored in its own field, so it can never drift out of sync with (or
+  // outlive) the transform's own expiry (checkBeastTransformExpiry), and
+  // never fights with the real Flight spell's own separate
+  // flightActive/flightActiveUntil timer for the same fields. Every
+  // existing "is this player flying" call site (water-crossing, boat
+  // state) ORs this in alongside client.data.flightActive.
+  private isEffectivelyFlying(client: GameSocket): boolean {
+    return client.data.flightActive || (client.data.beastTransformActive && isFlyingBeastKind(client.data.beastTransformKind));
+  }
+
   // "The same kind of attack mechanism as the beast... no longer magical
   // ranged" — while transformed, the player's own basic attack (punch/
   // weapon-skill) deals a flat physical "beast paw" bonus (the tamed
@@ -2415,7 +2427,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // (see shared/boats.ts's pickBoatItem) — called after every successful
   // move and the instant flight ends, never a manual toggle.
   private syncBoatState(client: GameSocket): void {
-    if (client.data.flightActive) return; // hovering above it, not "in" a boat
+    if (this.isEffectivelyFlying(client)) return; // hovering above it, not "in" a boat
     if (isWaterBlocked(client.data.map, client.data.row, client.data.col)) {
       if (!client.data.inBoat) {
         const item = pickBoatItem(client.data.inventory);
@@ -3097,7 +3109,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // all (syncBoatState below then actually puts them "in" it once they
     // land there); flying still bypasses water the same way it always
     // has.
-    const canCrossWater = client.data.flightActive || pickBoatItem(client.data.inventory) !== undefined;
+    const canCrossWater = this.isEffectivelyFlying(client) || pickBoatItem(client.data.inventory) !== undefined;
     const result = this.worldManager.processMove(username, parsed.data, canCrossWater);
     if (!result) {
       return { ok: false, player: this.snapshotFor(client), message: 'Your session was lost. Please reconnect.' };
@@ -3193,7 +3205,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       }
     }
 
-    const canCrossWater = client.data.flightActive || pickBoatItem(client.data.inventory) !== undefined;
+    const canCrossWater = this.isEffectivelyFlying(client) || pickBoatItem(client.data.inventory) !== undefined;
     const result = this.worldManager.processDiagonalMove(username, parsed.data.dRow, parsed.data.dCol, canCrossWater);
     if (!result) {
       return { ok: false, player: this.snapshotFor(client), message: 'Your session was lost. Please reconnect.' };
@@ -5593,6 +5605,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
+    // Item 11's Transform spell: "only able to attack the same way that
+    // the transformed beast did" — no magical ranged bolt.
+    if (client.data.beastTransformActive) {
+      return { ok: false, message: "You can't cast spells while transformed — only your beast's own physical attack." };
+    }
     const cooldownUntil = client.data.skillCooldowns[ARCANE_BOLT_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
@@ -5905,6 +5922,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
+    // Item 11's Transform spell (a later follow-up ask): "only able to
+    // attack the same way that the transformed beast did" — covers all 5
+    // elemental bolts (fire/water/air/earth/kinetic strike) at once,
+    // since they all share this one resolver. Same message/shape as
+    // handleEngageRangedAttack's own identical guard.
+    if (client.data.beastTransformActive) {
+      return { ok: false, message: "You can't cast spells while transformed — only your beast's own physical attack." };
+    }
     const cooldownUntil = client.data.skillCooldowns[skill];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
@@ -6164,6 +6189,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    // Item 11's Transform spell: "only able to attack the same way that
+    // the transformed beast did" — no magical ranged bolt.
+    if (client.data.beastTransformActive) {
+      return { ok: false, message: "You can't cast spells while transformed — only your beast's own physical attack." };
     }
     const cooldownUntil = client.data.skillCooldowns[SAP_HEALTH_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
@@ -6702,6 +6732,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       });
       this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
       message = `You transform into a ${parsed.data.kind}!`;
+      // "Show a tooltip message that they are flying" (see the Affects
+      // panel's own matching entry) — the moment-of-cast confirmation,
+      // for flying-capable kinds only (a falcon today).
+      if (isFlyingBeastKind(client.data.beastTransformKind)) {
+        message = `${message} You take to the air, flying!`;
+      }
     }
 
     const growth = this.maybeGrowSpellSkill(client, TRANSFORM_SKILL);
@@ -6897,6 +6933,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
+    // Item 11's Transform spell: "only able to attack the same way that
+    // the transformed beast did" — no magical ranged bolt.
+    if (client.data.beastTransformActive) {
+      return { ok: false, message: "You can't cast spells while transformed — only your beast's own physical attack." };
+    }
     const cooldownUntil = client.data.skillCooldowns[STUN_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
@@ -7011,6 +7052,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
+    }
+    // Item 11's Transform spell: "only able to attack the same way that
+    // the transformed beast did" — no magical ranged bolt.
+    if (client.data.beastTransformActive) {
+      return { ok: false, message: "You can't cast spells while transformed — only your beast's own physical attack." };
     }
     const cooldownUntil = client.data.skillCooldowns[DISARM_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {

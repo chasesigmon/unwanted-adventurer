@@ -7,6 +7,7 @@ import type { MapName, Direction } from '../../shared/constants.js';
 import type { PlayerSnapshot, MapStatePayload } from '../../shared/types.js';
 import type { PlayerState, MoveResult } from './types.js';
 import { isTreeTile } from '../../shared/trees.js';
+import { isLabyrinthWallTile } from '../../shared/labyrinthMaze.js';
 import {
   emitsLight,
   isFireplaceBlocked,
@@ -152,6 +153,10 @@ export class WorldManagerService {
   // walking one.
   private isOccupied(mapName: MapName, row: number, col: number, excludeUsername: string, flying = false): boolean {
     if (isTreeTile(mapName, row, col)) return true;
+    // The Labyrinth's own maze walls (a later follow-up ask) — solid
+    // stone, same "never bypassed by flying" treatment isRunestoneWayOffRoadBlocked
+    // already gives every other permanent obstacle.
+    if (isLabyrinthWallTile(mapName, row, col)) return true;
     if (isCastleExteriorBlocked(mapName, row, col)) return true;
     // Runestone Way's own boulder-walled off-road terrain (a later
     // follow-up ask) — solid rock, never bypassed by flying, same

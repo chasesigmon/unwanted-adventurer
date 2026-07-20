@@ -415,11 +415,34 @@ body {
   align-items: center;
   justify-content: center;
   position: relative;
+  /* Bug fix: the status bar (top) and log panel (bottom-left) are
+     separate absolutely-positioned overlays with zero coordination with
+     Phaser's own camera — a player/map-edge content near the very top or
+     bottom of the canvas used to render directly BEHIND that chrome,
+     effectively invisible ("the classroom doors and everything are cut
+     off... the player can move off screen"). Insetting the canvas's own
+     CONTAINER by real, empty page space (rather than trying to pad the
+     camera's scroll/viewport/bounds — several attempts at that ran into
+     confirmed Phaser quirks where content rendered off-canvas near a
+     scroll-clamp edge for reasons that never resolved to a clean
+     formula) means Phaser's own RESIZE scale manager sizes the canvas to
+     this smaller box automatically, so nothing the camera does can ever
+     place content under the HUD — there's real empty space there instead
+     of an overlap. Sized generously (the log panel's own default height,
+     see #log-panel below) rather than reading the panels' live layout.
+     #daynight-overlay/#dark-fog-overlay share these exact same vars so
+     their own screen-space math (computed in canvas-relative
+     coordinates) lines up with the canvas without any further offset. */
+  --hud-top-margin: 56px;
+  --hud-bottom-margin: 244px;
 }
 
 #game-container {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  top: var(--hud-top-margin);
+  left: 0;
+  right: 0;
+  bottom: var(--hud-bottom-margin);
 }
 
 #game-container canvas {
@@ -2019,7 +2042,10 @@ body {
 
 #daynight-overlay {
   position: absolute;
-  inset: 0;
+  top: var(--hud-top-margin);
+  left: 0;
+  right: 0;
+  bottom: var(--hud-bottom-margin);
   background: rgba(5, 5, 20, 0);
   pointer-events: none;
   /* Below the sleep overlay (sleeping is always pitch black regardless
@@ -2037,7 +2063,10 @@ body {
    day/night tint but below the sleep overlay and HUD. */
 #dark-fog-overlay {
   position: absolute;
-  inset: 0;
+  top: var(--hud-top-margin);
+  left: 0;
+  right: 0;
+  bottom: var(--hud-bottom-margin);
   background: transparent;
   pointer-events: none;
   z-index: 15;

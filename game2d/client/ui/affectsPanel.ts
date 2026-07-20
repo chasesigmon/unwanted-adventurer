@@ -5,7 +5,9 @@
 // actually counts down instead of showing a stale snapshot.
 import { myProfile } from '../state.js';
 import { isNearBench } from '../../shared/lighting.js';
+import { isFlyingBeastKind } from '../../shared/constants.js';
 import { affectsBody, affectsModal, registerModalOpenHandler, registerModalRefreshHandler } from './modalCore.js';
+import { attachTooltip } from './tooltip.js';
 
 // Mirrors game.gateway.ts's own STAT_TICK_MS — "12 game hours (ticks)"
 // (the Learn Spells quest's own enhanced-learning reward) means 12 stat
@@ -19,6 +21,10 @@ interface ActiveAffect {
   // affects window the respective message") — rendered with no
   // countdown at all rather than a fake one.
   expiresAt?: number;
+  // Item 11's Transform spell (a later follow-up ask): "show a tooltip
+  // message that they are flying" — optional since every other existing
+  // affect here is self-explanatory from its label alone.
+  tooltip?: string;
 }
 
 function activeAffects(): ActiveAffect[] {
@@ -45,6 +51,17 @@ function activeAffects(): ActiveAffect[] {
   }
   if (myProfile.flightActive && myProfile.flightActiveUntil) {
     affects.push({ label: 'Flight', expiresAt: myProfile.flightActiveUntil });
+  }
+  // Item 11's Transform spell (a later follow-up ask): "put an affect in
+  // the affects window that they are flying ('Flying - Indefinitely')" —
+  // tied to the transform's own (already-shown-elsewhere) duration, not a
+  // separate timer of its own, so baked into the label like "Enhanced
+  // learning - Xh" above rather than given its own expiresAt countdown.
+  if (myProfile.beastTransformActive && isFlyingBeastKind(myProfile.beastTransformKind)) {
+    affects.push({
+      label: 'Flying - Indefinitely',
+      tooltip: 'Transformed into a flying beast — you can cross water freely and move faster while transformed.',
+    });
   }
   // The flight spell's own spacebar burst (a later follow-up ask: "show
   // this secondary 10 second cooldown somewhere relevant so the player
@@ -100,10 +117,11 @@ export function renderAffects(): void {
     affectsBody.appendChild(empty);
     return;
   }
-  for (const { label, expiresAt } of affects) {
+  for (const { label, expiresAt, tooltip } of affects) {
     const labelEl = document.createElement('div');
     labelEl.className = 'stat-label';
     labelEl.textContent = label;
+    if (tooltip) attachTooltip(labelEl, () => tooltip);
     const valueEl = document.createElement('div');
     valueEl.className = 'stat-value';
     valueEl.textContent = expiresAt !== undefined ? formatRemaining(expiresAt) : '';

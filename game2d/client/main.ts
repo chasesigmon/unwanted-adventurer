@@ -51,11 +51,18 @@ function startGame(): void {
   // letterboxed the sides. The camera (see WorldScene.create) follows the
   // player and is clamped per-map, so an oversized viewport just shows
   // more of the map rather than stretching it.
+  // Bug fix: #game-container is now inset from the full window by the HUD
+  // margins (see style.css's --hud-top-margin/--hud-bottom-margin) so the
+  // canvas itself never extends under the status bar/log panel — sized
+  // from the CONTAINER's own actual box here (not window.innerWidth/
+  // innerHeight) so the very first frame already matches; RESIZE mode
+  // keeps tracking it on every subsequent browser resize.
+  const gameContainer = document.getElementById('game-container') as HTMLDivElement;
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game-container',
-    width: window.innerWidth,
-    height: window.innerHeight,
+    width: gameContainer.clientWidth,
+    height: gameContainer.clientHeight,
     pixelArt: true,
     backgroundColor: '#14181a',
     scale: {

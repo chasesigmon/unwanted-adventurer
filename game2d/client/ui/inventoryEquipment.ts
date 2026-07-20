@@ -3,7 +3,7 @@
 // applyUseItemAck reconciliation of myProfile.
 import { activeScene, myProfile, network, setMyProfile } from '../state.js';
 import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, EQUIPMENT_ITEM_BONUS_LABEL, EQUIPMENT_SLOT_FOR_ITEM, type EquipmentSlot } from '../../shared/equipment.js';
-import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem } from '../../shared/items.js';
+import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem, isDrinkableItem, isEdibleItem } from '../../shared/items.js';
 import { FOLLOWER_EQUIPMENT_SLOTS } from '../../shared/pets.js';
 import type { UseItemAck } from '../../shared/types.js';
 import { attachTooltip } from './tooltip.js';
@@ -102,32 +102,39 @@ export function renderInventory(): void {
     label.textContent = item === CANTEEN_ITEM ? `${baseLabel} (${myProfile?.canteenDrinks ?? 0}/${CANTEEN_CAPACITY})` : baseLabel;
     li.appendChild(label);
     li.className = 'inventory-item';
-    if (isFillableItem(item) && activeScene?.getItemTarget() === item) li.classList.add('targeted');
+    // Bug fix: only a fillable item (the canteen) ever got this highlight
+    // or an actual target — identify (which acts on whatever's currently
+    // targeted, see WorldScene's useItemTargetedSkill) could therefore
+    // only ever be cast on a canteen, never on anything else in the
+    // inventory. Every item is targetable now, canteen included.
+    if (activeScene?.getItemTarget() === item) li.classList.add('targeted');
     attachTooltip(li, () => itemTooltip(item));
     // Every group has at least one index (it's seeded with one on
     // creation above), so this is always defined.
     li.addEventListener('click', () => {
       // Fillable items (a canteen, item 7 & 11's follow-up asks) aren't
       // used/consumed by clicking — clicking targets them instead, for
-      // drink/pour/irrigo to act on from the action bar. Clicking the
-      // SAME already-targeted item again de-selects it, rather than
-      // leaving no way to clear a target short of clicking elsewhere
-      // entirely.
+      // drink/pour/irrigo (and now identify) to act on from the action
+      // bar. Clicking the SAME already-targeted item again de-selects it,
+      // rather than leaving no way to clear a target short of clicking
+      // elsewhere entirely. No Equip/Use/Drop menu for these — closing
+      // one that was open for a DIFFERENT item, so at most one row is
+      // ever "focused" at a time.
       if (isFillableItem(item)) {
         if (activeScene?.getItemTarget() === item) activeScene.clearItemTarget();
         else activeScene?.setItemTarget(item);
+        openMenuIndex = null;
         renderInventory();
         return;
       }
-      // "Selecting elsewhere in the inventory" (a later follow-up ask) —
-      // clicking a DIFFERENT, non-fillable row used to leave whatever
-      // fillable item was previously targeted still selected in the
-      // background (still highlighted, still actionable from the action
-      // bar) even though this click clearly meant to do something else
-      // entirely. De-select it first, same as clicking empty world
-      // ground or closing the modal already do (see clearItemTarget's
-      // other two call sites).
-      activeScene?.clearItemTarget();
+      // Bug fix: a non-fillable item used to only toggle its Equip/Use/
+      // Drop menu, never actually setting a target — meaning identify
+      // had no way to select it at all. Targeting it now happens
+      // alongside the menu (setItemTarget replaces whatever was targeted
+      // before, so a fillable item's own target is naturally dropped by
+      // clicking elsewhere, without a separate clearItemTarget call).
+      if (activeScene?.getItemTarget() === item) activeScene.clearItemTarget();
+      else activeScene?.setItemTarget(item);
       // Item 11: left-clicking a non-fillable item toggles a small
       // Equip/Use/Drop menu instead of immediately dispatching — clicking
       // the SAME already-open row again collapses it.
@@ -230,7 +237,7 @@ export function renderInventory(): void {
 
       const actionBtn = document.createElement('button');
       actionBtn.type = 'button';
-      actionBtn.textContent = isEquipmentItem(item) ? 'Equip' : 'Use';
+      actionBtn.textContent = isEquipmentItem(item) ? 'Equip' : isDrinkableItem(item) ? 'Drink' : isEdibleItem(item) ? 'Eat' : 'Use';
       actionBtn.addEventListener('click', () => {
         openMenuIndex = null;
         useInventoryItem(indices[0]!);
