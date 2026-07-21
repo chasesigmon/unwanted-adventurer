@@ -22,7 +22,7 @@ import {
 import { isWithinRadius } from '../../shared/lighting.js';
 import { applyExpGain } from '../combat/formulas.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
-import { stepsForOwnerSpeed } from './followerSpeed.js';
+import { stepsForOwnerSpeed, clearFollowerSpeedAccumulator } from './followerSpeed.js';
 
 interface Pet extends PetSnapshot {
   // Server-only — a later follow-up bug fix (see checkContacts below and
@@ -78,6 +78,7 @@ export class PetManagerService {
   // still-living pet without waiting for it to die first).
   remove(ownerUsername: string): void {
     this.pets.delete(ownerUsername);
+    clearFollowerSpeedAccumulator(ownerUsername);
   }
 
   buy(ownerUsername: string, kind: PetKind, map: MapName, row: number, col: number): Pet | undefined {
@@ -317,7 +318,7 @@ export class PetManagerService {
       // ride on), a buffed owner's follower just takes proportionally
       // more steps within this SAME tick — see stepsForOwnerSpeed's own
       // doc comment.
-      const stepsThisTick = stepsForOwnerSpeed(owner);
+      const stepsThisTick = stepsForOwnerSpeed(pet.ownerUsername, owner);
 
       if (pet.command === 'attack' && pet.attackTargetKind && pet.attackTargetId) {
         const target = this.targetLocator?.(pet.attackTargetKind, pet.attackTargetId);
@@ -430,6 +431,7 @@ export class PetManagerService {
 
   removePet(ownerUsername: string): void {
     this.pets.delete(ownerUsername);
+    clearFollowerSpeedAccumulator(ownerUsername);
   }
 
   // Recall's own "bring my companions with me" behavior (a later

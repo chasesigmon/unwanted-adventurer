@@ -67,6 +67,7 @@ import {
   SILVERBRANCH_LAKE_DIRT_WIDTH_TILES,
   SILVERBRANCH_LAKE_BEACH_WIDTH_TILES,
   SILVERBRANCH_LAKE_WATER_COL_START,
+  SILVERBRANCH_LAKE_MID_ROW,
   silverbranchLakeIslandTiles,
   RUNESTONE_CANYON_ROWS,
   RUNESTONE_CANYON_COLS,
@@ -3135,9 +3136,30 @@ export class WorldScene extends Phaser.Scene {
       // animated/interactive/moving... a few beachy/grassy islands...
       // across the water." Same "strips layered over the base floor,
       // animated wave tileSprite" shape as Kortho's own Shimmering Sea.
+      // A later follow-up ask: "there shouldn't be dirt, there should only
+      // be the dirt road leading out, replace the other dirt with sand" —
+      // this whole strip used to be a single full-height dirt tileSprite.
+      // Now it's sand edge-to-edge, with a real dirt road tileSprite laid
+      // back on top only across the road-crossing's own row band (the
+      // Silverbranch Road exit's roadBandExits row range, same
+      // SILVERBRANCH_ROAD_HALF_WIDTH_TILES half-width every other road
+      // crossing in this project uses) — same depth as the sand beneath
+      // it, drawn after so it wins ties in the display list.
       this.silverbranchLakeSprites.push(
         this.add
-          .tileSprite(0, 0, SILVERBRANCH_LAKE_DIRT_WIDTH_TILES * TILE_SIZE, SILVERBRANCH_LAKE_ROWS * TILE_SIZE, 'dirt')
+          .tileSprite(0, 0, SILVERBRANCH_LAKE_DIRT_WIDTH_TILES * TILE_SIZE, SILVERBRANCH_LAKE_ROWS * TILE_SIZE, 'sand')
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+      this.silverbranchLakeSprites.push(
+        this.add
+          .tileSprite(
+            0,
+            (SILVERBRANCH_LAKE_MID_ROW - SILVERBRANCH_ROAD_HALF_WIDTH_TILES) * TILE_SIZE,
+            SILVERBRANCH_LAKE_DIRT_WIDTH_TILES * TILE_SIZE,
+            (SILVERBRANCH_ROAD_HALF_WIDTH_TILES * 2 + 1) * TILE_SIZE,
+            'dirt'
+          )
           .setOrigin(0, 0)
           .setDepth(-0.99)
       );
@@ -4633,10 +4655,20 @@ export class WorldScene extends Phaser.Scene {
       // one-time snapshot, so this never needs to swap texture later the
       // way a live pet's own sprite does above).
       const corpseTextureKey = pc.name === PET_EVOLVED_NAME[pc.kind] ? PET_EVOLVED_TEXTURE_KEYS[pc.kind] : PET_TEXTURE_KEYS[pc.kind];
+      // A later follow-up ask: "sometimes the corpse is invisible but you
+      // can still hover/click it to loot it" — -1 ties the BASE floor
+      // tile's own depth, so it loses to every floor-overlay tileSprite
+      // this project layers on top of the base floor at a higher (less
+      // negative) depth (dirt roads, Silverbranch Lake's sand/water,
+      // Runestone Canyon's floor, town road patches, ...), landing the
+      // corpse invisibly BEHIND that overlay while its sprite/hit-area
+      // stays fully intact — -0.5 matches every other definitely-visible
+      // ground prop (torches, desks, portals, signs, the Secret Chamber's
+      // own chest).
       const sprite = this.add
         .sprite(pos.x, pos.y, corpseTextureKey)
         .setOrigin(0.5, 0.9)
-        .setDepth(-1)
+        .setDepth(-0.5)
         .setTint(0x666666)
         .setAlpha(0.7)
         .setInteractive({ useHandCursor: true });
@@ -4714,10 +4746,21 @@ export class WorldScene extends Phaser.Scene {
       if (this.corpseSprites.has(c.id)) continue;
 
       const pos = this.tilePosition(c.row, c.col);
+      // A later follow-up ask: "sometimes when killing the crystal deer
+      // the corpse is invisible but you can still hover/click it to loot
+      // it... happened to the crystal wyvern also and the rune beasts and
+      // the runestone canyon dweller." Every one of those 4 kinds' own
+      // homeMap layers a floor-overlay tileSprite (dirt road, lake sand/
+      // water, canyon floor) at a depth HIGHER than this corpse's old -1
+      // (which only ties the base floor tile) — the corpse rendered
+      // fully behind that overlay, invisible, while its own sprite/hit-
+      // area stayed intact (hence still clickable). -0.5 matches every
+      // other definitely-visible ground prop and clears every overlay
+      // depth used anywhere in this project.
       const sprite = this.add
         .sprite(pos.x, pos.y, textureKeyFor(c.kind), bodyPartFrameKey(c.kind))
         .setScale(CORPSE_SCALE)
-        .setDepth(-1)
+        .setDepth(-0.5)
         .setInteractive({ useHandCursor: true });
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
@@ -4779,12 +4822,18 @@ export class WorldScene extends Phaser.Scene {
       // A later follow-up ask: "dropped item chest sprite should be 1/5
       // its current size" — this reused the Secret Chamber's own
       // full-size chest texture at native scale, far too big for a small
-      // "something was dropped here" marker in the open world.
+      // "something was dropped here" marker in the open world. A still-
+      // later ask ("make the treasure chests... a little bigger and make
+      // sure they are not invisible in towns or anywhere") bumped 0.2 up
+      // slightly, and -1 (ties the base floor tile's own depth) up to
+      // -0.5 — same floor-overlay depth-collision root cause as the
+      // corpse fix above, since town road patches and other maps' floor
+      // overlays draw at depths above -1 and were hiding this chest too.
       const sprite = this.add
         .sprite(pos.x, pos.y, CHEST_UNLOCKED_TEXTURE_KEY)
         .setOrigin(0.5, 0.85)
-        .setDepth(-1)
-        .setScale(0.2)
+        .setDepth(-0.5)
+        .setScale(0.28)
         .setInteractive({ useHandCursor: true });
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;

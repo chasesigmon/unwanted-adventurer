@@ -6,7 +6,15 @@ import type { PetCommand, AnimatedMonsterSnapshot, FollowerEquipmentSlot } from 
 import { FOLLOWER_ATTACK_COOLDOWN_MS, computeFollowerStep } from '../../shared/pets.js';
 import { animatedMonsterCapFor } from '../../shared/skills.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
-import { stepsForOwnerSpeed } from './followerSpeed.js';
+import { stepsForOwnerSpeed, clearFollowerSpeedAccumulator } from './followerSpeed.js';
+
+// stepsForOwnerSpeed's own per-follower accumulator needs a stable id —
+// an animated monster's own `id` is freshly generated per summon (unlike
+// a pet/tamed beast, one-per-owner), so this compounds it with the owner
+// to keep it unique across every owner's own array.
+function speedAccumulatorId(ownerUsername: string, id: string): string {
+  return `${ownerUsername}:${id}`;
+}
 
 interface AnimatedMonster extends AnimatedMonsterSnapshot {
   // Server-only — a later follow-up bug fix (see checkContacts below and
@@ -183,6 +191,7 @@ export class AnimatedMonsterManagerService {
       // returned below so the caller can still report its final hp/name.
       const index = owned!.findIndex((m) => m.id === id);
       if (index !== -1) owned!.splice(index, 1);
+      clearFollowerSpeedAccumulator(speedAccumulatorId(ownerUsername, id));
     }
     return { monster, died };
   }
@@ -216,7 +225,7 @@ export class AnimatedMonsterManagerService {
         // player, even with speed enhancements active" — see
         // stepsForOwnerSpeed's own doc comment and PetManagerService's
         // tickAll (the same fix, applied there first).
-        const stepsThisTick = stepsForOwnerSpeed(owner);
+        const stepsThisTick = stepsForOwnerSpeed(speedAccumulatorId(monster.ownerUsername, monster.id), owner);
 
         if (monster.command === 'attack' && monster.attackTargetKind && monster.attackTargetId) {
           const target = this.targetLocator?.(monster.attackTargetKind, monster.attackTargetId);
@@ -300,6 +309,9 @@ export class AnimatedMonsterManagerService {
   // "Lasts the entire time the player is logged in" — called on
   // disconnect (see game.gateway.ts's handleDisconnect).
   removeAllForOwner(ownerUsername: string): void {
+    for (const monster of this.monsters.get(ownerUsername) ?? []) {
+      clearFollowerSpeedAccumulator(speedAccumulatorId(ownerUsername, monster.id));
+    }
     this.monsters.delete(ownerUsername);
   }
 
@@ -314,6 +326,7 @@ export class AnimatedMonsterManagerService {
     const index = owned.findIndex((m) => m.id === id);
     if (index === -1) return false;
     owned.splice(index, 1);
+    clearFollowerSpeedAccumulator(speedAccumulatorId(ownerUsername, id));
     return true;
   }
 

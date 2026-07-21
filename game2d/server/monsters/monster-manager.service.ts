@@ -8,6 +8,7 @@ import {
   isGateTile,
   isStairsSideBlocked,
   isRunestoneWayOffRoadBlocked,
+  isRunestoneCanyonBoulderBlocked,
 } from '../../shared/maps.js';
 import { isTreeTile } from '../../shared/trees.js';
 import { isLabyrinthWallTile } from '../../shared/labyrinthMaze.js';
@@ -365,6 +366,10 @@ export class MonsterManagerService {
     if (isLabyrinthWallTile(mapName, row, col)) return false;
     if (isCastleExteriorBlocked(mapName, row, col)) return false;
     if (isMoatBlocked(mapName, row, col)) return false;
+    // Same solid-boulder treatment as the player's own WorldManagerService.
+    // isOccupied — an aggressive runestone canyon dweller chasing a player
+    // shouldn't be able to cut across the stairs-flanking boulders either.
+    if (isRunestoneCanyonBoulderBlocked(mapName, row, col)) return false;
     // "It should not work for imps" — the castle gate never opens for a
     // monster, full stop, unlike WorldManagerService.isOccupied's own
     // proximity-aware check for players.

@@ -5,7 +5,7 @@ import { canFollowerCrossWater } from '../../shared/constants.js';
 import type { PetCommand, TamedBeastSnapshot } from '../../shared/pets.js';
 import { computeFollowerStep, FOLLOWER_ATTACK_COOLDOWN_MS } from '../../shared/pets.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
-import { stepsForOwnerSpeed } from './followerSpeed.js';
+import { stepsForOwnerSpeed, clearFollowerSpeedAccumulator } from './followerSpeed.js';
 
 // One tamed beast per owner (same "1 pet at a time" simplicity
 // PetManagerService uses) — see shared/pets.ts's own doc comment on
@@ -99,7 +99,10 @@ export class TamedBeastManagerService {
     if (!beast) return undefined;
     beast.hp = Math.max(0, beast.hp - amount);
     const died = beast.hp <= 0;
-    if (died) this.beasts.delete(ownerUsername);
+    if (died) {
+      this.beasts.delete(ownerUsername);
+      clearFollowerSpeedAccumulator(ownerUsername);
+    }
     return { died };
   }
 
@@ -107,6 +110,7 @@ export class TamedBeastManagerService {
   // permanent-gone shape as a death.
   remove(ownerUsername: string): void {
     this.beasts.delete(ownerUsername);
+    clearFollowerSpeedAccumulator(ownerUsername);
   }
 
   // Same movement shape as PetManagerService.tickAll, trimmed (no
@@ -135,7 +139,7 @@ export class TamedBeastManagerService {
       // player, even with speed enhancements active" — see
       // stepsForOwnerSpeed's own doc comment and PetManagerService's
       // tickAll (the same fix, applied there first).
-      const stepsThisTick = stepsForOwnerSpeed(owner);
+      const stepsThisTick = stepsForOwnerSpeed(beast.ownerUsername, owner);
 
       if (beast.command === 'attack' && beast.attackTargetKind && beast.attackTargetId) {
         const target = this.targetLocator?.(beast.attackTargetKind, beast.attackTargetId);

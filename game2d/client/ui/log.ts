@@ -11,6 +11,7 @@ const COMBAT_LOG_MAX_LINES = 60;
 const logPanel = document.getElementById('log-panel') as HTMLDivElement;
 const logToggle = document.getElementById('log-toggle') as HTMLButtonElement;
 const logResizeHandle = document.getElementById('log-resize-handle') as HTMLDivElement;
+const logMoveHandle = document.getElementById('log-move-handle') as HTMLDivElement;
 const logView = document.getElementById('log-view') as HTMLDivElement;
 export const chatInput = document.getElementById('chat-input') as HTMLInputElement;
 const logTabCombatBtn = document.getElementById('log-tab-combat') as HTMLButtonElement;
@@ -151,34 +152,30 @@ if (savedLogPanelRect) {
 }
 
 // Custom drag-resize instead of the native CSS `resize: both` handle —
-// the panel STARTS anchored to the bottom-left of the screen (see
-// #log-panel's `bottom`), and the native resize box only reliably grows
-// in the direction away from whichever edges are actually anchored in
-// every browser. Growing height while staying bottom-anchored technically
-// still resizes the box (its top edge moves up) but the handle itself —
-// glued to the panel's own bottom-right corner — never visually moves in
-// that case, since the panel's bottom is pinned to the screen; dragging
-// downward then looks like nothing happens even though the box really is
-// taller. Switching to an explicit top/left anchor right when a drag
-// starts fixes that: the bottom edge (and the handle sitting on it) now
-// moves WITH the cursor in both directions.
+// browsers only reliably grow a native resize box away from whichever
+// edges are anchored, and this panel needs to grow in the direction
+// AWAY from its handle regardless of which corner that handle sits at.
+// A later follow-up ask moved the handle from the bottom-right corner to
+// the top-right (see #log-resize-handle's own CSS comment) — rather than
+// re-deriving which edge to anchor from scratch, this pins the panel's
+// BOTTOM-LEFT corner (in viewport coordinates, captured once at drag
+// start) and recomputes width/height from the live cursor position each
+// move: width = cursor.x - pinnedLeft, height = pinnedBottom - cursor.y.
+// That's correct regardless of whether the panel is currently sitting at
+// its CSS bottom-anchored default or has been dragged to an explicit
+// top/left position by the new move handle below — the bottom-left
+// corner just stays wherever it already was, and the handle (top-right)
+// follows the cursor.
 (function setupLogPanelResize(): void {
   let dragging = false;
-  let startX = 0;
-  let startY = 0;
-  let startWidth = 0;
-  let startHeight = 0;
+  let pinnedLeft = 0;
+  let pinnedBottom = 0;
 
   logResizeHandle.addEventListener('pointerdown', (e) => {
     dragging = true;
     const rect = logPanel.getBoundingClientRect();
-    startX = e.clientX;
-    startY = e.clientY;
-    startWidth = rect.width;
-    startHeight = rect.height;
-    logPanel.style.top = `${rect.top}px`;
-    logPanel.style.left = `${rect.left}px`;
-    logPanel.style.bottom = 'auto';
+    pinnedLeft = rect.left;
+    pinnedBottom = rect.bottom;
     logResizeHandle.setPointerCapture(e.pointerId);
     e.preventDefault();
   });
@@ -186,10 +183,12 @@ if (savedLogPanelRect) {
     if (!dragging) return;
     const maxWidth = window.innerWidth * 0.9;
     const maxHeight = window.innerHeight * 0.8;
-    const width = Math.min(maxWidth, Math.max(LOG_PANEL_MIN_WIDTH, startWidth + (e.clientX - startX)));
-    let height = Math.min(maxHeight, Math.max(LOG_PANEL_MIN_HEIGHT, startHeight + (e.clientY - startY)));
-    const panelRect = logPanel.getBoundingClientRect();
-    height = clampHeightForActionBar(panelRect.top, panelRect.left, width, height);
+    const width = Math.min(maxWidth, Math.max(LOG_PANEL_MIN_WIDTH, e.clientX - pinnedLeft));
+    let height = Math.min(maxHeight, Math.max(LOG_PANEL_MIN_HEIGHT, pinnedBottom - e.clientY));
+    height = clampHeightForActionBar(pinnedBottom - height, pinnedLeft, width, height);
+    logPanel.style.top = `${pinnedBottom - height}px`;
+    logPanel.style.left = `${pinnedLeft}px`;
+    logPanel.style.bottom = 'auto';
     logPanel.style.width = `${width}px`;
     logPanel.style.height = `${height}px`;
   });
@@ -201,6 +200,50 @@ if (savedLogPanelRect) {
   };
   logResizeHandle.addEventListener('pointerup', stopDragging);
   logResizeHandle.addEventListener('pointercancel', stopDragging);
+})();
+
+// A later follow-up ask: "make it so that the Combat/Chat window can be
+// dragged/repositioned" — a separate grip (top-left corner, see
+// #log-move-handle's own CSS) from the resize handle above, moving the
+// whole panel rather than changing its size. Same explicit top/left/
+// bottom:auto anchor-switch the resize handle already relies on, clamped
+// to stay fully on-screen.
+(function setupLogPanelMove(): void {
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  let startTop = 0;
+  let startLeft = 0;
+
+  logMoveHandle.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    const rect = logPanel.getBoundingClientRect();
+    startX = e.clientX;
+    startY = e.clientY;
+    startTop = rect.top;
+    startLeft = rect.left;
+    logMoveHandle.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  logMoveHandle.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const rect = logPanel.getBoundingClientRect();
+    const maxTop = window.innerHeight - rect.height;
+    const maxLeft = window.innerWidth - rect.width;
+    const top = Math.min(Math.max(0, startTop + (e.clientY - startY)), Math.max(0, maxTop));
+    const left = Math.min(Math.max(0, startLeft + (e.clientX - startX)), Math.max(0, maxLeft));
+    logPanel.style.top = `${top}px`;
+    logPanel.style.left = `${left}px`;
+    logPanel.style.bottom = 'auto';
+  });
+  const stopDragging = (e: PointerEvent) => {
+    if (!dragging) return;
+    dragging = false;
+    logMoveHandle.releasePointerCapture(e.pointerId);
+    saveLogPanelRect();
+  };
+  logMoveHandle.addEventListener('pointerup', stopDragging);
+  logMoveHandle.addEventListener('pointercancel', stopDragging);
 })();
 
 // ---------- The shared chronological stream ----------

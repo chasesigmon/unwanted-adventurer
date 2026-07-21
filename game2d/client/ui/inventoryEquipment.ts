@@ -163,7 +163,15 @@ export function renderInventory(): void {
     // isFollowerEquippableItem's own doc comment); a single follower
     // skips straight to a plain button, a real choice between two+ gets a
     // picker first.
-    if (followers.length > 0 && isFollowerEquippableItem(item)) {
+    // A later bug fix: "I had cloth armor in my inventory and then the
+    // only option that became available was to give the armor to the
+    // cat, I should have also been able to equip or drop it" — this row
+    // used to render unconditionally, before the row was even clicked,
+    // while Equip/Drop stayed hidden behind openMenuIndex until clicked —
+    // so "Give to <pet>" looked like the item's ONLY option. Now gated on
+    // the same openMenuIndex click as the Equip/Use/Drop menu below, so
+    // all three always appear together.
+    if (openMenuIndex === indices[0] && followers.length > 0 && isFollowerEquippableItem(item)) {
       const giveRow = document.createElement('div');
       giveRow.className = 'inventory-give-row';
       // Neither the picker nor the button should also trigger the row's

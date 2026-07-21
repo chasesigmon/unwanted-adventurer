@@ -342,12 +342,22 @@ export const PET_CORPSE_SACRIFICE_GOLD_PER_LEVEL = 3;
 // function's own entity-occupancy checks (vendor/teacher/chest/other-
 // monster tiles), a different, lower-stakes nuisance than cutting through
 // otherwise-inaccessible terrain.
-function isFollowerBlockedByTerrain(mapName: MapName, row: number, col: number): boolean {
+// A later follow-up ask: "the follower is supposed to get on the raft with
+// the player... walked on the moat and the cat did not get on and could
+// not cross" — isMoatBlocked was unconditional here, so even a follower
+// that legitimately qualifies for canCrossWater (owner has flight, or a
+// boat large enough for this follower kind, per computeFollowerStep's own
+// doc comment above) still got re-blocked at the Grimoak Grounds moat
+// specifically, while the same follower could ride along across Kortho's
+// sea or Silverbranch Lake fine (those aren't gated by this function at
+// all). Moat crossing now defers to the same canCrossWater flag every
+// other water check in this file already respects.
+function isFollowerBlockedByTerrain(mapName: MapName, row: number, col: number, canCrossWater: boolean): boolean {
   return (
     isTreeTile(mapName, row, col) ||
     isLabyrinthWallTile(mapName, row, col) ||
     isCastleExteriorBlocked(mapName, row, col) ||
-    isMoatBlocked(mapName, row, col) ||
+    (!canCrossWater && isMoatBlocked(mapName, row, col)) ||
     isRunestoneWayOffRoadBlocked(mapName, row, col) ||
     isShopBuildingBlocked(mapName, row, col)
   );
@@ -367,7 +377,7 @@ export function computeFollowerStep(
     if (stepRow === 0 && stepCol === 0) return undefined;
     const candidate = { row: current.row + stepRow, col: current.col + stepCol };
     if (!canCrossWater && isWaterBlocked(mapName, candidate.row, candidate.col)) return undefined;
-    if (isFollowerBlockedByTerrain(mapName, candidate.row, candidate.col)) return undefined;
+    if (isFollowerBlockedByTerrain(mapName, candidate.row, candidate.col, canCrossWater)) return undefined;
     return candidate;
   };
 

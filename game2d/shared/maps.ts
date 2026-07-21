@@ -1447,7 +1447,11 @@ export const HEXSTONE_GREAT_PLAINS_ROW = Math.round(HEXSTONE_CAVERN_SIZE * 0.75)
 // Hexstone Cavern... a cave connection east with sign 'Bramwick'") — same
 // direct shared-border, no-door shape as the Great Plains <-> Hexstone
 // Cavern connection above, reusing the same generic cave-mouth sprite. ----------
-export const BRIMSTONE_CAVE_SIZE = HEXSTONE_CAVERN_SIZE;
+// A later follow-up ask: "reduce the size of brimstone cave by half" —
+// was the exact same size as Hexstone Cavern; halved independently here
+// (not touching HEXSTONE_CAVERN_SIZE itself, which many OTHER map
+// constants still derive from).
+export const BRIMSTONE_CAVE_SIZE = Math.round(HEXSTONE_CAVERN_SIZE / 2);
 export const BRIMSTONE_CAVE_MID_ROW = Math.floor(BRIMSTONE_CAVE_SIZE / 2);
 export const BRAMWICK_BRIMSTONE_ROW = Math.floor(BRAMWICK_SIZE / 2);
 export const BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES = 2;
@@ -1580,12 +1584,33 @@ export function silverbranchLakeIslandTiles(): Array<{ row: number; col: number 
 // CANYON FLOOR square, with a cosmetic stairs strip cut through the rim
 // at the south entrance (the "walk down stairs" path) — both routes
 // reach the same open floor, purely two different-looking ways in. ----------
-export const RUNESTONE_CANYON_ROWS = GRIMOAK_GROUNDS_ROWS;
-export const RUNESTONE_CANYON_COLS = GRIMOAK_GROUNDS_COLS;
+// A later follow-up ask: "reduce the size of runestone canyon by half" —
+// was the exact same footprint as Grimoak Grounds; halved independently
+// here (not touching GRIMOAK_GROUNDS_ROWS/COLS themselves, which many
+// OTHER map constants still derive from). The rim (8 tiles) and stairs
+// half-width (2 tiles) stay absolute — at half size there's still a
+// healthy ~28x34 tile open floor inside the rim.
+export const RUNESTONE_CANYON_ROWS = Math.round(GRIMOAK_GROUNDS_ROWS / 2);
+export const RUNESTONE_CANYON_COLS = Math.round(GRIMOAK_GROUNDS_COLS / 2);
 export const RUNESTONE_CANYON_MID_COL = Math.floor(RUNESTONE_CANYON_COLS / 2);
 export const RUNESTONE_CANYON_MID_ROW = Math.floor(RUNESTONE_CANYON_ROWS / 2);
 export const RUNESTONE_CANYON_RIM_WIDTH_TILES = 8;
 export const RUNESTONE_CANYON_STAIRS_HALF_WIDTH_TILES = 2;
+
+// A later follow-up ask: "in Runestone Canyon, make it so that the
+// boulders/rocks on the left and right of the stairs can't be walked
+// on" — deliberately narrower than the whole rim: the north/east/west
+// rim stays fully walkable (that's the existing "or can walk around the
+// entire canyon in a circle" route, see this section's own opening doc
+// comment, and must keep working). Only the SOUTH rim band — the same
+// row range the stairs cut crosses — gets blocked outside the stairs'
+// own walkable column range, so the stairs remain the one way through
+// that specific edge instead of scrambling over the boulders flanking it.
+export function isRunestoneCanyonBoulderBlocked(mapName: MapName, row: number, col: number): boolean {
+  if (mapName !== 'Runestone Canyon') return false;
+  if (row < RUNESTONE_CANYON_ROWS - RUNESTONE_CANYON_RIM_WIDTH_TILES) return false;
+  return !isRunestoneCanyonStairsTile(mapName, row, col);
+}
 
 export function isRunestoneCanyonRimTile(mapName: MapName, row: number, col: number): boolean {
   if (mapName !== 'Runestone Canyon') return false;

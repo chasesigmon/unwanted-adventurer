@@ -236,22 +236,26 @@ body {
   background: #6a3838;
 }
 
-#character-delete-confirm {
+/* A later follow-up ask: "the delete button should present the double
+   check option right below the character, not at the bottom of the
+   list" — this is now a plain <li> inserted directly after the specific
+   character's own row (see characterSelect.ts's promptDeleteCharacter),
+   not a single shared block fixed below the whole list. */
+.character-delete-confirm-inline {
   background: #24243a;
   border: 1px solid #7a3f3f;
   border-radius: 4px;
   padding: 12px;
-  margin-bottom: 10px;
+  margin: 4px 0 10px;
 }
 
-#character-delete-confirm-text {
+.character-delete-confirm-inline p {
   margin: 0 0 10px;
   font-size: 13px;
   color: #eee;
 }
 
-#character-delete-confirm-yes,
-#character-delete-confirm-no {
+.character-delete-confirm-inline .modal-actions button {
   flex: 1;
   padding: 8px;
   border: 1px solid #7a3f3f;
@@ -263,17 +267,16 @@ body {
   background: #4d2a2a;
 }
 
-#character-delete-confirm-yes:hover,
-#character-delete-confirm-no:hover {
+.character-delete-confirm-inline .modal-actions button:hover {
   background: #6a3838;
 }
 
-#character-delete-confirm-no {
+.character-delete-confirm-inline .modal-actions button:last-child {
   background: #2a4d3a;
   border-color: #3f7a56;
 }
 
-#character-delete-confirm-no:hover {
+.character-delete-confirm-inline .modal-actions button:last-child:hover {
   background: #386a4c;
 }
 
@@ -882,7 +885,8 @@ body {
   border: none;
 }
 
-#log-panel.collapsed #log-resize-handle {
+#log-panel.collapsed #log-resize-handle,
+#log-panel.collapsed #log-move-handle {
   display: none;
 }
 
@@ -896,28 +900,69 @@ body {
   display: none;
 }
 
+/* A later follow-up ask: "put the Combat/Chat resize/dragger at the top
+   right instead of bottom right" — moved from the panel's bottom-right
+   corner to the top edge. Inset from the true corner (right: 36px, not
+   0) to stay clear of #log-toggle's own 28px-wide button sitting right
+   at top/right: 4px — the two would otherwise overlap and fight over
+   pointer events in that shared corner. */
 #log-resize-handle {
   position: absolute;
-  right: 0;
-  bottom: 0;
+  top: 4px;
+  right: 36px;
   width: 16px;
   height: 16px;
-  cursor: nwse-resize;
+  cursor: nesw-resize;
   touch-action: none;
   /* A simple diagonal-grip affordance, drawn with layered gradients
      instead of an image asset — three short diagonal strokes fading
-     toward the corner. */
+     toward the corner. Mirrored (top-right to bottom-left) from the old
+     bottom-right version to match this handle's new top-right position
+     and its nesw-resize cursor. */
   background:
-    linear-gradient(135deg, transparent 46%, #999 46%, #999 54%, transparent 54%) 4px 4px / 4px 4px no-repeat,
-    linear-gradient(135deg, transparent 46%, #999 46%, #999 54%, transparent 54%) 8px 8px / 4px 4px no-repeat,
-    linear-gradient(135deg, transparent 46%, #999 46%, #999 54%, transparent 54%) 12px 12px / 4px 4px no-repeat;
+    linear-gradient(45deg, transparent 46%, #999 46%, #999 54%, transparent 54%) 4px 8px / 4px 4px no-repeat,
+    linear-gradient(45deg, transparent 46%, #999 46%, #999 54%, transparent 54%) 8px 4px / 4px 4px no-repeat,
+    linear-gradient(45deg, transparent 46%, #999 46%, #999 54%, transparent 54%) 12px 0px / 4px 4px no-repeat;
 }
 
 #log-resize-handle:hover {
   background:
-    linear-gradient(135deg, transparent 46%, #f0c040 46%, #f0c040 54%, transparent 54%) 4px 4px / 4px 4px no-repeat,
-    linear-gradient(135deg, transparent 46%, #f0c040 46%, #f0c040 54%, transparent 54%) 8px 8px / 4px 4px no-repeat,
-    linear-gradient(135deg, transparent 46%, #f0c040 46%, #f0c040 54%, transparent 54%) 12px 12px / 4px 4px no-repeat;
+    linear-gradient(45deg, transparent 46%, #f0c040 46%, #f0c040 54%, transparent 54%) 4px 8px / 4px 4px no-repeat,
+    linear-gradient(45deg, transparent 46%, #f0c040 46%, #f0c040 54%, transparent 54%) 8px 4px / 4px 4px no-repeat,
+    linear-gradient(45deg, transparent 46%, #f0c040 46%, #f0c040 54%, transparent 54%) 12px 0px / 4px 4px no-repeat;
+}
+
+/* A later follow-up ask: "make it so that the Combat/Chat window can be
+   dragged/repositioned" — a new dedicated grip, separate from the resize
+   handle above, at the opposite (top-left) corner so the two never
+   compete for the same drag gesture. A 2x3 dot-grid affordance (a common
+   "grip"/drag-handle convention), same layered-gradient-not-an-image-
+   asset approach as the resize handle. */
+#log-move-handle {
+  position: absolute;
+  top: 4px;
+  left: 8px;
+  width: 16px;
+  height: 22px;
+  cursor: move;
+  touch-action: none;
+  background:
+    radial-gradient(circle, #999 1.5px, transparent 1.6px) 2px 3px / 6px 6px no-repeat,
+    radial-gradient(circle, #999 1.5px, transparent 1.6px) 10px 3px / 6px 6px no-repeat,
+    radial-gradient(circle, #999 1.5px, transparent 1.6px) 2px 10px / 6px 6px no-repeat,
+    radial-gradient(circle, #999 1.5px, transparent 1.6px) 10px 10px / 6px 6px no-repeat,
+    radial-gradient(circle, #999 1.5px, transparent 1.6px) 2px 17px / 6px 6px no-repeat,
+    radial-gradient(circle, #999 1.5px, transparent 1.6px) 10px 17px / 6px 6px no-repeat;
+}
+
+#log-move-handle:hover {
+  background:
+    radial-gradient(circle, #f0c040 1.5px, transparent 1.6px) 2px 3px / 6px 6px no-repeat,
+    radial-gradient(circle, #f0c040 1.5px, transparent 1.6px) 10px 3px / 6px 6px no-repeat,
+    radial-gradient(circle, #f0c040 1.5px, transparent 1.6px) 2px 10px / 6px 6px no-repeat,
+    radial-gradient(circle, #f0c040 1.5px, transparent 1.6px) 10px 10px / 6px 6px no-repeat,
+    radial-gradient(circle, #f0c040 1.5px, transparent 1.6px) 2px 17px / 6px 6px no-repeat,
+    radial-gradient(circle, #f0c040 1.5px, transparent 1.6px) 10px 17px / 6px 6px no-repeat;
 }
 
 .log-view .log-line.level-up {
@@ -932,6 +977,10 @@ body {
   display: flex;
   gap: 4px;
   margin-bottom: 6px;
+  /* Clears #log-move-handle, absolutely positioned at the panel's own
+     top-left corner (a later follow-up ask) — without this the "Combat"
+     tab button would sit right underneath the new drag grip. */
+  margin-left: 20px;
 }
 
 .log-tab {

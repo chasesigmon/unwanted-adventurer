@@ -24,6 +24,7 @@ import {
   isCastleExteriorBlocked,
   isWaterBlocked,
   isRunestoneWayOffRoadBlocked,
+  isRunestoneCanyonBoulderBlocked,
   isGateTile,
   GATE_COL_LEFT,
   GATE_COL_RIGHT,
@@ -162,6 +163,10 @@ export class WorldManagerService {
     // follow-up ask) — solid rock, never bypassed by flying, same
     // treatment as every other permanent obstacle above.
     if (isRunestoneWayOffRoadBlocked(mapName, row, col)) return true;
+    // A later follow-up ask: "make it so that the boulders/rocks on the
+    // left and right of the stairs can't be walked on" — same solid-rock,
+    // never-bypassed-by-flying treatment as Runestone Way's own boulders.
+    if (isRunestoneCanyonBoulderBlocked(mapName, row, col)) return true;
     // `flying` doubles as "can cross water at all" (a later follow-up ask
     // added boats — see game.gateway.ts's handleMove, which also passes
     // true here while the mover simply OWNS a canoe/raft, not just while

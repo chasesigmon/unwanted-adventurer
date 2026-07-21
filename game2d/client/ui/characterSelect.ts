@@ -11,10 +11,6 @@ import { showAuthScreen } from './authScreen.js';
 const screen = document.getElementById('character-select-screen') as HTMLDivElement;
 const errorEl = document.getElementById('character-select-error') as HTMLDivElement;
 const listEl = document.getElementById('character-list') as HTMLUListElement;
-const deleteConfirmEl = document.getElementById('character-delete-confirm') as HTMLDivElement;
-const deleteConfirmTextEl = document.getElementById('character-delete-confirm-text') as HTMLParagraphElement;
-const deleteConfirmYesBtn = document.getElementById('character-delete-confirm-yes') as HTMLButtonElement;
-const deleteConfirmNoBtn = document.getElementById('character-delete-confirm-no') as HTMLButtonElement;
 const createForm = document.getElementById('create-character-form') as HTMLFormElement;
 const nameInput = document.getElementById('new-character-name') as HTMLInputElement;
 const raceSelect = document.getElementById('new-character-race') as HTMLSelectElement;
@@ -59,39 +55,56 @@ skinSelect.addEventListener('change', updatePreview);
 hairSelect.addEventListener('change', updatePreview);
 
 // A follow-up ask: "after they click to delete prompt them with an extra
-// 'Are you sure you would like to delete <name>, Lvl. #?'" — a small
-// inline confirm block on the select screen itself (this screen has no
-// in-game modal system to reuse), one pending name at a time.
-let pendingDeleteName: string | null = null;
-
-function promptDeleteCharacter(name: string, level: number): void {
-  pendingDeleteName = name;
-  deleteConfirmTextEl.textContent = `Are you sure you would like to delete ${name}, Lvl. ${level}?`;
-  deleteConfirmEl.hidden = false;
-}
+// 'Are you sure you would like to delete <name>, Lvl. #?'" — a still-later
+// ask ("the delete button should present the double check option right
+// below the character, not at the bottom of the list") replaced the
+// original single shared confirm block (fixed below the whole list,
+// wherever it happened to sit relative to a longer character roster)
+// with one built fresh and inserted directly after the SPECIFIC
+// character's own <li>, same "no in-game modal system to reuse on this
+// screen" reasoning as before.
+let pendingDeleteConfirmLi: HTMLLIElement | null = null;
 
 function hideDeleteConfirm(): void {
-  pendingDeleteName = null;
-  deleteConfirmEl.hidden = true;
+  pendingDeleteConfirmLi?.remove();
+  pendingDeleteConfirmLi = null;
 }
 
-deleteConfirmNoBtn.addEventListener('click', hideDeleteConfirm);
-
-deleteConfirmYesBtn.addEventListener('click', () => {
-  void (async () => {
-    if (!pendingDeleteName) return;
-    const name = pendingDeleteName;
-    hideDeleteConfirm();
-    errorEl.textContent = '';
-    try {
-      await network.deleteCharacter(name);
-    } catch (err) {
-      errorEl.textContent = err instanceof Error ? err.message : 'Could not delete that character.';
-      return;
-    }
-    await refreshCharacterList();
-  })();
-});
+function promptDeleteCharacter(characterLi: HTMLLIElement, name: string, level: number): void {
+  hideDeleteConfirm();
+  const confirmLi = document.createElement('li');
+  confirmLi.className = 'character-delete-confirm-inline';
+  const text = document.createElement('p');
+  text.textContent = `Are you sure you would like to delete ${name}, Lvl. ${level}?`;
+  confirmLi.appendChild(text);
+  const actions = document.createElement('div');
+  actions.className = 'modal-actions';
+  const yesBtn = document.createElement('button');
+  yesBtn.type = 'button';
+  yesBtn.textContent = 'Yes, delete';
+  yesBtn.addEventListener('click', () => {
+    void (async () => {
+      hideDeleteConfirm();
+      errorEl.textContent = '';
+      try {
+        await network.deleteCharacter(name);
+      } catch (err) {
+        errorEl.textContent = err instanceof Error ? err.message : 'Could not delete that character.';
+        return;
+      }
+      await refreshCharacterList();
+    })();
+  });
+  const noBtn = document.createElement('button');
+  noBtn.type = 'button';
+  noBtn.textContent = 'Cancel';
+  noBtn.addEventListener('click', hideDeleteConfirm);
+  actions.appendChild(yesBtn);
+  actions.appendChild(noBtn);
+  confirmLi.appendChild(actions);
+  characterLi.after(confirmLi);
+  pendingDeleteConfirmLi = confirmLi;
+}
 
 async function refreshCharacterList(): Promise<void> {
   listEl.innerHTML = '<li class="character-list-loading">Loading...</li>';
@@ -139,7 +152,7 @@ async function refreshCharacterList(): Promise<void> {
       deleteBtn.title = `Delete ${c.name}`;
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        promptDeleteCharacter(c.name, c.level);
+        promptDeleteCharacter(li, c.name, c.level);
       });
       li.appendChild(deleteBtn);
 

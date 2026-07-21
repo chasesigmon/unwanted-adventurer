@@ -409,7 +409,7 @@ export const IDENTIFY_COOLDOWN_MS = 3 * 1000;
 // The Battlemage specialization's own 2 level-15 passives (a later
 // follow-up ask) — each a CHANCE (scaled off learned percent, same
 // scaledSkillChance formula hobgoblin's second/third attack already
-// uses) to grant a flat +5, rolled per-hit. Enhanced armor grows every
+// uses) to grant a bonus, rolled per-hit. Enhanced armor grows every
 // hit the battlemage TAKES from a monster; enhanced damage grows every
 // ranged/physical attack the battlemage MAKES (see game.gateway.ts's
 // resolveMonsterCounterAttack/rollExtraAttacks). Named
@@ -419,9 +419,37 @@ export const IDENTIFY_COOLDOWN_MS = 3 * 1000;
 // literal skills-record key or a Hobgoblin Battlemage's innate flat
 // bonus and this chance-based learned one would corrupt each other.
 export const BATTLEMAGE_ENHANCED_ARMOR_SKILL = 'enhanced armor';
-export const BATTLEMAGE_ENHANCED_ARMOR_BONUS = 5;
 export const BATTLEMAGE_ENHANCED_DAMAGE_SKILL = 'battlemage enhanced damage';
-export const BATTLEMAGE_ENHANCED_DAMAGE_BONUS = 5;
+// A later follow-up ask: "make an update to battlemage enhanced armor &
+// enhanced damage to offer appropriate numbers for the player level and
+// intelligence and armor and dexterity and strength" — both bonuses were
+// a flat +5 forever, same problem shamanEnhanceDamageBonusFor above was
+// fixed for. Each half of this hybrid warrior/caster kit scales off the
+// stats actually relevant to it: enhanced armor (defensive, triggers on
+// a hit TAKEN) grows with the same dexterity/strength that already feed
+// armorVsPhysicalFor, plus a slice of the defender's OWN current armor
+// vs physical (an "enhance what you already have" curve, not just raw
+// stats) — enhanced damage (offensive, triggers on an attack MADE) grows
+// with intelligence/strength, the arcane-and-martial fusion a
+// battlemage's whole kit is built around. Both keep the exact old flat
+// +5 at level 1 with fresh starting stats (7-13, see RACE_STARTING_STATS,
+// and the ~4 starting armorVsPhysical a level-1 character has with no
+// equipment), then grow gradually — comparable in shape and scale to
+// shamanEnhanceDamageBonusFor's own +5 -> +18 curve by level 40.
+export const BATTLEMAGE_ENHANCED_ARMOR_BASE_BONUS = 2;
+export function battlemageEnhancedArmorBonusFor(level: number, strength: number, dexterity: number, armorVsPhysical: number): number {
+  return (
+    BATTLEMAGE_ENHANCED_ARMOR_BASE_BONUS +
+    Math.floor(level / 4) +
+    Math.floor(strength / 6) +
+    Math.floor(dexterity / 6) +
+    Math.floor(armorVsPhysical / 4)
+  );
+}
+export const BATTLEMAGE_ENHANCED_DAMAGE_BASE_BONUS = 2;
+export function battlemageEnhancedDamageBonusFor(level: number, intelligence: number, strength: number): number {
+  return BATTLEMAGE_ENHANCED_DAMAGE_BASE_BONUS + Math.floor(level / 4) + Math.floor(intelligence / 4) + Math.floor(strength / 6);
+}
 
 // The Battlemage specialization's own level-15 spell (a later follow-up
 // ask) — same targeted, ranged, monster/npc-only shape as the

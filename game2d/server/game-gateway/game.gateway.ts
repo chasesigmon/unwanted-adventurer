@@ -253,9 +253,9 @@ import {
   IDENTIFY_SKILL,
   IDENTIFY_MANA_COST,
   BATTLEMAGE_ENHANCED_ARMOR_SKILL,
-  BATTLEMAGE_ENHANCED_ARMOR_BONUS,
+  battlemageEnhancedArmorBonusFor,
   BATTLEMAGE_ENHANCED_DAMAGE_SKILL,
-  BATTLEMAGE_ENHANCED_DAMAGE_BONUS,
+  battlemageEnhancedDamageBonusFor,
   KINETIC_STRIKE_SKILL,
   KINETIC_STRIKE_MANA_COST,
   KINETIC_STRIKE_DAMAGE,
@@ -1780,7 +1780,22 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const pet = this.petManager.getSnapshotForOwner(ownerUsername);
     if (!pet || !pet.alive || pet.map !== monster.mapName) return;
     const previousName = pet.name;
-    const petExpGained = expGainFor(monster.expReward, pet.level, monster.level);
+    // A later follow-up ask: "make the pets have similar exp tnl to the
+    // player, they level too fast" — expGainFor's ratio scales UP the
+    // lower the killer's own level is relative to the victim (deliberately,
+    // for a real player fighting above their level); using the PET's own
+    // level here always fed it a wildly inflated ratio whenever the owner
+    // (who's doing the actual fighting) was far higher level than their
+    // still-young pet, which is the common case — a level-1 pet earning
+    // exp off the owner's level-30 kills kept re-triggering that big
+    // "punching above your level" bonus every single kill, well past the
+    // point it should have. Scaling off the OWNER's own level instead gives
+    // the pet the exact same raw exp per kill the owner themselves earned
+    // (same maxTnlForLevel curve either side, see applyExpGain), so a pet
+    // levels up alongside the owner at a comparable pace rather than
+    // rocketing to its own lower level cap almost immediately.
+    const ownerLevel = this.worldManager.getLocation(ownerUsername)?.level ?? pet.level;
+    const petExpGained = expGainFor(monster.expReward, ownerLevel, monster.level);
     const petGrant = this.petManager.grantExp(ownerUsername, petExpGained);
     if (petGrant?.evolved) {
       this.server.to(monster.mapName).emit('combatNotice', `${previousName} has evolved into a ${petGrant.pet.name}!`);
@@ -2184,7 +2199,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const battlemageGrowth = this.maybeGrowSkill(client, BATTLEMAGE_ENHANCED_DAMAGE_SKILL);
       if (battlemageGrowth) growthMessages.push(battlemageGrowth);
       if (Math.random() < computeExtraAttackChance(client.data.skills[BATTLEMAGE_ENHANCED_DAMAGE_SKILL])) {
-        enhancedBonus += BATTLEMAGE_ENHANCED_DAMAGE_BONUS;
+        enhancedBonus += battlemageEnhancedDamageBonusFor(client.data.level, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment), client.data.strength);
       }
     }
 
@@ -2624,7 +2639,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const battlemageArmorReduction =
       client.data.skills[BATTLEMAGE_ENHANCED_ARMOR_SKILL] !== undefined &&
       Math.random() < computeExtraAttackChance(client.data.skills[BATTLEMAGE_ENHANCED_ARMOR_SKILL])
-        ? BATTLEMAGE_ENHANCED_ARMOR_BONUS
+        ? battlemageEnhancedArmorBonusFor(
+            client.data.level,
+            client.data.strength,
+            client.data.dexterity + dexterityEquipmentBonus(client.data.equipment),
+            defenderArmorVsPhysical
+          )
         : 0;
     const damage = Math.max(0, damageBeforeOtherReductions - reduction - scutumReduction - battlemageArmorReduction);
     const verb = hasWeapon ? 'stabs' : 'punches';
@@ -4002,7 +4022,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       const battlemageGrowth = this.maybeGrowSkill(client, BATTLEMAGE_ENHANCED_DAMAGE_SKILL);
       if (battlemageGrowth) this.systemMessage(client, battlemageGrowth);
       if (Math.random() < computeExtraAttackChance(client.data.skills[BATTLEMAGE_ENHANCED_DAMAGE_SKILL])) {
-        battlemageDamageBonus = BATTLEMAGE_ENHANCED_DAMAGE_BONUS;
+        battlemageDamageBonus = battlemageEnhancedDamageBonusFor(client.data.level, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment), client.data.strength);
       }
     }
     // A later follow-up ask replaced the old flat "+1 damage per
@@ -5210,6 +5230,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     const listings = this.auctionHouse.getAll();
     this.server.emit('auctionState', listings);
+    // A later follow-up ask: "when a player lists an item in the auction
+    // house make a global announcement" — plain server.emit (no `.to(map)`
+    // room scoping, unlike handleChat's own per-map broadcast just above)
+    // so every connected player sees it regardless of which map they're
+    // currently on, same as this.systemMessage's 'chat' event/log shape.
+    this.server.emit('chat', {
+      username: 'System',
+      map: client.data.map,
+      message: `${client.data.username} has listed ${item} at the Auction House, starting bid ${parsed.data.startingGold} gold.`,
+    });
     return { ok: true, listings };
   }
 

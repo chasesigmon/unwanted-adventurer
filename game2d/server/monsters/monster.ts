@@ -945,5 +945,9 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     // "A chance to drop 'greater runestone' (future mechanic)" — inert
     // for now, same tradeoff as crystal antlers above.
     carriedItemRolls: [{ label: 'greater runestone', chance: 0.15 }],
+    // A later follow-up ask: "make the dwellers aggressive" — was
+    // contact-only (no aggroRadiusTiles at all); same radius every other
+    // aggressive species in this file already uses.
+    aggroRadiusTiles: 5,
   })),
 ];
