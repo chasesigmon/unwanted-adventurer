@@ -587,6 +587,27 @@ export interface MapStatePayload {
   droppedChests: DroppedItemChestSnapshot[];
 }
 
+// A later follow-up ask: "Create an Auction House in both Floro and
+// Kortho" — a GLOBAL listing (not scoped to a single map's own
+// MapStatePayload, see AuctionHouseService's own doc comment), broadcast
+// separately via its own 'auctionState' event to every connected socket.
+export interface AuctionListingSnapshot {
+  id: string;
+  sellerUsername: string;
+  itemLabel: string;
+  startingGold: number;
+  // Equals startingGold until a real bid comes in — currentBidderUsername
+  // stays undefined until then, distinguishing "starting price, no bids
+  // yet" from "someone actually bid the starting price."
+  currentBid: number;
+  currentBidderUsername?: string;
+  // Epoch ms — the client recomputes its own live countdown from this
+  // every second rather than trusting a server-sent "seconds left" that
+  // would drift stale the instant network latency or the interval
+  // between broadcasts crept in.
+  endsAt: number;
+}
+
 export interface PetCommandAck {
   ok: boolean;
   pet?: PetSnapshot;
@@ -1002,6 +1023,14 @@ export interface ServerToClientEvents {
   // fired the moment the follower's own contact starts a brand new
   // player-combat session server-side (see resolveFollowerContact).
   followerEngaged: (data: { targetKind: 'monster' | 'player'; targetId: string }) => void;
+  // A later follow-up ask: "Create an Auction House in both Floro and
+  // Kortho... make sure the duration on the auction house modal is
+  // updated immediately with each change" — broadcast to EVERY connected
+  // socket (not just one map's room, see AuctionHouseService's own doc
+  // comment on why this is a global marketplace) whenever a listing is
+  // created, bid on, or resolved, so an open modal's countdown/bid list
+  // stays live without polling.
+  auctionState: (listings: AuctionListingSnapshot[]) => void;
 }
 
 export interface ClientToServerEvents {
@@ -1041,6 +1070,15 @@ export interface ClientToServerEvents {
   lootDroppedChestItem: (payload: { chestId: string; itemIndex: number }, ack: (res: LootDroppedChestAck) => void) => void;
   buyItem: (payload: { vendorId: string; itemLabel: string }, ack: (res: BuyAck) => void) => void;
   sellItem: (payload: { vendorId: string; itemIndex: number }, ack: (res: SellAck) => void) => void;
+  // A later follow-up ask: "Create an Auction House in both Floro and
+  // Kortho" — see AuctionHouseService's own doc comment for why this is a
+  // single global pool rather than per-town.
+  auctionGetListings: (ack: (res: { ok: true; listings: AuctionListingSnapshot[] }) => void) => void;
+  auctionListItem: (
+    payload: { itemIndex: number; startingGold: number; durationMinutes: number },
+    ack: (res: { ok: boolean; message?: string; listings?: AuctionListingSnapshot[] }) => void
+  ) => void;
+  auctionBid: (payload: { auctionId: string; amount: number }, ack: (res: { ok: boolean; message?: string }) => void) => void;
   // Item 17: Kortho's/Floro's own Bank vendor — one shared balance, free
   // deposit, a 5% withdrawal fee. Depositing `amount: undefined` deposits
   // everything currently carried.
@@ -1134,6 +1172,9 @@ export interface ClientToServerEvents {
   // voluntary permanent release.
   tamedBeastCommand: (command: string, ack: (res: { ok: boolean; message?: string }) => void) => void;
   removeTamedBeast: (ack: (res: { ok: boolean; message?: string }) => void) => void;
+  // A later follow-up ask: "add a 'Remove' option to the pet window" —
+  // same plain voluntary permanent release as removeTamedBeast above.
+  removePet: (ack: (res: { ok: boolean; message?: string }) => void) => void;
   // The Summoner's own monster-summons modal pick (a later follow-up
   // ask) — no target selection needed, just which kind to summon.
   castMonsterSummons: (payload: { monsterKind: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;

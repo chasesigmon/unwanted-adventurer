@@ -1,11 +1,12 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import type { MapName, MonsterKind, Race } from '../../shared/constants.js';
-import { isEffectivelyFlying } from '../../shared/constants.js';
+import { canFollowerCrossWater } from '../../shared/constants.js';
 import type { PetCommand, AnimatedMonsterSnapshot, FollowerEquipmentSlot } from '../../shared/pets.js';
 import { FOLLOWER_ATTACK_COOLDOWN_MS, computeFollowerStep } from '../../shared/pets.js';
 import { animatedMonsterCapFor } from '../../shared/skills.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
+import { stepsForOwnerSpeed } from './followerSpeed.js';
 
 interface AnimatedMonster extends AnimatedMonsterSnapshot {
   // Server-only — a later follow-up bug fix (see checkContacts below and
@@ -198,14 +199,24 @@ export class AnimatedMonsterManagerService {
         if (!monster.alive) continue;
 
         // A later follow-up ask: "pets/animated dead/summons cannot
-        // travel over water" unless the OWNER is flying (item 4, now
-        // shared/constants.ts's isEffectivelyFlying — flight spell, wisp
-        // transformation, or a beast transform into a flying-capable
-        // kind) — an animated monster/summon, unlike a pet, only fits on
-        // the LARGE raft, never the small canoe (see shared/boats.ts's
-        // own doc comment on canoe capacity).
+        // travel over water" unless the OWNER has REAL flight (the Flight
+        // spell or Wisp Transformation — a later follow-up ask clarified
+        // the owner's own BEAST TRANSFORM into a flying kind does NOT
+        // count, since that's a personal shapeshift a separate animated
+        // creature can't hitch a ride on; see shared/constants.ts's
+        // canFollowerCrossWater doc comment) or is riding along in a
+        // qualifying boat — an animated monster/summon, unlike a pet,
+        // only fits on the LARGE raft, never the small canoe (see
+        // shared/boats.ts's own doc comment on canoe capacity). An
+        // animated dead raised from an inherently flying kind's corpse
+        // (a falcon/crystal wyvern) also crosses water on its own merit.
         const owner = this.worldManager.getLocation(monster.ownerUsername);
-        const canCrossWater = (owner !== undefined && isEffectivelyFlying(owner)) || owner?.inBoat === 'large';
+        const canCrossWater = canFollowerCrossWater(monster.monsterKind, owner, owner?.inBoat === 'large');
+        // A later follow-up ask: "followers should move as fast as the
+        // player, even with speed enhancements active" — see
+        // stepsForOwnerSpeed's own doc comment and PetManagerService's
+        // tickAll (the same fix, applied there first).
+        const stepsThisTick = stepsForOwnerSpeed(owner);
 
         if (monster.command === 'attack' && monster.attackTargetKind && monster.attackTargetId) {
           const target = this.targetLocator?.(monster.attackTargetKind, monster.attackTargetId);
@@ -223,11 +234,13 @@ export class AnimatedMonsterManagerService {
             changedMaps.add(monster.map);
             continue;
           }
-          const step = computeFollowerStep(monster, target, monster.map, canCrossWater);
-          if (!step) continue; // already adjacent, or blocked by water on both axes
-          monster.row = step.row;
-          monster.col = step.col;
-          changedMaps.add(monster.map);
+          for (let i = 0; i < stepsThisTick; i++) {
+            const step = computeFollowerStep(monster, target, monster.map, canCrossWater);
+            if (!step) break; // already adjacent, or blocked by water on both axes
+            monster.row = step.row;
+            monster.col = step.col;
+            changedMaps.add(monster.map);
+          }
           continue;
         }
 
@@ -244,11 +257,13 @@ export class AnimatedMonsterManagerService {
           changedMaps.add(monster.map);
           continue;
         }
-        const step = computeFollowerStep(monster, owner, monster.map, canCrossWater);
-        if (!step) continue;
-        monster.row = step.row;
-        monster.col = step.col;
-        changedMaps.add(monster.map);
+        for (let i = 0; i < stepsThisTick; i++) {
+          const step = computeFollowerStep(monster, owner, monster.map, canCrossWater);
+          if (!step) break;
+          monster.row = step.row;
+          monster.col = step.col;
+          changedMaps.add(monster.map);
+        }
       }
     }
     return changedMaps;

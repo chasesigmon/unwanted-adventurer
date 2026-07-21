@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import type { MapName } from '../../shared/constants.js';
-import { isEffectivelyFlying } from '../../shared/constants.js';
+import { canFollowerCrossWater } from '../../shared/constants.js';
 import type { PetKind, PetCommand, PetSnapshot } from '../../shared/pets.js';
 import {
   PET_KIND_LABELS,
@@ -15,11 +15,14 @@ import {
   PET_EVOLUTION_ATTACK_BONUS,
   EVOLVABLE_PET_KINDS,
   FOLLOWER_ATTACK_COOLDOWN_MS,
+  PET_ATTACK_RANGE_TILES,
   computeFollowerStep,
   type FollowerEquipmentSlot,
 } from '../../shared/pets.js';
+import { isWithinRadius } from '../../shared/lighting.js';
 import { applyExpGain } from '../combat/formulas.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
+import { stepsForOwnerSpeed } from './followerSpeed.js';
 
 interface Pet extends PetSnapshot {
   // Server-only — a later follow-up bug fix (see checkContacts below and
@@ -65,6 +68,16 @@ export class PetManagerService {
 
   getPet(ownerUsername: string): Pet | undefined {
     return this.pets.get(ownerUsername);
+  }
+
+  // A later follow-up ask: "add a 'Remove' option to the pet window so
+  // players can fully remove a pet and get a new one" — same plain
+  // voluntary, permanent release TamedBeastManagerService.remove already
+  // uses (a dying pet already frees up a new purchase via hasPet's own
+  // alive check above; this covers the OTHER case, wanting to replace a
+  // still-living pet without waiting for it to die first).
+  remove(ownerUsername: string): void {
+    this.pets.delete(ownerUsername);
   }
 
   buy(ownerUsername: string, kind: PetKind, map: MapName, row: number, col: number): Pet | undefined {
@@ -282,14 +295,29 @@ export class PetManagerService {
       if (!pet.alive) continue;
 
       // A later follow-up ask: "pets... cannot travel over water" unless
-      // the OWNER is flying (item 4, now shared/constants.ts's
-      // isEffectivelyFlying — flight spell, wisp transformation, or a
-      // beast transform into a flying-capable kind) or riding a boat (a
-      // pet fits on either size, see shared/boats.ts) — this is the
-      // owner's own state, not the pet's, so it's looked up once per pet
-      // regardless of which branch below actually moves it.
+      // the OWNER has REAL flight (the Flight spell or Wisp
+      // Transformation) or is riding a boat (a pet fits on either size,
+      // see shared/boats.ts) — a later follow-up ask ("only flying
+      // creatures... should cross water") clarified the owner's own BEAST
+      // TRANSFORM into a flying kind does NOT count, since that's a
+      // personal shapeshift a separate pet creature can't hitch a ride on
+      // (see shared/constants.ts's canFollowerCrossWater doc comment). No
+      // pet kind is itself inherently flying (puppy/kitten/piglet and
+      // their evolved forms), so this always comes down to the owner's
+      // own state/boat.
       const owner = this.worldManager.getLocation(pet.ownerUsername);
-      const canCrossWater = (owner !== undefined && isEffectivelyFlying(owner)) || owner?.inBoat != null;
+      const canCrossWater = canFollowerCrossWater(pet.kind, owner, owner?.inBoat != null);
+      // A later follow-up ask: "followers should move as fast as the
+      // player, even with speed enhancements active" — this tick fires at
+      // a flat FOLLOWER_STEP_MS/BASE_MOVE_COOLDOWN_MS cadence (matching
+      // the player's own UNBUFFED move speed), so a follower used to fall
+      // behind the instant its owner picked up celeritas/wisp/flight/
+      // boots of quickness/high dexterity. Rather than changing the
+      // tick's own frequency (which every OTHER player's followers also
+      // ride on), a buffed owner's follower just takes proportionally
+      // more steps within this SAME tick — see stepsForOwnerSpeed's own
+      // doc comment.
+      const stepsThisTick = stepsForOwnerSpeed(owner);
 
       if (pet.command === 'attack' && pet.attackTargetKind && pet.attackTargetId) {
         const target = this.targetLocator?.(pet.attackTargetKind, pet.attackTargetId);
@@ -309,11 +337,13 @@ export class PetManagerService {
           changedMaps.add(pet.map);
           continue;
         }
-        const step = computeFollowerStep(pet, target, pet.map, canCrossWater);
-        if (!step) continue; // already adjacent, or blocked by water on both axes
-        pet.row = step.row;
-        pet.col = step.col;
-        changedMaps.add(pet.map);
+        for (let i = 0; i < stepsThisTick; i++) {
+          const step = computeFollowerStep(pet, target, pet.map, canCrossWater);
+          if (!step) break; // already adjacent, or blocked by water on both axes
+          pet.row = step.row;
+          pet.col = step.col;
+          changedMaps.add(pet.map);
+        }
         continue;
       }
 
@@ -336,11 +366,13 @@ export class PetManagerService {
         changedMaps.add(pet.map);
         continue;
       }
-      const step = computeFollowerStep(pet, owner, pet.map, canCrossWater);
-      if (!step) continue;
-      pet.row = step.row;
-      pet.col = step.col;
-      changedMaps.add(pet.map);
+      for (let i = 0; i < stepsThisTick; i++) {
+        const step = computeFollowerStep(pet, owner, pet.map, canCrossWater);
+        if (!step) break;
+        pet.row = step.row;
+        pet.col = step.col;
+        changedMaps.add(pet.map);
+      }
     }
     return changedMaps;
   }
@@ -361,9 +393,19 @@ export class PetManagerService {
       if (now < (pet.nextAttackAt ?? 0)) continue;
       const target = this.targetLocator?.(pet.attackTargetKind, pet.attackTargetId);
       if (!target || target.mapName !== pet.map) continue;
+      // A later follow-up ask: "lesser elemental/evolved form should do
+      // RANGED magical damage" — a kind with its own PET_ATTACK_RANGE_TILES
+      // entry (currently just the elemental) checks Chebyshev distance
+      // instead of the ordinary strict-adjacency shape every other pet
+      // kind still uses, same "attackRangeTiles overrides adjacency"
+      // pattern server/monsters/monster.ts's own woodland fairy already
+      // established for a wild monster's own ranged attack (see
+      // game.gateway.ts's resolveMonsterInitiatedAttack).
+      const range = PET_ATTACK_RANGE_TILES[pet.kind];
       const dRow = target.row - pet.row;
       const dCol = target.col - pet.col;
-      if (Math.abs(dRow) + Math.abs(dCol) <= 1) {
+      const inRange = range !== undefined ? isWithinRadius(pet.row, pet.col, target.row, target.col, range) : Math.abs(dRow) + Math.abs(dCol) <= 1;
+      if (inRange) {
         pet.nextAttackAt = now + FOLLOWER_ATTACK_COOLDOWN_MS;
         contacts.push({ ownerUsername: pet.ownerUsername, targetKind: pet.attackTargetKind, targetId: pet.attackTargetId });
       }

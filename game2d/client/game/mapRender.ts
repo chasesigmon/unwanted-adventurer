@@ -290,9 +290,8 @@ export const QUEST_ICON_IN_PROGRESS_FRAME = 2;
 // characterSprites.ts) — a much lighter-weight "creature", not a whole
 // new playable race.
 // Item 15's own 3 new Kortho-only pets — same 24x24 2-frame shape as the
-// original 3, no evolved form (see EVOLVABLE_PET_KINDS's own doc comment
-// in shared/pets.ts — PET_EVOLVED_TEXTURE_KEYS below deliberately stays
-// narrowly typed to just the original 3 kinds).
+// original 3 (their own evolved forms are covered by PET_EVOLVED_TEXTURE_KEYS
+// below now too, see its own doc comment).
 export const PET_TEXTURE_KEYS: Record<PetKind, string> = {
   puppy: 'pet-puppy',
   kitten: 'pet-kitten',
@@ -308,13 +307,24 @@ export const PET_FRAME_HEIGHT = 24;
 // is slightly larger and modelled differently for each respective pet"
 // — evolution previously just renamed the pet and reused its un-evolved
 // spritesheet, see PET_EVOLUTION_LEVEL's own doc comment). Real, distinct
-// art per kind (see tools/gen-pet-evolved-assets.mjs) at a bigger frame
-// size — WorldScene picks between these and PET_TEXTURE_KEYS above by
-// comparing a pet's own `name` against PET_EVOLVED_NAME.
-export const PET_EVOLVED_TEXTURE_KEYS: Record<'puppy' | 'kitten' | 'piglet', string> = {
+// art per kind (see tools/gen-pet-evolved-assets.mjs for puppy/kitten/
+// piglet, tools/gen-flying-pet-evolved-assets.mjs for the later griffin/
+// elemental/phoenix ask) at a bigger frame size — WorldScene picks
+// between these and PET_TEXTURE_KEYS above by comparing a pet's own
+// `name` against PET_EVOLVED_NAME. Now a full PetKind record (a later
+// follow-up ask, "young griffin→griffin, young phoenix→phoenix, evolve
+// into 'elemental'", extended this beyond the original 3 kinds) — the
+// evolved form's own NAME collides with the base kind's key itself for
+// these 3 (unlike dog/cat/boar, whose names differ from puppy/kitten/
+// piglet), hence the '-evolved' texture-key suffix to keep them distinct
+// from PET_TEXTURE_KEYS' own 'pet-griffin'/'pet-elemental'/'pet-phoenix'.
+export const PET_EVOLVED_TEXTURE_KEYS: Record<PetKind, string> = {
   puppy: 'pet-dog',
   kitten: 'pet-cat',
   piglet: 'pet-boar',
+  griffin: 'pet-griffin-evolved',
+  elemental: 'pet-elemental-evolved',
+  phoenix: 'pet-phoenix-evolved',
 };
 export const PET_EVOLVED_FRAME_WIDTH = 32;
 export const PET_EVOLVED_FRAME_HEIGHT = 32;
@@ -426,6 +436,11 @@ export function floorTextureFor(mapName: MapName): string {
   // own off-road ground (the walkable band itself is still the usual
   // dirt-road overlay, see WorldScene's own renderMap).
   if (mapName === 'Runestone Way') return 'boulder-field';
+  // A later follow-up ask: "make it look like a canyon" — the same rocky
+  // boulder-field ground Runestone Way already uses reads as the canyon's
+  // own rim/high ground; the deeper canyon floor gets its own darker
+  // overlay tileSprite instead (see WorldScene's own renderMap).
+  if (mapName === 'Runestone Canyon') return 'boulder-field';
   // A later follow-up ask: "the new world Direfell... its texture/
   // background should be a haunted looking forest."
   if (mapName === 'Direfell') return 'haunted-forest';

@@ -277,7 +277,14 @@ export function updateGroupPanel(
             if (!ack.ok && ack.message) logCombatMessage(ack.message);
             else if (ack.ok && ack.pet) updateGroupPanel(ack.pet, animatedMonsters, currentTamedBeast);
           }),
-        buildFollowerItemsSection('pet', undefined, pet.inventory, pet.equipment, pet.alive)
+        buildFollowerItemsSection('pet', undefined, pet.inventory, pet.equipment, pet.alive),
+        // A later follow-up ask: "add a 'Remove' option to the pet window
+        // so players can fully remove a pet and get a new one" — same
+        // shape as the tamed beast/animated monster cards below.
+        () =>
+          network.removePet().then((ack) => {
+            if (!ack.ok && ack.message) logCombatMessage(ack.message);
+          })
       )
     );
   }

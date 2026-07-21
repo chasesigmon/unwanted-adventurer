@@ -11,7 +11,9 @@
 // longer requires the old one to have never existed — see
 // PetManagerService's own hasPet/buy, which now only check `alive`.
 import type { MapName, MonsterKind, Race } from './constants.js';
-import { isWaterBlocked } from './maps.js';
+import { isWaterBlocked, isCastleExteriorBlocked, isMoatBlocked, isRunestoneWayOffRoadBlocked, isShopBuildingBlocked } from './maps.js';
+import { isTreeTile } from './trees.js';
+import { isLabyrinthWallTile } from './labyrinthMaze.js';
 
 // Item 15: "add a 'young griffin', 'lesser elemental', and 'young
 // phoenix'" to Kortho's own pet shop specifically (see server/worlds/
@@ -43,12 +45,14 @@ export const PET_STARTING_HP: Record<PetKind, number> = {
 };
 
 // Which pet kinds actually have real "evolved form" art (PET_EVOLUTION_LEVEL,
-// PET_EVOLVED_NAME/PET_EVOLVED_TEXTURE_KEYS below) — griffin/elemental/
-// phoenix deliberately have NO evolved form yet (no new art was asked
-// for), so they're excluded here; PetManagerService.grantExp gates the
-// entire evolve-in-place mechanic on this list, same "arts-generation is
-// its own separate task" scope-down this project already made once.
-export const EVOLVABLE_PET_KINDS = ['puppy', 'kitten', 'piglet'] as const;
+// PET_EVOLVED_NAME/PET_EVOLVED_TEXTURE_KEYS below) — a later follow-up ask
+// ("should evolve into 'elemental' at level 5, same pattern for young
+// griffin→griffin, young phoenix→phoenix... all evolved forms need new/
+// enhanced sprites") built the art that this list's own doc comment used
+// to defer griffin/elemental/phoenix on ("no new art was asked for") —
+// PetManagerService.grantExp gates the entire evolve-in-place mechanic on
+// this list.
+export const EVOLVABLE_PET_KINDS = ['puppy', 'kitten', 'piglet', 'griffin', 'elemental', 'phoenix'] as const;
 
 // "Commandable like stay by side or attack or sleep" — 'follow' is the
 // default the moment a pet is purchased ("should follow the player").
@@ -96,19 +100,37 @@ export const PET_EVOLUTION_LEVEL = 5;
 // (see PetManagerService.grantExp, which passes this into the shared
 // applyExpGain curve instead of the player's default).
 export const PET_MAX_LEVEL = 20;
-// Required for every PetKind (TypeScript needs a total record even though
-// EVOLVABLE_PET_KINDS above means grantExp never actually assigns these 3
-// placeholder names to a real griffin/elemental/phoenix pet).
+// A later follow-up ask ("young griffin→griffin, young phoenix→phoenix,
+// evolve into 'elemental'") replaced these 3 placeholder self-mappings
+// (back when EVOLVABLE_PET_KINDS excluded them, so grantExp never actually
+// assigned them) with the real grown-form names.
 export const PET_EVOLVED_NAME: Record<PetKind, string> = {
   puppy: 'Dog',
   kitten: 'Cat',
   piglet: 'Boar',
-  griffin: 'Young Griffin',
-  elemental: 'Lesser Elemental',
-  phoenix: 'Young Phoenix',
+  griffin: 'Griffin',
+  elemental: 'Elemental',
+  phoenix: 'Phoenix',
 };
 export const PET_EVOLUTION_HP_BONUS = 25;
 export const PET_EVOLUTION_ATTACK_BONUS = 3;
+
+// A later follow-up ask: "Lesser elemental/evolved form should do RANGED
+// magical damage (currently attacks physically)." Every OTHER pet kind
+// keeps the existing strict-adjacency melee shape (see
+// PetManagerService.checkContacts, which falls back to that when a kind
+// has no entry here) — this only widens the elemental specifically,
+// mirroring the same attackRangeTiles shape server/monsters/monster.ts's
+// own woodland fairy already uses for its "ranged magical" attack.
+export const PET_ATTACK_RANGE_TILES: Partial<Record<PetKind, number>> = {
+  elemental: 4,
+};
+
+// Which pet kinds resolve their own attack through armorVsMagicalFor
+// instead of armorVsPhysicalFor (see game.gateway.ts's resolveFollowerContact)
+// — currently just the elemental, a magical creature by its own nature,
+// paired with PET_ATTACK_RANGE_TILES above ("ranged magical damage").
+export const PET_MAGICAL_ATTACK_KINDS: readonly PetKind[] = ['elemental'];
 
 // A later follow-up ask: "pets sold in Bramwick... classified as 'small'
 // when puppy/kitten/piglet, 'medium' once evolved" — feeds the small
@@ -307,6 +329,30 @@ export const PET_CORPSE_SACRIFICE_GOLD_PER_LEVEL = 3;
 // kind (see shared/boats.ts) — callers compute that flag themselves from
 // the owner's own PlayerState, since neither manager here knows about
 // flight/boats directly.
+// A later follow-up ask: "don't allow pets/followers to walk through
+// non-accessible areas (e.g. through the castle at Grimoak Grounds to
+// reach the player around the moat)" — computeFollowerStep previously
+// only ever checked water, so a follower cut straight through solid
+// terrain (a building, the moat's own stone ring, a labyrinth wall) in a
+// perfectly straight line toward its target instead of routing around it
+// like a player has to. Mirrors the same STATIC terrain obstacles
+// MonsterManagerService.isFree already blocks a wandering/spawning
+// monster on — never bypassed by flying (a follower crossing water via
+// canCrossWater still can't clip through an actual wall) — minus that
+// function's own entity-occupancy checks (vendor/teacher/chest/other-
+// monster tiles), a different, lower-stakes nuisance than cutting through
+// otherwise-inaccessible terrain.
+function isFollowerBlockedByTerrain(mapName: MapName, row: number, col: number): boolean {
+  return (
+    isTreeTile(mapName, row, col) ||
+    isLabyrinthWallTile(mapName, row, col) ||
+    isCastleExteriorBlocked(mapName, row, col) ||
+    isMoatBlocked(mapName, row, col) ||
+    isRunestoneWayOffRoadBlocked(mapName, row, col) ||
+    isShopBuildingBlocked(mapName, row, col)
+  );
+}
+
 export function computeFollowerStep(
   current: { row: number; col: number },
   target: { row: number; col: number },
@@ -321,6 +367,7 @@ export function computeFollowerStep(
     if (stepRow === 0 && stepCol === 0) return undefined;
     const candidate = { row: current.row + stepRow, col: current.col + stepCol };
     if (!canCrossWater && isWaterBlocked(mapName, candidate.row, candidate.col)) return undefined;
+    if (isFollowerBlockedByTerrain(mapName, candidate.row, candidate.col)) return undefined;
     return candidate;
   };
 

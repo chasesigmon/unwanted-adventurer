@@ -97,7 +97,29 @@ const VENDOR_SEEDS: VendorSeed[] = [
     map: 'Floro Armorer',
     row: 3,
     col: 15,
-    items: [{ label: 'bone shield', price: 6 }],
+    // A later follow-up ask ("update Floro & Kortho armor shop: studded
+    // armor 10 gold each, cloth armor 5 gold each, opal and bone
+    // equipment 10 gold each") stocked the shelves for real, same "full
+    // set, one price per piece" shape Bramwick's own Armorer already uses.
+    items: [
+      { label: 'cloth armor', price: 5 },
+      { label: 'cloth helmet', price: 5 },
+      { label: 'cloth gauntlets', price: 5 },
+      { label: 'cloth greaves', price: 5 },
+      { label: 'cloth vambraces', price: 5 },
+      { label: 'cloth boots', price: 5 },
+      { label: 'studded armor', price: 10 },
+      { label: 'studded helmet', price: 10 },
+      { label: 'studded gauntlets', price: 10 },
+      { label: 'studded greaves', price: 10 },
+      { label: 'studded vambraces', price: 10 },
+      { label: 'studded boots', price: 10 },
+      { label: 'opal earrings', price: 10 },
+      { label: 'opal ring', price: 10 },
+      { label: 'opal necklace', price: 10 },
+      { label: 'bone ring', price: 10 },
+      { label: 'bone shield', price: 10 },
+    ],
     greeting: "A shield's worth more than a sword, in my experience. This one's sturdy.",
   },
   {
@@ -163,6 +185,19 @@ const VENDOR_SEEDS: VendorSeed[] = [
     ],
     greeting: 'Looking to cross the water? A canoe carries you and one pet — the raft carries your whole company.',
   },
+  // A later follow-up ask: "Create an Auction House in both Floro and
+  // Kortho" — no buy-list of its own (items: []); the client special-cases
+  // this vendor's own id to open the Auction House modal instead of the
+  // generic shop-buy one (see WorldScene's own vendor click handler).
+  {
+    id: 'floro-auction-house',
+    name: 'Auctioneer',
+    map: 'Floro Auction House',
+    row: 3,
+    col: 15,
+    items: [],
+    greeting: 'Looking to buy or sell? Step right up.',
+  },
   // --- Kortho, Floro's own rival-town twin (a later follow-up ask: "add
   // the town of Kortho back... same size and rules and shops as when it
   // was being used before") — same "one shopkeeper just inside the door"
@@ -183,7 +218,26 @@ const VENDOR_SEEDS: VendorSeed[] = [
     map: 'Kortho Armorer',
     row: 3,
     col: 15,
-    items: [{ label: 'bone shield', price: 6 }],
+    // Same restock as Floro's own Armorer above — see its doc comment.
+    items: [
+      { label: 'cloth armor', price: 5 },
+      { label: 'cloth helmet', price: 5 },
+      { label: 'cloth gauntlets', price: 5 },
+      { label: 'cloth greaves', price: 5 },
+      { label: 'cloth vambraces', price: 5 },
+      { label: 'cloth boots', price: 5 },
+      { label: 'studded armor', price: 10 },
+      { label: 'studded helmet', price: 10 },
+      { label: 'studded gauntlets', price: 10 },
+      { label: 'studded greaves', price: 10 },
+      { label: 'studded vambraces', price: 10 },
+      { label: 'studded boots', price: 10 },
+      { label: 'opal earrings', price: 10 },
+      { label: 'opal ring', price: 10 },
+      { label: 'opal necklace', price: 10 },
+      { label: 'bone ring', price: 10 },
+      { label: 'bone shield', price: 10 },
+    ],
     greeting: "A shield's worth more than a sword out here. This one's sturdy.",
   },
   {
@@ -253,6 +307,17 @@ const VENDOR_SEEDS: VendorSeed[] = [
       { label: RAFT_ITEM, price: BOAT_PRICE[RAFT_ITEM] },
     ],
     greeting: 'Looking to cross the water? A canoe carries you and one pet — the raft carries your whole company.',
+  },
+  // A later follow-up ask: "Create an Auction House in both Floro and
+  // Kortho" — same as Floro's own floro-auction-house above.
+  {
+    id: 'kortho-auction-house',
+    name: 'Auctioneer',
+    map: 'Kortho Auction House',
+    row: 3,
+    col: 15,
+    items: [],
+    greeting: 'Looking to buy or sell? Step right up.',
   },
   // --- Bramwick, the small village north of Grimoak Grounds (a later
   // follow-up ask) — same "one shopkeeper just inside the door" shape as
@@ -391,14 +456,18 @@ export function vendorCounterFootprintFor(vendor: VendorSnapshot): Array<{ row: 
   return tiles;
 }
 
-// A later follow-up ask: "sell to vendor" — every vendor buys back
-// anything a player is carrying (not just what THEY happen to stock),
-// same "the shop is happy to take it off your hands" convenience most
-// shops offer. Half of the LOWEST listed buy price anywhere this exact
-// item is actually sold, floored, minimum 1 gold; a flat 1 gold "scrap"
-// value for anything no vendor sells at all (monster drops, quest
-// rewards, ...) so selling junk is still worth something rather than
-// being silently rejected.
+// A later follow-up ask: "sell to vendor" originally let every vendor
+// buy back anything a player was carrying, not just what THEY happened
+// to stock. A still-later ask ("only armor equipment sellable to
+// armorer; only weapons... sellable at blacksmith; everything else
+// sellable at general store; nothing sellable at other shops, including
+// Bramwick") replaced that free-for-all with real per-shop-type
+// restrictions — see vendorSellCategory/itemSellCategory below, checked
+// by game.gateway.ts's handleSellItem before this pricing formula ever
+// runs. The formula itself (half the lowest listed buy price, floored,
+// minimum 1 gold; a flat 1 gold "scrap" value for anything no vendor
+// sells at all) is unchanged — this only gates WHERE a sale is allowed,
+// not how much it's worth once it is.
 const FALLBACK_SELL_PRICE = 1;
 // A later follow-up ask ("update the studded armor to sell for 3 each,
 // cloth armor should sell for 1 each") pins an exact sell price for items
@@ -426,3 +495,11 @@ export function sellValueFor(itemLabel: string): number {
   if (prices.length === 0) return FALLBACK_SELL_PRICE;
   return Math.max(1, Math.floor(Math.min(...prices) / 2));
 }
+
+// itemSellCategory/vendorSellCategory (the "only armor sellable to
+// armorer..." restriction) now live in shared/equipment.ts — both the
+// server's own sell-restriction check and the client's shop-modal filter
+// need the identical vendor-id-to-category mapping, so it can't be
+// server-only here anymore. Re-exported for anyone already importing
+// them from this file.
+export { itemSellCategory, vendorSellCategory, type SellCategory } from '../../shared/equipment.js';

@@ -190,6 +190,13 @@ export interface MonsterSpecies {
   respawnDelayMs?: number;
   // See Monster.flies's own doc comment.
   flies?: boolean;
+  // A later follow-up ask ("rune beasts should have 15 strength — add a
+  // strength stat to monsters") — overrides the generic
+  // monsterAttributeForLevel(level) every OTHER attribute (and strength,
+  // absent this) still gets. Every species keeps the level-derived default
+  // unless it explicitly needs a different strength (a rune beast being
+  // notably stronger than its level alone would suggest).
+  strength?: number;
 }
 
 // Every wild monster starts at level 1 with every attribute at 1 — so a
@@ -837,6 +844,10 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     startingHp: monsterHpForLevel(15),
     expReward: monsterExpRewardForLevel(15),
     attackDamage: monsterAttackDamageForLevel(15),
+    // A later follow-up ask: "rune beasts should have 15 strength" —
+    // overrides the generic monsterAttributeForLevel(15) (16) every
+    // other attribute still gets.
+    strength: 15,
     aggroRadiusTiles: 5,
     goldRewardRange: [20, 25],
     // "A chance to drop 'a glowing rune' (future mechanic)" — an inert
@@ -868,4 +879,71 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     // constitution" — see combat/formulas.ts's constitutionEquipmentBonus.
     carriedItemRolls: [{ label: 'a woodland ring', chance: 0.12 }],
   },
+
+  // ---------- A later follow-up ask: "Add a 'Crystal Deer' to
+  // Silverbranch way... between levels 16 and 19 (up to and including
+  // 19)... classify them as 'beast' (so druid can tame)." Four separate
+  // species entries sharing the same `kind` (distinguished by `id`, same
+  // multi-tier-population shape Grimoak Grounds' own wild goblin/skeleton
+  // populations use) — a real level RANGE, not a single fixed level, one
+  // entry per level with a modest maxCount each so the total population
+  // (16, spread across the doubled-length road) matches its size. ----------
+  ...[16, 17, 18, 19].map((level) => ({
+    kind: 'crystal deer' as const,
+    id: `crystal-deer-${level}`,
+    monsterClass: 'beast' as const,
+    homeMap: 'Silverbranch Road' as const,
+    maxCount: 4,
+    level,
+    startingHp: monsterHpForLevel(level),
+    expReward: monsterExpRewardForLevel(level),
+    attackDamage: monsterAttackDamageForLevel(level),
+    goldRewardRange: [16, 22] as [number, number],
+    // "A chance to drop crystal antlers (future mechanic)" — an inert
+    // item for now, same "earnable now, dormant until something reads it"
+    // tradeoff every other future-mechanic drop in this file already
+    // accepts (a glowing rune, a woodland ring before its own effect was
+    // wired up).
+    carriedItemRolls: [{ label: 'crystal antlers', chance: 0.15 }],
+  })),
+
+  // ---------- A later follow-up ask: "Add 'Crystal Wyvern' flying
+  // creature roaming/flying around Silverbranch Lake... levels 18-20
+  // inclusive... classify as 'beast'." Same multi-tier-population shape as
+  // Crystal Deer/Runestone Canyon Dweller above, plus `flies: true` (the
+  // same flag falcon already uses) so it wanders/roams freely over the
+  // lake's own water tiles instead of being confined to the beach/islands. ----------
+  ...[18, 19, 20].map((level) => ({
+    kind: 'crystal wyvern' as const,
+    id: `crystal-wyvern-${level}`,
+    monsterClass: 'beast' as const,
+    homeMap: 'Silverbranch Lake' as const,
+    maxCount: 3,
+    level,
+    startingHp: Math.round(monsterHpForLevel(level) * 0.8),
+    expReward: monsterExpRewardForLevel(level),
+    attackDamage: monsterAttackDamageForLevel(level),
+    goldRewardRange: [18, 25] as [number, number],
+    flies: true,
+  })),
+
+  // ---------- A later follow-up ask: "new creature 'Runestone Canyon
+  // Dweller' levels 18-20 inclusive... classify as 'beast'." Same
+  // multi-tier-population shape as Crystal Deer above — one species entry
+  // per level, sharing `kind`, distinguished by `id`. ----------
+  ...[18, 19, 20].map((level) => ({
+    kind: 'runestone canyon dweller' as const,
+    id: `runestone-canyon-dweller-${level}`,
+    monsterClass: 'beast' as const,
+    homeMap: 'Runestone Canyon' as const,
+    maxCount: 5,
+    level,
+    startingHp: monsterHpForLevel(level),
+    expReward: monsterExpRewardForLevel(level),
+    attackDamage: monsterAttackDamageForLevel(level),
+    goldRewardRange: [18, 25] as [number, number],
+    // "A chance to drop 'greater runestone' (future mechanic)" — inert
+    // for now, same tradeoff as crystal antlers above.
+    carriedItemRolls: [{ label: 'greater runestone', chance: 0.15 }],
+  })),
 ];

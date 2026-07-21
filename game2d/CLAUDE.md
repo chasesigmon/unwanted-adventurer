@@ -39,12 +39,22 @@ MMO. Shared code importable from both sides lives in `shared/`.
 
 ## Assets
 
-- New sprites are generated as real spritesheets (PIL/python3 inline scripts
-  via `python3 - <<'EOF' ... EOF`), never procedural canvas-draw `.ts` files —
-  loaded through Phaser's own asset loader like every other sprite.
+- New sprites are generated as real spritesheets, never procedural
+  canvas-DRAW-at-RUNTIME `.ts` files — loaded through Phaser's own asset
+  loader like every other sprite. A later follow-up ask ("for every sprite
+  created from now on use Canvas processing and Sharp to enhance
+  everything") switched the GENERATION tooling itself from the original
+  PIL/python3 inline-script convention to node's own `canvas` package
+  (already a project dependency) for drawing + `sharp` (already a
+  dependency) for a post-process enhancement pass (e.g. `.sharpen()`,
+  `.modulate()` for contrast/saturation touch-ups) before writing the
+  final PNG — a plain Node `tools/gen-*.mjs` script (see existing ones for
+  the file-naming convention), not a python3 inline script, from this
+  point forward. Older sprites already generated via PIL don't need to be
+  redone — this only governs new work.
 - Verify every generated sprite visually via the Read tool at both native
-  resolution and a zoomed (`Image.NEAREST` upscale) preview before considering
-  it done.
+  resolution and a zoomed (nearest-neighbor upscale) preview before
+  considering it done.
 - Keep any one-off verification scripts (`verify-*.mjs`) in `tests/` at the
   repo root instead of deleting them after use.
 

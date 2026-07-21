@@ -30,12 +30,19 @@ interface ActiveAffect {
 function activeAffects(): ActiveAffect[] {
   if (!myProfile) return [];
   const affects: ActiveAffect[] = [];
-  if (myProfile.wandLit && myProfile.wandLitUntil) affects.push({ label: 'Lucem', expiresAt: myProfile.wandLitUntil });
+  // A later follow-up ask: "the Affects window still uses Latin names —
+  // remove ALL Latin references everywhere." These 3 labels were the last
+  // holdouts from an earlier rename pass that already renamed every
+  // spell's own skill key to English (shared/skills.ts's LIGHT_SKILL=
+  // 'light', HASTE_SKILL='haste', AEGIS_SKILL='aegis') but never touched
+  // these hardcoded Affects labels, so the Skills panel/action bar and the
+  // Affects window showed two different names for the same spell.
+  if (myProfile.wandLit && myProfile.wandLitUntil) affects.push({ label: 'Light', expiresAt: myProfile.wandLitUntil });
   if (myProfile.celeritasActive && myProfile.celeritasActiveUntil) {
-    affects.push({ label: 'Celeritas', expiresAt: myProfile.celeritasActiveUntil });
+    affects.push({ label: 'Haste', expiresAt: myProfile.celeritasActiveUntil });
   }
   if (myProfile.scutumActive && myProfile.scutumActiveUntil) {
-    affects.push({ label: 'Scutum', expiresAt: myProfile.scutumActiveUntil });
+    affects.push({ label: 'Aegis', expiresAt: myProfile.scutumActiveUntil });
   }
   if (myProfile.barrierActive && myProfile.barrierActiveUntil) {
     affects.push({ label: 'Barrier', expiresAt: myProfile.barrierActiveUntil });
@@ -49,8 +56,22 @@ function activeAffects(): ActiveAffect[] {
   if (myProfile.wispActive && myProfile.wispActiveUntil) {
     affects.push({ label: 'Wisp Transformation', expiresAt: myProfile.wispActiveUntil });
   }
-  if (myProfile.flightActive && myProfile.flightActiveUntil) {
-    affects.push({ label: 'Flight', expiresAt: myProfile.flightActiveUntil });
+  // A later follow-up ask: "while druid has wisp transformation active
+  // (flight is possible), also add a flight AFFECT matching wisp
+  // transformation's own time limit." Wisp already grants real
+  // water-crossing flight via shared/constants.ts's own isEffectivelyFlying
+  // (its wispActive branch) — this was purely a missing UI gap, so it's a
+  // second synthetic 'Flight' row keyed off wispActiveUntil rather than
+  // touching the real flightActive/flightActiveUntil server fields (which
+  // would risk clobbering an independently-cast real Flight spell's own
+  // duration on wisp's expiry). If BOTH are independently active at once
+  // (a real Flight cast during wisp), show a single row using whichever
+  // expires later, rather than two identical "Flight" rows.
+  const realFlightUntil = myProfile.flightActive ? myProfile.flightActiveUntil : null;
+  const wispFlightUntil = myProfile.wispActive ? myProfile.wispActiveUntil : null;
+  if (realFlightUntil || wispFlightUntil) {
+    const expiresAt = Math.max(realFlightUntil ?? 0, wispFlightUntil ?? 0);
+    affects.push({ label: 'Flight', expiresAt });
   }
   // Item 11's Transform spell (a later follow-up ask): "put an affect in
   // the affects window that they are flying ('Flying - Indefinitely')" —

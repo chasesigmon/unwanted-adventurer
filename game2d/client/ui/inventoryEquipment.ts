@@ -3,7 +3,7 @@
 // applyUseItemAck reconciliation of myProfile.
 import { activeScene, myProfile, network, setMyProfile } from '../state.js';
 import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, EQUIPMENT_ITEM_BONUS_LABEL, EQUIPMENT_SLOT_FOR_ITEM, type EquipmentSlot } from '../../shared/equipment.js';
-import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem, isDrinkableItem, isEdibleItem } from '../../shared/items.js';
+import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem, isDrinkableItem, isEdibleItem, groupInventoryItems } from '../../shared/items.js';
 import { FOLLOWER_EQUIPMENT_SLOTS } from '../../shared/pets.js';
 import type { UseItemAck } from '../../shared/types.js';
 import { attachTooltip } from './tooltip.js';
@@ -84,13 +84,11 @@ export function renderInventory(): void {
   // repeated line per copy. The server's inventory stays a flat array
   // (it has no concept of stacks) — this is purely a display grouping;
   // clicking a stack acts on one instance (the first index sharing that
-  // name), same as clicking any single unstacked item always did.
-  const groups = new Map<string, number[]>();
-  items.forEach((item, index) => {
-    const indices = groups.get(item);
-    if (indices) indices.push(index);
-    else groups.set(item, [index]);
-  });
+  // name), same as clicking any single unstacked item always did. Sorted
+  // alphabetically (see groupInventoryItems's own doc comment) so a
+  // stack's position never jumps just because a sell/use/drop removed one
+  // copy of it or of some other item.
+  const groups = groupInventoryItems(items);
 
   const followers = livingFollowers();
   for (const [item, indices] of groups) {

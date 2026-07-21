@@ -283,6 +283,21 @@
           </div>
         </div>
 
+        <!-- A later follow-up ask: "Create an Auction House in both Floro
+             and Kortho." A single shared, global marketplace (see
+             shared/auctionHouse.ts's own doc comment) — listings +
+             bidding on top, a "list one of your own items" form below. -->
+        <div id="auction-modal" class="modal" hidden>
+          <div class="modal-box">
+            <button type="button" class="modal-close">&times;</button>
+            <h2>Auction House</h2>
+            <div id="auction-gold-line"></div>
+            <ul id="auction-listing-list" class="inventory-list"></ul>
+            <h3>List an item</h3>
+            <ul id="auction-list-item-form" class="inventory-list"></ul>
+          </div>
+        </div>
+
         <div id="bed-modal" class="modal" hidden>
           <div class="modal-box">
             <button type="button" class="modal-close">&times;</button>

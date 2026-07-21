@@ -1,3 +1,5 @@
+import { TORCH_ITEM } from './lighting.js';
+
 // A later follow-up ask trimmed the text game's original 16-slot list
 // down to 12: 'mask' dropped entirely (nothing ever filled it), and the
 // 3 paired left/right slots that only ever held identical gear anyway
@@ -218,3 +220,46 @@ export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
   // ring/bone ring above (see isRingItem/resolveRingSlot).
   'a woodland ring': 'leftRing',
 };
+
+export type SellCategory = 'armor' | 'weapon' | 'general';
+
+// A later follow-up ask: "only armor equipment sellable to armorer; only
+// weapons (wands/swords/shields/etc) sellable at blacksmith; everything
+// else sellable at general store." Classified by EQUIPMENT_SLOT_FOR_ITEM
+// above rather than a separate hand-maintained list, so a new weapon/
+// armor piece added there is automatically categorized correctly here
+// too, with zero risk of the two lists drifting apart. The one
+// exception: a torch sits in the SAME off-hand 'shield' slot a real
+// shield uses (see EQUIPMENT_SLOT_FOR_ITEM's own doc comment on why),
+// but it's a light source, not armor or a weapon — sold at the General
+// Store today, so it's carved out here to match. Shared (not server-only)
+// so both the sell-restriction check (server/game-gateway/game.gateway.ts)
+// and the shop modal's own "only show what this vendor will actually buy"
+// filter (client/ui/shopModal.ts) stay in agreement by construction.
+export function itemSellCategory(itemLabel: string): SellCategory {
+  if (itemLabel === TORCH_ITEM) return 'general';
+  const slot = EQUIPMENT_SLOT_FOR_ITEM[itemLabel];
+  if (slot === 'weapon' || slot === 'shield') return 'weapon';
+  if (slot !== undefined) return 'armor';
+  return 'general';
+}
+
+// Every armor/weapon/general-store vendor across all three towns counts
+// as its own category (Bramwick isn't exempt from this restriction, per
+// the ask's own "including Bramwick") — every other vendor (inn, bank,
+// pet shop, boat shop, auction house, potions shop, the Great Hall's own
+// starter shopkeeper) buys nothing at all now, replacing the old
+// "every vendor buys anything" convenience. Shared (not server-only) so
+// the shop modal's own "only show what THIS vendor buys" filter can use
+// the exact same vendor-id-to-category mapping the server's own sell
+// restriction enforces, rather than a second hand-maintained copy.
+const ARMORER_VENDOR_IDS = ['floro-armorer', 'kortho-armorer', 'bramwick-armor'];
+const BLACKSMITH_VENDOR_IDS = ['floro-blacksmith', 'kortho-blacksmith', 'bramwick-wands'];
+const GENERAL_STORE_VENDOR_IDS = ['floro-general-store', 'kortho-general-store', 'bramwick-general-shop'];
+
+export function vendorSellCategory(vendorId: string): SellCategory | null {
+  if (ARMORER_VENDOR_IDS.includes(vendorId)) return 'armor';
+  if (BLACKSMITH_VENDOR_IDS.includes(vendorId)) return 'weapon';
+  if (GENERAL_STORE_VENDOR_IDS.includes(vendorId)) return 'general';
+  return null;
+}

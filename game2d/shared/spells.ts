@@ -37,5 +37,5 @@ export function spellDefinition(name: string): SpellDefinition | undefined {
 // client.data.secretChestUnlocked), so this is a plain position check,
 // same shape as isPodiumBlocked.
 export function isChestBlocked(mapName: MapName, row: number, col: number): boolean {
-  return mapName === 'Caverna Secretissima' && row === CAVERNA_CHEST_POSITION.row && col === CAVERNA_CHEST_POSITION.col;
+  return mapName === 'Secret Chamber' && row === CAVERNA_CHEST_POSITION.row && col === CAVERNA_CHEST_POSITION.col;
 }

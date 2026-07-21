@@ -34,7 +34,7 @@ const CHAR_SHEET_STAT_DESCRIPTIONS: Record<string, string> = {
   'Armor vs Physical':
     'A small base, plus a bit from dexterity and strength, plus whatever armor you have equipped (cloth +1 each, studded +3 each, ...). Flatly reduces incoming melee/punch/dagger damage on every hit that lands.',
   'Armor vs Magical':
-    'A small base, plus a bit from intelligence and wisdom, plus whatever armor grants it (nothing does yet). Flatly reduces incoming spell damage (bolts, wand bolt, augue, ...) on every hit that lands.',
+    'A small base, plus a bit from intelligence and wisdom, plus whatever armor grants it (nothing does yet). Flatly reduces incoming spell damage (bolts, wand bolt, arcane bolt, ...) on every hit that lands.',
   Deaths: 'Every death (from any cause) counts here. Every 5th costs 1 constitution permanently. At 65, CONDEATH — this character can never be played again.',
   Hunger: 'Drops by 1 every game hour. Eating jerky restores 20. No mechanical effect yet at 0 — reserved for future use.',
   Thirst: 'Drops by 1 every game hour. Drinking from your canteen or a cup of water restores 20. No mechanical effect yet at 0 — reserved for future use.',

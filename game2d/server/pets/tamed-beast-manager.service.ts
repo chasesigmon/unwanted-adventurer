@@ -1,10 +1,11 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import type { MapName } from '../../shared/constants.js';
-import { isEffectivelyFlying } from '../../shared/constants.js';
+import { canFollowerCrossWater } from '../../shared/constants.js';
 import type { PetCommand, TamedBeastSnapshot } from '../../shared/pets.js';
 import { computeFollowerStep, FOLLOWER_ATTACK_COOLDOWN_MS } from '../../shared/pets.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
+import { stepsForOwnerSpeed } from './followerSpeed.js';
 
 // One tamed beast per owner (same "1 pet at a time" simplicity
 // PetManagerService uses) — see shared/pets.ts's own doc comment on
@@ -116,15 +117,25 @@ export class TamedBeastManagerService {
     for (const beast of this.beasts.values()) {
       // Item 6 of a later follow-up ask ("the tamed falcon beast should
       // have flight, so if the player flies over water, the tamed falcon
-      // should be able to fly across the water with them") — this already
-      // ORs in the OWNER's flight state regardless of the beast's OWN
-      // kind (a falcon, or any other tamed beast, follows across water
-      // exactly when the owner does, matching how a boat carries any
-      // beast alongside its owner too), now via shared/constants.ts's
-      // isEffectivelyFlying so a beast-transform-into-flying-kind or wisp
-      // transformation counts too, not just the timed flight spell.
+      // should be able to fly across the water with them") — a later
+      // follow-up ask ("the druid transformed into falcon with a tamed
+      // dire wolf — the dire wolf could walk on water, which shouldn't be
+      // allowed... only flying creatures or those given flight by the
+      // flight spell should cross water") narrowed this: the beast's OWN
+      // kind being inherently flying (a tamed falcon/crystal wyvern) still
+      // crosses water always, and the owner's REAL flight (the Flight
+      // spell or Wisp Transformation) still carries any beast along — but
+      // the owner's own BEAST TRANSFORM into a flying kind no longer
+      // does, since that's a personal shapeshift, not something a
+      // separate physical creature like a dire wolf can hitch a ride on.
+      // See shared/constants.ts's canFollowerCrossWater doc comment.
       const owner = this.worldManager.getLocation(beast.ownerUsername);
-      const canCrossWater = (owner !== undefined && isEffectivelyFlying(owner)) || owner?.inBoat != null;
+      const canCrossWater = canFollowerCrossWater(beast.kind, owner, owner?.inBoat != null);
+      // A later follow-up ask: "followers should move as fast as the
+      // player, even with speed enhancements active" — see
+      // stepsForOwnerSpeed's own doc comment and PetManagerService's
+      // tickAll (the same fix, applied there first).
+      const stepsThisTick = stepsForOwnerSpeed(owner);
 
       if (beast.command === 'attack' && beast.attackTargetKind && beast.attackTargetId) {
         const target = this.targetLocator?.(beast.attackTargetKind, beast.attackTargetId);
@@ -142,11 +153,13 @@ export class TamedBeastManagerService {
           changedMaps.add(beast.map);
           continue;
         }
-        const step = computeFollowerStep(beast, target, beast.map, canCrossWater);
-        if (!step) continue;
-        beast.row = step.row;
-        beast.col = step.col;
-        changedMaps.add(beast.map);
+        for (let i = 0; i < stepsThisTick; i++) {
+          const step = computeFollowerStep(beast, target, beast.map, canCrossWater);
+          if (!step) break;
+          beast.row = step.row;
+          beast.col = step.col;
+          changedMaps.add(beast.map);
+        }
         continue;
       }
 
@@ -160,11 +173,13 @@ export class TamedBeastManagerService {
         changedMaps.add(beast.map);
         continue;
       }
-      const step = computeFollowerStep(beast, owner, beast.map, canCrossWater);
-      if (!step) continue;
-      beast.row = step.row;
-      beast.col = step.col;
-      changedMaps.add(beast.map);
+      for (let i = 0; i < stepsThisTick; i++) {
+        const step = computeFollowerStep(beast, owner, beast.map, canCrossWater);
+        if (!step) break;
+        beast.row = step.row;
+        beast.col = step.col;
+        changedMaps.add(beast.map);
+      }
     }
     return changedMaps;
   }

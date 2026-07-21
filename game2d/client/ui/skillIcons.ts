@@ -59,6 +59,9 @@ import {
   INVISIBILITY_SKILL,
   CREATE_DUPLICATE_SKILL,
   FLIGHT_SKILL,
+  TRANSFORM_SKILL,
+  TAME_BEAST_SKILL,
+  IDENTIFY_SKILL,
 } from '../../shared/skills.js';
 
 const STROKE = '#f5f0dc';
@@ -111,7 +114,13 @@ const ICONS: Record<string, string> = {
   [BONE_FINGER_STRIKE_SKILL]: svgUrl(
     '<path d="M6 13 c-1.2 0 -2 -1 -1.6 -2.2 c-1 -0.4 -1 -1.9 0.1 -2.2 c-0.3 -1.2 0.8 -2.2 1.9 -1.7 c0.4 -1.1 2 -1.1 2.4 0 c1.1 -0.5 2.2 0.5 1.9 1.7 c1.1 0.3 1.1 1.8 0.1 2.2 c0.4 1.2 -0.4 2.2 -1.6 2.2 Z"/><path d="M8 13 v4 a2 2 0 0 0 2 2 h1 a2 2 0 0 0 2 -2 v-6"/>'
   ),
-  [LIGHT_SKILL]: svgUrl('<circle cx="12" cy="12" r="4"/><path d="M12 3 v2.5 M12 18.5 v2.5 M3 12 h2.5 M18.5 12 h2.5 M5.6 5.6 l1.8 1.8 M16.6 16.6 l1.8 1.8 M5.6 18.4 l1.8 -1.8 M16.6 7.4 l1.8 -1.8"/>'),
+  // A later follow-up ask: "the light, transform, tame beast, and
+  // identify spell icons all look identical — make each spell icon
+  // unique." This one used to be an 8-line radiating star, structurally
+  // near-identical to FALLBACK_ICON's own 8-line sparkle burst below —
+  // a solid glow orb with a soft halo ring reads as its own distinct
+  // shape instead.
+  [LIGHT_SKILL]: svgUrl('<circle cx="12" cy="12" r="3" fill="' + STROKE + '"/><circle cx="12" cy="12" r="6.5" opacity="0.4"/>'),
   [WATERFILL_SKILL]: svgUrl('<path d="M12 3 C8 9 5 12.5 5 15.5 A7 7 0 0 0 19 15.5 C19 12.5 16 9 12 3 Z" fill="' + STROKE + '" fill-opacity="0.25"/>'),
   [HASTE_SKILL]: svgUrl(
     '<path d="M8 20 l5 -18 l-2 8 h4 l-6 12 l1 -7 h-3 Z" fill="' + STROKE + '"/><path d="M2 9 h4 M1 12.5 h4.5 M2 16 h4" stroke-width="1.2"/>'
@@ -222,6 +231,30 @@ const ICONS: Record<string, string> = {
       STROKE +
       '"/><path d="M15 8 l2 2 l4 -4" stroke-width="2"/><circle cx="18" cy="7" r="5.2"/>'
   ),
+  // A later follow-up ask: "the light, transform, tame beast, and
+  // identify spell icons all look identical" — these 3 weren't in this
+  // table at all before, silently falling back to the same generic
+  // FALLBACK_ICON sparkle every OTHER uncovered skill also gets, which is
+  // exactly why they read as identical to each other (and, since it's
+  // also an 8-line radiating burst, to LIGHT_SKILL's own old icon above).
+  // A swirl (shape-shifting/change of form) for Transform, a paw print
+  // (befriending/taming a beast) for Tame Beast, and a magnifying glass
+  // (inspect) for Identify — three distinct, thematically direct shapes.
+  [TRANSFORM_SKILL]: svgUrl('<path d="M11 20 a8 8 0 1 1 8 -8" /><path d="M19 4 v6 h-6"/>'),
+  [TAME_BEAST_SKILL]: svgUrl(
+    '<circle cx="9" cy="7.5" r="1.6" fill="' +
+      STROKE +
+      '"/><circle cx="13.5" cy="6" r="1.6" fill="' +
+      STROKE +
+      '"/><circle cx="17" cy="9.5" r="1.6" fill="' +
+      STROKE +
+      '"/><circle cx="7" cy="11.5" r="1.6" fill="' +
+      STROKE +
+      '"/><path d="M12 12.5 c-3 0 -5.2 2 -5.2 4.5 c0 2 1.9 3.2 4.2 3.2 c1 0 1.5 -0.5 2 -0.5 s1 0.5 2 0.5 c2.3 0 4.2 -1.2 4.2 -3.2 c0 -2.5 -2.2 -4.5 -5.2 -4.5 Z" fill="' +
+      STROKE +
+      '"/>'
+  ),
+  [IDENTIFY_SKILL]: svgUrl('<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.2 15.2 L21 21" stroke-width="2.2"/>'),
 };
 
 // A generic sparkle for anything not in the table above (future-proofing

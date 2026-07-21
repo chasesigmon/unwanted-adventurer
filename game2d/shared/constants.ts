@@ -73,6 +73,10 @@ export const FLORO_SHOP_MAPS = [
   // here too — the same conversion Kortho's own Jobs Office already got
   // (see KORTHO_SHOP_MAPS's own doc comment below).
   'Floro Boat Shop',
+  // A later follow-up ask: "Create an Auction House in both Floro and
+  // Kortho" — a brand new 8th shop slot (see FLORO_SHOP_DOORS), not a
+  // repurposed existing one like the Boat Shop above.
+  'Floro Auction House',
 ] as const;
 
 // Kortho (a later follow-up ask: "add the town of Kortho back... same
@@ -95,6 +99,9 @@ export const KORTHO_SHOP_MAPS = [
   // board today"), so it's the one repurposed rather than any shop that
   // was already stocked/functional.
   'Kortho Boat Shop',
+  // A later follow-up ask: "Create an Auction House in both Floro and
+  // Kortho" — same new 8th shop slot as Floro's own above.
+  'Kortho Auction House',
 ] as const;
 
 // Bramwick (a later follow-up ask) — a small village just north of
@@ -179,13 +186,13 @@ export const GRIMOAK_CASTLE_MAPS = [
   // grants map access. Included here so it's always-lit and gets the
   // same automatic wall torches every other castle room does (see
   // shared/lighting.ts's ALWAYS_LIT_MAPS/torchWallPositionsFor).
-  'Caverna Secretissima',
+  'Secret Chamber',
   // The 4 house Dorms rooms (a later follow-up ask) — same "always lit,
   // stone floor, grouped under the Grimoak world in the map modal"
   // treatment as every other castle interior; explicitly excluded from
   // fireplacePositionsFor's own default 4-fireplace layout though (a
   // small bedroom doesn't need them — see that function's own early
-  // return, same as Caverna Secretissima).
+  // return, same as Secret Chamber).
   'Thistledown Dorms',
   'Duskwing Dorms',
   'Emberclaw Dorms',
@@ -357,6 +364,12 @@ export const MAP_NAMES = [
   // northeast/east of Kortho... make the new world Direfell... level 20
   // dire wolves."
   'Direfell',
+  // A later follow-up ask: "Create a new world 'Silverbranch Lake'...
+  // Add a sign all the way to the right / at the end of Silverbranch Road."
+  'Silverbranch Lake',
+  // A later follow-up ask: "Create a new world 'Runestone Canyon'... Add
+  // a sign at the north connection to Runestone Way."
+  'Runestone Canyon',
   ...GRIMOAK_CASTLE_MAPS,
   ...PORTAL_DUNGEON_MAPS,
 ] as const;
@@ -399,6 +412,8 @@ export const WISP_ELIGIBLE_MAPS: MapName[] = [
   'Runestone Way',
   'Silverbranch Road',
   'Direfell',
+  'Silverbranch Lake',
+  'Runestone Canyon',
 ];
 
 // The short building suffix for the map modal's Where tab (item 13) —
@@ -484,6 +499,14 @@ export const MONSTER_KINDS = [
   'rune beast',
   'woodland fairy',
   'orc',
+  // A later follow-up ask: "Add a 'Crystal Deer' to Silverbranch way."
+  'crystal deer',
+  // A later follow-up ask: "Add a new creature, 'Crystal Wyvern' that
+  // roams around and flies around Silverbranch Lake."
+  'crystal wyvern',
+  // A later follow-up ask: "Create a new creature called Runestone Canyon
+  // Dweller."
+  'runestone canyon dweller',
 ] as const;
 export type MonsterKind = (typeof MONSTER_KINDS)[number];
 
@@ -495,7 +518,11 @@ export type MonsterKind = (typeof MONSTER_KINDS)[number];
 // isn't importable from the client, and this is the one place both the
 // transform-flight grant (server) and the Affects panel/tooltip (client)
 // need to agree on which tamed-beast kinds count as fliers.
-export const FLYING_MONSTER_KINDS: readonly MonsterKind[] = ['falcon'];
+// A later follow-up ask ("Add a new creature, 'Crystal Wyvern' that roams
+// around and flies around Silverbranch Lake") added the second flying
+// kind here — same "the druid transforms into it, it should be flying"
+// treatment the falcon already gets.
+export const FLYING_MONSTER_KINDS: readonly MonsterKind[] = ['falcon', 'crystal wyvern'];
 
 export function isFlyingBeastKind(kind: MonsterKind | null | undefined): boolean {
   return kind != null && (FLYING_MONSTER_KINDS as readonly string[]).includes(kind);
@@ -521,6 +548,49 @@ export interface FlightStateSnapshot {
 
 export function isEffectivelyFlying(state: FlightStateSnapshot): boolean {
   return state.flightActive || state.wispActive || (state.beastTransformActive && isFlyingBeastKind(state.beastTransformKind));
+}
+
+// Kortho's own pet shop sells 3 inherently-flying pet kinds (griffin,
+// elemental, phoenix — see client/game/WorldScene.ts's own "these pets...
+// fly next to the player" hover treatment). PetKind lives in shared/
+// pets.ts, which already imports FROM this file (for MonsterKind) — so
+// this can't import PetKind back without a cycle; duplicated here as
+// plain literals instead (same "duplicate rather than introduce a cycle"
+// tradeoff this project's own circular-import constraint already accepts
+// elsewhere), used only to widen canFollowerCrossWater's own kind check
+// below to pets, not just tamed-beast/animated-monster MonsterKinds.
+const FLYING_PET_KINDS = ['griffin', 'elemental', 'phoenix'] as const;
+
+// A later follow-up ask: "the druid transformed into falcon with a tamed
+// dire wolf — the dire wolf could walk on water, which shouldn't be
+// allowed... only flying creatures or those given flight by the flight
+// spell should cross water." Deliberately narrower than isEffectivelyFlying
+// above (which stays as-is for the OWNER'S OWN movement — a player
+// personally shapeshifted into a falcon obviously should be able to fly
+// themselves): a follower is a separate physical creature, so the owner's
+// own BEAST TRANSFORM into a flying kind does NOT let it fly too. A
+// follower crosses water only if it is itself an inherently flying
+// creature (a tamed falcon/crystal wyvern, a griffin/elemental/phoenix
+// pet, or an animated dead raised from one — checked by kind, not by the
+// owner's transform), or the owner has REAL magical flight (the Flight
+// spell or Wisp Transformation, both genuinely airborne effects rather
+// than a shapeshift), or it's riding along in a boat.
+// A later follow-up ask ("an elemental pet got stuck on water after
+// losing flight mid-water") found this ONLY ever checked FLYING_MONSTER_KINDS
+// (falcon/crystal wyvern, both MonsterKind values) — a griffin/elemental/
+// phoenix PET's own kind never matched, so it only ever crossed water
+// because the OWNER happened to have real flight active; the moment that
+// expired mid-water, the pet had no independent qualification and got
+// stranded. FLYING_PET_KINDS above closes that gap.
+export function canFollowerCrossWater(followerKind: string | null | undefined, owner: FlightStateSnapshot | undefined, ownerHasQualifyingBoat: boolean): boolean {
+  if (
+    followerKind != null &&
+    ((FLYING_MONSTER_KINDS as readonly string[]).includes(followerKind) || (FLYING_PET_KINDS as readonly string[]).includes(followerKind))
+  ) {
+    return true;
+  }
+  if (owner !== undefined && (owner.flightActive || owner.wispActive)) return true;
+  return ownerHasQualifyingBoat;
 }
 
 // Same idea as the text game's own monster classification — determines

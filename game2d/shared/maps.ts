@@ -112,6 +112,10 @@ const FLORO_SHOP_DOORS: Record<(typeof FLORO_SHOP_MAPS)[number], { row: number; 
   'Floro Armorer': { row: 32, col: 15 },
   'Floro Pet Salesman': { row: 32, col: 25 },
   'Floro Boat Shop': { row: 32, col: 35 },
+  // A later follow-up ask: "Create an Auction House in both Floro and
+  // Kortho" — same row-32 grid, one more slot east with the same 10-tile
+  // gap every other door in this row already uses.
+  'Floro Auction House': { row: 32, col: 45 },
 };
 
 function shopInteriorDefinition(name: (typeof FLORO_SHOP_MAPS)[number]): MapDefinition {
@@ -170,6 +174,9 @@ const KORTHO_SHOP_DOORS: Record<(typeof KORTHO_SHOP_MAPS)[number], { row: number
   'Kortho Armorer': { row: 32, col: 15 },
   'Kortho Pet Salesman': { row: 32, col: 25 },
   'Kortho Boat Shop': { row: 32, col: 35 },
+  // A later follow-up ask: "Create an Auction House in both Floro and
+  // Kortho" — same slot Floro's own FLORO_SHOP_DOORS uses.
+  'Kortho Auction House': { row: 32, col: 45 },
 };
 
 function korthoShopInteriorDefinition(name: (typeof KORTHO_SHOP_MAPS)[number]): MapDefinition {
@@ -447,7 +454,7 @@ export function isKorthoSeaBlocked(mapName: MapName, row: number, col: number): 
 // each caller having to know and OR together every individual water
 // feature itself.
 export function isWaterBlocked(mapName: MapName, row: number, col: number): boolean {
-  return isMoatBlocked(mapName, row, col) || isKorthoSeaBlocked(mapName, row, col);
+  return isMoatBlocked(mapName, row, col) || isKorthoSeaBlocked(mapName, row, col) || isSilverbranchLakeWaterBlocked(mapName, row, col);
 }
 
 // "If a player lands on water from flight wearing off and they do not
@@ -842,7 +849,7 @@ export const CAVERNA_SECRET_DOOR_POSITION = { row: 0, col: 4 };
 // door" from either side without hardcoding its position twice.
 export const CAVERNA_SECRET_DOOR_INSIDE_POSITION = { row: CLASSROOM_ROWS - 1, col: CLASSROOM_MID_COL };
 const CAVERNA_SECRETISSIMA: MapDefinition = {
-  name: 'Caverna Secretissima',
+  name: 'Secret Chamber',
   rows: CLASSROOM_ROWS,
   cols: CLASSROOM_COLS,
   terrain: 'stone',
@@ -861,7 +868,7 @@ UTILIZATION.exits.push({
   row: CAVERNA_SECRET_DOOR_POSITION.row,
   col: CAVERNA_SECRET_DOOR_POSITION.col,
   direction: 'north',
-  toMap: 'Caverna Secretissima',
+  toMap: 'Secret Chamber',
   toRow: CAVERNA_SECRET_DOOR_INSIDE_POSITION.row,
   toCol: CAVERNA_SECRET_DOOR_INSIDE_POSITION.col,
 });
@@ -1221,7 +1228,16 @@ function shopBuildingFootprint(door: { row: number; col: number }, widthTiles: n
 
 export function isShopBuildingBlocked(mapName: MapName, row: number, col: number): boolean {
   if (mapName === 'Floro') {
-    return FLORO_SHOP_MAPS.some((name) => shopBuildingFootprint(FLORO_SHOP_DOORS[name], 3, 4).some((t) => t.row === row && t.col === col));
+    // A later follow-up ask ("update the shop sprites in Floro to look
+    // like the ones you placed in Kortho") swapped Floro's own shop
+    // buildings onto the SAME (bigger) KORTHO_SHOP_TEXTURE_KEY spritesheet
+    // Kortho itself uses (see WorldScene's own renderMap) — this
+    // collision footprint was never updated to match, so it stayed at
+    // the OLD, smaller timber-shopfront dimensions, leaving most of the
+    // new (visually bigger) building walkable with only the door itself
+    // blocked. Matches Kortho's own 6x8 exactly now, since it's literally
+    // the same building art at the same size.
+    return FLORO_SHOP_MAPS.some((name) => shopBuildingFootprint(FLORO_SHOP_DOORS[name], 6, 8).some((t) => t.row === row && t.col === col));
   }
   if (mapName === 'Kortho') {
     return KORTHO_SHOP_MAPS.some((name) => shopBuildingFootprint(KORTHO_SHOP_DOORS[name], 6, 8).some((t) => t.row === row && t.col === col));
@@ -1488,6 +1504,107 @@ export const SILVERBRANCH_ROAD_MID_ROW = Math.floor(SILVERBRANCH_ROAD_ROWS / 2);
 export const SILVERBRANCH_ROAD_HALF_WIDTH_TILES = 2;
 export const BRAMWICK_SILVERBRANCH_ROW = Math.floor(BRAMWICK_SIZE / 2);
 
+// ---------- Silverbranch Lake (a later follow-up ask: "Create a new
+// world 'Silverbranch Lake'... at the end of Silverbranch Road... the
+// size of Grimoak Grounds... some dirt and a sandy beach once you walk
+// through... after about 20 feet equivalent the rest of it should all be
+// water that looks like a lake, make it animated/interactive/moving...
+// a few beachy/grassy islands... across the water"). Silverbranch Road's
+// own east end (previously a dead end, see its own doc comment above)
+// connects here now. ----------
+export const SILVERBRANCH_LAKE_ROWS = GRIMOAK_GROUNDS_ROWS;
+export const SILVERBRANCH_LAKE_COLS = GRIMOAK_GROUNDS_COLS;
+export const SILVERBRANCH_LAKE_MID_ROW = Math.floor(SILVERBRANCH_LAKE_ROWS / 2);
+// A short dirt strip right at the entrance, then sand, matching "some
+// dirt and a sandy beach" in that literal order — "20 feet equivalent"
+// read the same way this project's other tile-distance asks already have
+// (a plain 1 tile == 1 foot-ish unit, see e.g. shared/spells.ts's own
+// reach conventions), so the water starts exactly 20 tiles in.
+export const SILVERBRANCH_LAKE_DIRT_WIDTH_TILES = 5;
+export const SILVERBRANCH_LAKE_BEACH_WIDTH_TILES = 20;
+export const SILVERBRANCH_LAKE_WATER_COL_START = SILVERBRANCH_LAKE_BEACH_WIDTH_TILES;
+
+interface SilverbranchLakeIsland {
+  row: number;
+  col: number;
+  radiusTiles: number;
+}
+// A handful of small round islands scattered across the open water,
+// clear of the beach's own western edge and the map's outer border.
+const SILVERBRANCH_LAKE_ISLANDS: SilverbranchLakeIsland[] = [
+  { row: 18, col: 42, radiusTiles: 6 },
+  { row: 62, col: 50, radiusTiles: 7 },
+  { row: 32, col: 68, radiusTiles: 5 },
+  { row: 68, col: 82, radiusTiles: 6 },
+  { row: 22, col: 90, radiusTiles: 5 },
+];
+
+export function isOnSilverbranchLakeIsland(row: number, col: number): boolean {
+  return SILVERBRANCH_LAKE_ISLANDS.some((isl) => {
+    const dRow = row - isl.row;
+    const dCol = col - isl.col;
+    return dRow * dRow + dCol * dCol <= isl.radiusTiles * isl.radiusTiles;
+  });
+}
+
+export function isSilverbranchLakeWaterBlocked(mapName: MapName, row: number, col: number): boolean {
+  if (mapName !== 'Silverbranch Lake') return false;
+  if (col < SILVERBRANCH_LAKE_WATER_COL_START) return false;
+  return !isOnSilverbranchLakeIsland(row, col);
+}
+
+// The client needs the full per-tile island list to actually draw them —
+// same "single source of truth, both server collision and client
+// rendering read the exact same tile set" shape as shared/trees.ts's own
+// treePositionsFor/shared/labyrinthMaze.ts's labyrinthWallPositions.
+export function silverbranchLakeIslandTiles(): Array<{ row: number; col: number }> {
+  const tiles: Array<{ row: number; col: number }> = [];
+  for (const isl of SILVERBRANCH_LAKE_ISLANDS) {
+    for (let row = isl.row - isl.radiusTiles; row <= isl.row + isl.radiusTiles; row++) {
+      for (let col = isl.col - isl.radiusTiles; col <= isl.col + isl.radiusTiles; col++) {
+        if (isOnSilverbranchLakeIsland(row, col)) tiles.push({ row, col });
+      }
+    }
+  }
+  return tiles;
+}
+
+// ---------- Runestone Canyon (a later follow-up ask: "Create a new world
+// 'Runestone Canyon'... the same size as Silverbranch Lake... make it
+// look like a canyon and make it so that a player has to walk down what
+// looks like stairs down into the canyon or can walk around the entire
+// canyon in a circle"). Fully walkable everywhere (same "texture-only,
+// not a real collision difference" tradeoff as MapTerrain elsewhere in
+// this file) — an outer RIM ring (walkable "high ground" around the
+// entire perimeter, the "walk around in a circle" path) and an inner
+// CANYON FLOOR square, with a cosmetic stairs strip cut through the rim
+// at the south entrance (the "walk down stairs" path) — both routes
+// reach the same open floor, purely two different-looking ways in. ----------
+export const RUNESTONE_CANYON_ROWS = GRIMOAK_GROUNDS_ROWS;
+export const RUNESTONE_CANYON_COLS = GRIMOAK_GROUNDS_COLS;
+export const RUNESTONE_CANYON_MID_COL = Math.floor(RUNESTONE_CANYON_COLS / 2);
+export const RUNESTONE_CANYON_MID_ROW = Math.floor(RUNESTONE_CANYON_ROWS / 2);
+export const RUNESTONE_CANYON_RIM_WIDTH_TILES = 8;
+export const RUNESTONE_CANYON_STAIRS_HALF_WIDTH_TILES = 2;
+
+export function isRunestoneCanyonRimTile(mapName: MapName, row: number, col: number): boolean {
+  if (mapName !== 'Runestone Canyon') return false;
+  const rim = RUNESTONE_CANYON_RIM_WIDTH_TILES;
+  return row < rim || row >= RUNESTONE_CANYON_ROWS - rim || col < rim || col >= RUNESTONE_CANYON_COLS - rim;
+}
+
+// The cosmetic stairs strip — a short band cutting through the south
+// rim's own width, dead center on the entrance column, where the floor
+// texture crosses into the rim's own instead of the usual grass/rock
+// boundary. Purely a rendering concern (see WorldScene's own renderMap) —
+// every tile here is already walkable regardless, same as the rim/floor
+// tiles either side of it.
+export function isRunestoneCanyonStairsTile(mapName: MapName, row: number, col: number): boolean {
+  if (mapName !== 'Runestone Canyon') return false;
+  const rim = RUNESTONE_CANYON_RIM_WIDTH_TILES;
+  return row >= RUNESTONE_CANYON_ROWS - rim && col >= RUNESTONE_CANYON_MID_COL - RUNESTONE_CANYON_STAIRS_HALF_WIDTH_TILES && col <= RUNESTONE_CANYON_MID_COL + RUNESTONE_CANYON_STAIRS_HALF_WIDTH_TILES;
+}
+
 // ---------- Direfell (a later follow-up ask: "add a 1 tile dirt road
 // connection (with no door) at the northeast/east of Kortho on the sandy
 // beach area... make the new world Direfell be half the size of
@@ -1665,6 +1782,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Floro Armorer': shopInteriorDefinition('Floro Armorer'),
   'Floro Pet Salesman': shopInteriorDefinition('Floro Pet Salesman'),
   'Floro Boat Shop': shopInteriorDefinition('Floro Boat Shop'),
+  'Floro Auction House': shopInteriorDefinition('Floro Auction House'),
   Kortho: {
     name: 'Kortho',
     rows: TOWN_SIZE,
@@ -1719,6 +1837,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Kortho Armorer': korthoShopInteriorDefinition('Kortho Armorer'),
   'Kortho Pet Salesman': korthoShopInteriorDefinition('Kortho Pet Salesman'),
   'Kortho Boat Shop': korthoShopInteriorDefinition('Kortho Boat Shop'),
+  'Kortho Auction House': korthoShopInteriorDefinition('Kortho Auction House'),
   'Road to Kortho': {
     name: 'Road to Kortho',
     rows: ROAD_TO_KORTHO_ROWS,
@@ -1843,17 +1962,17 @@ export const MAPS: Record<MapName, MapDefinition> = {
       ...bramwickGroundsEntranceExits('south'),
       ...bramwickShopDoorExits(),
       // A later follow-up ask: "a cave connection to the west of
-      // Bramwick with a sign that reads 'Brimstone Cave'." A still-later
-      // ask ("make the cave exit face west") moved Brimstone Cave's own
-      // door from its east edge to its west edge (see that map's own
-      // exits below) — this lands the player right next to it now.
+      // Bramwick with a sign that reads 'Brimstone Cave'." Brimstone
+      // Cave's own door swung between its east and west edge twice since
+      // (see that map's own exits below) — most recently back to its east
+      // edge, so this lands the player right next to it there now.
       ...roadBandExits({
         row: BRAMWICK_BRIMSTONE_ROW,
         col: 0,
         direction: 'west',
         toMap: 'Brimstone Cave',
         toRow: BRIMSTONE_CAVE_MID_ROW,
-        toCol: 1,
+        toCol: BRIMSTONE_CAVE_SIZE - 2,
         halfWidthTiles: BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES,
         spread: 'row',
       }),
@@ -1899,13 +2018,15 @@ export const MAPS: Record<MapName, MapDefinition> = {
     terrain: 'stone',
     exits: [
       // A later follow-up ask: "remove the dirt road from Brimstone Cave
-      // and make the cave exit face west" — moved from the east edge to
-      // the west edge (see WorldScene's own renderMap, which also drops
-      // the dirt-road patch on this side entirely).
+      // and make the cave exit face west" moved this from the east edge
+      // to the west edge; a still-later ask ("exit to Bramwick should be
+      // on the EAST of the cave, cave exit sprite facing WEST") reversed
+      // that back — the dirt-road patch stays gone either way (see
+      // WorldScene's own renderMap).
       ...roadBandExits({
         row: BRIMSTONE_CAVE_MID_ROW,
-        col: 0,
-        direction: 'west',
+        col: BRIMSTONE_CAVE_SIZE - 1,
+        direction: 'east',
         toMap: 'Bramwick',
         toRow: BRAMWICK_BRIMSTONE_ROW,
         toCol: 1,
@@ -1933,6 +2054,40 @@ export const MAPS: Record<MapName, MapDefinition> = {
         halfWidthTiles: RUNESTONE_WAY_HALF_WIDTH_TILES,
         spread: 'col',
       }),
+      // A later follow-up ask: "Create a new world 'Runestone Canyon'" —
+      // the north end's own dead end (see this map's own doc comment
+      // above) now leads there.
+      ...roadBandExits({
+        row: 0,
+        col: RUNESTONE_WAY_MID_COL,
+        direction: 'north',
+        toMap: 'Runestone Canyon',
+        toRow: RUNESTONE_CANYON_ROWS - 2,
+        toCol: RUNESTONE_CANYON_MID_COL,
+        halfWidthTiles: RUNESTONE_WAY_HALF_WIDTH_TILES,
+        spread: 'col',
+      }),
+    ],
+  },
+  'Runestone Canyon': {
+    name: 'Runestone Canyon',
+    rows: RUNESTONE_CANYON_ROWS,
+    cols: RUNESTONE_CANYON_COLS,
+    // Unused metadata — the real visuals are the rim/floor/stairs overlay
+    // tileSprites (see WorldScene's own renderMap and
+    // isRunestoneCanyonRimTile/isRunestoneCanyonStairsTile above).
+    terrain: 'stone',
+    exits: [
+      ...roadBandExits({
+        row: RUNESTONE_CANYON_ROWS - 1,
+        col: RUNESTONE_CANYON_MID_COL,
+        direction: 'south',
+        toMap: 'Runestone Way',
+        toRow: 1,
+        toCol: RUNESTONE_WAY_MID_COL,
+        halfWidthTiles: RUNESTONE_WAY_HALF_WIDTH_TILES,
+        spread: 'col',
+      }),
     ],
   },
   'Silverbranch Road': {
@@ -1950,6 +2105,40 @@ export const MAPS: Record<MapName, MapDefinition> = {
         toMap: 'Bramwick',
         toRow: BRAMWICK_SILVERBRANCH_ROW,
         toCol: BRAMWICK_SIZE - 2,
+        halfWidthTiles: SILVERBRANCH_ROAD_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
+      // A later follow-up ask: "Create a new world 'Silverbranch Lake'" —
+      // no longer a dead end at the east edge (see this map's own doc
+      // comment above).
+      ...roadBandExits({
+        row: SILVERBRANCH_ROAD_MID_ROW,
+        col: SILVERBRANCH_ROAD_COLS - 1,
+        direction: 'east',
+        toMap: 'Silverbranch Lake',
+        toRow: SILVERBRANCH_LAKE_MID_ROW,
+        toCol: 1,
+        halfWidthTiles: SILVERBRANCH_ROAD_HALF_WIDTH_TILES,
+        spread: 'row',
+      }),
+    ],
+  },
+  'Silverbranch Lake': {
+    name: 'Silverbranch Lake',
+    rows: SILVERBRANCH_LAKE_ROWS,
+    cols: SILVERBRANCH_LAKE_COLS,
+    // Unused metadata — the real visuals are the dirt/sand/water overlay
+    // tileSprites (see WorldScene's own renderMap); grass is what the
+    // islands themselves look like.
+    terrain: 'grass',
+    exits: [
+      ...roadBandExits({
+        row: SILVERBRANCH_LAKE_MID_ROW,
+        col: 0,
+        direction: 'west',
+        toMap: 'Silverbranch Road',
+        toRow: SILVERBRANCH_ROAD_MID_ROW,
+        toCol: SILVERBRANCH_ROAD_COLS - 2,
         halfWidthTiles: SILVERBRANCH_ROAD_HALF_WIDTH_TILES,
         spread: 'row',
       }),
@@ -2082,7 +2271,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Defense Classroom': DEFENSE,
   'Utility Classroom': UTILIZATION,
   'Offense Classroom': OFFENSE,
-  'Caverna Secretissima': CAVERNA_SECRETISSIMA,
+  'Secret Chamber': CAVERNA_SECRETISSIMA,
   'Grimoak Castle 2nd Floor': FLOOR2_LANDING,
   'Grimoak Castle 3rd Floor': FLOOR3_LANDING,
   'Grimoak Castle 4th Floor': FLOOR4_LANDING,

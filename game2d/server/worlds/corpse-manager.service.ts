@@ -56,6 +56,9 @@ const BODY_PART_LABEL: Record<Race | MonsterKind, string> = {
   'rune beast': 'rune beast shard',
   'woodland fairy': 'fairy wing',
   orc: 'orc tusk',
+  'crystal deer': 'crystal deer shard',
+  'crystal wyvern': 'crystal wyvern scale',
+  'runestone canyon dweller': 'runic serpent scale',
 };
 
 export function bodyPartLabelFor(kind: Race | MonsterKind): string {

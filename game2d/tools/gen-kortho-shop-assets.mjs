@@ -22,7 +22,11 @@ import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outPath = join(__dirname, '..', 'assets', 'kortho-shop-spritesheet.png');
 
-const SHOP_NAMES = ['Blacksmith', 'General Store', 'Inn', 'Bank', 'Armorer', 'Pet Salesman', 'Boat Shop'];
+// A later follow-up ask ("Create an Auction House in both Floro and
+// Kortho") added an 8th frame — FLORO_SHOP_MAPS/KORTHO_SHOP_MAPS both got
+// their own new entry appended in the same position, so this stays in
+// sync with WorldScene's own .indexOf(...) frame lookup.
+const SHOP_NAMES = ['Blacksmith', 'General Store', 'Inn', 'Bank', 'Armorer', 'Pet Salesman', 'Boat Shop', 'Auction House'];
 
 const python = `
 import random

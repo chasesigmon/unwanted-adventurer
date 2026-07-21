@@ -108,3 +108,27 @@ export const POTION_RESTORE_AMOUNT = 20;
 // own convention rather than hunger/thirst's percent one).
 export const LINIMENT_ITEM = 'liniment';
 export const LINIMENT_MV_RESTORE_AMOUNT = 10;
+
+// A later follow-up ask: "in inventory & shops, organize items
+// alphabetically; selling an item with multiples should keep its position
+// stable instead of jumping around." The server's own inventory stays a
+// flat array with no concept of stacks (see player.entity.ts's own doc
+// comment) — grouping identical items into a single "item xN" row for
+// display is purely a client-side concern. Both the inventory panel and
+// the shop's "sell" list used to build this grouping as a Map keyed by
+// first-occurrence order in the flat array, which meant selling the
+// FRONT-most copy of a stack could promote some unrelated item's earlier
+// copy ahead of it, visibly reordering the list. Sorting the finished
+// groups alphabetically by label fixes both asks at once: display order
+// no longer depends on which raw index happens to survive a sell/use/
+// drop, only on the label text itself, so a stack's position never moves
+// just because one copy of it (or some OTHER item) was removed.
+export function groupInventoryItems(items: readonly string[]): Array<[string, number[]]> {
+  const groups = new Map<string, number[]>();
+  items.forEach((item, index) => {
+    const indices = groups.get(item);
+    if (indices) indices.push(index);
+    else groups.set(item, [index]);
+  });
+  return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+}

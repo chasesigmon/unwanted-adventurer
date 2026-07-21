@@ -8,6 +8,7 @@ import { AnimatedMonsterManagerService } from '../pets/animated-monster-manager.
 import { PetCorpseManagerService } from '../pets/pet-corpse-manager.service.js';
 import { TamedBeastManagerService } from '../pets/tamed-beast-manager.service.js';
 import { DroppedItemManagerService } from './dropped-item-manager.service.js';
+import { AuctionHouseService } from '../auction/auction-house.service.js';
 
 @Module({
   imports: [MonstersModule],
@@ -20,6 +21,7 @@ import { DroppedItemManagerService } from './dropped-item-manager.service.js';
     PetCorpseManagerService,
     TamedBeastManagerService,
     DroppedItemManagerService,
+    AuctionHouseService,
   ],
   exports: [
     WorldManagerService,
@@ -30,6 +32,7 @@ import { DroppedItemManagerService } from './dropped-item-manager.service.js';
     PetCorpseManagerService,
     TamedBeastManagerService,
     DroppedItemManagerService,
+    AuctionHouseService,
     MonstersModule,
   ],
 })

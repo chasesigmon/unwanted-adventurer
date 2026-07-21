@@ -25,7 +25,7 @@ import {
 } from '../../shared/lighting.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { MONSTER_SPECIES, MONSTER_LEVEL, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
-import { monsterAttributeForLevel } from '../combat/formulas.js';
+import { monsterAttributeForLevel, monsterAttackDamageForLevel } from '../combat/formulas.js';
 import { vendorsForMap, vendorCounterFootprintFor } from '../worlds/vendors.js';
 import { teachersForMap, teacherDeskFootprintFor } from '../worlds/teachers.js';
 import { isChestBlocked } from '../../shared/spells.js';
@@ -228,7 +228,6 @@ export class MonsterManagerService {
   >();
   private locateFollower: FollowerLocator = () => undefined;
   private damageFollower: FollowerDamager = () => undefined;
-  private static readonly MONSTER_VS_FOLLOWER_DAMAGE = 5;
   // A later follow-up bug fix: "the monster... hitting the pet/summon/
   // animated really fast per millisecond" — chaseAggroTargets/
   // stepTowardAggroTarget run on the fast per-tile movement tick
@@ -514,7 +513,7 @@ export class MonsterManagerService {
       isRare: species.isRare,
       respawnDelayMs: species.respawnDelayMs,
       level,
-      strength: attribute,
+      strength: species.strength ?? attribute,
       intelligence: attribute,
       wisdom: attribute,
       dexterity: attribute,
@@ -738,11 +737,20 @@ export class MonsterManagerService {
           return true;
         }
         monster.lastCounterAttackTick = now;
+        // A later follow-up ask: "a level-15 rune beast only did 5 damage
+        // to a level-20 tamed dire wolf — too low, should scale off a
+        // level-based formula." This used to be a flat MONSTER_VS_FOLLOWER_DAMAGE
+        // constant (5) shared by every monster in the game regardless of
+        // species/level — the SAME monster.attackDamage already used
+        // against a PLAYER (see game.gateway.ts's resolveMonsterCounterAttack)
+        // now drives this too, falling back to the level-based formula for
+        // the handful of species that don't set an explicit attackDamage.
+        const followerDamage = monster.attackDamage ?? monsterAttackDamageForLevel(monster.level);
         const remainingHp = this.damageFollower(
           followerAggro.ownerUsername,
           followerAggro.followerKind,
           followerAggro.followerId,
-          MonsterManagerService.MONSTER_VS_FOLLOWER_DAMAGE,
+          followerDamage,
           monster.kind,
           monster.id
         );

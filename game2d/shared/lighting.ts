@@ -59,6 +59,11 @@ import {
   BRAMWICK_RUNESTONE_COL,
   BRAMWICK_SILVERBRANCH_ROW,
   SILVERBRANCH_ROAD_MID_ROW,
+  SILVERBRANCH_ROAD_COLS,
+  SILVERBRANCH_LAKE_MID_ROW,
+  RUNESTONE_WAY_MID_COL,
+  RUNESTONE_CANYON_ROWS,
+  RUNESTONE_CANYON_MID_COL,
   GREAT_PLAINS_MID_COL,
   LABYRINTH_MID_COL,
   LABYRINTH_SIZE,
@@ -312,7 +317,7 @@ export function fireplacePositionsFor(mapName: MapName): Array<{ row: number; co
   // "a few torches on the walls" (already automatic, see
   // torchWallPositionsFor) and a treasure chest, no fireplaces cluttering
   // it up.
-  if (mapName === 'Caverna Secretissima') return [];
+  if (mapName === 'Secret Chamber') return [];
   // The Dorms rooms (a later follow-up ask) are small bedrooms with just
   // 5 beds — no fireplaces to clutter them up, same bare-room treatment
   // as the secret room above.
@@ -915,10 +920,12 @@ export const HEXSTONE_GREAT_PLAINS_SIGN_POSITION = { row: HEXSTONE_GREAT_PLAINS_
 // sign 'Bramwick'" — same two-sided sign-pair convention as every other
 // connection above.
 export const BRAMWICK_BRIMSTONE_SIGN_POSITION = { row: BRAMWICK_BRIMSTONE_ROW - 4, col: 0 };
-// A later follow-up ask ("make the cave exit face west") moved Brimstone
-// Cave's own door from its east edge to its west edge — this sign moves
-// with it.
-export const BRIMSTONE_BRAMWICK_SIGN_POSITION = { row: BRIMSTONE_CAVE_MID_ROW - 4, col: 0 };
+// The door swung between edges twice since (first "make the cave exit
+// face west" moved it to the west edge, then a still-later ask reversed
+// that back to the east edge, "cave exit sprite facing WEST") — this sign
+// moves with it each time, same row-4/true-edge-col shape
+// HEXSTONE_GREAT_PLAINS_SIGN_POSITION above uses for its own east-edge exit.
+export const BRIMSTONE_BRAMWICK_SIGN_POSITION = { row: BRIMSTONE_CAVE_MID_ROW - 4, col: BRIMSTONE_CAVE_SIZE - 1 };
 
 // A later follow-up ask: "a dirt road connection to the north of
 // Bramwick with sign 'Boulder Pass'" — only the one sign was asked for
@@ -937,6 +944,26 @@ export const BRAMWICK_RUNESTONE_SIGN_POSITION = { row: SIGN_TOP_EDGE_ROW, col: B
 export const BRAMWICK_SILVERBRANCH_SIGN_POSITION = { row: BRAMWICK_SILVERBRANCH_ROW - 4, col: BRAMWICK_SIZE - 1 };
 export const SILVERBRANCH_BRAMWICK_SIGN_POSITION = { row: SILVERBRANCH_ROAD_MID_ROW - 4, col: 0 };
 
+// A later follow-up ask: "Create a new world 'Silverbranch Lake'... Add a
+// sign all the way to the right / at the end of Silverbranch Road for
+// 'Silverbranch Lake'" — same two-sided sign-pair convention as every
+// other connection above, at Silverbranch Road's own (now no longer dead)
+// east end.
+export const SILVERBRANCH_ROAD_LAKE_SIGN_POSITION = { row: SILVERBRANCH_ROAD_MID_ROW - 4, col: SILVERBRANCH_ROAD_COLS - 1 };
+export const SILVERBRANCH_LAKE_ROAD_SIGN_POSITION = { row: SILVERBRANCH_LAKE_MID_ROW - 4, col: 0 };
+
+// A later follow-up ask: "Create a new world 'Runestone Canyon'... Add a
+// sign at the north connection to Runestone Way for 'Runestone Canyon'"
+// — Runestone Way's own north end (previously a dead end) leads there
+// now; SIGN_TOP_EDGE_ROW inset avoids the same row-0 clipping issue every
+// other north-facing sign in this file already accounts for.
+export const RUNESTONE_WAY_CANYON_SIGN_POSITION = { row: SIGN_TOP_EDGE_ROW, col: RUNESTONE_WAY_MID_COL - 4 };
+// The reciprocal sign on Runestone Canyon's own south edge — flush
+// against the true edge (row RUNESTONE_CANYON_ROWS-1 itself), same "a
+// south-edge sign has no clipping risk" reasoning
+// LABYRINTH_GREAT_PLAINS_SIGN_POSITION's own doc comment explains.
+export const RUNESTONE_CANYON_WAY_SIGN_POSITION = { row: RUNESTONE_CANYON_ROWS - 1, col: RUNESTONE_CANYON_MID_COL - 4 };
+
 export function isBramwickSignBlocked(mapName: MapName, row: number, col: number): boolean {
   if (mapName === 'Bramwick') {
     return (
@@ -950,7 +977,19 @@ export function isBramwickSignBlocked(mapName: MapName, row: number, col: number
     return row === BRIMSTONE_BRAMWICK_SIGN_POSITION.row && col === BRIMSTONE_BRAMWICK_SIGN_POSITION.col;
   }
   if (mapName === 'Silverbranch Road') {
-    return row === SILVERBRANCH_BRAMWICK_SIGN_POSITION.row && col === SILVERBRANCH_BRAMWICK_SIGN_POSITION.col;
+    return (
+      (row === SILVERBRANCH_BRAMWICK_SIGN_POSITION.row && col === SILVERBRANCH_BRAMWICK_SIGN_POSITION.col) ||
+      (row === SILVERBRANCH_ROAD_LAKE_SIGN_POSITION.row && col === SILVERBRANCH_ROAD_LAKE_SIGN_POSITION.col)
+    );
+  }
+  if (mapName === 'Silverbranch Lake') {
+    return row === SILVERBRANCH_LAKE_ROAD_SIGN_POSITION.row && col === SILVERBRANCH_LAKE_ROAD_SIGN_POSITION.col;
+  }
+  if (mapName === 'Runestone Way') {
+    return row === RUNESTONE_WAY_CANYON_SIGN_POSITION.row && col === RUNESTONE_WAY_CANYON_SIGN_POSITION.col;
+  }
+  if (mapName === 'Runestone Canyon') {
+    return row === RUNESTONE_CANYON_WAY_SIGN_POSITION.row && col === RUNESTONE_CANYON_WAY_SIGN_POSITION.col;
   }
   if (mapName === 'Grimoak Grounds') {
     return (

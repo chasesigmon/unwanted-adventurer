@@ -3,6 +3,7 @@
 // Skills/Spells modals) — pure data, no server-only logic, so it lives
 // here rather than being duplicated.
 import type { Race, SpecializationPath, MonsterKind } from './constants.js';
+import { isFlyingBeastKind } from './constants.js';
 
 // A follow-up ask: "once a skill is learned, start it out at 10% instead
 // of 1%" — applies uniformly to every skill grant in the game (starting
@@ -585,6 +586,46 @@ export const FLIGHT_COOLDOWN_MS = 4 * 60 * 1000;
 export const FLIGHT_MOVE_COOLDOWN_FACTOR = WISP_MOVE_COOLDOWN_FACTOR;
 export const FLIGHT_BURST_TILES = 10;
 export const FLIGHT_BURST_COOLDOWN_MS = 10 * 1000;
+
+// A later follow-up ask: "followers should move as fast as the player,
+// even with speed enhancements active" — followers used to step on a
+// flat FOLLOWER_STEP_MS server tick (server/game-gateway/game.gateway.ts)
+// completely unaware of any of the owner's own speed buffs, so a
+// celeritas/wisp/flight/boots-of-quickness-buffed player quickly outran
+// them. This mirrors WorldScene's own client-side effectiveMoveCooldownMs
+// formula EXACTLY (same base, same stacking multipliers, same order) so
+// the server can compute the SAME number for a follower's owner and use
+// it to decide how many steps that follower should take per tick — kept
+// as a deliberate duplicate (that client method stays client-only/
+// untouched, same "shared/ can't import a server-only or client-only
+// module" tradeoff shared/equipment.ts's own EQUIPMENT_ITEM_BONUS_LABEL
+// doc comment already accepts) rather than risking a refactor of a
+// delicate, already-working player-movement function just to share it.
+export const BASE_MOVE_COOLDOWN_MS = 220;
+const DEX_MOVE_SPEED_PERCENT_PER_POINT = 0.015;
+const MIN_MOVE_COOLDOWN_FACTOR = 0.4;
+
+export interface MoveSpeedState {
+  celeritasActive: boolean;
+  wispActive: boolean;
+  flightActive: boolean;
+  beastTransformActive: boolean;
+  beastTransformKind: MonsterKind | null;
+  dexterity: number;
+  bootsItem: string | undefined;
+}
+
+export function effectiveMoveCooldownMs(state: MoveSpeedState): number {
+  let base = state.celeritasActive ? Math.round(BASE_MOVE_COOLDOWN_MS * 0.9) : BASE_MOVE_COOLDOWN_MS;
+  if (state.bootsItem === 'boots of quickness') base = Math.round(base * 0.9);
+  if (state.wispActive) base = Math.round(base * WISP_MOVE_COOLDOWN_FACTOR);
+  if (state.flightActive || (state.beastTransformActive && isFlyingBeastKind(state.beastTransformKind))) {
+    base = Math.round(base * FLIGHT_MOVE_COOLDOWN_FACTOR);
+  }
+  if (state.beastTransformActive) base = Math.round(base * 0.9);
+  const dexReduction = Math.max(0, state.dexterity - 1) * DEX_MOVE_SPEED_PERCENT_PER_POINT;
+  return Math.round(base * Math.max(MIN_MOVE_COOLDOWN_FACTOR, 1 - dexReduction));
+}
 
 // The small number of skills explicitly stated to start at 100% instead
 // of the ordinary 70% baseline (see STARTING_SKILL_PERCENT above) — both

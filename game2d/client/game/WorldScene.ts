@@ -62,6 +62,17 @@ import {
   KORTHO_COLS,
   KORTHO_DOCK_LENGTH_TILES,
   KORTHO_DOCK_HALF_WIDTH_TILES,
+  SILVERBRANCH_LAKE_ROWS,
+  SILVERBRANCH_LAKE_COLS,
+  SILVERBRANCH_LAKE_DIRT_WIDTH_TILES,
+  SILVERBRANCH_LAKE_BEACH_WIDTH_TILES,
+  SILVERBRANCH_LAKE_WATER_COL_START,
+  silverbranchLakeIslandTiles,
+  RUNESTONE_CANYON_ROWS,
+  RUNESTONE_CANYON_COLS,
+  RUNESTONE_CANYON_RIM_WIDTH_TILES,
+  isRunestoneCanyonRimTile,
+  isRunestoneCanyonStairsTile,
   TOWN_SIZE,
   GREAT_PLAINS_FLORO_ROW,
   GREAT_PLAINS_FLORO_HALF_WIDTH_TILES,
@@ -182,6 +193,10 @@ import {
   BRAMWICK_RUNESTONE_SIGN_POSITION,
   BRAMWICK_SILVERBRANCH_SIGN_POSITION,
   SILVERBRANCH_BRAMWICK_SIGN_POSITION,
+  SILVERBRANCH_ROAD_LAKE_SIGN_POSITION,
+  SILVERBRANCH_LAKE_ROAD_SIGN_POSITION,
+  RUNESTONE_WAY_CANYON_SIGN_POSITION,
+  RUNESTONE_CANYON_WAY_SIGN_POSITION,
   KORTHO_DIREFELL_SIGN_POSITION,
   DIREFELL_KORTHO_SIGN_POSITION,
   GREAT_PLAINS_LABYRINTH_SIGN_POSITION,
@@ -348,6 +363,7 @@ import { openDroppedChestModal } from '../ui/droppedChestModal.js';
 import { openBedModal } from '../ui/bedModal.js';
 import { openBenchModal } from '../ui/benchModal.js';
 import { openShopModal } from '../ui/shopModal.js';
+import { openAuctionModal, registerAuctionStateListener } from '../ui/auctionModal.js';
 import { openTargetInfoModal } from '../ui/targetInfoModal.js';
 import { openIdentifyModal } from '../ui/identifyModal.js';
 import { notifyMapChanged } from '../ui/mapModal.js';
@@ -437,7 +453,7 @@ export class WorldScene extends Phaser.Scene {
   // doorSprites in renderDoorsAndChest, same lifetime.
   private classroomSymbolSprites: Phaser.GameObjects.Sprite[] = [];
   // The secret room's treasure chest (a later follow-up ask) — only
-  // populated on 'Caverna Secretissima', clickable to open it (see
+  // populated on 'Secret Chamber', clickable to open it (see
   // renderMap and handleChestClick).
   private chestSprite: Phaser.GameObjects.Sprite | null = null;
   // Which lockable object (the secret door or its chest) the player has
@@ -490,15 +506,13 @@ export class WorldScene extends Phaser.Scene {
   // handleWorldTime), not per-frame in update(), since the hour only
   // ever changes once per world-clock tick.
   private standingTorchSprites: Phaser.GameObjects.Sprite[] = [];
-  // A visible warm glow around each LIT standing torch (a follow-up bug
-  // fix: "the torches aren't actually providing a light source" — the
-  // mechanical darkFog radius push-back near a static light source, see
-  // shared/lighting.ts's staticLightRadiusAt, is subtle enough on its own
-  // that it doesn't read as "this torch is glowing" the way a player's
-  // own carried lucem light does; this makes it directly visible,
-  // matching lucem's own two-circle soft/bright glow shape, sized to the
-  // SAME functional radius torches actually light (LUCEM_LIGHT_RADIUS_TILES).
-  private standingTorchGlows: Phaser.GameObjects.Graphics[] = [];
+  // A later follow-up ask ("hide the torch light-radius circle graphic on
+  // the map; keep the actual night lighting effect, just don't show the
+  // visible circle") removed the decorative glow circle a prior bug fix
+  // had added here — the REAL mechanical lighting (the dark-fog radius
+  // push-back near a static light source, see shared/lighting.ts's
+  // staticLightRadiusAt) is untouched and still works exactly the same;
+  // this was purely the visible circle drawn on top of it.
   // Grimoak Castle's exterior + its flying crows (item 4) — only
   // populated on 'Grimoak Grounds'; the fireplaces (item 6) below are
   // only populated inside the castle's own interior rooms.
@@ -544,6 +558,15 @@ export class WorldScene extends Phaser.Scene {
   // korthoSeaSprites above (which still gets destroyed/cleared the same
   // way) purely so update() has a typed handle to scroll each frame.
   private korthoWaterSprite: Phaser.GameObjects.TileSprite | null = null;
+  // Silverbranch Lake (a later follow-up ask) — same "sprites layered
+  // over the base floor" shape as korthoSeaSprites above: dirt + sand
+  // beach, an animated water fill, and per-tile island patches.
+  private silverbranchLakeSprites: Phaser.GameObjects.GameObject[] = [];
+  private silverbranchLakeWaterSprite: Phaser.GameObjects.TileSprite | null = null;
+  // Runestone Canyon (a later follow-up ask) — the inner canyon-floor
+  // overlay + the cosmetic stairs strip, same destroy/recreate lifecycle
+  // as every other per-map overlay array above.
+  private runestoneCanyonSprites: Phaser.GameObjects.GameObject[] = [];
   // Hexstone Cavern's own cave-mouth entrance sprite (a later follow-up
   // ask) — one per map that has one (Great Plains' own west exit,
   // Hexstone Cavern's own south exit), same destroy/recreate-per-
@@ -766,6 +789,10 @@ export class WorldScene extends Phaser.Scene {
     // forest' key, but nothing ever registered it with Phaser's loader,
     // so it silently fell back to a placeholder texture instead).
     this.load.svg('haunted-forest', '/haunted-forest-tile.svg', { width: TILE_SIZE, height: TILE_SIZE });
+    // Runestone Canyon's own inner floor + cosmetic stairs strip (a later
+    // follow-up ask).
+    this.load.image('canyon-floor', '/canyon-floor-tile.png');
+    this.load.image('canyon-stairs', '/canyon-stairs-tile.png');
     this.load.image(CAVE_ENTRANCE_TEXTURE_KEY, '/cave-entrance.png');
     // Grimoak Grounds' own stretch of road leading up to it (a later
     // follow-up ask: "clearly have a different colored dirt road from
@@ -1072,6 +1099,11 @@ export class WorldScene extends Phaser.Scene {
     // types.ts's combatNotice), used for things that don't fit the
     // ordinary player-vs-target 'combat' broadcast shape.
     this.network.addEventListener('combatNotice', ((e: CustomEvent<string>) => logCombatMessage(e.detail)) as EventListener);
+    // A later follow-up ask: "Create an Auction House in both Floro and
+    // Kortho... make sure the duration on the auction house modal is
+    // updated immediately with each change" — see auctionModal.ts's own
+    // doc comment.
+    registerAuctionStateListener(this.network);
     // A later follow-up ask: "when the follower goes and attacks a
     // target the player should begin to auto attack or auto move toward
     // the monster... similar to right clicking" — private-to-this-owner
@@ -1124,7 +1156,6 @@ export class WorldScene extends Phaser.Scene {
     const lit = isDarkHour(hour);
     const frame = lit ? STANDING_TORCH_LIT_FRAME : STANDING_TORCH_UNLIT_FRAME;
     for (const sprite of this.standingTorchSprites) sprite.setFrame(frame);
-    for (const glow of this.standingTorchGlows) glow.setVisible(lit);
   }
 
   update(): void {
@@ -1134,6 +1165,13 @@ export class WorldScene extends Phaser.Scene {
     if (this.korthoWaterSprite) {
       this.korthoWaterSprite.tilePositionX += 0.15;
       this.korthoWaterSprite.tilePositionY = Math.sin(this.time.now / 900) * 2;
+    }
+    // Silverbranch Lake's own animated water (a later follow-up ask:
+    // "make it animated/interactive/moving") — same scroll+bob as
+    // Kortho's own Shimmering Sea above.
+    if (this.silverbranchLakeWaterSprite) {
+      this.silverbranchLakeWaterSprite.tilePositionX += 0.15;
+      this.silverbranchLakeWaterSprite.tilePositionY = Math.sin(this.time.now / 900) * 2;
     }
     // Item 9's ambient wisps — kept wandering unconditionally (same
     // reasoning as the water scroll above), regardless of modals/combat/
@@ -1663,6 +1701,13 @@ export class WorldScene extends Phaser.Scene {
   // computed for the owner's own idle/walk frame (see BOAT_FRAME_FOR_FACING)
   // rather than any separate rotation math, so the boat and its rider
   // always turn together by construction.
+  // A later follow-up ask: "expand the large raft size by 3x" — purely
+  // cosmetic (inBoat is a status flag, not a hitbox; the player's own
+  // tile position still drives movement/collision either way), so a flat
+  // setScale on the raft's own sprite is enough. The canoe stays at its
+  // native size.
+  private static readonly RAFT_SCALE = 3;
+
   private updateBoatVisual(key: string, sprite: Phaser.GameObjects.Sprite, boat: 'small' | 'large' | null | undefined, facing: Facing): void {
     let boatSprite = this.boatSprites.get(key);
     if (!boat) {
@@ -1675,6 +1720,7 @@ export class WorldScene extends Phaser.Scene {
       this.boatSprites.set(key, boatSprite);
     }
     boatSprite.setTexture(textureKey, BOAT_FRAME_FOR_FACING[facing]);
+    boatSprite.setScale(boat === 'large' ? WorldScene.RAFT_SCALE : 1);
     boatSprite.setVisible(true);
     boatSprite.setPosition(sprite.x, sprite.y);
   }
@@ -2129,11 +2175,11 @@ export class WorldScene extends Phaser.Scene {
     // 'Specialization' (formerly Elemental Casting Classroom, a later
     // follow-up ask) shares the same classroom footprint too, despite no
     // longer being a CLASSROOM_MAPS entry — same "not a classroom
-    // anymore, still classroom-sized" carve-out Caverna Secretissima
+    // anymore, still classroom-sized" carve-out Secret Chamber
     // already gets.
     const isClassroomSized =
       (CLASSROOM_MAPS as readonly string[]).includes(this.currentMap) ||
-      this.currentMap === 'Caverna Secretissima' ||
+      this.currentMap === 'Secret Chamber' ||
       this.currentMap === 'Specialization' ||
       // The 10 specialization chambers (a later follow-up ask) — same
       // classroom footprint (CLASSROOM_ROWS/COLS), same "not a
@@ -2513,25 +2559,12 @@ export class WorldScene extends Phaser.Scene {
     // always unlit) so a transition into Bramwick at night doesn't show
     // every torch unlit for a moment until the next 'worldTime' tick.
     for (const sprite of this.standingTorchSprites) sprite.destroy();
-    for (const glow of this.standingTorchGlows) glow.destroy();
     const standingTorchLit = worldTimeKnown && isDarkHour(currentWorldHour);
-    // Matches the actual functional radius (see shared/lighting.ts's own
-    // STATIC_LIGHT_SOURCES entry for Bramwick, LUCEM_LIGHT_RADIUS_TILES + 3
-    // now — "expand the distance of the light radius offered").
-    const standingTorchGlowRadiusPx = (LUCEM_LIGHT_RADIUS_TILES + 3) * TILE_SIZE;
     this.standingTorchSprites = [];
-    this.standingTorchGlows = [];
     for (const { row, col } of standingTorchPositionsFor(mapName)) {
       const pos = this.tilePosition(row, col);
       const frame = standingTorchLit ? STANDING_TORCH_LIT_FRAME : STANDING_TORCH_UNLIT_FRAME;
       this.standingTorchSprites.push(this.add.sprite(pos.x, pos.y, STANDING_TORCH_TEXTURE_KEY, frame).setOrigin(0.5, 1).setDepth(-0.5));
-      const glow = this.add.graphics().setDepth(-0.6).setVisible(standingTorchLit);
-      glow.setPosition(pos.x, pos.y - TILE_SIZE / 2);
-      glow.fillStyle(WAND_GLOW_COLOR, 0.12);
-      glow.fillCircle(0, 0, standingTorchGlowRadiusPx);
-      glow.fillStyle(WAND_GLOW_COLOR, 0.3);
-      glow.fillCircle(0, 0, standingTorchGlowRadiusPx * 0.4);
-      this.standingTorchGlows.push(glow);
     }
 
     // Other entities belong to whichever map we just left — clear them
@@ -2691,6 +2724,11 @@ export class WorldScene extends Phaser.Scene {
     for (const sprite of this.korthoSeaSprites) sprite.destroy();
     this.korthoSeaSprites = [];
     this.korthoWaterSprite = null;
+    for (const sprite of this.silverbranchLakeSprites) sprite.destroy();
+    this.silverbranchLakeSprites = [];
+    this.silverbranchLakeWaterSprite = null;
+    for (const sprite of this.runestoneCanyonSprites) sprite.destroy();
+    this.runestoneCanyonSprites = [];
     for (const sprite of this.caveEntranceSprites) sprite.destroy();
     this.caveEntranceSprites = [];
     if (mapName === 'Bramwick') {
@@ -2761,15 +2799,14 @@ export class WorldScene extends Phaser.Scene {
           .setDepth(-0.99)
       );
     } else if (mapName === 'Brimstone Cave') {
-      // A later follow-up ask: "remove the dirt road from Brimstone Cave
-      // and make the cave exit face west" — the reciprocal dirt patch on
-      // this side is gone entirely (bare cave floor now), and the door
-      // itself moved from the east edge to the west edge, facing 'east'
-      // (into the cave's own interior) — the exact same edge/facing
-      // convention Bramwick's own west-edge door into this cave already
-      // uses (see addCaveEntranceSprite(BRAMWICK_BRIMSTONE_ROW, 0, 'east')
-      // above).
-      this.addCaveEntranceSprite(BRIMSTONE_CAVE_MID_ROW, 0, 'east');
+      // A still-later follow-up ask reversed the earlier "make the cave
+      // exit face west" change: "exit to Bramwick should be on the EAST
+      // of the cave, cave exit sprite facing WEST for the player" — the
+      // door is back on the east edge, facing 'west' (into the cave's own
+      // interior). The reciprocal dirt patch stays gone (bare cave floor)
+      // — only re-asked was the door position/facing and the sign, not
+      // the road.
+      this.addCaveEntranceSprite(BRIMSTONE_CAVE_MID_ROW, BRIMSTONE_CAVE_SIZE - 1, 'west');
     } else if (mapName === 'Runestone Way') {
       // The full-length dirt road overlay (a later follow-up ask: "like
       // the road to floro, except this goes north") — same shape as Road
@@ -3091,6 +3128,88 @@ export class WorldScene extends Phaser.Scene {
       this.roadTiles.push(
         this.add.tileSprite(0, DIREFELL_KORTHO_ROW * TILE_SIZE, TILE_SIZE, TILE_SIZE, DIRT_ROAD_TEXTURE_KEY).setOrigin(0, 0).setDepth(-0.99)
       );
+    } else if (mapName === 'Silverbranch Lake') {
+      // A later follow-up ask: "some dirt and a sandy beach once you walk
+      // through from Silverbranch Road. Then after about 20 feet
+      // equivalent the rest of it should all be water... make it
+      // animated/interactive/moving... a few beachy/grassy islands...
+      // across the water." Same "strips layered over the base floor,
+      // animated wave tileSprite" shape as Kortho's own Shimmering Sea.
+      this.silverbranchLakeSprites.push(
+        this.add
+          .tileSprite(0, 0, SILVERBRANCH_LAKE_DIRT_WIDTH_TILES * TILE_SIZE, SILVERBRANCH_LAKE_ROWS * TILE_SIZE, 'dirt')
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+      this.silverbranchLakeSprites.push(
+        this.add
+          .tileSprite(
+            SILVERBRANCH_LAKE_DIRT_WIDTH_TILES * TILE_SIZE,
+            0,
+            (SILVERBRANCH_LAKE_BEACH_WIDTH_TILES - SILVERBRANCH_LAKE_DIRT_WIDTH_TILES) * TILE_SIZE,
+            SILVERBRANCH_LAKE_ROWS * TILE_SIZE,
+            'sand'
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+      const waterSprite = this.add
+        .tileSprite(
+          SILVERBRANCH_LAKE_WATER_COL_START * TILE_SIZE,
+          0,
+          (SILVERBRANCH_LAKE_COLS - SILVERBRANCH_LAKE_WATER_COL_START) * TILE_SIZE,
+          SILVERBRANCH_LAKE_ROWS * TILE_SIZE,
+          'water-wave'
+        )
+        .setOrigin(0, 0)
+        .setDepth(-0.98);
+      this.silverbranchLakeSprites.push(waterSprite);
+      this.silverbranchLakeWaterSprite = waterSprite;
+      // Islands — a real per-tile sand+grass patch (not just a bounding
+      // square) so the visual matches shared/maps.ts's own circular
+      // isOnSilverbranchLakeIsland collision exactly; a thin sand fringe
+      // (the outer third of each island's own radius) reads as a beach
+      // around a grassy center.
+      for (const { row, col } of silverbranchLakeIslandTiles()) {
+        const pos = this.tilePosition(row, col);
+        const sprite = this.add.sprite(pos.x, pos.y, 'grass').setOrigin(0.5, 0.5).setDisplaySize(TILE_SIZE, TILE_SIZE).setDepth(-0.97);
+        this.silverbranchLakeSprites.push(sprite);
+      }
+    } else if (mapName === 'Runestone Canyon') {
+      // A later follow-up ask: "make it look like a canyon and make it so
+      // that a player has to walk down what looks like stairs down into
+      // the canyon or can walk around the entire canyon in a circle." The
+      // outer rim keeps the base 'boulder-field' floor (see
+      // mapRender.ts's floorTextureFor); this layers the deeper inner
+      // floor + the cosmetic stairs strip on top, same "overlay tileSprite
+      // over the base floor" shape as every other map's own road/sea
+      // overlays.
+      const rim = RUNESTONE_CANYON_RIM_WIDTH_TILES;
+      this.runestoneCanyonSprites.push(
+        this.add
+          .tileSprite(
+            rim * TILE_SIZE,
+            rim * TILE_SIZE,
+            (RUNESTONE_CANYON_COLS - rim * 2) * TILE_SIZE,
+            (RUNESTONE_CANYON_ROWS - rim * 2) * TILE_SIZE,
+            'canyon-floor'
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.99)
+      );
+      // The stairs strip — reuses isRunestoneCanyonStairsTile's own
+      // bounds directly rather than re-deriving them here, so it can
+      // never numerically drift from the (purely cosmetic) collision-free
+      // definition shared/maps.ts already uses.
+      for (let row = RUNESTONE_CANYON_ROWS - rim; row < RUNESTONE_CANYON_ROWS; row++) {
+        for (let col = 0; col < RUNESTONE_CANYON_COLS; col++) {
+          if (!isRunestoneCanyonStairsTile(mapName, row, col)) continue;
+          const pos = this.tilePosition(row, col);
+          this.runestoneCanyonSprites.push(
+            this.add.sprite(pos.x, pos.y, 'canyon-stairs').setOrigin(0.5, 0.5).setDisplaySize(TILE_SIZE, TILE_SIZE).setDepth(-0.98)
+          );
+        }
+      }
     } else if (mapName === 'Floro') {
       // Same entrance-patch treatment as Kortho above (a later follow-up
       // ask: "make sure Road to Floro and Floro get the same updates that
@@ -3562,6 +3681,16 @@ export class WorldScene extends Phaser.Scene {
       { map: 'Bramwick', position: BRAMWICK_RUNESTONE_SIGN_POSITION, label: 'Boulder Pass' },
       { map: 'Bramwick', position: BRAMWICK_SILVERBRANCH_SIGN_POSITION, label: 'Silverbranch Road' },
       { map: 'Silverbranch Road', position: SILVERBRANCH_BRAMWICK_SIGN_POSITION, label: 'Bramwick' },
+      // A later follow-up ask: "Create a new world 'Silverbranch Lake'...
+      // Add a sign all the way to the right / at the end of Silverbranch
+      // Road for 'Silverbranch Lake'."
+      { map: 'Silverbranch Road', position: SILVERBRANCH_ROAD_LAKE_SIGN_POSITION, label: 'Silverbranch Lake' },
+      { map: 'Silverbranch Lake', position: SILVERBRANCH_LAKE_ROAD_SIGN_POSITION, label: 'Silverbranch Road' },
+      // A later follow-up ask: "Create a new world 'Runestone Canyon'...
+      // Add a sign at the north connection to Runestone Way for
+      // 'Runestone Canyon'."
+      { map: 'Runestone Way', position: RUNESTONE_WAY_CANYON_SIGN_POSITION, label: 'Runestone Canyon' },
+      { map: 'Runestone Canyon', position: RUNESTONE_CANYON_WAY_SIGN_POSITION, label: 'Runestone Way' },
     ];
     this.signSprites = signDefs
       .filter((def) => def.map === mapName)
@@ -3660,7 +3789,7 @@ export class WorldScene extends Phaser.Scene {
     // re-validates the lock/reach/already-taken state.
     this.chestSprite?.destroy();
     this.chestSprite = null;
-    if (mapName === 'Caverna Secretissima') {
+    if (mapName === 'Secret Chamber') {
       const pos = this.tilePosition(CAVERNA_CHEST_POSITION.row, CAVERNA_CHEST_POSITION.col);
       const unlocked = Boolean(myProfile?.secretChestUnlocked);
       const chest = this.add
@@ -3671,7 +3800,7 @@ export class WorldScene extends Phaser.Scene {
       chest.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
         this.setLockTarget(
-          { kind: 'chest', map: 'Caverna Secretissima', row: CAVERNA_CHEST_POSITION.row, col: CAVERNA_CHEST_POSITION.col },
+          { kind: 'chest', map: 'Secret Chamber', row: CAVERNA_CHEST_POSITION.row, col: CAVERNA_CHEST_POSITION.col },
           'Treasure Chest'
         );
         if (!isWithinRadius(this.row, this.col, CAVERNA_CHEST_POSITION.row, CAVERNA_CHEST_POSITION.col, 1)) {
@@ -4198,14 +4327,11 @@ export class WorldScene extends Phaser.Scene {
       // PetManagerService.grantExp uses server-side to decide whether to
       // rename it in the first place).
       const isEvolved = pet.name === PET_EVOLVED_NAME[pet.kind];
-      // Item 15's own 3 new kinds have no evolved form at all (see
-      // EVOLVABLE_PET_KINDS) — PET_EVOLVED_TEXTURE_KEYS stays narrowly
-      // typed to just the original 3, so this re-checks kind alongside
-      // isEvolved to let TS narrow the lookup safely.
-      const petTextureKey =
-        isEvolved && (pet.kind === 'puppy' || pet.kind === 'kitten' || pet.kind === 'piglet')
-          ? PET_EVOLVED_TEXTURE_KEYS[pet.kind]
-          : PET_TEXTURE_KEYS[pet.kind];
+      // A later follow-up ask ("young griffin→griffin, young phoenix→
+      // phoenix, evolve into 'elemental'") extended EVOLVABLE_PET_KINDS/
+      // PET_EVOLVED_TEXTURE_KEYS beyond the original 3 kinds to a full
+      // PetKind record, so this no longer needs to re-narrow by kind.
+      const petTextureKey = isEvolved ? PET_EVOLVED_TEXTURE_KEYS[pet.kind] : PET_TEXTURE_KEYS[pet.kind];
       let sprite = this.petSprites.get(pet.id);
       if (!sprite) {
         const pos = this.tilePosition(pet.row, pet.col);
@@ -4277,7 +4403,26 @@ export class WorldScene extends Phaser.Scene {
         // create-or-update pass to notice.
         if (sprite.getData('evolved') !== isEvolved) {
           sprite.setData('evolved', isEvolved);
-          sprite.setTexture(petTextureKey);
+          // A later follow-up ask extended EVOLVABLE_PET_KINDS to include
+          // the elemental (a looping-animation pet, unlike every other
+          // static-frame kind) — its evolution moment needs to switch
+          // which spritesheet the ACTIVE animation plays from too, not
+          // just swap the idle texture, or it keeps animating frames off
+          // the old (now wrong) spritesheet.
+          if (pet.kind === 'elemental') {
+            const animKey = `${petTextureKey}-cycle`;
+            if (!this.anims.exists(animKey)) {
+              this.anims.create({
+                key: animKey,
+                frames: this.anims.generateFrameNumbers(petTextureKey, { start: 0, end: 5 }),
+                frameRate: 6,
+                repeat: -1,
+              });
+            }
+            sprite.play(animKey);
+          } else {
+            sprite.setTexture(petTextureKey);
+          }
         }
       }
       // A later follow-up bug fix: "when I click on the pet, it shows
@@ -4319,7 +4464,15 @@ export class WorldScene extends Phaser.Scene {
     const seenTamedBeasts = new Set<string>();
     for (const beast of state.tamedBeasts) {
       seenTamedBeasts.add(beast.id);
-      const beastOffset = followerFanOffsetFor(`tamedBeast:${beast.id}`);
+      // Item 13: "show followers on the raft with the player unless they
+      // can fly (then fly alongside)" — a tamed falcon/crystal wyvern
+      // already crosses water on its own kind-based merit (see shared/
+      // constants.ts's canFollowerCrossWater) whether or not the owner has
+      // a raft at all, so it should always read as flying rather than
+      // riding along, same hover treatment wild monsters' own `flies` flag
+      // and certain pet kinds already get above.
+      const rawBeastOffset = followerFanOffsetFor(`tamedBeast:${beast.id}`);
+      const beastOffset = isFlyingBeastKind(beast.kind) ? { x: rawBeastOffset.x, y: rawBeastOffset.y + FLYING_MONSTER_Y_OFFSET } : rawBeastOffset;
       let sprite = this.tamedBeastSprites.get(beast.id);
       if (!sprite) {
         const pos = this.tilePosition(beast.row, beast.col);
@@ -4384,7 +4537,13 @@ export class WorldScene extends Phaser.Scene {
     const seenAnimatedMonsters = new Set<string>();
     for (const am of state.animatedMonsters) {
       seenAnimatedMonsters.add(am.id);
-      const amOffset = followerFanOffsetFor(`am:${am.id}`);
+      // Same "fly alongside rather than ride along" treatment as tamed
+      // beasts above — an animated dead raised from a falcon/crystal
+      // wyvern corpse crosses water on its own merit and should read as
+      // flying. `monsterKind` is also sometimes a Race (the Illusionist's
+      // duplicate) — isFlyingBeastKind safely returns false for those.
+      const rawAmOffset = followerFanOffsetFor(`am:${am.id}`);
+      const amOffset = isFlyingBeastKind(am.monsterKind as MonsterKind) ? { x: rawAmOffset.x, y: rawAmOffset.y + FLYING_MONSTER_Y_OFFSET } : rawAmOffset;
       let sprite = this.animatedMonsterSprites.get(am.id);
       if (!sprite) {
         const pos = this.tilePosition(am.row, am.col);
@@ -4473,10 +4632,7 @@ export class WorldScene extends Phaser.Scene {
       // Reflects whatever form the pet actually died in (a corpse is a
       // one-time snapshot, so this never needs to swap texture later the
       // way a live pet's own sprite does above).
-      const corpseTextureKey =
-        pc.name === PET_EVOLVED_NAME[pc.kind] && (pc.kind === 'puppy' || pc.kind === 'kitten' || pc.kind === 'piglet')
-          ? PET_EVOLVED_TEXTURE_KEYS[pc.kind]
-          : PET_TEXTURE_KEYS[pc.kind];
+      const corpseTextureKey = pc.name === PET_EVOLVED_NAME[pc.kind] ? PET_EVOLVED_TEXTURE_KEYS[pc.kind] : PET_TEXTURE_KEYS[pc.kind];
       const sprite = this.add
         .sprite(pos.x, pos.y, corpseTextureKey)
         .setOrigin(0.5, 0.9)
@@ -4620,10 +4776,15 @@ export class WorldScene extends Phaser.Scene {
       if (this.droppedChestSprites.has(chest.id)) continue;
 
       const pos = this.tilePosition(chest.row, chest.col);
+      // A later follow-up ask: "dropped item chest sprite should be 1/5
+      // its current size" — this reused the Secret Chamber's own
+      // full-size chest texture at native scale, far too big for a small
+      // "something was dropped here" marker in the open world.
       const sprite = this.add
         .sprite(pos.x, pos.y, CHEST_UNLOCKED_TEXTURE_KEY)
         .setOrigin(0.5, 0.85)
         .setDepth(-1)
+        .setScale(0.2)
         .setInteractive({ useHandCursor: true });
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
@@ -4688,6 +4849,13 @@ export class WorldScene extends Phaser.Scene {
         // and the message is clearer about why nothing happened.
         if (!isWithinRadius(this.row, this.col, v.row, v.col, SHOP_REACH_TILES)) {
           logCombatMessage("You're too far away to reach the shop.");
+          return;
+        }
+        // A later follow-up ask: "Create an Auction House in both Floro
+        // and Kortho" — a special modal (global listings + bidding), not
+        // the generic buy/sell one every other vendor opens.
+        if (v.id === 'floro-auction-house' || v.id === 'kortho-auction-house') {
+          openAuctionModal();
           return;
         }
         openShopModal(v);
@@ -5131,9 +5299,20 @@ export class WorldScene extends Phaser.Scene {
   }
 
   // Item 1: "move diagonally, e.g. W+A at the same time to go northwest."
-  // Same shape as attemptMove above, just against network.moveDiagonal
-  // and never checking for a map transition (diagonal steps can't cross
-  // one — see WorldManagerService.processDiagonalMove's own doc comment).
+  // Same shape as attemptMove above, including a map-transition branch — a
+  // later follow-up ask ("diagonal movement from Kortho into Direfell
+  // caused a visual glitch: appeared in Kortho next to shops, then
+  // snapped to Direfell on next move") found that despite the SERVER side
+  // (handleMoveDiagonal/processDiagonalMove) fully supporting a diagonal
+  // step crossing a map boundary, this handler never checked for one —
+  // it always just tweened the sprite within the OLD map's coordinate
+  // space, so a transitioning diagonal step visually stranded the player
+  // at their new row/col reinterpreted as a tile on the map they'd
+  // already left, until the next (non-diagonal) move finally called
+  // renderMap and snapped things right. Same "similar zoom-from-random-
+  // off-screen glitch on other transitions" the user flagged — this was
+  // the one missing piece, not a camera-math bug (that was already fixed
+  // separately, see updateCameraScroll's own doc comment).
   // The character rig only has 4 facing rows (no diagonal frames), so the
   // horizontal component wins for which walk cycle/facing to show — same
   // west/east-before-north/south precedence the single-key chain below
@@ -5158,6 +5337,31 @@ export class WorldScene extends Phaser.Scene {
 
         this.row = ack.player.row;
         this.col = ack.player.col;
+
+        if (ack.player.map !== this.currentMap) {
+          // Same "a map transition is a load, not a walk" handling
+          // attemptMove's own transition branch uses — see its doc
+          // comment for why each of these steps is needed.
+          closeAllModals();
+          this.race = ack.player.race;
+          this.gender = ack.player.gender;
+          this.hairColor = ack.player.hairColor;
+          this.skinTone = ack.player.skinTone;
+          this.mimicForm = ack.player.mimicForm;
+          this.beastTransformKind = ack.player.beastTransformActive ? (ack.player.beastTransformKind ?? null) : null;
+          setMyProfile(ack.player);
+          this.updateOwnBars();
+          const pos = this.tilePosition(ack.player.row, ack.player.col);
+          this.player.setPosition(pos.x, pos.y);
+          this.renderMap(ack.player.map);
+          if (ack.mapState) this.applyMapState(ack.mapState);
+          updateWorldLabel(ack.player.map);
+          notifyMapChanged();
+          this.isMoving = false;
+          this.setIdle();
+          return;
+        }
+
         setMyProfile(ack.player);
         this.updateOwnBars();
         refreshCharSheetIfOpen();

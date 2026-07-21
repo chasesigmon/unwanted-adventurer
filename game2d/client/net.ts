@@ -37,6 +37,7 @@ import type {
   AllocatableStat,
   AllocateStatPointAck,
   PlayerSnapshot,
+  AuctionListingSnapshot,
 } from '../shared/types.js';
 import type { Direction, Gender, HairColor, SkinTone, HouseName, SpecializationPath, PlayableRace } from '../shared/constants.js';
 import type { EquipmentSlot } from '../shared/equipment.js';
@@ -234,6 +235,14 @@ export class NetworkManager extends EventTarget {
     socket.on('chat', (data: ChatPayload) => this.dispatchEvent(new CustomEvent<ChatPayload>('chat', { detail: data })));
     socket.on('combatNotice', (message: string) => this.dispatchEvent(new CustomEvent<string>('combatNotice', { detail: message })));
     socket.on('followerEngaged', (data) => this.dispatchEvent(new CustomEvent<{ targetKind: 'monster' | 'player'; targetId: string }>('followerEngaged', { detail: data })));
+    // A later follow-up ask: "Create an Auction House in both Floro and
+    // Kortho... make sure the duration on the auction house modal is
+    // updated immediately with each change" — broadcast to every
+    // connected socket whenever any listing changes (see AuctionHouseService's
+    // own doc comment on why this is global, not per-map).
+    socket.on('auctionState', (listings: AuctionListingSnapshot[]) =>
+      this.dispatchEvent(new CustomEvent<AuctionListingSnapshot[]>('auctionState', { detail: listings }))
+    );
     socket.on('statTick', (data: StatTickPayload) =>
       this.dispatchEvent(new CustomEvent<StatTickPayload>('statTick', { detail: data }))
     );
@@ -508,6 +517,47 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('sellItem', { vendorId, itemIndex }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // A later follow-up ask: "Create an Auction House in both Floro and
+  // Kortho."
+  auctionGetListings(): Promise<{ ok: true; listings: AuctionListingSnapshot[] }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('auctionGetListings', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  auctionListItem(itemIndex: number, startingGold: number, durationMinutes: number): Promise<{ ok: boolean; message?: string; listings?: AuctionListingSnapshot[] }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('auctionListItem', { itemIndex, startingGold, durationMinutes }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  auctionBid(auctionId: string, amount: number): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('auctionBid', { auctionId, amount }, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });
@@ -943,6 +993,21 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('removeTamedBeast', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // A later follow-up ask: "add a 'Remove' option to the pet window" —
+  // same shape as removeTamedBeast above.
+  removePet(): Promise<{ ok: boolean; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('removePet', (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

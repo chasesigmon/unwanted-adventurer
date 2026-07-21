@@ -5,6 +5,8 @@
 // than a buy/sell list) since neither sells or buys ordinary items.
 import { myProfile, network, setMyProfile } from '../state.js';
 import type { VendorSnapshot } from '../../shared/types.js';
+import { groupInventoryItems } from '../../shared/items.js';
+import { vendorSellCategory, itemSellCategory } from '../../shared/equipment.js';
 import { logCombatMessage } from './log.js';
 import { closeAllModals, refreshOpenModals, registerModalRefreshHandler, shopGoldLine, shopGreeting, shopItemList, shopModal, shopModalTitle, updateInputCaptured } from './modalCore.js';
 import { updateStatusBar } from './statusBar.js';
@@ -40,7 +42,12 @@ export function renderShopModal(): void {
     forSaleHeader.textContent = 'For sale';
     shopItemList.appendChild(forSaleHeader);
   }
-  for (const item of currentVendor.items) {
+  // Item 7: "organize items alphabetically" — the vendor's own static
+  // item array is authored in whatever order vendors.ts happens to list
+  // it (see that file), not alphabetically; sort a copy for display only,
+  // vendors.ts's own order is otherwise meaningless.
+  const forSaleItems = [...currentVendor.items].sort((a, b) => a.label.localeCompare(b.label));
+  for (const item of forSaleItems) {
     const li = document.createElement('li');
     li.className = 'shop-item';
     const label = document.createElement('span');
@@ -57,24 +64,32 @@ export function renderShopModal(): void {
     shopItemList.appendChild(li);
   }
 
-  // A later follow-up ask: "sell to vendor" — every vendor buys back
-  // anything the player is carrying (see vendors.ts's own sellValueFor),
-  // shown as a second list right below what the shop itself sells. Item
-  // 19: stacked into "item x3" rows same as the Inventory modal, rather
-  // than one row per copy — clicking a stack sells only the first index
-  // sharing that name, i.e. exactly one at a time.
-  if (myProfile && myProfile.inventory.length > 0) {
+  // A later follow-up ask: "sell to vendor" originally let every vendor
+  // buy back anything the player was carrying. A still-later ask ("only
+  // armor equipment sellable to armorer; only weapons... sellable at
+  // blacksmith; everything else sellable at general store; nothing
+  // sellable at other shops") restricted that server-side (see
+  // game.gateway.ts's own handleSellItem) — this filters the list shown
+  // here to match, so a vendor that won't buy something never shows a
+  // "Sell" button for it in the first place rather than offering one
+  // that just rejects every click. shopCategory is null for every non-
+  // armorer/blacksmith/general-store vendor (inn, bank, pet shop, ...),
+  // which correctly hides this whole section for them (every() on an
+  // empty filtered array would otherwise still show the divider).
+  const shopCategory = vendorSellCategory(currentVendor.id);
+  const sellableInventory = shopCategory ? myProfile?.inventory.filter((item) => itemSellCategory(item) === shopCategory) : undefined;
+  if (sellableInventory && sellableInventory.length > 0) {
     const divider = document.createElement('li');
     divider.className = 'shop-item-divider';
     divider.textContent = 'Your items';
     shopItemList.appendChild(divider);
 
-    const groups = new Map<string, number[]>();
-    myProfile.inventory.forEach((item, index) => {
-      const indices = groups.get(item);
-      if (indices) indices.push(index);
-      else groups.set(item, [index]);
-    });
+    // Alphabetized (see groupInventoryItems's own doc comment) — same
+    // "position never jumps on a partial sell" fix as the Inventory modal.
+    // Grouped/indexed against the FULL inventory (not the filtered list)
+    // so indices[0] still refers to the real inventory slot sellItem needs.
+    const sellableSet = new Set(sellableInventory);
+    const groups = groupInventoryItems(myProfile!.inventory).filter(([item]) => sellableSet.has(item));
 
     for (const [item, indices] of groups) {
       const li = document.createElement('li');

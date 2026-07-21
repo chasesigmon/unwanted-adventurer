@@ -121,6 +121,12 @@ export const benchRestNoBtn = document.getElementById('bench-rest-no') as HTMLBu
 // already covers dismissing it.
 export const logoutConfirmModal = document.getElementById('logout-confirm-modal') as HTMLDivElement;
 export const logoutConfirmYesBtn = document.getElementById('logout-confirm-yes') as HTMLButtonElement;
+// A later follow-up ask: "Create an Auction House in both Floro and
+// Kortho" — see auctionModal.ts.
+export const auctionModal = document.getElementById('auction-modal') as HTMLDivElement;
+export const auctionGoldLine = document.getElementById('auction-gold-line') as HTMLDivElement;
+export const auctionListingList = document.getElementById('auction-listing-list') as HTMLUListElement;
+export const auctionListItemForm = document.getElementById('auction-list-item-form') as HTMLUListElement;
 
 export const ALL_MODALS = [
   charSheetModal,
@@ -147,35 +153,27 @@ export const ALL_MODALS = [
   bedModal,
   benchModal,
   logoutConfirmModal,
+  auctionModal,
 ];
 
-// None of these six visually obstruct the map and none has a text input
-// of its own, so movement stays usable while any of them is open (items 7
-// & 15) — a player can browse Skills/Inventory/Equipment/the character
-// sheet/the map/Affects while still walking around. Every OTHER modal
-// (corpse/shop/target-info/autopilot's own text prompt/the chest) still
-// blocks movement.
-// A later follow-up ask added the teacher dialogue and shop modals to
-// this list too — "a player is able to move while a teacher/shop modal
-// is open." Neither has a text input a WASD keypress could clash with
-// (button-driven click-to-learn/click-to-buy only), same reasoning as
-// every other modal already here.
-export const MOVEMENT_PASSTHROUGH_MODALS = [
-  inventoryModal,
-  equipmentModal,
-  skillsModal,
-  spellsModal,
-  charSheetModal,
-  mapModal,
-  affectsModal,
-  helpModal,
-  questLogModal,
-  npcDialogueModal,
-  shopModal,
-];
+// A later follow-up ask ("make it so that when any modal is open the
+// player is able to move, when I opened the recall modal it didn't allow
+// me to move") replaced what used to be a hand-picked allowlist here —
+// recallModal (and several other modals: corpse/petCorpse/droppedChest/
+// targetInfo/identify/autopilot/chest/monsterSummons/transform/bed/bench/
+// logoutConfirm) had simply never been added to it, so opening any of
+// those silently blocked movement even though nothing about them actually
+// needs to. Every modal now passes movement through — see
+// isMovementBlocked below, which no longer consults this list at all;
+// kept only as a record of the modals this project has, in case a FUTURE
+// modal genuinely needs to block movement again (a text-entry prompt
+// that WASD keys would collide with, the way chatInputFocused already
+// does), which should be its own explicit, narrow check rather than
+// reverting to a broad allowlist.
+export const MOVEMENT_PASSTHROUGH_MODALS = ALL_MODALS;
 
 export function isMovementBlocked(): boolean {
-  return chatInputFocused || ALL_MODALS.some((m) => !m.hidden && !MOVEMENT_PASSTHROUGH_MODALS.includes(m));
+  return chatInputFocused;
 }
 
 export function updateInputCaptured(): void {

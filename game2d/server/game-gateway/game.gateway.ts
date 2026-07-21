@@ -21,6 +21,7 @@ import { AnimatedMonsterManagerService } from '../pets/animated-monster-manager.
 import { PetCorpseManagerService } from '../pets/pet-corpse-manager.service.js';
 import { TamedBeastManagerService } from '../pets/tamed-beast-manager.service.js';
 import { DroppedItemManagerService } from '../worlds/dropped-item-manager.service.js';
+import { AuctionHouseService } from '../auction/auction-house.service.js';
 import {
   PET_KINDS,
   PET_COMMANDS,
@@ -28,12 +29,14 @@ import {
   FOLLOWER_EQUIPMENT_SLOTS,
   FOLLOWER_WEAPON_DAMAGE_BONUS,
   PET_CORPSE_SACRIFICE_GOLD_PER_LEVEL,
+  PET_MAGICAL_ATTACK_KINDS,
   type PetKind,
   type PetCommand,
 } from '../../shared/pets.js';
 import { CHAT_COMMANDS } from '../../shared/commands.js';
 import { WorldClockService } from '../worlds/world-clock.service.js';
 import { findVendor, sellValueFor } from '../worlds/vendors.js';
+import { vendorSellCategory, itemSellCategory } from '../../shared/equipment.js';
 import { MONSTER_SPECIES } from '../monsters/monster.js';
 import { NPCS } from '../worlds/npcs.js';
 import { AuthService } from '../auth/auth.service.js';
@@ -160,7 +163,13 @@ import type {
   TileTargetPayload,
   AllocatableStat,
   AllocateStatPointAck,
+  AuctionListingSnapshot,
 } from '../../shared/types.js';
+import {
+  AUCTION_MIN_BID_LEVEL,
+  AUCTION_MIN_DURATION_MINUTES,
+  AUCTION_MAX_DURATION_MINUTES,
+} from '../../shared/auctionHouse.js';
 import { TOWN_MAPS } from '../../shared/constants.js';
 import {
   emitsLight,
@@ -581,6 +590,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     private readonly petCorpseManager: PetCorpseManagerService,
     private readonly tamedBeastManager: TamedBeastManagerService,
     private readonly droppedItemManager: DroppedItemManagerService,
+    private readonly auctionHouse: AuctionHouseService,
     private readonly worldClock: WorldClockService,
     private readonly authService: AuthService,
     private readonly sessionStore: SessionStoreService,
@@ -838,7 +848,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       for (const contact of this.tamedBeastManager.checkContacts()) {
         this.resolveFollowerContact(contact.ownerUsername, contact.targetKind, contact.targetId, 'tamedBeast');
       }
+      this.engagePlayersOntoFollowerTargets();
     }, FOLLOWER_STEP_MS);
+
+    // The Auction House's own resolution sweep (a later follow-up ask) —
+    // 5s is plenty responsive for something measured in minutes, no need
+    // to piggyback on the much faster follower-step tick above.
+    setInterval(() => {
+      const expired = this.auctionHouse.takeExpired();
+      if (expired.length === 0) return;
+      for (const listing of expired) void this.resolveAuction(listing);
+      this.server.emit('auctionState', this.auctionHouse.getAll());
+    }, 5000);
 
     setInterval(() => {
       this.combatTickCount += 1;
@@ -3104,7 +3125,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // The secret room's own door (a follow-up ask) — locked per-player
       // until resera'd open (see handleCastResera); same "preview first,
       // no side effects" shape as the town gate above.
-      if (preview.ok && preview.transitioned && preview.mapName === 'Caverna Secretissima' && !client.data.secretDoorUnlocked) {
+      if (preview.ok && preview.transitioned && preview.mapName === 'Secret Chamber' && !client.data.secretDoorUnlocked) {
         return { ok: false, player: this.snapshotFor(client), message: 'The door is locked.' };
       }
       // House gate (a follow-up ask: "the player should only be allowed
@@ -3240,7 +3261,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           message: `The guards of ${preview.mapName} bar your way — you need a weapon equipped to pass.`,
         };
       }
-      if (preview.ok && preview.transitioned && preview.mapName === 'Caverna Secretissima' && !client.data.secretDoorUnlocked) {
+      if (preview.ok && preview.transitioned && preview.mapName === 'Secret Chamber' && !client.data.secretDoorUnlocked) {
         return { ok: false, player: this.snapshotFor(client), message: 'The door is locked.' };
       }
       if (preview.ok && preview.transitioned) {
@@ -3881,8 +3902,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           ? (tamedBeast?.attackDamage ?? 0)
           : (animatedMonster?.attackDamage ?? 0)) + weaponBonus;
     if (rawDamage <= 0) return;
-    const monsterArmorVsPhysical = armorVsPhysicalFor(monster.dexterity, monster.strength, 0);
-    const damage = Math.round(applyArmorMitigation(rawDamage, monsterArmorVsPhysical));
+    // A later follow-up ask: "lesser elemental/evolved form should do
+    // RANGED magical damage (currently attacks physically)" — every
+    // OTHER follower kind still mitigates against the monster's own
+    // armorVsPhysical; PET_MAGICAL_ATTACK_KINDS (currently just the
+    // elemental) mitigates against armorVsMagical instead, same
+    // physical-vs-magical split every player spell/attack already uses.
+    const isMagicalAttacker = followerType === 'pet' && pet !== undefined && (PET_MAGICAL_ATTACK_KINDS as readonly string[]).includes(pet.kind);
+    const monsterArmor = isMagicalAttacker
+      ? armorVsMagicalFor(monster.intelligence, monster.wisdom, 0)
+      : armorVsPhysicalFor(monster.dexterity, monster.strength, 0);
+    const damage = Math.round(applyArmorMitigation(rawDamage, monsterArmor));
     if (damage <= 0) return;
     const followerLabel =
       followerType === 'pet' ? (pet?.name ?? 'Your pet') : followerType === 'tamedBeast' ? (tamedBeast?.name ?? 'Your tamed beast') : (animatedMonster?.name ?? 'Your ally');
@@ -3923,6 +3953,38 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.server.to(client.data.map).emit('combatNotice', `${followerLabel} strikes the ${monster.kind} for ${damage} damage.`);
     }
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+  }
+
+  // A later follow-up ask: "player should auto-attack whatever their
+  // tamed beast/animated dead/pet/summon is auto-attacking." Above,
+  // resolveFollowerContact already starts the owner's own attack the
+  // moment a follower actually LANDS a hit — but a follower given a
+  // distant target (the 'z' hotkey, or a monster's own aggro redirect
+  // onto it) has to walk over and connect first, leaving a lag where the
+  // follower is clearly fighting something and the player isn't yet.
+  // This checks every connected owner's followers' own live target every
+  // tick instead, engaging the instant one exists rather than waiting for
+  // contact — same "only fill in when the player has no fight of their
+  // own, never force an override" rule resolveFollowerContact already
+  // follows (see its own `!this.playerCombat.has(...)` gate).
+  private engagePlayersOntoFollowerTargets(): void {
+    for (const socket of this.server.sockets.sockets.values()) {
+      const client = socket as GameSocket;
+      if (!client.data.username || this.playerCombat.has(client.data.username)) continue;
+      const pet = this.petManager.getSnapshotForOwner(client.data.username);
+      const tamedBeast = this.tamedBeastManager.getSnapshotForOwner(client.data.username);
+      const summons = this.animatedMonsterManager.getSnapshotsForOwner(client.data.username);
+      const follower = [pet, tamedBeast, ...summons].find(
+        (f) => f?.command === 'attack' && f.attackTargetKind !== undefined && f.attackTargetId !== undefined
+      );
+      if (!follower?.attackTargetKind || !follower.attackTargetId) continue;
+      this.engageCombat(client, follower.attackTargetKind, follower.attackTargetId, this.attackGrowthSkill(client));
+      // Same "tell the client to actually walk over/select the target"
+      // treatment resolveFollowerContact's own engageCombat call gets —
+      // see its doc comment on why the server-side session alone isn't
+      // enough.
+      client.emit('followerEngaged', { targetKind: follower.attackTargetKind, targetId: follower.attackTargetId });
+    }
   }
 
   // The wand's ranged basic attack (a follow-up ask) — flat
@@ -5079,6 +5141,16 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: "You don't have that." };
     }
 
+    // A later follow-up ask: "only armor equipment sellable to armorer;
+    // only weapons... sellable at blacksmith; everything else sellable
+    // at general store; nothing sellable at other shops" — replaced the
+    // old "every vendor buys anything" convenience (see vendors.ts's own
+    // vendorSellCategory/itemSellCategory doc comments).
+    const shopCategory = vendorSellCategory(vendorId);
+    if (shopCategory === null || shopCategory !== itemSellCategory(item)) {
+      return { ok: false, message: `${vendor.name} isn't interested in buying that.` };
+    }
+
     const price = sellValueFor(item);
     client.data.inventory = client.data.inventory.filter((_, i) => i !== itemIndex);
     client.data.gold += price;
@@ -5091,6 +5163,146 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       gold: client.data.gold,
       message: `You sell the ${item} for ${price} gold.`,
     };
+  }
+
+  // A later follow-up ask: "Create an Auction House in both Floro and
+  // Kortho." A single shared, GLOBAL listing pool (see AuctionHouseService's
+  // own doc comment) — either town's Auctioneer is just an access point
+  // into the same marketplace, so "which vendor" only matters for the
+  // shop-reach check below, not for which listings are visible.
+  private static readonly AUCTION_HOUSE_VENDOR_IDS = ['floro-auction-house', 'kortho-auction-house'];
+
+  private isNearAnAuctionHouse(client: GameSocket): boolean {
+    return GameGateway.AUCTION_HOUSE_VENDOR_IDS.some((id) => {
+      const vendor = findVendor(id);
+      return vendor && vendor.map === client.data.map && this.isClientWithinShopReach(client, vendor.row, vendor.col);
+    });
+  }
+
+  @SubscribeMessage('auctionGetListings')
+  handleAuctionGetListings(): { ok: true; listings: AuctionListingSnapshot[] } {
+    return { ok: true, listings: this.auctionHouse.getAll() };
+  }
+
+  @SubscribeMessage('auctionListItem')
+  handleAuctionListItem(
+    @ConnectedSocket() client: GameSocket,
+    @MessageBody() payload: unknown
+  ): { ok: boolean; message?: string; listings?: AuctionListingSnapshot[] } {
+    const parsed = z
+      .object({
+        itemIndex: z.number().int().min(0),
+        startingGold: z.number().int().min(1),
+        durationMinutes: z.number().int().min(AUCTION_MIN_DURATION_MINUTES).max(AUCTION_MAX_DURATION_MINUTES),
+      })
+      .safeParse(payload);
+    if (!parsed.success) return { ok: false, message: 'Invalid listing.' };
+    if (!this.isNearAnAuctionHouse(client)) return { ok: false, message: "You're too far away to reach the Auction House." };
+
+    const item = client.data.inventory[parsed.data.itemIndex];
+    if (item === undefined) return { ok: false, message: "You don't have that item." };
+
+    client.data.inventory = client.data.inventory.filter((_, i) => i !== parsed.data.itemIndex);
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    void this.persistStats(client);
+    this.auctionHouse.list(client.data.username, item, parsed.data.startingGold, parsed.data.durationMinutes);
+    client.emit('sync', { player: this.snapshotFor(client) });
+
+    const listings = this.auctionHouse.getAll();
+    this.server.emit('auctionState', listings);
+    return { ok: true, listings };
+  }
+
+  @SubscribeMessage('auctionBid')
+  handleAuctionBid(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): { ok: boolean; message?: string } {
+    if (client.data.level <= AUCTION_MIN_BID_LEVEL) {
+      return { ok: false, message: `You must be over level ${AUCTION_MIN_BID_LEVEL} to bid at the Auction House.` };
+    }
+    if (!this.isNearAnAuctionHouse(client)) return { ok: false, message: "You're too far away to reach the Auction House." };
+    const parsed = z.object({ auctionId: z.string(), amount: z.number().int().min(1) }).safeParse(payload);
+    if (!parsed.success) return { ok: false, message: 'Invalid bid.' };
+    if (client.data.gold < parsed.data.amount) return { ok: false, message: "You don't have that much gold." };
+
+    const result = this.auctionHouse.bid(parsed.data.auctionId, client.data.username, parsed.data.amount);
+    if (!result.ok) return { ok: false, message: result.message };
+
+    if (result.previousBidder) {
+      const prevSocketId = this.activeConnections.getActiveSocketId(result.previousBidder);
+      const prevSocket = prevSocketId ? (this.server.sockets.sockets.get(prevSocketId) as GameSocket | undefined) : undefined;
+      if (prevSocket) this.systemMessage(prevSocket, "You've been outbid on an Auction House item.");
+    }
+    this.server.emit('auctionState', this.auctionHouse.getAll());
+    return { ok: true, message: result.extended ? 'Bid placed! The auction was extended by 2 minutes.' : 'Bid placed!' };
+  }
+
+  // Resolves one expired auction — called from the periodic sweep below.
+  // Re-validates the winning bidder can actually still afford it (no
+  // escrow was ever taken at bid time) rather than trusting the stale
+  // amount; works whether the seller/winner are online or not, since a
+  // real-money-value transfer shouldn't ever silently fail to happen just
+  // because someone logged off.
+  private async resolveAuction(listing: AuctionListingSnapshot): Promise<void> {
+    const winner = listing.currentBidderUsername;
+    if (winner) {
+      const winnerSocketId = this.activeConnections.getActiveSocketId(winner);
+      const winnerSocket = winnerSocketId ? (this.server.sockets.sockets.get(winnerSocketId) as GameSocket | undefined) : undefined;
+      if (winnerSocket) {
+        if (winnerSocket.data.gold >= listing.currentBid) {
+          winnerSocket.data.gold -= listing.currentBid;
+          winnerSocket.data.inventory = [...winnerSocket.data.inventory, listing.itemLabel];
+          this.worldManager.updateState(winner, { gold: winnerSocket.data.gold, inventory: winnerSocket.data.inventory });
+          void this.persistStats(winnerSocket);
+          winnerSocket.emit('sync', { player: this.snapshotFor(winnerSocket) });
+          this.systemMessage(winnerSocket, `You won the Auction House bid for ${listing.itemLabel} at ${listing.currentBid} gold!`);
+          await this.creditAuctionSeller(listing.sellerUsername, listing.currentBid, `Your Auction House listing for ${listing.itemLabel} sold for ${listing.currentBid} gold!`);
+          return;
+        }
+        this.systemMessage(
+          winnerSocket,
+          `You won the Auction House bid for ${listing.itemLabel} but no longer have enough gold (${listing.currentBid} needed) — forfeited.`
+        );
+      } else {
+        const doc = await this.playersService.findByUsername(winner);
+        if (doc && doc.gold >= listing.currentBid) {
+          await this.playersService.updateStats(winner, { gold: doc.gold - listing.currentBid, inventory: [...doc.inventory, listing.itemLabel] });
+          await this.creditAuctionSeller(listing.sellerUsername, listing.currentBid, `Your Auction House listing for ${listing.itemLabel} sold for ${listing.currentBid} gold!`);
+          return;
+        }
+      }
+    }
+    // No winner, or the winner couldn't actually pay — the item goes back
+    // to the seller.
+    await this.returnAuctionItemToSeller(listing.sellerUsername, listing.itemLabel);
+  }
+
+  private async creditAuctionSeller(sellerUsername: string, amount: number, message: string): Promise<void> {
+    const sellerSocketId = this.activeConnections.getActiveSocketId(sellerUsername);
+    const sellerSocket = sellerSocketId ? (this.server.sockets.sockets.get(sellerSocketId) as GameSocket | undefined) : undefined;
+    if (sellerSocket) {
+      sellerSocket.data.gold += amount;
+      this.worldManager.updateState(sellerUsername, { gold: sellerSocket.data.gold });
+      void this.persistStats(sellerSocket);
+      sellerSocket.emit('sync', { player: this.snapshotFor(sellerSocket) });
+      this.systemMessage(sellerSocket, message);
+      return;
+    }
+    const doc = await this.playersService.findByUsername(sellerUsername);
+    if (doc) await this.playersService.updateStats(sellerUsername, { gold: doc.gold + amount });
+  }
+
+  private async returnAuctionItemToSeller(sellerUsername: string, itemLabel: string): Promise<void> {
+    const sellerSocketId = this.activeConnections.getActiveSocketId(sellerUsername);
+    const sellerSocket = sellerSocketId ? (this.server.sockets.sockets.get(sellerSocketId) as GameSocket | undefined) : undefined;
+    if (sellerSocket) {
+      sellerSocket.data.inventory = [...sellerSocket.data.inventory, itemLabel];
+      this.worldManager.updateState(sellerUsername, { inventory: sellerSocket.data.inventory });
+      void this.persistStats(sellerSocket);
+      sellerSocket.emit('sync', { player: this.snapshotFor(sellerSocket) });
+      this.systemMessage(sellerSocket, `Your Auction House listing for ${itemLabel} ended with no winning bid — returned to your inventory.`);
+      return;
+    }
+    const doc = await this.playersService.findByUsername(sellerUsername);
+    if (doc) await this.playersService.updateStats(sellerUsername, { inventory: [...doc.inventory, itemLabel] });
   }
 
   // Item 17's Bank vendor — a single balance shared between Kortho's and
@@ -5279,6 +5491,22 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: "You don't have a tamed beast." };
     }
     this.tamedBeastManager.remove(client.data.username);
+    void this.persistStats(client);
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    return { ok: true };
+  }
+
+  // A later follow-up ask: "add a 'Remove' option to the pet window so
+  // players can fully remove a pet and get a new one" — same plain
+  // voluntary, permanent release as removeTamedBeast above (a pet was
+  // previously the one follower type with NO way to voluntarily give it
+  // up short of it dying).
+  @SubscribeMessage('removePet')
+  handleRemovePet(@ConnectedSocket() client: GameSocket): { ok: boolean; message?: string } {
+    if (!this.petManager.getPet(client.data.username)) {
+      return { ok: false, message: "You don't have a pet." };
+    }
+    this.petManager.remove(client.data.username);
     void this.persistStats(client);
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     return { ok: true };
@@ -5553,8 +5781,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // now removed, see the podium-system removal above — but the
       // door's own location is unchanged).
       ((map === 'Utility Classroom' && row === CAVERNA_SECRET_DOOR_POSITION.row && col === CAVERNA_SECRET_DOOR_POSITION.col) ||
-        (map === 'Caverna Secretissima' && row === CAVERNA_SECRET_DOOR_INSIDE_POSITION.row && col === CAVERNA_SECRET_DOOR_INSIDE_POSITION.col));
-    const isChest = kind === 'chest' && map === 'Caverna Secretissima' && row === CAVERNA_CHEST_POSITION.row && col === CAVERNA_CHEST_POSITION.col;
+        (map === 'Secret Chamber' && row === CAVERNA_SECRET_DOOR_INSIDE_POSITION.row && col === CAVERNA_SECRET_DOOR_INSIDE_POSITION.col));
+    const isChest = kind === 'chest' && map === 'Secret Chamber' && row === CAVERNA_CHEST_POSITION.row && col === CAVERNA_CHEST_POSITION.col;
 
     if (!isSecretDoor && !isChest) {
       return { ok: false, message: kind === 'door' ? "This door isn't locked." : "This isn't locked." };
@@ -5607,7 +5835,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // [] forever after (see handleTakeChestItem).
   @SubscribeMessage('openChest')
   handleOpenChest(@ConnectedSocket() client: GameSocket): OpenChestAck {
-    if (client.data.map !== 'Caverna Secretissima' || !this.isWithinLootReach(client, CAVERNA_CHEST_POSITION.row, CAVERNA_CHEST_POSITION.col)) {
+    if (client.data.map !== 'Secret Chamber' || !this.isWithinLootReach(client, CAVERNA_CHEST_POSITION.row, CAVERNA_CHEST_POSITION.col)) {
       return { ok: false, message: "You're too far away to reach the chest." };
     }
     if (!client.data.secretChestUnlocked) {
@@ -5622,7 +5850,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // hotkey/modal client-side (see shared/types.ts's PlayerSnapshot).
   @SubscribeMessage('takeChestItem')
   handleTakeChestItem(@ConnectedSocket() client: GameSocket): TakeChestItemAck {
-    if (client.data.map !== 'Caverna Secretissima' || !this.isWithinLootReach(client, CAVERNA_CHEST_POSITION.row, CAVERNA_CHEST_POSITION.col)) {
+    if (client.data.map !== 'Secret Chamber' || !this.isWithinLootReach(client, CAVERNA_CHEST_POSITION.row, CAVERNA_CHEST_POSITION.col)) {
       return { ok: false, message: "You're too far away to reach the chest." };
     }
     if (!client.data.secretChestUnlocked) {
@@ -7316,7 +7544,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   @SubscribeMessage('castScutum')
   handleCastScutum(@ConnectedSocket() client: GameSocket): CastSpellAck {
     if (client.data.skills[AEGIS_SKILL] === undefined) {
-      const message = "You don't know the scutum spell yet.";
+      const message = "You don't know the aegis spell yet.";
       this.systemMessage(client, message);
       return { ok: false, message };
     }
@@ -7328,12 +7556,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const cooldownUntil = client.data.skillCooldowns[AEGIS_SKILL];
     if (cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
-      const message = `Scutum is still recharging (${secondsLeft}s left).`;
+      const message = `Aegis is still recharging (${secondsLeft}s left).`;
       this.systemMessage(client, message);
       return { ok: false, message };
     }
     if (client.data.mana < AEGIS_MANA_COST) {
-      const message = `You don't have enough mana to cast scutum (${AEGIS_MANA_COST} needed).`;
+      const message = `You don't have enough mana to cast aegis (${AEGIS_MANA_COST} needed).`;
       this.systemMessage(client, message);
       return { ok: false, message };
     }
@@ -8125,10 +8353,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   @SubscribeMessage('castIrrigo')
   handleCastIrrigo(@ConnectedSocket() client: GameSocket, @MessageBody() itemIndex: unknown): CanteenActionAck {
     if (client.data.skills[WATERFILL_SKILL] === undefined) {
-      return { ok: false, message: "You don't know the irrigo spell yet." };
+      return { ok: false, message: "You don't know the waterfill spell yet." };
     }
     if (!isWandItem(client.data.equipment.weapon)) {
-      return { ok: false, message: 'You need a wand equipped to cast irrigo.' };
+      return { ok: false, message: 'You need a wand equipped to cast waterfill.' };
     }
     const resolved = this.resolveCanteenTarget(client, itemIndex);
     if ('reject' in resolved) return resolved.reject;
@@ -8136,7 +8364,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: "You can't fill that." };
     }
     if (client.data.mana < IRRIGO_CAST_MANA_COST) {
-      return { ok: false, message: `You don't have enough mana to cast irrigo (${IRRIGO_CAST_MANA_COST} needed).` };
+      return { ok: false, message: `You don't have enough mana to cast waterfill (${IRRIGO_CAST_MANA_COST} needed).` };
     }
 
     client.data.mana -= IRRIGO_CAST_MANA_COST;
@@ -8268,12 +8496,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // still logging it the normal way via systemMessage below.
   private handleLucemCommand(client: GameSocket): CastSpellAck {
     if (client.data.skills[LIGHT_SKILL] === undefined) {
-      const message = "You don't know the lucem spell yet.";
+      const message = "You don't know the light spell yet.";
       this.systemMessage(client, message);
       return { ok: false, message };
     }
     if (!isWandItem(client.data.equipment.weapon)) {
-      const message = 'You need a wand equipped to cast lucem.';
+      const message = 'You need a wand equipped to cast light.';
       this.systemMessage(client, message);
       return { ok: false, message };
     }
@@ -8284,7 +8512,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const cooldownUntil = client.data.skillCooldowns[LIGHT_SKILL];
     if (!client.data.wandLit && cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
-      const message = `Lucem is still recharging (${secondsLeft}s left).`;
+      const message = `Light is still recharging (${secondsLeft}s left).`;
       this.systemMessage(client, message);
       return { ok: false, message };
     }
@@ -8292,7 +8520,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     let message: string;
     if (!client.data.wandLit) {
       if (client.data.mana < LUCEM_CAST_MANA_COST) {
-        const insufficientMana = `You don't have enough mana to cast lucem (${LUCEM_CAST_MANA_COST} needed).`;
+        const insufficientMana = `You don't have enough mana to cast light (${LUCEM_CAST_MANA_COST} needed).`;
         this.systemMessage(client, insufficientMana);
         return { ok: false, message: insufficientMana };
       }
@@ -8339,7 +8567,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // the same way lucem's own duration does.
   private handleCeleritasCommand(client: GameSocket): CastSpellAck {
     if (client.data.skills[HASTE_SKILL] === undefined) {
-      const message = "You don't know the celeritas spell yet.";
+      const message = "You don't know the haste spell yet.";
       this.systemMessage(client, message);
       return { ok: false, message };
     }
@@ -8353,7 +8581,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const cooldownUntil = client.data.skillCooldowns[HASTE_SKILL];
     if (!client.data.celeritasActive && cooldownUntil !== undefined && cooldownUntil > Date.now()) {
       const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
-      const message = `Celeritas is still recharging (${secondsLeft}s left).`;
+      const message = `Haste is still recharging (${secondsLeft}s left).`;
       this.systemMessage(client, message);
       return { ok: false, message };
     }
@@ -8361,7 +8589,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     let message: string;
     if (!client.data.celeritasActive) {
       if (client.data.mana < CELERITAS_CAST_MANA_COST) {
-        const insufficientMana = `You don't have enough mana to cast celeritas (${CELERITAS_CAST_MANA_COST} needed).`;
+        const insufficientMana = `You don't have enough mana to cast haste (${CELERITAS_CAST_MANA_COST} needed).`;
         this.systemMessage(client, insufficientMana);
         return { ok: false, message: insufficientMana };
       }
@@ -8768,7 +8996,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // handleDrinkItem/handlePourItem/handleCastIrrigo), targeted from the
     // action bar. Guarded here so a stray click doesn't delete one.
     if (isFillableItem(item)) {
-      return { ok: false, message: 'Target it, then use drink, pour out, or irrigo from your action bar.' };
+      return { ok: false, message: 'Target it, then use drink, pour out, or waterfill from your action bar.' };
     }
     if (isManaCrystal(item)) {
       return { ok: false, message: "It hums faintly, but doesn't do anything yet. Hold onto it." };
@@ -8812,7 +9040,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: "You don't have that." };
     }
     if (isFillableItem(item)) {
-      return { ok: false, message: 'Target it, then use drink, pour out, or irrigo from your action bar.' };
+      return { ok: false, message: 'Target it, then use drink, pour out, or waterfill from your action bar.' };
     }
     if (isManaCrystal(item)) {
       return { ok: false, message: "It hums faintly, but doesn't do anything yet. Hold onto it." };
