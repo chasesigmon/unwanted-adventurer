@@ -51,7 +51,7 @@ import {
   nearestLandTile,
 } from '../../shared/maps.js';
 import { pickBoatItem, boatSizeForItem } from '../../shared/boats.js';
-import { resolveMove } from '../worlds/resolveMove.js';
+import { resolveMove, resolveDiagonalMove } from '../worlds/resolveMove.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { STARTING_MAP, DIRECTIONS, MAP_NAMES, HOUSE_NAMES, SPECIALIZATION_PATHS, SPECIALIZATION_LEVEL_REQUIREMENT, houseForMap, specializationForMap } from '../../shared/constants.js';
 import {
@@ -301,7 +301,7 @@ import {
 } from '../../shared/items.js';
 import { questDefinition, QUESTS, LEARN_SPELLS_QUEST_ID, allObjectivesDone } from '../../shared/quests.js';
 import { RECALL_POINTS, recallPointForMap, recallPointById } from '../../shared/recall.js';
-import { MONSTER_KINDS, isFlyingBeastKind } from '../../shared/constants.js';
+import { MONSTER_KINDS, isFlyingBeastKind, isEffectivelyFlying } from '../../shared/constants.js';
 import type { Direction, MapName, MonsterClass, MonsterKind, Race } from '../../shared/constants.js';
 
 const directionSchema = z.enum(DIRECTIONS);
@@ -674,19 +674,36 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         if (pet?.alive) return { followerKind: 'pet', followerId: undefined, mapName: pet.map, row: pet.row, col: pet.col };
         return undefined;
       },
-      (ownerUsername, followerKind, followerId, amount) => {
+      (ownerUsername, followerKind, followerId, amount, attackerKind, attackerId) => {
+        // Items 9 & 20 of a later follow-up ask: "show how much damage the
+        // monster does to the tamed beast/animated dead/pet/summon in the
+        // combat/chat window" (a private notice, same shape as the stone
+        // block's own damageStoneBlock callback above) and "when [it]...
+        // is in attack mode... it should begin auto attacking that
+        // monster" — syncFollowerAttackTargets already no-ops unless the
+        // specific follower's own command is 'attack' (see each manager's
+        // syncAttackTarget), so calling it unconditionally here is safe
+        // and exactly matches "only if already in attack mode."
+        const ownerSocketId = this.activeConnections.getActiveSocketId(ownerUsername);
+        const ownerSocket = ownerSocketId ? (this.server.sockets.sockets.get(ownerSocketId) as GameSocket | undefined) : undefined;
+        this.syncFollowerAttackTargets(ownerUsername, 'monster', attackerId);
+
         if (followerKind === 'tamedBeast') {
+          const before = this.tamedBeastManager.getSnapshotForOwner(ownerUsername);
           const result = this.tamedBeastManager.applyDamage(ownerUsername, amount);
           if (result?.died) {
-            const ownerSocketId = this.activeConnections.getActiveSocketId(ownerUsername);
-            const ownerSocket = ownerSocketId ? (this.server.sockets.sockets.get(ownerSocketId) as GameSocket | undefined) : undefined;
             if (ownerSocket) {
+              ownerSocket.emit('combatNotice', `The ${attackerKind} kills your tamed ${before?.kind ?? 'beast'}! It is gone forever.`);
               this.systemMessage(ownerSocket, 'Your tamed beast has been slain and is gone forever.');
               void this.persistStats(ownerSocket);
             }
             return undefined;
           }
-          return this.tamedBeastManager.getSnapshotForOwner(ownerUsername)?.hp;
+          const remainingHp = this.tamedBeastManager.getSnapshotForOwner(ownerUsername)?.hp;
+          if (ownerSocket && before) {
+            ownerSocket.emit('combatNotice', `The ${attackerKind} hits your tamed ${before.kind} for ${amount} damage (${remainingHp}/${before.maxHp} hp).`);
+          }
+          return remainingHp;
         }
         if (followerKind === 'animatedMonster') {
           // "Summons/animate dead should not get corpses and should
@@ -703,6 +720,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           // original cast-time expiry even though it's already gone.
           if (result?.died && followerId !== undefined && this.activeDuplicates.has(followerId)) {
             this.clearExpiredDuplicate(followerId, ownerUsername);
+          }
+          if (ownerSocket && result) {
+            ownerSocket.emit(
+              'combatNotice',
+              result.died
+                ? `The ${attackerKind} destroys your ${result.monster.name}!`
+                : `The ${attackerKind} hits your ${result.monster.name} for ${amount} damage (${result.monster.hp}/${result.monster.maxHp} hp).`
+            );
           }
           return result ? result.monster.hp : undefined;
         }
@@ -731,9 +756,17 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
           // false` snapshot right away rather than waiting for whatever
           // persistStats call happens to fire next, so a restart in the
           // same instant can't resurrect it back to alive.
-          const ownerSocketId = this.activeConnections.getActiveSocketId(ownerUsername);
-          const ownerSocket = ownerSocketId ? (this.server.sockets.sockets.get(ownerSocketId) as GameSocket | undefined) : undefined;
-          if (ownerSocket) void this.persistStats(ownerSocket);
+          const ownerSocketId2 = this.activeConnections.getActiveSocketId(ownerUsername);
+          const ownerSocket2 = ownerSocketId2 ? (this.server.sockets.sockets.get(ownerSocketId2) as GameSocket | undefined) : undefined;
+          if (ownerSocket2) void this.persistStats(ownerSocket2);
+        }
+        if (ownerSocket && result) {
+          ownerSocket.emit(
+            'combatNotice',
+            result.died
+              ? `The ${attackerKind} slays your ${result.pet.name}!`
+              : `The ${attackerKind} hits your ${result.pet.name} for ${amount} damage (${result.pet.hp}/${result.pet.maxHp} hp).`
+          );
         }
         return result ? result.pet.hp : undefined;
       }
@@ -2336,9 +2369,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // never fights with the real Flight spell's own separate
   // flightActive/flightActiveUntil timer for the same fields. Every
   // existing "is this player flying" call site (water-crossing, boat
-  // state) ORs this in alongside client.data.flightActive.
+  // state) ORs this in alongside client.data.flightActive. A later
+  // follow-up ask ("the druid wisp transformation should be flying
+  // indefinitely as well") added wispActive as a third source — see
+  // shared/constants.ts's isEffectivelyFlying, the one shared predicate
+  // this and every follower manager's own canCrossWater now both call.
   private isEffectivelyFlying(client: GameSocket): boolean {
-    return client.data.flightActive || (client.data.beastTransformActive && isFlyingBeastKind(client.data.beastTransformKind));
+    return isEffectivelyFlying(client.data);
   }
 
   // "The same kind of attack mechanism as the beast... no longer magical
@@ -3164,13 +3201,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, player: this.snapshotFor(client), message, mapState: result.transitioned ? newMapState : undefined };
   }
 
-  // Item 1: "move diagonally, e.g. W+A to go northwest" — same shape as
-  // handleMove above, minus everything that only matters for a
-  // transition (town/house/specialization/secret-door gates, exit
-  // handling) since a diagonal step never transitions maps (see
-  // WorldManagerService.processDiagonalMove's own doc comment). Barrier
-  // confinement and paralysis/dead/rate-limit/water-boat handling are all
-  // still checked, same as an ordinary move.
+  // Item 1: "move diagonally, e.g. W+A to go northwest" — mostly the same
+  // shape as handleMove above, but now (a later follow-up ask: "trying to
+  // go diagonally through a door/entrance says 'You can't go that way'")
+  // ALSO previews/gates/handles map transitions exactly like handleMove
+  // does, since resolveDiagonalMove/processDiagonalMove can transition now
+  // too (see their own doc comments).
   @SubscribeMessage('moveDiagonal')
   async handleMoveDiagonal(@ConnectedSocket() client: GameSocket, @MessageBody() rawPayload: unknown): Promise<MoveAck> {
     const limiter = this.commandLimiters.get(client.id);
@@ -3194,12 +3230,34 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
     const { username } = client.data;
     const loc = this.worldManager.getLocation(username);
+    let preview: ReturnType<typeof resolveDiagonalMove> | undefined;
     if (loc) {
-      const ownBarrier = this.activeBarriers.get(username);
-      if (ownBarrier) {
-        const nextRow = loc.row + parsed.data.dRow;
-        const nextCol = loc.col + parsed.data.dCol;
-        if (ownBarrier.mapName !== loc.mapName || !this.isWithinBarrierZone(loc.mapName, nextRow, nextCol)) {
+      preview = resolveDiagonalMove(loc, parsed.data.dRow, parsed.data.dCol);
+      if (preview.ok && preview.transitioned && TOWN_MAPS.includes(preview.mapName) && !this.canEnterTown(client)) {
+        return {
+          ok: false,
+          player: this.snapshotFor(client),
+          message: `The guards of ${preview.mapName} bar your way — you need a weapon equipped to pass.`,
+        };
+      }
+      if (preview.ok && preview.transitioned && preview.mapName === 'Caverna Secretissima' && !client.data.secretDoorUnlocked) {
+        return { ok: false, player: this.snapshotFor(client), message: 'The door is locked.' };
+      }
+      if (preview.ok && preview.transitioned) {
+        const requiredHouse = houseForMap(preview.mapName);
+        if (requiredHouse && client.data.house !== requiredHouse) {
+          return { ok: false, player: this.snapshotFor(client), message: `Only ${requiredHouse} students may enter here.` };
+        }
+      }
+      if (preview.ok && preview.transitioned) {
+        const requiredSpecialization = specializationForMap(preview.mapName);
+        if (requiredSpecialization && client.data.specialization !== requiredSpecialization) {
+          return { ok: false, player: this.snapshotFor(client), message: 'Only students of this specialization may enter here.' };
+        }
+      }
+      if (preview.ok) {
+        const ownBarrier = this.activeBarriers.get(client.data.username);
+        if (ownBarrier && (ownBarrier.mapName !== preview.mapName || !this.isWithinBarrierZone(preview.mapName, preview.row, preview.col))) {
           return { ok: false, player: this.snapshotFor(client), message: 'Your barrier holds you in place.' };
         }
       }
@@ -3211,9 +3269,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, player: this.snapshotFor(client), message: 'Your session was lost. Please reconnect.' };
     }
     if (!result.ok) {
-      return { ok: false, player: this.snapshotFor(client), message: "You can't go that way." };
+      const blockedByPortal = preview?.ok && isPortalBlocked(preview.mapName, preview.row, preview.col);
+      return blockedByPortal
+        ? { ok: false, player: this.snapshotFor(client) }
+        : { ok: false, player: this.snapshotFor(client), message: "You can't go that way." };
     }
 
+    const previousMap = client.data.map;
+    client.data.map = result.mapName;
     client.data.row = result.row;
     client.data.col = result.col;
     client.data.mv = Math.max(0, client.data.mv - MV_COST_PER_TILE);
@@ -3221,8 +3284,22 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.worldManager.updateState(username, { mv: client.data.mv, inBoat: client.data.inBoat });
     void this.persistPosition(client);
 
-    this.server.to(result.mapName).emit('map:state', this.mapStateFor(result.mapName));
-    return { ok: true, player: this.snapshotFor(client) };
+    if (result.transitioned) {
+      void client.leave(previousMap);
+      void client.join(result.mapName);
+      this.server.to(previousMap).emit('map:state', this.mapStateFor(previousMap));
+      const recallPoint = recallPointForMap(result.mapName);
+      if (recallPoint && !client.data.visitedPois.includes(recallPoint.id)) {
+        client.data.visitedPois = [...client.data.visitedPois, recallPoint.id];
+        void this.persistStats(client);
+      }
+    }
+
+    const newMapState = this.mapStateFor(result.mapName);
+    this.server.to(result.mapName).emit('map:state', newMapState);
+
+    const message = result.transitioned ? `You enter ${result.mapName}.` : undefined;
+    return { ok: true, player: this.snapshotFor(client), message, mapState: result.transitioned ? newMapState : undefined };
   }
 
   // Kill-count quest objectives (a follow-up ask's imp-extermination
@@ -6525,6 +6602,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
+    // A later follow-up ask: "prevent the druid from transforming into a
+    // beast while wisp transformed and vice versa, show a tooltip message
+    // and chat window message" — same outright-rejection shape as
+    // handleCastTransform's own reciprocal check.
+    if (client.data.beastTransformActive) {
+      const message = 'You cannot become a wisp while transformed into a beast.';
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
 
     if (client.data.wispActive) {
       client.data.wispActive = false;
@@ -6671,6 +6757,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!isWandItem(client.data.equipment.weapon)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
+    // A later follow-up ask: "prevent the druid from transforming into a
+    // beast while wisp transformed and vice versa, show a tooltip message
+    // and chat window message" — this used to silently cancel wispActive
+    // and switch forms instead (see the comment that used to sit where
+    // client.data.wispActive is now cleared below); now it's an outright
+    // rejection, matching handleCastWispTransformation's own reciprocal
+    // check.
+    if (client.data.wispActive) {
+      const message = 'You cannot transform into a beast while in wisp form.';
+      this.systemMessage(client, message);
+      return { ok: false, message };
+    }
     // Bug fix: casting Transform again while already transformed used to
     // just reject outright — same "cast it again to cancel" toggle
     // handleCastWispTransformation already gives its own transformation,
@@ -6713,18 +6811,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     } else {
       this.startSkillCooldown(client, TRANSFORM_SKILL);
       // Mutually exclusive with wisp transformation — can't be both forms
-      // at once.
-      if (client.data.wispActive) {
-        client.data.wispActive = false;
-        client.data.wispActiveUntil = null;
-      }
+      // at once (now enforced by an outright rejection above, so
+      // wispActive is always already false by the time we get here).
       client.data.beastTransformActive = true;
       client.data.beastTransformKind = parsed.data.kind as MonsterKind;
       client.data.beastTransformUntil = Date.now() + TRANSFORM_DURATION_MS;
       client.data.maxHp += BEAST_TRANSFORM_HP_BONUS;
       client.data.hp += BEAST_TRANSFORM_HP_BONUS;
       this.worldManager.updateState(client.data.username, {
-        wispActive: false,
         beastTransformActive: true,
         beastTransformKind: client.data.beastTransformKind,
         maxHp: client.data.maxHp,

@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import type { MapName, MonsterKind, Race } from '../../shared/constants.js';
+import { isEffectivelyFlying } from '../../shared/constants.js';
 import type { PetCommand, AnimatedMonsterSnapshot, FollowerEquipmentSlot } from '../../shared/pets.js';
 import { FOLLOWER_ATTACK_COOLDOWN_MS, computeFollowerStep } from '../../shared/pets.js';
 import { animatedMonsterCapFor } from '../../shared/skills.js';
@@ -197,12 +198,14 @@ export class AnimatedMonsterManagerService {
         if (!monster.alive) continue;
 
         // A later follow-up ask: "pets/animated dead/summons cannot
-        // travel over water" unless the OWNER is flying (item 4) — an
-        // animated monster/summon, unlike a pet, only fits on the LARGE
-        // raft, never the small canoe (see shared/boats.ts's own doc
-        // comment on canoe capacity).
+        // travel over water" unless the OWNER is flying (item 4, now
+        // shared/constants.ts's isEffectivelyFlying — flight spell, wisp
+        // transformation, or a beast transform into a flying-capable
+        // kind) — an animated monster/summon, unlike a pet, only fits on
+        // the LARGE raft, never the small canoe (see shared/boats.ts's
+        // own doc comment on canoe capacity).
         const owner = this.worldManager.getLocation(monster.ownerUsername);
-        const canCrossWater = owner?.flightActive === true || owner?.inBoat === 'large';
+        const canCrossWater = (owner !== undefined && isEffectivelyFlying(owner)) || owner?.inBoat === 'large';
 
         if (monster.command === 'attack' && monster.attackTargetKind && monster.attackTargetId) {
           const target = this.targetLocator?.(monster.attackTargetKind, monster.attackTargetId);

@@ -245,6 +245,7 @@ import {
   CHEST_LOCKED_TEXTURE_KEY,
   CHEST_UNLOCKED_TEXTURE_KEY,
   STONE_BLOCK_TEXTURE_KEY,
+  LABYRINTH_WALL_TEXTURE_KEY,
   BED_TEXTURE_KEY,
   LONG_TABLE_TEXTURE_KEY,
   CASTLE_GATE_LEAF_TEXTURE_KEY,
@@ -868,6 +869,7 @@ export class WorldScene extends Phaser.Scene {
     this.load.image(CHEST_LOCKED_TEXTURE_KEY, '/chest-locked.png');
     this.load.image(CHEST_UNLOCKED_TEXTURE_KEY, '/chest-unlocked.png');
     this.load.image(STONE_BLOCK_TEXTURE_KEY, '/stone-block.png');
+    this.load.image(LABYRINTH_WALL_TEXTURE_KEY, '/labyrinth-brick-wall.png');
     this.load.image(LONG_TABLE_TEXTURE_KEY, '/long-table.png');
     this.load.image(CASTLE_GATE_LEAF_TEXTURE_KEY, '/castle-gate-leaf.png');
     this.load.image(HALL_CHAIR_TEXTURE_KEY, '/hall-chair.png');
@@ -2171,6 +2173,24 @@ export class WorldScene extends Phaser.Scene {
     const zoom = baseZoom * (this.zoomedIn ? PLAYER_ZOOM_IN_FACTOR : 1);
     cam.setZoom(zoom);
     cam.setBounds(0, 0, pixelWidth, pixelHeight);
+    // Item 5 of a later follow-up ask ("the road to Floro... is all the
+    // way on the left with a lot of dark space on the right"):
+    // setBounds() flips Phaser's own useBounds on, which makes its
+    // internal preRender clamp EVERY scrollX/scrollY we set below,
+    // regardless of our own centering math. Its clampX/clampY formula
+    // (`bx = bounds.x + (displayWidth - cam.width) / 2`, `bw = max(bx, bx
+    // + bounds.width - displayWidth)`) collapses to a single fixed value
+    // (bx == bw, pinned to the map's own top-left) whenever the map is
+    // narrower/shorter than the viewport — exactly the "Road to X"/
+    // Runestone Way/Silverbranch Road/shop-interior case this item is
+    // about — silently overwriting the centered scrollX/scrollY
+    // updateCameraScroll computes for that axis. Turning useBounds back
+    // off (bounds themselves stay set — only the AUTOMATIC clamp is
+    // disabled) lets updateCameraScroll's own clamping (via cam.clampX/
+    // clampY, called only on the follow axis, where the map is guaranteed
+    // at least as big as the viewport so the collapse can't happen) be
+    // the only thing that ever adjusts scroll.
+    cam.useBounds = false;
     // A later follow-up ask: "any map that is not large enough to cover
     // the whole screen should be centered... with black space on either
     // side (left/right)." The OLD all-or-nothing version only centered
@@ -2212,16 +2232,31 @@ export class WorldScene extends Phaser.Scene {
   // already fits on screen along stays permanently centered; an axis too
   // big to fit tracks the player exactly (same instant, no-smoothing
   // tracking cam.startFollow(player, true, 1, 1) used to provide).
+  // Bug fix (item 2 of a later follow-up ask: "'v' zoom still cuts off the
+  // top/left of the screen"): Phaser's own scrollX/scrollY are anchored to
+  // the camera's UNZOOMED width/height, not to the zoomed display size —
+  // its clampX/clampY (Camera.js's preRender, formerly run automatically
+  // every frame once setBounds/useBounds was active) compute
+  // `bx = bounds.x + (displayWidth - cam.width) / 2`, which goes NEGATIVE
+  // once zoomed in (displayWidth = cam.width/zoom shrinks below cam.width).
+  // The old version of this method clamped scrollX/scrollY to a floor of 0
+  // using the already-zoomed view width/height, which permanently excluded
+  // that negative range and cropped a fixed
+  // `(cam.width - displayWidth) / 2` / `(cam.height - displayHeight) / 2`
+  // strip off the left/top no matter how far the player walked.
+  // Anchoring to cam.width/cam.height (not the zoomed view size) fixes
+  // that math — but Phaser's OWN automatic clamp (still active via
+  // applyCameraBounds's setBounds call) turned out to have a second bug
+  // of its own for the centering branch below (item 5: collapses to a
+  // fixed pinned-left value whenever the map is narrower than the
+  // viewport, see applyCameraBounds's own `cam.useBounds = false` doc
+  // comment) — so useBounds is now off, and clampX/clampY are called
+  // directly here, only on the follow axis, where the map is guaranteed
+  // at least as large as the viewport and the collapse can't occur.
   private updateCameraScroll(): void {
     const cam = this.cameras.main;
-    const viewW = cam.width / cam.zoom;
-    const viewH = cam.height / cam.zoom;
-    cam.scrollX = this.cameraFollowsX
-      ? Phaser.Math.Clamp(this.player.x - viewW / 2, 0, Math.max(0, this.cameraMapPixelWidth - viewW))
-      : (this.cameraMapPixelWidth - viewW) / 2;
-    cam.scrollY = this.cameraFollowsY
-      ? Phaser.Math.Clamp(this.player.y - viewH / 2, 0, Math.max(0, this.cameraMapPixelHeight - viewH))
-      : (this.cameraMapPixelHeight - viewH) / 2;
+    cam.scrollX = this.cameraFollowsX ? cam.clampX(this.player.x - cam.width / 2) : (this.cameraMapPixelWidth - cam.width) / 2;
+    cam.scrollY = this.cameraFollowsY ? cam.clampY(this.player.y - cam.height / 2) : (this.cameraMapPixelHeight - cam.height) / 2;
   }
 
   // Item 9's ambient wisps — purely decorative background flavor for
@@ -2596,14 +2631,18 @@ export class WorldScene extends Phaser.Scene {
     // paths, like a big maze") — real collision (see
     // shared/labyrinthMaze.ts's isLabyrinthWallTile, already wired into
     // WorldManagerService.isOccupied/MonsterManagerService.isFree), one
-    // stone-block sprite per wall tile, same "recreate on every renderMap"
-    // lifecycle as treeSprites/wallTorchSprites above.
+    // brick-wall sprite per wall tile, same "recreate on every renderMap"
+    // lifecycle as treeSprites/wallTorchSprites above. A later follow-up
+    // ask ("don't re-use the stone wall sprite for the Labyrinth, create a
+    // new slimmer looking wall with brick construction") swapped in
+    // LABYRINTH_WALL_TEXTURE_KEY — STONE_BLOCK_TEXTURE_KEY is actually
+    // Murus Lapideus's own summoned creature sprite (it has a face).
     for (const sprite of this.labyrinthWallSprites) sprite.destroy();
     this.labyrinthWallSprites = [];
     if (mapName === 'Labyrinth') {
       for (const { row, col } of labyrinthWallPositions()) {
         const pos = this.tilePosition(row, col);
-        const sprite = this.add.sprite(pos.x, pos.y, STONE_BLOCK_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
+        const sprite = this.add.sprite(pos.x, pos.y, LABYRINTH_WALL_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
         this.labyrinthWallSprites.push(sprite);
       }
     }
@@ -2722,29 +2761,15 @@ export class WorldScene extends Phaser.Scene {
           .setDepth(-0.99)
       );
     } else if (mapName === 'Brimstone Cave') {
-      // The reciprocal thin patch + cave-mouth sprite on Brimstone Cave's
-      // own side (a later follow-up ask: "a cave connection east with
-      // sign 'Bramwick'") — same convention as Bramwick's own side above.
-      const brimstoneBramwickDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
-      const brimstoneBramwickHeight = BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES * 2 + 1;
-      this.roadTiles.push(
-        this.add
-          .tileSprite(
-            (BRIMSTONE_CAVE_SIZE - brimstoneBramwickDepth) * TILE_SIZE,
-            (BRIMSTONE_CAVE_MID_ROW - BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES) * TILE_SIZE,
-            brimstoneBramwickDepth * TILE_SIZE,
-            brimstoneBramwickHeight * TILE_SIZE,
-            DIRT_ROAD_TEXTURE_KEY
-          )
-          .setOrigin(0, 0)
-          .setDepth(-0.99)
-      );
-      {
-        const pos = this.tilePosition(BRIMSTONE_CAVE_MID_ROW, BRIMSTONE_CAVE_SIZE - 1);
-        this.caveEntranceSprites.push(
-          this.add.sprite(pos.x, pos.y + TILE_SIZE / 2, CAVE_ENTRANCE_TEXTURE_KEY).setOrigin(0.5, 1).setDepth(-0.75)
-        );
-      }
+      // A later follow-up ask: "remove the dirt road from Brimstone Cave
+      // and make the cave exit face west" — the reciprocal dirt patch on
+      // this side is gone entirely (bare cave floor now), and the door
+      // itself moved from the east edge to the west edge, facing 'east'
+      // (into the cave's own interior) — the exact same edge/facing
+      // convention Bramwick's own west-edge door into this cave already
+      // uses (see addCaveEntranceSprite(BRAMWICK_BRIMSTONE_ROW, 0, 'east')
+      // above).
+      this.addCaveEntranceSprite(BRIMSTONE_CAVE_MID_ROW, 0, 'east');
     } else if (mapName === 'Runestone Way') {
       // The full-length dirt road overlay (a later follow-up ask: "like
       // the road to floro, except this goes north") — same shape as Road
@@ -3143,26 +3168,11 @@ export class WorldScene extends Phaser.Scene {
       // Great Plains, approaching this north-edge exit from the south.
       this.addCaveEntranceSprite(0, GREAT_PLAINS_MID_COL, 'south');
     } else if (mapName === 'Hexstone Cavern') {
-      // The reciprocal thin patch on Hexstone Cavern's own side (a later
-      // follow-up ask: "a connection to the great plains from the
-      // southeast/south") — originally the south edge; a still-later
-      // follow-up ask ("update the cave exit out of hexstone cavern to
-      // the great plains to be to the east") moved this to the east edge.
-      const hexstoneGreatPlainsDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
-      const hexstoneGreatPlainsHeight = GREAT_PLAINS_FLORO_HALF_WIDTH_TILES * 2 + 1;
-      this.roadTiles.push(
-        this.add
-          .tileSprite(
-            (HEXSTONE_CAVERN_SIZE - hexstoneGreatPlainsDepth) * TILE_SIZE,
-            (HEXSTONE_GREAT_PLAINS_ROW - GREAT_PLAINS_FLORO_HALF_WIDTH_TILES) * TILE_SIZE,
-            hexstoneGreatPlainsDepth * TILE_SIZE,
-            hexstoneGreatPlainsHeight * TILE_SIZE,
-            DIRT_ROAD_TEXTURE_KEY
-          )
-          .setOrigin(0, 0)
-          .setDepth(-0.99)
-      );
-
+      // A later follow-up ask ("remove the dirt road from hexstone
+      // cavern") removed the reciprocal thin dirt patch that used to sit
+      // here — bare cave floor now, same treatment Brimstone Cave's own
+      // side already got (see the 'Brimstone Cave' branch above).
+      //
       // The reciprocal cave-mouth sprite on Hexstone Cavern's own side —
       // now on the east edge, facing west (toward a player standing
       // inside Hexstone Cavern, approaching this east-edge exit from the
@@ -4888,9 +4898,21 @@ export class WorldScene extends Phaser.Scene {
       hideDarkFog();
       return;
     }
+    // Bug fix (item 15 of a later follow-up ask: "at night in silverbranch
+    // road the light from the 'light' spell is a bit off, it is not
+    // centered on the player's wand... same thing for Runestone Way"):
+    // this used `(player.x - cam.scrollX) * cam.zoom`, the exact same
+    // wrong-at-any-zoom-but-1 formula fixed in updateCameraScroll's own
+    // doc comment (Phaser's scrollX is anchored to the camera's UNZOOMED
+    // width, not the zoomed display size) — invisible at the default
+    // zoom (the error term is 0 there) but very visible once zoomed in
+    // (pressing 'v'), which is presumably how the report happened.
+    // cam.worldView is Phaser's own already-correct visible-world
+    // rectangle (see the zoom-cutoff fix above), so anchoring to it
+    // instead sidesteps re-deriving the same clamp math a second time.
     const cam = this.cameras.main;
-    const screenX = (this.player.x - cam.scrollX) * cam.zoom;
-    const screenY = (this.player.y - cam.scrollY) * cam.zoom;
+    const screenX = (this.player.x - cam.worldView.x) * cam.zoom;
+    const screenY = (this.player.y - cam.worldView.y) * cam.zoom;
     // Floored at NO_LIGHT_RADIUS_TILES no matter what — a source with a
     // gradual falloff (the castle's, see staticLightRadiusAt) can compute
     // an effective radius smaller than that floor as the player nears the

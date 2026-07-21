@@ -883,11 +883,24 @@ export const GREAT_PLAINS_FLORO_SIGN_POSITION = { row: GREAT_PLAINS_FLORO_ROW - 
 // via a COLUMN offset instead of the usual row offset — same
 // SIGN_TOP_EDGE_ROW/col-4 shape BRAMWICK_RUNESTONE_SIGN_POSITION already
 // uses for its own north-facing exit.
-export const GREAT_PLAINS_LABYRINTH_SIGN_POSITION = { row: SIGN_TOP_EDGE_ROW, col: GREAT_PLAINS_MID_COL - 4 };
+// A later follow-up ask ("the sign for the Labyrinth needs to be against
+// the north wall") found even SIGN_TOP_EDGE_ROW's own 2-tile inset didn't
+// read as "against" the wall for this one — row 0 itself was tried and
+// confirmed (visually, not just in theory) to fully clip off-screen,
+// exactly the failure mode SIGN_TOP_EDGE_ROW's own doc comment describes,
+// so row 1 is the closest it can sit to the true edge while still
+// rendering completely.
+export const GREAT_PLAINS_LABYRINTH_SIGN_POSITION = { row: 1, col: GREAT_PLAINS_MID_COL - 4 };
 // The Labyrinth's own exit sits on its SOUTH edge (last row) instead of
 // the north/top edge every other SIGN_TOP_EDGE_ROW sign is anchored to —
-// mirrored off the bottom instead.
-export const LABYRINTH_GREAT_PLAINS_SIGN_POSITION = { row: LABYRINTH_SIZE - 1 - SIGN_TOP_EDGE_ROW, col: LABYRINTH_MID_COL - 4 };
+// mirrored off the bottom. A later follow-up ask ("the sign to the Great
+// Plains is not against the south wall") moved this flush against row
+// LABYRINTH_SIZE-1 itself rather than inset by SIGN_TOP_EDGE_ROW — unlike
+// a true row-0 sign (see SIGN_TOP_EDGE_ROW's own doc comment on why THAT
+// needs the inset, to clear the camera's own bound), a south-edge sign
+// has no such clipping risk since the camera's bound only ever prevents
+// scrolling BELOW row 0, never past the map's own last row.
+export const LABYRINTH_GREAT_PLAINS_SIGN_POSITION = { row: LABYRINTH_SIZE - 1, col: LABYRINTH_MID_COL - 4 };
 
 export const GREAT_PLAINS_HEXSTONE_SIGN_POSITION = { row: GREAT_PLAINS_HEXSTONE_ROW + 4, col: 0 };
 // A later follow-up ask moved this connection's own Hexstone-side exit
@@ -902,7 +915,10 @@ export const HEXSTONE_GREAT_PLAINS_SIGN_POSITION = { row: HEXSTONE_GREAT_PLAINS_
 // sign 'Bramwick'" — same two-sided sign-pair convention as every other
 // connection above.
 export const BRAMWICK_BRIMSTONE_SIGN_POSITION = { row: BRAMWICK_BRIMSTONE_ROW - 4, col: 0 };
-export const BRIMSTONE_BRAMWICK_SIGN_POSITION = { row: BRIMSTONE_CAVE_MID_ROW - 4, col: BRIMSTONE_CAVE_SIZE - 1 };
+// A later follow-up ask ("make the cave exit face west") moved Brimstone
+// Cave's own door from its east edge to its west edge — this sign moves
+// with it.
+export const BRIMSTONE_BRAMWICK_SIGN_POSITION = { row: BRIMSTONE_CAVE_MID_ROW - 4, col: 0 };
 
 // A later follow-up ask: "a dirt road connection to the north of
 // Bramwick with sign 'Boulder Pass'" — only the one sign was asked for

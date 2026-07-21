@@ -146,14 +146,22 @@ const VENDOR_SEEDS: VendorSeed[] = [
     items: [],
     greeting: "No creatures for sale just yet, but I'm always looking for stock.",
   },
+  // A later follow-up ask ("have the floro boat shop sell the same items
+  // as the kortho boat shop") repurposed Floro's own Jobs Office into a
+  // Boat Shop too — the exact same conversion Kortho's own Jobs Office
+  // already got (see its own doc comment below), keeping the two towns'
+  // shop lineups in parity.
   {
-    id: 'floro-jobs-office',
-    name: 'Clerk',
-    map: 'Floro Jobs Office',
+    id: 'floro-boat-shop',
+    name: 'Boat Shop',
+    map: 'Floro Boat Shop',
     row: 3,
     col: 15,
-    items: [],
-    greeting: 'No postings on the board today — check back another time.',
+    items: [
+      { label: CANOE_ITEM, price: BOAT_PRICE[CANOE_ITEM] },
+      { label: RAFT_ITEM, price: BOAT_PRICE[RAFT_ITEM] },
+    ],
+    greeting: 'Looking to cross the water? A canoe carries you and one pet — the raft carries your whole company.',
   },
   // --- Kortho, Floro's own rival-town twin (a later follow-up ask: "add
   // the town of Kortho back... same size and rules and shops as when it
@@ -249,8 +257,7 @@ const VENDOR_SEEDS: VendorSeed[] = [
   // --- Bramwick, the small village north of Grimoak Grounds (a later
   // follow-up ask) — same "one shopkeeper just inside the door" shape as
   // Floro's own shops above. Greeting-only for now ("mechanics for the
-  // shops will come later"), same as Floro's own Inn/Bank/Pet Salesman/
-  // Jobs Office. ---
+  // shops will come later"), same as Floro's own Inn/Bank/Pet Salesman. ---
   {
     id: 'bramwick-general-shop',
     name: 'General Shop',

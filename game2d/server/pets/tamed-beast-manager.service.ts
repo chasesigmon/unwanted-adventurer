@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import type { MapName } from '../../shared/constants.js';
+import { isEffectivelyFlying } from '../../shared/constants.js';
 import type { PetCommand, TamedBeastSnapshot } from '../../shared/pets.js';
 import { computeFollowerStep, FOLLOWER_ATTACK_COOLDOWN_MS } from '../../shared/pets.js';
 import { WorldManagerService } from '../worlds/world-manager.service.js';
@@ -113,8 +114,17 @@ export class TamedBeastManagerService {
   tickAll(): Set<MapName> {
     const changedMaps = new Set<MapName>();
     for (const beast of this.beasts.values()) {
+      // Item 6 of a later follow-up ask ("the tamed falcon beast should
+      // have flight, so if the player flies over water, the tamed falcon
+      // should be able to fly across the water with them") — this already
+      // ORs in the OWNER's flight state regardless of the beast's OWN
+      // kind (a falcon, or any other tamed beast, follows across water
+      // exactly when the owner does, matching how a boat carries any
+      // beast alongside its owner too), now via shared/constants.ts's
+      // isEffectivelyFlying so a beast-transform-into-flying-kind or wisp
+      // transformation counts too, not just the timed flight spell.
       const owner = this.worldManager.getLocation(beast.ownerUsername);
-      const canCrossWater = owner?.flightActive === true || owner?.inBoat != null;
+      const canCrossWater = (owner !== undefined && isEffectivelyFlying(owner)) || owner?.inBoat != null;
 
       if (beast.command === 'attack' && beast.attackTargetKind && beast.attackTargetId) {
         const target = this.targetLocator?.(beast.attackTargetKind, beast.attackTargetId);

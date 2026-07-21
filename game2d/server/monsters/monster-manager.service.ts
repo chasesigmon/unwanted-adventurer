@@ -57,12 +57,21 @@ export type FollowerLocator = (
   ownerUsername: string
 ) => { followerKind: 'pet' | 'animatedMonster' | 'tamedBeast'; followerId?: string; mapName: MapName; row: number; col: number } | undefined;
 // Returns the follower's REMAINING hp after the hit, or undefined if it
-// no longer exists (already killed/removed/unsummoned).
+// no longer exists (already killed/removed/unsummoned). A later follow-up
+// ask ("show how much damage the monster does to the tamed beast/animated
+// dead/pet/summon in the combat/chat window", plus "when [it]... is in
+// attack mode... it should begin auto attacking that monster") needs the
+// attacker's own kind/id at the call site — a combat notice needs a label
+// to put in the message, and auto-retaliation needs an id to redirect the
+// follower's attack target to — so both ride along here, same shape as
+// StoneBlockDamager's own attackerLabel.
 export type FollowerDamager = (
   ownerUsername: string,
   followerKind: 'pet' | 'animatedMonster' | 'tamedBeast',
   followerId: string | undefined,
-  amount: number
+  amount: number,
+  attackerKind: MonsterKind,
+  attackerId: string
 ) => number | undefined;
 
 // A much smaller version of the text game's own monster-manager.service.ts
@@ -344,12 +353,14 @@ export class MonsterManagerService {
     const map = getMap(mapName);
     if (row < 0 || row >= map.rows || col < 0 || col >= map.cols) return false;
     if (map.exits.some((e) => e.row === row && e.col === col)) return false;
-    // Item 28: "along the rocky part of Runestone Way" — inverted from
-    // every other species' own collision rule (isRunestoneWayOffRoadBlocked
-    // normally BLOCKS the rocky off-road band); a rune beast instead lives
-    // there and can never step onto the walkable road band itself.
+    // A later follow-up ask ("the rune beasts are on the path, not on the
+    // rocks") reversed item 28's original placement — a rune beast now
+    // follows the SAME collision rule every other species already gets
+    // for free (isRunestoneWayOffRoadBlocked blocks the rocky off-road
+    // band), confined to Runestone Way specifically rather than roaming
+    // every map.
     if (kind === 'rune beast') {
-      if (mapName !== 'Runestone Way' || !isRunestoneWayOffRoadBlocked(mapName, row, col)) return false;
+      if (mapName !== 'Runestone Way' || isRunestoneWayOffRoadBlocked(mapName, row, col)) return false;
     }
     if (isTreeTile(mapName, row, col)) return false;
     if (isLabyrinthWallTile(mapName, row, col)) return false;
@@ -731,7 +742,9 @@ export class MonsterManagerService {
           followerAggro.ownerUsername,
           followerAggro.followerKind,
           followerAggro.followerId,
-          MonsterManagerService.MONSTER_VS_FOLLOWER_DAMAGE
+          MonsterManagerService.MONSTER_VS_FOLLOWER_DAMAGE,
+          monster.kind,
+          monster.id
         );
         // A follower taking a hit is a real state change nobody would
         // otherwise see — chaseAggroTargets's own map:state broadcast is

@@ -76,7 +76,15 @@ const SHOP_INTERIOR_DOOR_ROW = SHOP_INTERIOR_SIZE - 1;
 // SHOP_INTERIOR_SIZE above).
 const TOWN_SHOP_INTERIOR_SIZE = SHOP_INTERIOR_SIZE * 3;
 const TOWN_SHOP_INTERIOR_MID_COL = Math.floor(TOWN_SHOP_INTERIOR_SIZE / 2);
-const TOWN_SHOP_INTERIOR_DOOR_ROW = TOWN_SHOP_INTERIOR_SIZE - 1;
+// A later follow-up ask ("reduce the height of the inside of the shops in
+// floro and kortho by half") halved just the ROW count — the room was
+// taller than the viewport at zoom 1 (see WorldScene's applyCameraBounds),
+// forcing vertical scrolling inside what's supposed to be a small shop;
+// COLS (TOWN_SHOP_INTERIOR_SIZE, still 30) is unchanged, only the depth
+// of the room shrank. Every vendor inside these rooms sits at row 3 (see
+// server/worlds/vendors.ts), safely north of the new door row either way.
+const TOWN_SHOP_INTERIOR_ROWS = Math.round(TOWN_SHOP_INTERIOR_SIZE / 2);
+const TOWN_SHOP_INTERIOR_DOOR_ROW = TOWN_SHOP_INTERIOR_ROWS - 1;
 // Gobbler Village's own 3 hut interiors specifically (a later follow-up
 // ask: "make the inside of the huts in Gobbler Village twice the size") —
 // same "own dedicated multiplier off the base SHOP_INTERIOR_SIZE" shape
@@ -103,14 +111,14 @@ const FLORO_SHOP_DOORS: Record<(typeof FLORO_SHOP_MAPS)[number], { row: number; 
   'Floro Bank': { row: 15, col: 40 },
   'Floro Armorer': { row: 32, col: 15 },
   'Floro Pet Salesman': { row: 32, col: 25 },
-  'Floro Jobs Office': { row: 32, col: 35 },
+  'Floro Boat Shop': { row: 32, col: 35 },
 };
 
 function shopInteriorDefinition(name: (typeof FLORO_SHOP_MAPS)[number]): MapDefinition {
   const door = FLORO_SHOP_DOORS[name];
   return {
     name,
-    rows: TOWN_SHOP_INTERIOR_SIZE,
+    rows: TOWN_SHOP_INTERIOR_ROWS,
     cols: TOWN_SHOP_INTERIOR_SIZE,
     terrain: 'stone',
     exits: [
@@ -168,7 +176,7 @@ function korthoShopInteriorDefinition(name: (typeof KORTHO_SHOP_MAPS)[number]): 
   const door = KORTHO_SHOP_DOORS[name];
   return {
     name,
-    rows: TOWN_SHOP_INTERIOR_SIZE,
+    rows: TOWN_SHOP_INTERIOR_ROWS,
     cols: TOWN_SHOP_INTERIOR_SIZE,
     terrain: 'stone',
     exits: [
@@ -1472,7 +1480,10 @@ export function isRunestoneWayOffRoadBlocked(mapName: MapName, row: number, col:
 // a blanket off-road wall. No second connection at its own far end,
 // same "nothing asked for there yet" reasoning as Runestone Way. ----------
 export const SILVERBRANCH_ROAD_ROWS = Math.round(BRAMWICK_SIZE * 0.25);
-export const SILVERBRANCH_ROAD_COLS = BRAMWICK_SIZE;
+// Doubled (a later follow-up ask: "double the length of Silverbranch
+// Road") — COLS is the road's own "length" axis (it runs east-west), ROWS
+// stays the same width band.
+export const SILVERBRANCH_ROAD_COLS = BRAMWICK_SIZE * 2;
 export const SILVERBRANCH_ROAD_MID_ROW = Math.floor(SILVERBRANCH_ROAD_ROWS / 2);
 export const SILVERBRANCH_ROAD_HALF_WIDTH_TILES = 2;
 export const BRAMWICK_SILVERBRANCH_ROW = Math.floor(BRAMWICK_SIZE / 2);
@@ -1653,7 +1664,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Floro Bank': shopInteriorDefinition('Floro Bank'),
   'Floro Armorer': shopInteriorDefinition('Floro Armorer'),
   'Floro Pet Salesman': shopInteriorDefinition('Floro Pet Salesman'),
-  'Floro Jobs Office': shopInteriorDefinition('Floro Jobs Office'),
+  'Floro Boat Shop': shopInteriorDefinition('Floro Boat Shop'),
   Kortho: {
     name: 'Kortho',
     rows: TOWN_SIZE,
@@ -1832,14 +1843,17 @@ export const MAPS: Record<MapName, MapDefinition> = {
       ...bramwickGroundsEntranceExits('south'),
       ...bramwickShopDoorExits(),
       // A later follow-up ask: "a cave connection to the west of
-      // Bramwick with a sign that reads 'Brimstone Cave'."
+      // Bramwick with a sign that reads 'Brimstone Cave'." A still-later
+      // ask ("make the cave exit face west") moved Brimstone Cave's own
+      // door from its east edge to its west edge (see that map's own
+      // exits below) — this lands the player right next to it now.
       ...roadBandExits({
         row: BRAMWICK_BRIMSTONE_ROW,
         col: 0,
         direction: 'west',
         toMap: 'Brimstone Cave',
         toRow: BRIMSTONE_CAVE_MID_ROW,
-        toCol: BRIMSTONE_CAVE_SIZE - 2,
+        toCol: 1,
         halfWidthTiles: BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES,
         spread: 'row',
       }),
@@ -1884,10 +1898,14 @@ export const MAPS: Record<MapName, MapDefinition> = {
     // as Hexstone Cavern.
     terrain: 'stone',
     exits: [
+      // A later follow-up ask: "remove the dirt road from Brimstone Cave
+      // and make the cave exit face west" — moved from the east edge to
+      // the west edge (see WorldScene's own renderMap, which also drops
+      // the dirt-road patch on this side entirely).
       ...roadBandExits({
         row: BRIMSTONE_CAVE_MID_ROW,
-        col: BRIMSTONE_CAVE_SIZE - 1,
-        direction: 'east',
+        col: 0,
+        direction: 'west',
         toMap: 'Bramwick',
         toRow: BRAMWICK_BRIMSTONE_ROW,
         toCol: 1,

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { resolveMove } from './resolveMove.js';
+import { resolveMove, resolveDiagonalMove } from './resolveMove.js';
 import { NPCS } from './npcs.js';
 import { MonsterManagerService } from '../monsters/monster-manager.service.js';
 import { CorpseManagerService } from './corpse-manager.service.js';
@@ -248,27 +248,25 @@ export class WorldManagerService {
   // switch/Record<Direction, ...> in this codebase — sprite facing,
   // monster wander, door/exit definitions — would then need new cases
   // for, for a purely player-input convenience feature). A diagonal step
-  // never checks map exits at all: every real exit is anchored to one
-  // cardinal direction at one specific tile, so a diagonal step just
-  // moves within the current map or is rejected at its edge/an occupied
-  // tile, exactly like resolveMove's own "no exit" branch.
+  // DOES check for a map exit now (a later follow-up ask: "trying to go
+  // diagonally through a door/entrance says 'You can't go that way'" —
+  // see resolveDiagonalMove's own doc comment), same shape as processMove
+  // above.
   processDiagonalMove(username: string, dRow: -1 | 1, dCol: -1 | 1, flying = false): MoveResult | null {
     const loc = this.playerLocation.get(username);
     if (!loc) return null;
 
-    const map = getMap(loc.mapName);
-    const nextRow = loc.row + dRow;
-    const nextCol = loc.col + dCol;
-    if (nextRow < 0 || nextRow >= map.rows || nextCol < 0 || nextCol >= map.cols) {
-      return { ok: false, transitioned: false, mapName: loc.mapName, row: loc.row, col: loc.col };
-    }
-    if (this.isOccupied(loc.mapName, nextRow, nextCol, username, flying)) {
+    const result = resolveDiagonalMove(loc, dRow, dCol);
+    if (!result.ok) return result;
+
+    if (this.isOccupied(result.mapName, result.row, result.col, username, flying)) {
       return { ok: false, transitioned: false, mapName: loc.mapName, row: loc.row, col: loc.col };
     }
 
-    loc.row = nextRow;
-    loc.col = nextCol;
-    return { ok: true, transitioned: false, mapName: loc.mapName, row: nextRow, col: nextCol };
+    loc.mapName = result.mapName;
+    loc.row = result.row;
+    loc.col = result.col;
+    return result;
   }
 
   // The flight spell's own spacebar burst (a later follow-up ask) — same

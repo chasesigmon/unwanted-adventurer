@@ -68,7 +68,11 @@ export const FLORO_SHOP_MAPS = [
   'Floro Bank',
   'Floro Armorer',
   'Floro Pet Salesman',
-  'Floro Jobs Office',
+  // A later follow-up ask ("have the floro boat shop sell the same items
+  // as the kortho boat shop") repurposed the Jobs Office into a Boat Shop
+  // here too — the same conversion Kortho's own Jobs Office already got
+  // (see KORTHO_SHOP_MAPS's own doc comment below).
+  'Floro Boat Shop',
 ] as const;
 
 // Kortho (a later follow-up ask: "add the town of Kortho back... same
@@ -495,6 +499,28 @@ export const FLYING_MONSTER_KINDS: readonly MonsterKind[] = ['falcon'];
 
 export function isFlyingBeastKind(kind: MonsterKind | null | undefined): boolean {
   return kind != null && (FLYING_MONSTER_KINDS as readonly string[]).includes(kind);
+}
+
+// A later follow-up ask: "the tamed falcon should be able to fly across
+// the water" with the player, plus "the druid wisp transformation should
+// be flying indefinitely as well" — a single shared "is this player
+// currently flying" predicate, since the answer now depends on THREE
+// independent states (the timed flight spell, a beast transform into a
+// flying-capable kind, and wisp transformation) and needs to agree across
+// game.gateway.ts's own player-movement water-crossing check AND every
+// follower manager's (pet/animated-monster/tamed-beast) canCrossWater —
+// those only ever see a PlayerState snapshot, never the live GameSocket,
+// so this takes the narrowest shape both sides already have in common
+// rather than each re-deriving its own copy.
+export interface FlightStateSnapshot {
+  flightActive: boolean;
+  wispActive: boolean;
+  beastTransformActive: boolean;
+  beastTransformKind: MonsterKind | null;
+}
+
+export function isEffectivelyFlying(state: FlightStateSnapshot): boolean {
+  return state.flightActive || state.wispActive || (state.beastTransformActive && isFlyingBeastKind(state.beastTransformKind));
 }
 
 // Same idea as the text game's own monster classification — determines

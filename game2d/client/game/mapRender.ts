@@ -216,6 +216,13 @@ export const CHEST_UNLOCKED_TEXTURE_KEY = 'chest-unlocked';
 // Murus lapideus's own summoned stone block (a later follow-up ask) —
 // see WorldScene's stoneBlockSprites.
 export const STONE_BLOCK_TEXTURE_KEY = 'stone-block';
+// A later follow-up ask: "don't re-use the stone wall sprite for the
+// Labyrinth, create a new slimmer looking wall with brick construction" —
+// STONE_BLOCK_TEXTURE_KEY above is actually Murus Lapideus's own summoned
+// creature sprite (it has a face), never meant to be a plain wall; the
+// Labyrinth's maze walls (see WorldScene's labyrinthWallSprites) get their
+// own purpose-built texture instead.
+export const LABYRINTH_WALL_TEXTURE_KEY = 'labyrinth-brick-wall';
 // A Dorms room's own beds (a later follow-up ask) — see
 // shared/lighting.ts's bedPositionsFor.
 export const BED_TEXTURE_KEY = 'bed';

@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import type { MapName } from '../../shared/constants.js';
+import { isEffectivelyFlying } from '../../shared/constants.js';
 import type { PetKind, PetCommand, PetSnapshot } from '../../shared/pets.js';
 import {
   PET_KIND_LABELS,
@@ -281,12 +282,14 @@ export class PetManagerService {
       if (!pet.alive) continue;
 
       // A later follow-up ask: "pets... cannot travel over water" unless
-      // the OWNER is flying (item 4) or riding a boat (a pet fits on
-      // either size, see shared/boats.ts) — this is the owner's own
-      // state, not the pet's, so it's looked up once per pet regardless
-      // of which branch below actually moves it.
+      // the OWNER is flying (item 4, now shared/constants.ts's
+      // isEffectivelyFlying — flight spell, wisp transformation, or a
+      // beast transform into a flying-capable kind) or riding a boat (a
+      // pet fits on either size, see shared/boats.ts) — this is the
+      // owner's own state, not the pet's, so it's looked up once per pet
+      // regardless of which branch below actually moves it.
       const owner = this.worldManager.getLocation(pet.ownerUsername);
-      const canCrossWater = owner?.flightActive === true || owner?.inBoat != null;
+      const canCrossWater = (owner !== undefined && isEffectivelyFlying(owner)) || owner?.inBoat != null;
 
       if (pet.command === 'attack' && pet.attackTargetKind && pet.attackTargetId) {
         const target = this.targetLocator?.(pet.attackTargetKind, pet.attackTargetId);

@@ -658,12 +658,16 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
   // plains" — same figures as dire wolf above, just its own kind/sprite/
   // home map; the default random-wander behavior already gives Great
   // Plains' other monsters (no patrolRangeTiles here) covers "roam
-  // around."
+  // around." maxCount bumped (a still-later follow-up ask: "add some
+  // more bears in great plains for its size") — bear is this 100x100
+  // map's ONLY species, same reasoning as Brimstone Cave's own troll bump
+  // and Mystical Timberland's own woodland fairy bump elsewhere in this
+  // file.
   {
     kind: 'bear',
     monsterClass: 'beast',
     homeMap: 'Great Plains',
-    maxCount: 8,
+    maxCount: 22,
     level: 20,
     startingHp: 200,
     expReward: monsterExpRewardForLevel(20),
@@ -760,11 +764,15 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
   },
 
   // ---------- Item 27: Brimstone Cave's own trolls ----------
+  // maxCount bumped (a later follow-up ask: "there's only a handful of
+  // trolls in brimstone cave, increase the amount... for the large size
+  // that it is") — same reasoning as the Labyrinth's own 30 orcs for a
+  // large map with only one species to populate it.
   {
     kind: 'troll',
     monsterClass: 'normal',
     homeMap: 'Brimstone Cave',
-    maxCount: 8,
+    maxCount: 24,
     level: 10,
     startingHp: monsterHpForLevel(10),
     expReward: monsterExpRewardForLevel(10),
@@ -814,8 +822,12 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
   },
 
   // ---------- Item 28: Runestone Way's own rune beasts ----------
-  // Confined to the rocky off-road band specifically — see
-  // MonsterManagerService.isFree's own 'rune beast' branch.
+  // A later follow-up ask ("the rune beasts are on the path, not on the
+  // rocks, and they should be aggressive/aggro to a player that gets
+  // near") reversed the original confinement — see MonsterManagerService.
+  // isFree's own 'rune beast' branch, now inverted to keep them ON the
+  // walkable road band instead of the rocky off-road one — and added a
+  // real aggro radius, same value every other aggressive species here uses.
   {
     kind: 'rune beast',
     monsterClass: 'normal',
@@ -825,6 +837,7 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     startingHp: monsterHpForLevel(15),
     expReward: monsterExpRewardForLevel(15),
     attackDamage: monsterAttackDamageForLevel(15),
+    aggroRadiusTiles: 5,
     goldRewardRange: [20, 25],
     // "A chance to drop 'a glowing rune' (future mechanic)" — an inert
     // item for now, same "earnable now, dormant until something reads
@@ -833,11 +846,16 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
   },
 
   // ---------- Item 29: Mystical Timberland's own woodland fairies ----------
+  // maxCount bumped (a later follow-up ask: "there's only a handful of
+  // woodland fairies... but there should be more for the size of it") —
+  // same reasoning as Brimstone Cave's own troll bump above, for a
+  // similarly large map (MYSTICAL_TIMBERLAND_ROWS/COLS mirror Grimoak
+  // Grounds' own) with only one species to populate it.
   {
     kind: 'woodland fairy',
     monsterClass: 'normal',
     homeMap: 'Mystical Timberland',
-    maxCount: 8,
+    maxCount: 22,
     level: 10,
     startingHp: monsterHpForLevel(10),
     expReward: monsterExpRewardForLevel(10),

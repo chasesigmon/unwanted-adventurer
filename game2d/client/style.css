@@ -428,13 +428,20 @@ body {
      formula) means Phaser's own RESIZE scale manager sizes the canvas to
      this smaller box automatically, so nothing the camera does can ever
      place content under the HUD — there's real empty space there instead
-     of an overlap. Sized generously (the log panel's own default height,
-     see #log-panel below) rather than reading the panels' live layout.
-     #daynight-overlay/#dark-fog-overlay share these exact same vars so
-     their own screen-space math (computed in canvas-relative
-     coordinates) lines up with the canvas without any further offset. */
+     of an overlap. #daynight-overlay/#dark-fog-overlay share these exact
+     same vars so their own screen-space math (computed in canvas-relative
+     coordinates) lines up with the canvas without any further offset.
+     Bug fix: the bottom margin used to be sized generously enough to fit
+     the log panel's own full default height (232px) — "make it like the
+     top with only an inch or two of space" traded that guarantee away
+     for more screen real estate; the log panel (and corner buttons) now
+     floats OVER the bottom strip of the game view again when expanded,
+     same as before the original HUD-overlap fix, rather than getting its
+     own fully reserved space. Sized just past the corner-buttons row's
+     own footprint (~40px tall, bottom:12px), matching the top margin's
+     own scale. */
   --hud-top-margin: 56px;
-  --hud-bottom-margin: 244px;
+  --hud-bottom-margin: 64px;
 }
 
 #game-container {

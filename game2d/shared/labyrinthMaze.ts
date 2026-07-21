@@ -7,31 +7,47 @@
 // "dense scatter, not true corridors" choice for Mystical Timberland)
 // needs actual guaranteed-connected corridors, so this uses a classic
 // recursive-backtracker instead of scatter-and-verify.
-import { LABYRINTH_SIZE, LABYRINTH_MID_COL } from './maps.js';
+//
+// A later follow-up ask ("the walls are so close together that you can't
+// even tell where to walk to fit through, reduce the number and make it
+// look better") reworked this from the original "cell on every EVEN tile,
+// wall/connector on every ODD tile" grid (1-tile-wide cells AND corridors
+// — a dense thicket) into wider, multi-tile CELL BLOCKS connected by
+// equally wide corridors, with a THIN single-tile wall between them —
+// still a real spanning-tree maze (every block is guaranteed reachable),
+// just with corridors wide enough to actually read as a path rather than
+// a maze of solid rock with pinholes through it.
+import { LABYRINTH_SIZE } from './maps.js';
 import type { MapName } from './constants.js';
 
-// Cells sit at EVEN (row,col) coordinates, walls/connectors at ODD ones —
-// the standard "maze on a grid twice the cell size" representation. 30
-// cells per axis at coordinates 0,2,4,...,58 covers rows/cols 0-58,
-// deliberately one short of LABYRINTH_SIZE(60) on each edge: row/col 59
-// stays a permanently-open 1-tile border strip, doubling as the entrance
-// foyer for the south door (see shared/maps.ts's own Labyrinth exit,
-// which lands at row LABYRINTH_SIZE-1, col LABYRINTH_MID_COL) — the tile
-// directly north of it, (58, 30), is always a real maze cell (even,even),
-// so the door always opens straight into the maze with no special-casing
-// needed.
-const MAZE_CELL_COUNT = Math.floor(LABYRINTH_SIZE / 2);
+// Each logical maze cell is a CELL_OPEN_SIZE x CELL_OPEN_SIZE block of
+// open floor; WALL_THICKNESS-thick walls separate adjacent blocks unless
+// a passage between them was carved. PITCH is the tile distance between
+// two adjacent blocks' own origins.
+const CELL_OPEN_SIZE = 3;
+const WALL_THICKNESS = 1;
+const PITCH = CELL_OPEN_SIZE + WALL_THICKNESS;
+// 15 cells per axis, covering rows/cols 0-58 — deliberately one short of
+// LABYRINTH_SIZE(60) on each edge: row/col 59 stays a permanently-open
+// 1-tile border strip, doubling as the entrance foyer for the south door
+// (see shared/maps.ts's own Labyrinth exit, which lands at row
+// LABYRINTH_SIZE-1, col LABYRINTH_MID_COL) — the tile directly north of
+// it, (58, 30), always falls inside the last row of cell block (14, 7)'s
+// own open interior (see the entrance-guarantee note in
+// generateLabyrinthWalls below), so the door always opens straight into
+// open floor with no special-casing needed.
+const MAZE_CELL_COUNT = Math.floor(LABYRINTH_SIZE / PITCH);
 
 function seededRandom(seed: number): number {
   const x = Math.sin(seed * 91.345) * 57123.671;
   return x - Math.floor(x);
 }
 
-// Iterative (not recursive) so a 900-cell maze can't ever risk a call-
-// stack overflow — a plain array used as the backtracking stack instead.
+// Iterative (not recursive) so a large maze can't ever risk a call-stack
+// overflow — a plain array used as the backtracking stack instead.
 function generateLabyrinthWalls(): Set<string> {
   const walls = new Set<string>();
-  const span = (MAZE_CELL_COUNT - 1) * 2; // 58 — the last valid cell coordinate
+  const span = (MAZE_CELL_COUNT - 1) * PITCH + CELL_OPEN_SIZE - 1; // 58 — the last valid wall-grid coordinate
   for (let row = 0; row <= span; row++) {
     for (let col = 0; col <= span; col++) {
       walls.add(`${row},${col}`);
@@ -39,7 +55,47 @@ function generateLabyrinthWalls(): Set<string> {
   }
 
   const cellKey = (ci: number, cj: number) => `${ci},${cj}`;
-  const cellTile = (ci: number, cj: number) => ({ row: ci * 2, col: cj * 2 });
+
+  // Clears an entire CELL_OPEN_SIZE x CELL_OPEN_SIZE block — a visited
+  // cell is fully open floor, not just its own single anchor tile.
+  const carveCell = (ci: number, cj: number): void => {
+    const baseRow = ci * PITCH;
+    const baseCol = cj * PITCH;
+    for (let r = 0; r < CELL_OPEN_SIZE; r++) {
+      for (let c = 0; c < CELL_OPEN_SIZE; c++) {
+        walls.delete(`${baseRow + r},${baseCol + c}`);
+      }
+    }
+  };
+
+  // Clears the WALL_THICKNESS-thick band directly between two ADJACENT
+  // cells (sharing a row or column index), spanning the full
+  // CELL_OPEN_SIZE width of the passage — a full-width doorway between
+  // the two open blocks, not a single pinhole.
+  const carveConnector = (ci: number, cj: number, ni: number, nj: number): void => {
+    if (ci === ni) {
+      // Adjacent columns (east/west neighbor) — same row band, connector
+      // sits right after the westmost cell's own block.
+      const rowBase = ci * PITCH;
+      const colBase = Math.min(cj, nj) * PITCH + CELL_OPEN_SIZE;
+      for (let r = 0; r < CELL_OPEN_SIZE; r++) {
+        for (let c = 0; c < WALL_THICKNESS; c++) {
+          walls.delete(`${rowBase + r},${colBase + c}`);
+        }
+      }
+    } else {
+      // Adjacent rows (north/south neighbor) — same column band,
+      // connector sits right after the northmost cell's own block.
+      const colBase = cj * PITCH;
+      const rowBase = Math.min(ci, ni) * PITCH + CELL_OPEN_SIZE;
+      for (let r = 0; r < WALL_THICKNESS; r++) {
+        for (let c = 0; c < CELL_OPEN_SIZE; c++) {
+          walls.delete(`${rowBase + r},${colBase + c}`);
+        }
+      }
+    }
+  };
+
   const visited = new Set<string>();
   let seedCounter = 0;
   const nextRandom = () => {
@@ -48,11 +104,10 @@ function generateLabyrinthWalls(): Set<string> {
   };
 
   const startCi = 0;
-  const startCj = MAZE_CELL_COUNT - 1; // near the entrance's own column (58,30 is close to cell col 15 of 0-29 — start doesn't need to align, just deterministic)
+  const startCj = MAZE_CELL_COUNT - 1;
   const stack: Array<[number, number]> = [[startCi, startCj]];
   visited.add(cellKey(startCi, startCj));
-  const startTile = cellTile(startCi, startCj);
-  walls.delete(`${startTile.row},${startTile.col}`);
+  carveCell(startCi, startCj);
 
   while (stack.length > 0) {
     const [ci, cj] = stack[stack.length - 1]!;
@@ -72,21 +127,10 @@ function generateLabyrinthWalls(): Set<string> {
     }
     const [nci, ncj] = candidates[Math.floor(nextRandom() * candidates.length)]!;
     visited.add(cellKey(nci, ncj));
-    const curTile = cellTile(ci, cj);
-    const nextTile = cellTile(nci, ncj);
-    walls.delete(`${nextTile.row},${nextTile.col}`);
-    walls.delete(`${(curTile.row + nextTile.row) / 2},${(curTile.col + nextTile.col) / 2}`);
+    carveCell(nci, ncj);
+    carveConnector(ci, cj, nci, ncj);
     stack.push([nci, ncj]);
   }
-
-  // The Labyrinth's own sign back to the Great Plains (a later follow-up
-  // ask: shared/lighting.ts's LABYRINTH_GREAT_PLAINS_SIGN_POSITION) sits
-  // on an ODD row (a wall/connector position that isn't guaranteed carved
-  // open by the maze RNG above) — force it clear so the sign is never
-  // embedded in a solid wall tile.
-  const SIGN_ROW = LABYRINTH_SIZE - 1 - 2;
-  const SIGN_COL = LABYRINTH_MID_COL - 4;
-  walls.delete(`${SIGN_ROW},${SIGN_COL}`);
 
   return walls;
 }
