@@ -234,6 +234,7 @@ export class NetworkManager extends EventTarget {
     );
     socket.on('chat', (data: ChatPayload) => this.dispatchEvent(new CustomEvent<ChatPayload>('chat', { detail: data })));
     socket.on('combatNotice', (message: string) => this.dispatchEvent(new CustomEvent<string>('combatNotice', { detail: message })));
+    socket.on('selfDamage', (data: { damage: number }) => this.dispatchEvent(new CustomEvent<{ damage: number }>('selfDamage', { detail: data })));
     socket.on('followerEngaged', (data) => this.dispatchEvent(new CustomEvent<{ targetKind: 'monster' | 'player'; targetId: string }>('followerEngaged', { detail: data })));
     // A later follow-up ask: "Create an Auction House in both Floro and
     // Kortho... make sure the duration on the auction house modal is

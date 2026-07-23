@@ -172,6 +172,30 @@ export interface PlayerSnapshot {
   // reduction itself is computed fresh per-hit server-side.
   armorVsPhysical: number;
   armorVsMagical: number;
+  // A later follow-up ask: "include Physical Damage # and Magic Damage #
+  // [on the character sheet]... show the bonuses being added to them
+  // next to them in parentheses like: 4 (2)" — same "server-computed
+  // transparency number, not used for the real per-hit combat roll"
+  // treatment as armorVsPhysical/armorVsMagical above. Split into a base
+  // (level + the driving stat, no opponent-dependent terms — an actual
+  // hit ALSO adds a relative attributeBonus edge over whichever specific
+  // opponent it lands on, and subtracts THEIR armor, neither of which
+  // makes sense to bake into a stable character-sheet number) and a
+  // bonus (the equipped weapon's own flat contribution — a dagger/sword's
+  // damage bonus, or a wand's ranged-damage bonus) so the client can
+  // render both parts without needing server-only combat/formulas.ts
+  // (shared/ can't import it).
+  physicalDamageBase: number;
+  physicalDamageBonus: number;
+  magicDamageBase: number;
+  magicDamageBonus: number;
+  // Same base/bonus split as the two damage stats above, for the two
+  // Armor stats — armorVsPhysical/armorVsMagical above stay the existing
+  // COMBINED total (unchanged, in case anything else already depends on
+  // it); these are just the bonus HALF of that total, so the client can
+  // show "base (bonus)" the same way (base = total - bonus).
+  armorVsPhysicalBonus: number;
+  armorVsMagicalBonus: number;
   // Condeath tracking (item 23) — every death, from any cause, counts
   // toward CONDEATH_LIMIT (65); see game.gateway.ts's applyCondeathPenalty.
   deathCount: number;
@@ -1015,6 +1039,16 @@ export interface ServerToClientEvents {
   // the player's OWN summoned stone block, which isn't a player/npc/
   // monster attacker at all).
   combatNotice: (message: string) => void;
+  // A later follow-up ask: "show the damage that a player takes on
+  // screen when they get hit, right above the player like a fading
+  // number." A monster's own counter-attack/proactive hit (see
+  // resolveMonsterCounterAttack) is resolved privately (same one-client
+  // reasoning as combatNotice above — it's not part of the broadcast
+  // 'combat' event's own player-vs-target shape, since the ATTACKER here
+  // is a monster, not a real player username), so the resulting damage
+  // number has nowhere else to ride along on. Private to whoever just
+  // took the hit.
+  selfDamage: (data: { damage: number }) => void;
   // A later follow-up ask: "when the follower goes and attacks a target
   // the player should begin to auto attack or auto move toward the
   // monster... similar to right clicking" — private to the follower's

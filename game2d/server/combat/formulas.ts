@@ -135,6 +135,26 @@ export function baseDamage(strength: number, level: number): number {
   return PUNCH_BASE_DAMAGE_FLOOR + Math.floor(strength / 2) + Math.floor(level / 2);
 }
 
+// A later follow-up ask: "make sure ranged vs physical damage is
+// balanced." The wand bolt's own basic ranged attack used to run through
+// scaledSpellDamage's compounding 1.1^intelligence curve — the same
+// formula every NAMED spell's own damage uses — while melee's own
+// baseDamage above scales purely LINEARLY with strength. At equal
+// invested stat points this let ranged noticeably out-damage melee, and
+// the gap only widened at higher levels/stats (measured: level 20,
+// stat 20, punch skill 50%+dagger — melee ~27 dmg after mitigation vs
+// wand bolt ~75 dmg — nearly 3x, with the gap still growing at higher
+// levels since one side is exponential and the other linear). This gives
+// the wand bolt the exact same linear shape baseDamage() above already
+// uses for melee, just driven by intelligence instead of strength —
+// named spells (fireball, arcane bolt, elemental bolts, ...) still use
+// scaledSpellDamage completely unchanged; this is scoped to the ranged
+// BASIC attack specifically, mirroring melee's own basic attack, not a
+// change to the spellcasting system as a whole.
+export function wandBoltBaseDamage(baseWandDamage: number, intelligence: number, level: number): number {
+  return baseWandDamage + Math.floor(intelligence / 2) + Math.floor(level / 2);
+}
+
 // Every 2 points of relative strength edge, and every 2 levels of
 // relative level edge, add +1 damage — clamped at 0 (being weaker or
 // lower-level never subtracts damage, it just earns no bonus). Since this
@@ -242,7 +262,26 @@ export const WEAPON_DAMAGE_BONUS: Record<string, number> = {
   // the Chieftain's club, one tier apart, both above bone dagger's own +2.
   'Muckfang Blade': 4,
   'Skullcrush Cudgel': 5,
+  // Floro/Kortho's blacksmith (a later follow-up ask) — every "sword of
+  // <stat>" shares this same flat +2 physical damage, on top of its own
+  // +1 stat bonus (see the JEWELRY_*_BONUS tables above).
+  'sword of intelligence': 2,
+  'sword of strength': 2,
+  'sword of wisdom': 2,
+  'sword of constitution': 2,
+  'sword of dexterity': 2,
+  'sword of luck': 2,
 };
+
+// A later follow-up ask: "the wands should give +1 to ranged magic basic
+// damage" — a flat bonus shared by EVERY wand-type item (isWandItem's own
+// `.startsWith('wand of')` match), old portal-dungeon wands included, not
+// a per-specific-wand lookup table like WEAPON_DAMAGE_BONUS above, since
+// the ask describes it as a trait of the wand CATEGORY, not a stacking
+// per-item value.
+export function wandRangedDamageBonus(equipment: Record<string, string>): number {
+  return isWandItem(equipment.weapon) ? 1 : 0;
+}
 
 // Any equipped weapon whose name contains "dagger" also adds
 // skillBonus(dagger skill) on top of its own flat bonus — same shape as
@@ -359,6 +398,11 @@ const JEWELRY_DEXTERITY_BONUS: Record<string, number> = {
   // intelligence (see JEWELRY_INTELLIGENCE_BONUS below too).
   'wand of frost': 2,
   'wand of the ashen king': 2,
+  // Floro/Kortho's blacksmith (a later follow-up ask) — one wand/sword
+  // pair per core stat, +1 each (see shared/equipment.ts's own doc
+  // comment on the full set).
+  'wand of dexterity': 1,
+  'sword of dexterity': 1,
 };
 
 export function dexterityEquipmentBonus(equipment: Record<string, string>): number {
@@ -385,6 +429,10 @@ const JEWELRY_INTELLIGENCE_BONUS: Record<string, number> = {
   'wand of embers': 2,
   'wand of shadows': 3,
   'wand of the ashen king': 4,
+  // Floro/Kortho's blacksmith (a later follow-up ask) — the sword-of-
+  // intelligence half of the wand/sword pair (wand of intelligence
+  // already existed above).
+  'sword of intelligence': 1,
 };
 
 export function intelligenceEquipmentBonus(equipment: Record<string, string>): number {
@@ -404,12 +452,62 @@ export function intelligenceEquipmentBonus(equipment: Record<string, string>): n
 // disturb).
 const JEWELRY_CONSTITUTION_BONUS: Record<string, number> = {
   'a woodland ring': 1,
+  // Floro/Kortho's blacksmith (a later follow-up ask) — the constitution
+  // half of the wand/sword pair.
+  'wand of constitution': 1,
+  'sword of constitution': 1,
 };
 
 export function constitutionEquipmentBonus(equipment: Record<string, string>): number {
   let bonus = 0;
   for (const item of Object.values(equipment)) {
     bonus += JEWELRY_CONSTITUTION_BONUS[item] ?? 0;
+  }
+  return bonus;
+}
+
+// A later follow-up ask: Floro/Kortho's blacksmith sells a "wand of
+// strength"/"sword of strength" pair (+1 strength each) — no equipment
+// ever granted a strength bonus before this, so this is a brand new
+// table/function, same shape as dexterityEquipmentBonus/
+// intelligenceEquipmentBonus/constitutionEquipmentBonus above.
+const STRENGTH_EQUIPMENT_BONUS: Record<string, number> = {
+  'wand of strength': 1,
+  'sword of strength': 1,
+};
+
+export function strengthEquipmentBonus(equipment: Record<string, string>): number {
+  let bonus = 0;
+  for (const item of Object.values(equipment)) {
+    bonus += STRENGTH_EQUIPMENT_BONUS[item] ?? 0;
+  }
+  return bonus;
+}
+
+// Same as STRENGTH_EQUIPMENT_BONUS above, for the wisdom pair.
+const WISDOM_EQUIPMENT_BONUS: Record<string, number> = {
+  'wand of wisdom': 1,
+  'sword of wisdom': 1,
+};
+
+export function wisdomEquipmentBonus(equipment: Record<string, string>): number {
+  let bonus = 0;
+  for (const item of Object.values(equipment)) {
+    bonus += WISDOM_EQUIPMENT_BONUS[item] ?? 0;
+  }
+  return bonus;
+}
+
+// Same as STRENGTH_EQUIPMENT_BONUS above, for the luck pair.
+const LUCK_EQUIPMENT_BONUS: Record<string, number> = {
+  'wand of luck': 1,
+  'sword of luck': 1,
+};
+
+export function luckEquipmentBonus(equipment: Record<string, string>): number {
+  let bonus = 0;
+  for (const item of Object.values(equipment)) {
+    bonus += LUCK_EQUIPMENT_BONUS[item] ?? 0;
   }
   return bonus;
 }
@@ -717,6 +815,16 @@ export const PER_LEVEL_VITAL_GAIN_MAX = 15;
 export function perLevelVitalGain(drivingStat: number): number {
   const raw = PER_LEVEL_VITAL_GAIN_MIN + Math.random() * (PER_LEVEL_VITAL_GAIN_MAX - PER_LEVEL_VITAL_GAIN_MIN) + (drivingStat - 1) * 0.3;
   return Math.min(PER_LEVEL_VITAL_GAIN_MAX, Math.max(PER_LEVEL_VITAL_GAIN_MIN, Math.round(raw)));
+}
+
+// A later follow-up ask: "similar to hp & mana, as a player levels their
+// MV should increase on level by a random amount between 4 and 8" — a
+// plain uniform roll, deliberately NOT stat-biased like perLevelVitalGain
+// above (the ask never mentioned tying it to a stat, just a flat range).
+export const PER_LEVEL_MV_GAIN_MIN = 4;
+export const PER_LEVEL_MV_GAIN_MAX = 8;
+export function perLevelMvGain(): number {
+  return PER_LEVEL_MV_GAIN_MIN + Math.floor(Math.random() * (PER_LEVEL_MV_GAIN_MAX - PER_LEVEL_MV_GAIN_MIN + 1));
 }
 
 // --- Spellcasting: intelligence/luck bonuses (a later follow-up ask) ---

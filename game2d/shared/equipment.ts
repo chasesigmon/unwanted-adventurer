@@ -44,6 +44,15 @@ export function isWandItem(item: string | undefined): boolean {
   return item === WAND_ITEM || (item?.startsWith('wand of') ?? false);
 }
 
+// A later follow-up ask: Floro/Kortho's blacksmith sells a "sword of
+// <stat>" for each of the 6 core stats (same one-per-stat pattern as the
+// wands above) — this is what the "slash" attack-effect trigger and the
+// melee weapon-bonus wiring both check to identify one, same
+// isWandItem-style prefix match.
+export function isSwordItem(item: string | undefined): boolean {
+  return item?.startsWith('sword of') ?? false;
+}
+
 // A later follow-up ask: "show what bonus a piece of gear actually
 // gives" — the Equipment modal had no way to see this before, just the
 // character sheet's own rolled-up AC total. Plain display strings, kept
@@ -107,7 +116,29 @@ export const EQUIPMENT_ITEM_BONUS_LABEL: Record<string, string> = {
   'opal necklace': '+1 dexterity',
   'bone ring': '+1 intelligence',
   'wand of quickness': '+2 dexterity',
-  'wand of intelligence': '+1 intelligence',
+  // A later follow-up ask: Floro/Kortho's blacksmith now sells one wand
+  // per core stat (int/str/wis/con/dex/luck), each +1 to its own named
+  // stat PLUS a flat +1 to ranged magic basic damage every wand shares
+  // (see combat/formulas.ts's wandRangedDamageBonus) — "wand of
+  // intelligence" already existed (Bramwick's own Weapons shop) with the
+  // exact same +1 int/10 gold shape, so it's reused here rather than
+  // duplicated; the other 5 are brand new.
+  'wand of intelligence': '+1 intelligence, +1 ranged magic damage',
+  'wand of strength': '+1 strength, +1 ranged magic damage',
+  'wand of wisdom': '+1 wisdom, +1 ranged magic damage',
+  'wand of constitution': '+1 constitution, +1 ranged magic damage',
+  'wand of dexterity': '+1 dexterity, +1 ranged magic damage',
+  'wand of luck': '+1 luck, +1 ranged magic damage',
+  // Same one-per-stat pattern as the wands above, but a physical melee
+  // weapon: +1 to its own named stat PLUS a flat +2 physical damage every
+  // sword shares (same WEAPON_DAMAGE_BONUS table the bone dagger's own
+  // +2 already uses).
+  'sword of intelligence': '+1 intelligence, +2 physical damage',
+  'sword of strength': '+1 strength, +2 physical damage',
+  'sword of wisdom': '+1 wisdom, +2 physical damage',
+  'sword of constitution': '+1 constitution, +2 physical damage',
+  'sword of dexterity': '+1 dexterity, +2 physical damage',
+  'sword of luck': '+1 luck, +2 physical damage',
   'wand of frost': '+2 dexterity',
   'wand of embers': '+2 intelligence',
   'wand of shadows': '+3 intelligence',
@@ -188,6 +219,17 @@ export const EQUIPMENT_SLOT_FOR_ITEM: Record<string, EquipmentSlot> = {
   // follow-up ask) — same slot an ordinary wand/dagger would use.
   'wand of intelligence': 'weapon',
   'wand of quickness': 'weapon',
+  'wand of strength': 'weapon',
+  'wand of wisdom': 'weapon',
+  'wand of constitution': 'weapon',
+  'wand of dexterity': 'weapon',
+  'wand of luck': 'weapon',
+  'sword of intelligence': 'weapon',
+  'sword of strength': 'weapon',
+  'sword of wisdom': 'weapon',
+  'sword of constitution': 'weapon',
+  'sword of dexterity': 'weapon',
+  'sword of luck': 'weapon',
   // The 4th floor's own 4 portal dungeons (a later follow-up ask) —
   // "rare wands not available in the shop" plus a matching armor piece,
   // one tier per dungeon (see server/monsters/monster.ts's own

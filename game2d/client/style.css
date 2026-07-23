@@ -1126,6 +1126,35 @@ body {
   overflow-y: auto;
 }
 
+/* A later follow-up ask: "make it so that all of the modals that open
+   are draggable with a thin line at the top like the group label" —
+   same thin grabbable strip convention as #group-panel's own
+   .panel-drag-handle, scaled to match .modal-box's own larger 24px/28px
+   padding (the negative margins pull it flush to the box's own edges,
+   same trick .panel-drag-handle uses against #group-panel's smaller
+   6px/10px padding). Injected as the very FIRST child of every modal-box
+   (see modalCore.ts's makeModalsDraggable) so it paints BEHIND the
+   already-first-child .modal-close button — the × stays fully clickable,
+   sitting in the same top strip the way a real window's title bar/close
+   button share one row.
+   Positioning itself is left alone here (still plain `position: relative`
+   above, flex-centered by its `.modal` parent) — switching to an explicit
+   absolute top/left only happens in JS the instant a drag actually
+   starts, the same "switch anchor on first interaction" pattern
+   #log-panel's own resize/move handles already use. */
+.modal-drag-handle {
+  height: 10px;
+  margin: -24px -28px 14px -28px;
+  border-radius: 8px 8px 0 0;
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid #333;
+  cursor: move;
+}
+
+.modal-drag-handle:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 /* The Map modal's own World Map tab (a later follow-up ask: an actual
    ASCII sketch of Grimoak Academy, not a narrow indented tree list) needs
    real room to breathe — every other modal stays at the compact default

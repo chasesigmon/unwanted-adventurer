@@ -396,3 +396,65 @@ export function updateMapButtonVisibility(mapUnlocked: boolean): void {
   // left staring at a modal they can no longer re-open the normal way.
   if (!mapUnlocked && !mapModal.hidden) hideModal(mapModal);
 }
+
+// A later follow-up ask: "make it so that all of the modals that open
+// are draggable with a thin line at the top like the group label" —
+// same plain pointer-capture drag off a thin handle strip groupPanel.ts
+// already uses for the group/follower panel, generalized here to run
+// ONCE for every modal in ALL_MODALS rather than one-off per modal
+// module. A `.modal-drag-handle` div (see its own CSS comment) is
+// injected as each modal-box's first child; dragging it switches that
+// ONE modal-box from the CSS default (position: relative, flex-centered
+// by its `.modal` parent) to an explicit position: absolute + top/left
+// matching wherever it currently sits on screen (`.modal` itself is
+// already position:absolute, inset:0, sitting flush with #app's own
+// viewport-sized origin, so a viewport-relative getBoundingClientRect
+// maps directly onto it) — the same "switch anchor on first
+// interaction" pattern #log-panel's own resize/move handles use, so a
+// modal opens centered as always until the player actually drags it
+// somewhere.
+function makeModalDraggable(modal: HTMLDivElement): void {
+  const modalBox = modal.querySelector<HTMLDivElement>('.modal-box');
+  if (!modalBox) return;
+  const handle = document.createElement('div');
+  handle.className = 'modal-drag-handle';
+  handle.title = 'Drag to move';
+  modalBox.insertBefore(handle, modalBox.firstChild);
+
+  let dragPointerId: number | null = null;
+  let dragOffsetX = 0;
+  let dragOffsetY = 0;
+
+  handle.addEventListener('pointerdown', (e) => {
+    dragPointerId = e.pointerId;
+    const rect = modalBox.getBoundingClientRect();
+    dragOffsetX = e.clientX - rect.left;
+    dragOffsetY = e.clientY - rect.top;
+    modalBox.style.position = 'absolute';
+    modalBox.style.left = `${rect.left}px`;
+    modalBox.style.top = `${rect.top}px`;
+    modalBox.style.margin = '0';
+    handle.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (dragPointerId !== e.pointerId) return;
+    const maxLeft = window.innerWidth - modalBox.offsetWidth;
+    const maxTop = window.innerHeight - modalBox.offsetHeight;
+    const left = Math.min(Math.max(0, e.clientX - dragOffsetX), Math.max(0, maxLeft));
+    const top = Math.min(Math.max(0, e.clientY - dragOffsetY), Math.max(0, maxTop));
+    modalBox.style.left = `${left}px`;
+    modalBox.style.top = `${top}px`;
+  });
+  const stopDragging = (e: PointerEvent) => {
+    if (dragPointerId !== e.pointerId) return;
+    handle.releasePointerCapture(e.pointerId);
+    dragPointerId = null;
+  };
+  handle.addEventListener('pointerup', stopDragging);
+  handle.addEventListener('pointercancel', stopDragging);
+}
+
+for (const modal of ALL_MODALS) {
+  makeModalDraggable(modal);
+}

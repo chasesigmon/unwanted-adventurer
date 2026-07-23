@@ -82,6 +82,7 @@ import {
   TRAINING_POINT_LEVEL_INTERVAL,
   PRACTICE_POINTS_PER_LEVEL,
   perLevelVitalGain,
+  perLevelMvGain,
   HP_PER_CONSTITUTION,
   MANA_PER_INTELLIGENCE,
   intelligenceSpellBonus,
@@ -103,8 +104,15 @@ import {
   dexterityEquipmentBonus,
   intelligenceEquipmentBonus,
   constitutionEquipmentBonus,
+  strengthEquipmentBonus,
+  wisdomEquipmentBonus,
+  luckEquipmentBonus,
   MANA_ITEM_BONUS,
   scaledSpellDamage,
+  wandBoltBaseDamage,
+  wandRangedDamageBonus,
+  baseDamage,
+  skillBonus,
   applyArmorMitigation,
   isRingItem,
   resolveRingSlot,
@@ -1143,14 +1151,26 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       skillCooldowns: client.data.skillCooldowns,
       armorVsPhysical: armorVsPhysicalFor(
         client.data.dexterity + dexterityEquipmentBonus(client.data.equipment),
-        client.data.strength,
+        client.data.strength + strengthEquipmentBonus(client.data.equipment),
         physicalArmorEquipmentBonus(client.data.equipment) + this.beastTransformArmorBonus(client)
       ),
       armorVsMagical: armorVsMagicalFor(
         client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment),
-        client.data.wisdom,
+        client.data.wisdom + wisdomEquipmentBonus(client.data.equipment),
         magicalArmorEquipmentBonus(client.data.equipment)
       ),
+      // A later follow-up ask: "include Physical Damage # and Magic
+      // Damage #... show the bonuses being added to them next to them in
+      // parentheses" — see PlayerSnapshot's own doc comment on why base
+      // deliberately excludes the opponent-dependent attributeBonus/armor-
+      // mitigation terms punchDamage/the wand bolt's real per-hit
+      // resolution both still apply.
+      physicalDamageBase: baseDamage(client.data.strength + strengthEquipmentBonus(client.data.equipment), client.data.level) + skillBonus(client.data.skills[this.attackGrowthSkill(client)] ?? 0),
+      physicalDamageBonus: weaponBonusFor(client.data.equipment, client.data.skills),
+      magicDamageBase: wandBoltBaseDamage(WAND_BOLT_DAMAGE, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment), client.data.level),
+      magicDamageBonus: wandRangedDamageBonus(client.data.equipment),
+      armorVsPhysicalBonus: physicalArmorEquipmentBonus(client.data.equipment) + this.beastTransformArmorBonus(client),
+      armorVsMagicalBonus: magicalArmorEquipmentBonus(client.data.equipment),
       deathCount: client.data.deathCount,
       statPointsAvailable: client.data.statPointsAvailable,
       practicePointsAvailable: client.data.practicePointsAvailable,
@@ -1476,7 +1496,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // this function's own return type) lets each caller fix that up.
     const targetArmorVsMagical = armorVsMagicalFor(
       targetClient.data.intelligence + intelligenceEquipmentBonus(targetClient.data.equipment),
-      targetClient.data.wisdom,
+      targetClient.data.wisdom + wisdomEquipmentBonus(targetClient.data.equipment),
       magicalArmorEquipmentBonus(targetClient.data.equipment)
     );
     dmg = Math.round(applyArmorMitigation(dmg, targetArmorVsMagical));
@@ -1598,7 +1618,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   private attackerStatsFor(client: GameSocket): CombatantStats {
     return {
       level: client.data.level,
-      strength: client.data.strength,
+      // A later follow-up ask: Floro/Kortho's blacksmith sells a "wand/
+      // sword of strength" (+1 strength each) — attributeBonus/baseDamage
+      // (the only consumers of this field) both read straight off
+      // CombatantStats.strength, so this is the one place to add it for
+      // both the wielder's own melee damage AND (being symmetric between
+      // attacker/defender) their own attributeBonus resistance.
+      strength: client.data.strength + strengthEquipmentBonus(client.data.equipment),
       intelligence: client.data.intelligence,
       wisdom: client.data.wisdom,
       dexterity: client.data.dexterity,
@@ -1737,9 +1763,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       for (let i = 0; i < levelsGained; i++) {
         client.data.maxHp += perLevelVitalGain(client.data.constitution);
         client.data.maxMana += perLevelVitalGain(client.data.intelligence);
+        // A later follow-up ask: "similar to hp & mana, as a player
+        // levels their MV should increase on level by a random amount
+        // between 4 and 8" — mv had never grown past its starting value
+        // before this.
+        client.data.maxMv += perLevelMvGain();
       }
       client.data.hp = client.data.maxHp;
       client.data.mana = client.data.maxMana;
+      client.data.mv = client.data.maxMv;
     }
 
     this.worldManager.updateState(client.data.username, {
@@ -1749,6 +1781,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxHp: client.data.maxHp,
       mana: client.data.mana,
       maxMana: client.data.maxMana,
+      mv: client.data.mv,
+      maxMv: client.data.maxMv,
       statPointsAvailable: client.data.statPointsAvailable,
       practicePointsAvailable: client.data.practicePointsAvailable,
     });
@@ -2372,6 +2406,32 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     this.systemMessage(client, 'The extra power fades from your strikes.');
   }
 
+  // A later follow-up bug fix: "when the wisp transformation and flight
+  // wore off I was standing on top of the moat without a boat and it
+  // didn't kill me... this should have killed the player as per previous
+  // rules" — checkFlightExpiry already had this drowning check (see its
+  // own doc comment below), but checkWispTransformationExpiry and
+  // checkBeastTransformExpiry never did, even though isEffectivelyFlying
+  // treats all three as equally valid ways to be airborne over water.
+  // Shared by all three expiry checks, called right after the SPECIFIC
+  // source that just ended has already been cleared on client.data —
+  // isEffectivelyFlying re-checks the OTHER two sources, so a player who
+  // stacked (say) both flight and wisp only drowns once the LAST one of
+  // them actually runs out, not the first. Returns true if the player was
+  // killed (caller should stop, the corpse/respawn path already handled
+  // sync/messaging) or false if there's nothing to do (caller continues
+  // with its own normal "settle back onto the ground" messaging).
+  private checkWaterLandingAfterFlightSourceEnds(client: GameSocket): boolean {
+    if (this.isEffectivelyFlying(client)) return false;
+    if (!isWaterBlocked(client.data.map, client.data.row, client.data.col)) return false;
+    this.syncBoatState(client);
+    if (client.data.inBoat) return false;
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.killPlayerFromWaterLanding(client);
+    return true;
+  }
+
   // Wisp transformation (a later follow-up ask) — same periodic-expiry
   // shape as scutum/barrier above; DOES need the worldManager thread
   // (unlike enhance damage) since other nearby players need to see the
@@ -2384,6 +2444,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.wispActive = false;
     client.data.wispActiveUntil = null;
     this.worldManager.updateState(client.data.username, { wispActive: false });
+    if (this.checkWaterLandingAfterFlightSourceEnds(client)) return;
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
@@ -2412,6 +2473,18 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // this and every follower manager's own canCrossWater now both call.
   private isEffectivelyFlying(client: GameSocket): boolean {
     return isEffectivelyFlying(client.data);
+  }
+
+  // A later follow-up ask: "Battlemage is a special class/specialization
+  // that does not require a wand to cast spells. They have learned to
+  // cast spells without a wand or while holding weapons" — every spell-
+  // cast handler (and the wand's own ranged auto-attack) individually
+  // gated on isWandItem(client.data.equipment.weapon) with no shared
+  // helper to hook a specialization exception into; this is that helper,
+  // swapped in at every one of those ~28 call sites instead of hand-
+  // editing each one's own condition.
+  private hasSpellcastingImplement(client: GameSocket): boolean {
+    return isWandItem(client.data.equipment.weapon) || client.data.specialization === 'battlemage';
   }
 
   // "The same kind of attack mechanism as the beast... no longer magical
@@ -2455,6 +2528,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       maxHp: client.data.maxHp,
       hp: client.data.hp,
     });
+    if (this.checkWaterLandingAfterFlightSourceEnds(client)) return;
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
@@ -2479,16 +2553,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // should kill the player" — checked the instant flight itself turns
     // off, since that's the only moment a player can be standing on a
     // water tile without already being in a boat (ordinary movement onto
-    // water requires owning one, see handleMove's own canCrossWater).
-    if (isWaterBlocked(client.data.map, client.data.row, client.data.col)) {
-      this.syncBoatState(client);
-      if (!client.data.inBoat) {
-        void this.persistStats(client);
-        client.emit('sync', { player: this.snapshotFor(client) });
-        this.killPlayerFromWaterLanding(client);
-        return;
-      }
-    }
+    // water requires owning one, see handleMove's own canCrossWater). See
+    // checkWaterLandingAfterFlightSourceEnds's own doc comment — shared
+    // with wisp/beast-transform expiry below, and correctly skips the
+    // kill if another flight source (wisp, a flying beast transform) is
+    // still keeping this player aloft.
+    if (this.checkWaterLandingAfterFlightSourceEnds(client)) return;
 
     void this.persistStats(client);
     client.emit('sync', { player: this.snapshotFor(client) });
@@ -2612,7 +2682,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const weaponBonus = hasWeapon ? (WEAPON_DAMAGE_BONUS['bone dagger'] ?? 0) : 0;
     const defenderArmorVsPhysical = armorVsPhysicalFor(
       client.data.dexterity + dexterityEquipmentBonus(client.data.equipment),
-      client.data.strength,
+      client.data.strength + strengthEquipmentBonus(client.data.equipment),
       physicalArmorEquipmentBonus(client.data.equipment) + this.beastTransformArmorBonus(client)
     );
     // A species with its own flat attackDamage (a later follow-up ask:
@@ -2656,6 +2726,14 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     } else {
       this.worldManager.updateState(client.data.username, { hp: client.data.hp });
     }
+
+    // A later follow-up ask: "show the damage that a player takes on
+    // screen... right above the player like a fading number" — this
+    // counter-attack (or resolveMonsterInitiatedAttack's own proactive
+    // hit, which reuses this same function) is resolved privately, not
+    // through the broadcast 'combat' event, so the floating number rides
+    // its own dedicated private event instead.
+    if (damage > 0) client.emit('selfDamage', { damage });
 
     if (damage <= 0) return `The ${attackerLabel} ${verb} at you, but the blow glances off.`;
     return died
@@ -3457,7 +3535,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleEngageRangedAttack(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): CastSpellAck {
     const limiter = this.commandLimiters.get(client.id);
     if (limiter && !limiter.tryConsume()) return { ok: false };
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to auto-attack at range.' };
     }
     if (this.isParalyzed(`player:${client.data.username}`)) {
@@ -3561,7 +3639,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // CHANCE (luck x 10%) of an extra +10% for this one cast — see each
     // function's own doc comment in combat/formulas.ts.
     const intelligenceBonus = intelligenceSpellBonus(client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment));
-    const luckBonus = rollLuckSpellSuccessBonus(client.data.luck);
+    // A later follow-up ask: Floro/Kortho's blacksmith sells a "wand/sword
+    // of luck" (+1 luck each) — this is the one shared spell-success roll
+    // every spell-cast handler funnels through, so wiring it in here
+    // covers all of them at once.
+    const luckBonus = rollLuckSpellSuccessBonus(client.data.luck + luckEquipmentBonus(client.data.equipment));
     // A later follow-up ask removed the new-player low-level handicap
     // bonus entirely (skill percent now starts at a flat 70% for
     // everything learned through the teacher click-to-learn modal, so the
@@ -3761,7 +3843,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // through resolveHitOnMonster/Npc/Player, which are tuned for
       // melee's own formula/avoidance/counter-attack rules.
       if (session.skill === WAND_BOLT_SKILL) {
-        if (!isWandItem(client.data.equipment.weapon)) {
+        if (!this.hasSpellcastingImplement(client)) {
           this.endPlayerCombat(username);
           continue;
         }
@@ -4025,16 +4107,20 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         battlemageDamageBonus = battlemageEnhancedDamageBonusFor(client.data.level, client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment), client.data.strength);
       }
     }
-    // A later follow-up ask replaced the old flat "+1 damage per
-    // intelligence point" wand-bolt bonus with the same compounding
-    // formula every other offensive spell's own base damage now uses
-    // (see scaledSpellDamage's own doc comment) — Shaman's enhance-damage
-    // buff and Battlemage's own chance-based bonus stay flat additions on
-    // top, unrelated sources rather than part of the spell's own base
-    // figure.
+    // A later follow-up ask ("make sure ranged vs physical damage is
+    // balanced") replaced scaledSpellDamage's own compounding curve here
+    // with wandBoltBaseDamage's linear one — see that function's own doc
+    // comment for the measured imbalance this fixes. Shaman's enhance-
+    // damage buff and Battlemage's own chance-based bonus stay flat
+    // additions on top, unrelated sources rather than part of the wand
+    // bolt's own base figure.
     const effectiveIntelligence = client.data.intelligence + intelligenceEquipmentBonus(client.data.equipment);
     const baseWandBoltDamage =
-      scaledSpellDamage(WAND_BOLT_DAMAGE, client.data.level, effectiveIntelligence) +
+      wandBoltBaseDamage(WAND_BOLT_DAMAGE, effectiveIntelligence, client.data.level) +
+      // A later follow-up ask: "the wands should give +1 to ranged magic
+      // basic damage" — Floro/Kortho's blacksmith wands (and every
+      // existing wand item).
+      wandRangedDamageBonus(client.data.equipment) +
       (client.data.enhanceDamageActive ? shamanEnhanceDamageBonusFor(client.data.level, effectiveIntelligence) : 0) +
       battlemageDamageBonus;
     // Cleric's own "enhanced undead damage" (a later follow-up ask) — the
@@ -4525,7 +4611,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const growthMessages: string[] = [];
     const defenderArmorVsPhysical = armorVsPhysicalFor(
       targetClient.data.dexterity + dexterityEquipmentBonus(targetClient.data.equipment),
-      targetClient.data.strength,
+      targetClient.data.strength + strengthEquipmentBonus(targetClient.data.equipment),
       physicalArmorEquipmentBonus(targetClient.data.equipment) + this.beastTransformArmorBonus(targetClient)
     );
 
@@ -5780,7 +5866,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[UNLOCK_SKILL] === undefined) {
       return { ok: false, message: "You don't know the unlock spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const parsed = z
@@ -5937,7 +6023,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[ARCANE_BOLT_SKILL] === undefined) {
       return { ok: false, message: "You don't know the arcane bolt spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     // Item 11's Transform spell: "only able to attack the same way that
@@ -6254,7 +6340,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[skill] === undefined) {
       return { ok: false, message: `You don't know the ${skill} spell yet.` };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     // Item 11's Transform spell (a later follow-up ask): "only able to
@@ -6522,7 +6608,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[SAP_HEALTH_SKILL] === undefined) {
       return { ok: false, message: "You don't know the sap health spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     // Item 11's Transform spell: "only able to attack the same way that
@@ -6734,7 +6820,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[LESSER_HEAL_SKILL] === undefined) {
       return { ok: false, message: "You don't know the lesser heal spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const parsed = lesserHealTargetSchema.safeParse(payload);
@@ -6806,7 +6892,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[LESSER_SELF_HEAL_SKILL] === undefined) {
       return { ok: false, message: "You don't know the lesser self heal spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const cooldownUntil = client.data.skillCooldowns[LESSER_SELF_HEAL_SKILL];
@@ -6857,7 +6943,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[WISP_TRANSFORMATION_SKILL] === undefined) {
       return { ok: false, message: "You don't know the wisp transformation spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     // A later follow-up ask: "prevent the druid from transforming into a
@@ -6925,7 +7011,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[TAME_BEAST_SKILL] === undefined) {
       return { ok: false, message: "You don't know the tame beast spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const parsed = z.object({ targetId: z.string() }).safeParse(payload);
@@ -7012,7 +7098,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[TRANSFORM_SKILL] === undefined) {
       return { ok: false, message: "You don't know the transform spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     // A later follow-up ask: "prevent the druid from transforming into a
@@ -7114,7 +7200,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[IDENTIFY_SKILL] === undefined) {
       return { ok: false, message: "You don't know the identify spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const parsed = z.object({ itemIndex: z.number().int() }).safeParse(payload);
@@ -7174,7 +7260,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[FLIGHT_SKILL] === undefined) {
       return { ok: false, message: "You don't know the flight spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const cooldownUntil = client.data.skillCooldowns[FLIGHT_SKILL];
@@ -7282,7 +7368,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[STUN_SKILL] === undefined) {
       return { ok: false, message: "You don't know the stun spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     // Item 11's Transform spell: "only able to attack the same way that
@@ -7402,7 +7488,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[DISARM_SKILL] === undefined) {
       return { ok: false, message: "You don't know the disarm spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     // Item 11's Transform spell: "only able to attack the same way that
@@ -7578,7 +7664,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, message);
       return { ok: false, message };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       const message = 'You need a wand equipped to cast spells.';
       this.systemMessage(client, message);
       return { ok: false, message };
@@ -7641,7 +7727,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[STONE_WALL_SKILL] === undefined) {
       return { ok: false, message: "You don't know the stone wall spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const cooldownUntil = client.data.skillCooldowns[STONE_WALL_SKILL];
@@ -7725,7 +7811,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[ANIMATE_DEAD_SKILL] === undefined) {
       return { ok: false, message: "You don't know the animate dead spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const cooldownUntil = client.data.skillCooldowns[ANIMATE_DEAD_SKILL];
@@ -7811,7 +7897,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[MONSTER_SUMMONS_SKILL] === undefined) {
       return { ok: false, message: "You don't know the monster summons spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const parsed = z.object({ monsterKind: z.string() }).safeParse(payload);
@@ -7879,7 +7965,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[SUMMON_DEMON_IMP_SKILL] === undefined) {
       return { ok: false, message: "You don't know the summon demon imp spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     if (this.animatedMonsterManager.countFor(client.data.username) >= animatedMonsterCapFor(client.data.level)) {
@@ -7940,7 +8026,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, message);
       return { ok: false, message };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       const message = 'You need a wand equipped to cast spells.';
       this.systemMessage(client, message);
       return { ok: false, message };
@@ -8002,7 +8088,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[CREATE_DUPLICATE_SKILL] === undefined) {
       return { ok: false, message: "You don't know the create duplicate spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     if (this.animatedMonsterManager.countFor(client.data.username) >= animatedMonsterCapFor(client.data.level)) {
@@ -8138,7 +8224,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[RECALL_SKILL] === undefined) {
       return { ok: false, message: "You don't know the recall spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
     const point = client.data.recallPointId ? recallPointById(client.data.recallPointId) : undefined;
@@ -8209,7 +8295,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[BARRIER_SKILL] === undefined) {
       return { ok: false, message: "You don't know the barrier spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast spells.' };
     }
 
@@ -8275,7 +8361,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, message);
       return { ok: false, message };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       const message = 'You need a wand equipped to cast spells.';
       this.systemMessage(client, message);
       return { ok: false, message };
@@ -8385,7 +8471,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.skills[WATERFILL_SKILL] === undefined) {
       return { ok: false, message: "You don't know the waterfill spell yet." };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       return { ok: false, message: 'You need a wand equipped to cast waterfill.' };
     }
     const resolved = this.resolveCanteenTarget(client, itemIndex);
@@ -8530,7 +8616,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, message);
       return { ok: false, message };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       const message = 'You need a wand equipped to cast light.';
       this.systemMessage(client, message);
       return { ok: false, message };
@@ -8601,7 +8687,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.systemMessage(client, message);
       return { ok: false, message };
     }
-    if (!isWandItem(client.data.equipment.weapon)) {
+    if (!this.hasSpellcastingImplement(client)) {
       const message = 'You need a wand equipped to cast spells.';
       this.systemMessage(client, message);
       return { ok: false, message };

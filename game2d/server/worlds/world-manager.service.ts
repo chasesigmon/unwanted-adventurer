@@ -42,7 +42,24 @@ import {
   magicalArmorEquipmentBonus,
   dexterityEquipmentBonus,
   intelligenceEquipmentBonus,
+  strengthEquipmentBonus,
+  wisdomEquipmentBonus,
+  baseDamage,
+  skillBonus,
+  weaponBonusFor,
+  wandBoltBaseDamage,
+  wandRangedDamageBonus,
 } from '../combat/formulas.js';
+import { PUNCH_SKILL, DAGGER_SKILL } from '../../shared/skills.js';
+
+// Duplicated from game.gateway.ts's own (non-exported, module-private)
+// WAND_BOLT_DAMAGE — this module sits BELOW the gateway in the dependency
+// graph (the gateway depends on WorldManagerService, not the reverse), so
+// importing it back would introduce a cycle; same "duplicate rather than
+// introduce a cycle" tradeoff this project's own circular-import
+// constraint already accepts elsewhere (see shared/lighting.ts vs
+// shared/maps.ts).
+const WAND_BOLT_DAMAGE = 9;
 
 // A much smaller version of the text game's own WorldManagerService — no
 // per-map capacity sharding or worker_threads, just an in-memory map of
@@ -264,6 +281,29 @@ export class WorldManagerService {
     const result = resolveDiagonalMove(loc, dRow, dCol);
     if (!result.ok) return result;
 
+    // A later follow-up bug fix: "players are able to use diagonal
+    // navigation to cross through collision boundaries" — this only ever
+    // checked the single final diagonal destination tile, the classic
+    // corner-cutting bug: two solid tiles forming an L (e.g. two trees)
+    // still leave the DIAGONAL gap between them open, since neither of
+    // the two orthogonal tiles flanking that diagonal step was ever
+    // itself checked. Skipped for a `transitioned` result (stepping
+    // through a doorway from an adjacent exit tile) — that's a deliberate
+    // same-tile shortcut onto a different map entirely, not a corner to
+    // cut, and there's no meaningful "flanking tile" on the OLD map to
+    // check against the NEW map's own destination.
+    if (!result.transitioned) {
+      if (this.isOccupied(loc.mapName, loc.row, loc.row === result.row ? result.col : loc.col, username, flying)) {
+        return { ok: false, transitioned: false, mapName: loc.mapName, row: loc.row, col: loc.col };
+      }
+      if (this.isOccupied(loc.mapName, loc.row + dRow, loc.col, username, flying)) {
+        return { ok: false, transitioned: false, mapName: loc.mapName, row: loc.row, col: loc.col };
+      }
+      if (this.isOccupied(loc.mapName, loc.row, loc.col + dCol, username, flying)) {
+        return { ok: false, transitioned: false, mapName: loc.mapName, row: loc.row, col: loc.col };
+      }
+    }
+
     if (this.isOccupied(result.mapName, result.row, result.col, username, flying)) {
       return { ok: false, transitioned: false, mapName: loc.mapName, row: loc.row, col: loc.col };
     }
@@ -351,14 +391,26 @@ export class WorldManagerService {
         skillCooldowns: state.skillCooldowns,
         armorVsPhysical: armorVsPhysicalFor(
           state.dexterity + dexterityEquipmentBonus(state.equipment),
-          state.strength,
+          state.strength + strengthEquipmentBonus(state.equipment),
           physicalArmorEquipmentBonus(state.equipment)
         ),
         armorVsMagical: armorVsMagicalFor(
           state.intelligence + intelligenceEquipmentBonus(state.equipment),
-          state.wisdom,
+          state.wisdom + wisdomEquipmentBonus(state.equipment),
           magicalArmorEquipmentBonus(state.equipment)
         ),
+        // Same base/bonus breakdown as GameGateway.snapshotFor's own copy
+        // (see PlayerSnapshot's own doc comment) — this is the OTHER-
+        // players-on-the-map snapshot array, not the character sheet's
+        // "my own profile" one, but kept correct/consistent regardless.
+        physicalDamageBase:
+          baseDamage(state.strength + strengthEquipmentBonus(state.equipment), state.level) +
+          skillBonus(state.skills[state.equipment.weapon?.toLowerCase().includes('dagger') ? DAGGER_SKILL : PUNCH_SKILL] ?? 0),
+        physicalDamageBonus: weaponBonusFor(state.equipment, state.skills),
+        magicDamageBase: wandBoltBaseDamage(WAND_BOLT_DAMAGE, state.intelligence + intelligenceEquipmentBonus(state.equipment), state.level),
+        magicDamageBonus: wandRangedDamageBonus(state.equipment),
+        armorVsPhysicalBonus: physicalArmorEquipmentBonus(state.equipment),
+        armorVsMagicalBonus: magicalArmorEquipmentBonus(state.equipment),
         deathCount: state.deathCount,
         statPointsAvailable: state.statPointsAvailable,
         practicePointsAvailable: state.practicePointsAvailable,

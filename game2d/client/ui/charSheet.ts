@@ -32,9 +32,13 @@ const CHAR_SHEET_STAT_DESCRIPTIONS: Record<string, string> = {
   Constitution: 'Increases your max hp by 20 per point.',
   Luck: "Gives every spell cast a chance at a bonus to its own success chance, and boosts how much your skills/spells can grow from casting them.",
   'Armor vs Physical':
-    'A small base, plus a bit from dexterity and strength, plus whatever armor you have equipped (cloth +1 each, studded +3 each, ...). Flatly reduces incoming melee/punch/dagger damage on every hit that lands.',
+    'A small base, plus a bit from dexterity and strength, plus whatever armor you have equipped (cloth +1 each, studded +3 each, ...) — shown in parentheses. Flatly reduces incoming melee/punch/dagger damage on every hit that lands.',
   'Armor vs Magical':
-    'A small base, plus a bit from intelligence and wisdom, plus whatever armor grants it (nothing does yet). Flatly reduces incoming spell damage (bolts, wand bolt, arcane bolt, ...) on every hit that lands.',
+    'A small base, plus a bit from intelligence and wisdom, plus whatever armor grants it — shown in parentheses. Flatly reduces incoming spell damage (bolts, wand bolt, arcane bolt, ...) on every hit that lands.',
+  'Physical Damage':
+    "Your base unarmed/melee damage (strength, level, and weapon skill), plus whatever your equipped weapon adds on top (a dagger or sword's own damage bonus) — shown in parentheses. The real hit you land also depends on your target's own armor and the relative edge between you.",
+  'Magic Damage':
+    "Your base wand-bolt ranged damage (intelligence and level), plus the flat ranged-damage bonus every equipped wand grants — shown in parentheses. The real hit you land also depends on your target's own Armor vs Magical.",
   Deaths: 'Every death (from any cause) counts here. Every 5th costs 1 constitution permanently. At 65, CONDEATH — this character can never be played again.',
   Hunger: 'Drops by 1 every game hour. Eating jerky restores 20. No mechanical effect yet at 0 — reserved for future use.',
   Thirst: 'Drops by 1 every game hour. Drinking from your canteen or a cup of water restores 20. No mechanical effect yet at 0 — reserved for future use.',
@@ -59,6 +63,16 @@ const ALLOCATABLE_STATS: Array<{ label: string; stat: AllocatableStat }> = [
   { label: 'Constitution', stat: 'constitution' },
   { label: 'Luck', stat: 'luck' },
 ];
+
+// A later follow-up ask: "include Physical Damage # and Magic Damage #...
+// show the bonuses being added to them next to them in parentheses like:
+// 4 (2)" — applied to those two new stats AND the two existing Armor
+// stats. Omits the parenthetical entirely when there's no bonus (an
+// unarmed/unequipped character), rather than showing a bare "(0)" on
+// every single row.
+function formatBaseBonus(base: number, bonus: number): string {
+  return bonus > 0 ? `${base} (${bonus})` : String(base);
+}
 
 let allocating = false;
 
@@ -152,8 +166,30 @@ export function renderCharSheet(): void {
   for (const { label, stat } of ALLOCATABLE_STATS) {
     appendAllocatableStatRow(label, stat, myProfile[stat], hasPoints);
   }
-  appendStatRow(charSheetBody, 'Armor vs Physical', myProfile.armorVsPhysical, CHAR_SHEET_STAT_DESCRIPTIONS['Armor vs Physical']);
-  appendStatRow(charSheetBody, 'Armor vs Magical', myProfile.armorVsMagical, CHAR_SHEET_STAT_DESCRIPTIONS['Armor vs Magical']);
+  appendStatRow(
+    charSheetBody,
+    'Armor vs Physical',
+    formatBaseBonus(myProfile.armorVsPhysical - myProfile.armorVsPhysicalBonus, myProfile.armorVsPhysicalBonus),
+    CHAR_SHEET_STAT_DESCRIPTIONS['Armor vs Physical']
+  );
+  appendStatRow(
+    charSheetBody,
+    'Armor vs Magical',
+    formatBaseBonus(myProfile.armorVsMagical - myProfile.armorVsMagicalBonus, myProfile.armorVsMagicalBonus),
+    CHAR_SHEET_STAT_DESCRIPTIONS['Armor vs Magical']
+  );
+  appendStatRow(
+    charSheetBody,
+    'Physical Damage',
+    formatBaseBonus(myProfile.physicalDamageBase, myProfile.physicalDamageBonus),
+    CHAR_SHEET_STAT_DESCRIPTIONS['Physical Damage']
+  );
+  appendStatRow(
+    charSheetBody,
+    'Magic Damage',
+    formatBaseBonus(myProfile.magicDamageBase, myProfile.magicDamageBonus),
+    CHAR_SHEET_STAT_DESCRIPTIONS['Magic Damage']
+  );
   appendStatRow(charSheetBody, 'Deaths', `${myProfile.deathCount}/${CONDEATH_LIMIT_CLIENT}`, CHAR_SHEET_STAT_DESCRIPTIONS.Deaths);
 }
 

@@ -58,6 +58,8 @@ import {
   KORTHO_NEAR_SAND_COL_START,
   KORTHO_SEA_COL_START,
   KORTHO_SEA_COL_END,
+  isKorthoSeaBlocked,
+  isShopBuildingBlocked,
   KORTHO_FAR_SAND_COL_START,
   KORTHO_COLS,
   KORTHO_DOCK_LENGTH_TILES,
@@ -217,9 +219,12 @@ import {
   SPECIALIZATION_CHAMBER_MAPS,
   WISP_ELIGIBLE_MAPS,
   isFlyingBeastKind,
+  GENDERS,
+  HAIR_COLORS,
+  SKIN_TONES,
 } from '../../shared/constants.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
-import { WAND_ITEM, isWandItem } from '../../shared/equipment.js';
+import { WAND_ITEM, isWandItem, isSwordItem } from '../../shared/equipment.js';
 import { questIconStateFor, activeQuestIdFor } from '../../shared/quests.js';
 import type { MapName, Race, Direction, MonsterKind, Gender, HairColor, SkinTone } from '../../shared/constants.js';
 import type {
@@ -520,10 +525,15 @@ export class WorldScene extends Phaser.Scene {
   private castleExteriorSprites: Phaser.GameObjects.Sprite[] = [];
   private crowSprites: Phaser.GameObjects.Sprite[] = [];
   // The moat ring + its bridge (a follow-up ask) — only populated on
-  // 'Grimoak Grounds', plain Graphics fills rather than sprite assets
-  // (same "Graphics for a simple geometric effect" treatment the dark-fog/
-  // hp-bar overlays already use).
-  private moatGraphics: Phaser.GameObjects.Graphics | null = null;
+  // 'Grimoak Grounds'. A later follow-up ask ("make the moat more
+  // interactive and wavy, show some animation") swapped the ring's own
+  // flat Graphics fill for the same animated 'water-wave' tileSprite
+  // technique Kortho's Shimmering Sea/Silverbranch Lake already use (see
+  // korthoWaterSprite/silverbranchLakeWaterSprite below) — one tileSprite
+  // per band (the moat ring is 6 disjoint rectangles, not one), scrolled
+  // in update() the same way. The bridge itself (wood planks) stays a
+  // plain Graphics fill — there's no water there to animate.
+  private moatWaterSprites: Phaser.GameObjects.TileSprite[] = [];
   private bridgeGraphics: Phaser.GameObjects.Graphics | null = null;
   // The Grounds' own stretch of road up to Bramwick's entrance (a later
   // follow-up ask) — a TileSprite overlay, same "on top of the base
@@ -548,12 +558,46 @@ export class WorldScene extends Phaser.Scene {
   // Bumped from an original 8 — spread across the whole visible screen
   // (see randomPointInView) rather than clustered near the player, this
   // many reads as "the world is full of them" without feeling sparse.
-  private static readonly WISP_COUNT = 12;
+  // A later follow-up ask ("add a few more white wisps in the
+  // animation") bumped this again, 12 -> 16.
+  private static readonly WISP_COUNT = 16;
   private wisps: Array<{
     sprite: Phaser.GameObjects.Sprite;
     emitter: Phaser.GameObjects.Particles.ParticleEmitter;
     targetX: number;
     targetY: number;
+  }> = [];
+  // A later follow-up ask: "have some townspeople walking around Floro
+  // and Kortho for more animation and to make them appear a little more
+  // busy" — purely cosmetic ambient NPCs, same "no targeting/collision/
+  // server involvement, cleared and respawned per map change" treatment
+  // as the wisps above, just wandering real TILE positions (via
+  // moveOrSnap, so they get the same walk-cycle animation/facing a real
+  // player does) instead of raw screen pixels, and confined to actual
+  // open street tiles (never inside a shop building or Kortho's own sea).
+  private static readonly TOWNSPERSON_COUNT = 5;
+  private townspeople: Array<{
+    sprite: Phaser.GameObjects.Sprite;
+    kind: SpriteKind;
+    targetRow: number;
+    targetCol: number;
+    nextMoveAt: number;
+  }> = [];
+  // A later follow-up ask: "put some fishermen out in the water on
+  // canoes in Kortho to make it more lively" — a canoe sprite (the exact
+  // same CANOE_TEXTURE_KEY/BOAT_FRAME_FOR_FACING a real player's own boat
+  // already uses) plus a rider sprite standing in it, anchored out in
+  // Kortho's own sea band. Deliberately near-stationary (a fisherman
+  // sits still fishing, doesn't wander) — a slow drift within a small
+  // radius plus the same gentle bob the water itself already animates
+  // with is enough to read as "alive" without needing real boat-steering
+  // logic.
+  private static readonly FISHERMAN_COUNT = 3;
+  private fishermen: Array<{
+    canoeSprite: Phaser.GameObjects.Sprite;
+    riderSprite: Phaser.GameObjects.Sprite;
+    homeX: number;
+    homeY: number;
   }> = [];
   // Item 20's animated wave water — a separate reference from
   // korthoSeaSprites above (which still gets destroyed/cleared the same
@@ -1100,6 +1144,14 @@ export class WorldScene extends Phaser.Scene {
     // types.ts's combatNotice), used for things that don't fit the
     // ordinary player-vs-target 'combat' broadcast shape.
     this.network.addEventListener('combatNotice', ((e: CustomEvent<string>) => logCombatMessage(e.detail)) as EventListener);
+    // A later follow-up ask: "show the damage that a player takes on
+    // screen when they get hit" — a monster's own counter-attack/
+    // proactive hit rides this private event instead of the broadcast
+    // 'combat' one (see selfDamage's own doc comment in shared/types.ts).
+    this.network.addEventListener(
+      'selfDamage',
+      ((e: CustomEvent<{ damage: number }>) => this.spawnFloatingDamageNumber(this.player, e.detail.damage, '')) as EventListener
+    );
     // A later follow-up ask: "Create an Auction House in both Floro and
     // Kortho... make sure the duration on the auction house modal is
     // updated immediately with each change" — see auctionModal.ts's own
@@ -1174,10 +1226,21 @@ export class WorldScene extends Phaser.Scene {
       this.silverbranchLakeWaterSprite.tilePositionX += 0.15;
       this.silverbranchLakeWaterSprite.tilePositionY = Math.sin(this.time.now / 900) * 2;
     }
+    // Grimoak Castle's own moat (a later follow-up ask: "make the moat...
+    // more interactive and wavy, show some animation") — same scroll+bob
+    // as the other animated water above, applied to every one of the 6
+    // ring-band tileSprites together so the whole moat animates as one
+    // continuous body of water rather than each band drifting separately.
+    for (const sprite of this.moatWaterSprites) {
+      sprite.tilePositionX += 0.15;
+      sprite.tilePositionY = Math.sin(this.time.now / 900) * 2;
+    }
     // Item 9's ambient wisps — kept wandering unconditionally (same
     // reasoning as the water scroll above), regardless of modals/combat/
     // paralysis, since they're pure background flavor.
     this.updateWisps();
+    this.updateTownspeople(this.currentMap);
+    this.updateFishermen();
     this.updateCameraScroll();
     this.repositionHpBars();
     this.updateDarkFog();
@@ -1834,6 +1897,82 @@ export class WorldScene extends Phaser.Scene {
     drawHpBar(bar, hp, maxHp);
   }
 
+  // A later follow-up ask: "show the damage that a player takes on
+  // screen when they get hit, right above the player like a fading
+  // number... 'X slash damage'/'X fire damage'/'X water damage'." A named
+  // spell already carries its own `skill` on the combat event (see
+  // playProjectileEffect's own doc comment) — mapped to a plain damage-
+  // type word here. Melee carries no skill at all (nothing to project),
+  // so the only case this can actually tell apart client-side is the
+  // LOCAL player's own attack (via myProfile.equipment.weapon) — a
+  // monster's own physical attack, or another player's melee we can't
+  // inspect the weapon of, falls back to a plain type-less number rather
+  // than guessing.
+  private static readonly DAMAGE_TYPE_LABEL: Partial<Record<string, string>> = {
+    [WAND_BOLT_SKILL]: 'magic',
+    [ARCANE_BOLT_SKILL]: 'arcane',
+    [FIRE_BOLT_SKILL]: 'fire',
+    [WATER_BOLT_SKILL]: 'water',
+    [AIR_BOLT_SKILL]: 'air',
+    [EARTH_BOLT_SKILL]: 'earth',
+    [KINETIC_STRIKE_SKILL]: 'force',
+    [SAP_HEALTH_SKILL]: 'necrotic',
+  };
+
+  private static readonly DAMAGE_TYPE_COLOR: Partial<Record<string, string>> = {
+    magic: '#8ecbff',
+    arcane: '#c9a2e6',
+    fire: '#ff8a3d',
+    water: '#5ec9ff',
+    air: '#dff2ff',
+    earth: '#b98a4e',
+    force: '#e6e6e6',
+    necrotic: '#c2558a',
+    slash: '#ffffff',
+    stab: '#ffffff',
+    punch: '#ffffff',
+  };
+
+  private damageTypeLabelFor(event: CombatEventPayload): string {
+    if (event.skill) return WorldScene.DAMAGE_TYPE_LABEL[event.skill] ?? event.skill;
+    if (event.attacker !== this.myUsername) return '';
+    const weapon = myProfile?.equipment.weapon;
+    if (weapon && isSwordItem(weapon)) return 'slash';
+    if (weapon === 'bone dagger') return 'stab';
+    return 'punch';
+  }
+
+  // A short-lived rising, fading text label above whichever sprite just
+  // took the hit — shown for every resolvable target (monster, NPC,
+  // another visible player, or the local player themself), same
+  // "everyone in the room sees it, same as the hp bar updating" treatment
+  // applyCombatEvent's other per-target effects already use.
+  private static readonly DAMAGE_NUMBER_RISE_PX = 26;
+  private static readonly DAMAGE_NUMBER_DURATION_MS = 850;
+
+  private spawnFloatingDamageNumber(sprite: Phaser.GameObjects.Sprite, damage: number, typeLabel: string): void {
+    const text = typeLabel ? `${damage} ${typeLabel} damage` : `${damage} damage`;
+    const color = WorldScene.DAMAGE_TYPE_COLOR[typeLabel] ?? '#ffcc33';
+    const label = this.add
+      .text(sprite.x, sprite.y - 22, text, {
+        fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+        fontSize: '13px',
+        color,
+        stroke: '#000000',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(6);
+    this.tweens.add({
+      targets: label,
+      y: label.y - WorldScene.DAMAGE_NUMBER_RISE_PX,
+      alpha: 0,
+      duration: WorldScene.DAMAGE_NUMBER_DURATION_MS,
+      ease: 'Cubic.easeOut',
+      onComplete: () => label.destroy(),
+    });
+  }
+
   // A fixed offset per facing direction — not aligned to individual
   // animation frames, just a reasonable "held near the hand" position.
   // The item is always in the character's own RIGHT hand — which is why
@@ -2416,6 +2555,121 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
+  // A later follow-up ask: "have some townspeople walking around Floro
+  // and Kortho... to make them appear a little more busy." Picks a
+  // random open street tile (never inside a shop building's own 6x8
+  // footprint, and for Kortho specifically never out in the sea — that's
+  // the fishermen's own territory below), retrying a few times rather
+  // than ever returning a tile known to be blocked.
+  // Random appearance helper for townspeople/fishermen below — a plain
+  // uniform pick, just typed to avoid TS's own "possibly undefined" noise
+  // on array indexing (Phaser.Math.Between's own range is always in
+  // bounds).
+  private static randomFrom<T>(options: readonly T[]): T {
+    return options[Phaser.Math.Between(0, options.length - 1)] as T;
+  }
+
+  private randomTownStreetTile(mapName: MapName): { row: number; col: number } | undefined {
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const row = Phaser.Math.Between(4, TOWN_SIZE - 5);
+      const col = Phaser.Math.Between(4, TOWN_SIZE - 5);
+      if (isShopBuildingBlocked(mapName, row, col)) continue;
+      if (mapName === 'Kortho' && isKorthoSeaBlocked(mapName, row, col)) continue;
+      return { row, col };
+    }
+    return undefined;
+  }
+
+  private destroyTownspeople(): void {
+    for (const person of this.townspeople) person.sprite.destroy();
+    this.townspeople = [];
+  }
+
+  private spawnTownspeople(mapName: MapName): void {
+    for (let i = 0; i < WorldScene.TOWNSPERSON_COUNT; i++) {
+      const start = this.randomTownStreetTile(mapName);
+      if (!start) continue;
+      // A varied, randomized appearance per townsperson (same human
+      // gender/skin/hair axes a real character can pick at creation, see
+      // effectiveSpriteKind) rather than every one of them looking
+      // identical.
+      const kind = effectiveSpriteKind('human', WorldScene.randomFrom(GENDERS), WorldScene.randomFrom(SKIN_TONES), WorldScene.randomFrom(HAIR_COLORS));
+      const pos = this.tilePosition(start.row, start.col);
+      const sprite = this.add.sprite(pos.x, pos.y, textureKeyFor(kind), idleFrameFor(kind, 'down')).setScale(CHAR_SCALE);
+      sprite.setData('row', start.row);
+      sprite.setData('col', start.col);
+      this.townspeople.push({
+        sprite,
+        kind,
+        targetRow: start.row,
+        targetCol: start.col,
+        nextMoveAt: this.time.now + Phaser.Math.Between(1000, 4000),
+      });
+    }
+  }
+
+  // Called every frame from update() — each townsperson ambles to a
+  // fresh random street tile every few seconds (moveOrSnap handles the
+  // actual walk-cycle animation/facing/tween, same as a real remote
+  // player's own movement).
+  private updateTownspeople(mapName: MapName): void {
+    if (this.townspeople.length === 0) return;
+    const now = this.time.now;
+    for (const person of this.townspeople) {
+      if (now < person.nextMoveAt) continue;
+      const next = this.randomTownStreetTile(mapName);
+      if (next) {
+        person.targetRow = next.row;
+        person.targetCol = next.col;
+        this.moveOrSnap(person.sprite, person.kind, next.row, next.col);
+      }
+      person.nextMoveAt = now + Phaser.Math.Between(3000, 7000);
+    }
+  }
+
+  private destroyFishermen(): void {
+    for (const fisherman of this.fishermen) {
+      fisherman.canoeSprite.destroy();
+      fisherman.riderSprite.destroy();
+    }
+    this.fishermen = [];
+  }
+
+  // A later follow-up ask: "put some fisherman out in the water on
+  // canoes in Kortho to make it more lively" — spread out across
+  // Kortho's own sea band (KORTHO_SEA_COL_START..KORTHO_SEA_COL_END),
+  // reusing the exact same canoe texture/facing-frame convention a real
+  // player's own boat already uses (see updateBoatVisual).
+  private spawnFishermen(): void {
+    for (let i = 0; i < WorldScene.FISHERMAN_COUNT; i++) {
+      const row = Phaser.Math.Between(4, TOWN_SIZE - 5);
+      const col = Phaser.Math.Between(KORTHO_SEA_COL_START, KORTHO_SEA_COL_END);
+      const pos = this.tilePosition(row, col);
+      const facing: Facing = Math.random() < 0.5 ? 'left' : 'right';
+      const canoeSprite = this.add.sprite(pos.x, pos.y, CANOE_TEXTURE_KEY, BOAT_FRAME_FOR_FACING[facing]);
+      const kind = effectiveSpriteKind('human', WorldScene.randomFrom(GENDERS), WorldScene.randomFrom(SKIN_TONES), WorldScene.randomFrom(HAIR_COLORS));
+      const riderSprite = this.add
+        .sprite(pos.x, pos.y, textureKeyFor(kind), idleFrameFor(kind, facing === 'left' ? 'left' : 'right'))
+        .setScale(CHAR_SCALE)
+        .setDepth(canoeSprite.depth + 0.01);
+      this.fishermen.push({ canoeSprite, riderSprite, homeX: pos.x, homeY: pos.y });
+    }
+  }
+
+  // Called every frame from update() — a fisherman stays anchored near
+  // their own spot (a real fisherman sits still fishing, doesn't wander
+  // the way townspeople do above), just a gentle bob matching the sea's
+  // own animated water beneath them so they read as floating on it
+  // rather than pasted on top.
+  private updateFishermen(): void {
+    if (this.fishermen.length === 0) return;
+    for (const fisherman of this.fishermen) {
+      const bobY = Math.sin(this.time.now / 900 + fisherman.homeX) * 2;
+      fisherman.canoeSprite.setPosition(fisherman.homeX, fisherman.homeY + bobY);
+      fisherman.riderSprite.setPosition(fisherman.homeX, fisherman.homeY + bobY);
+    }
+  }
+
   private renderMap(mapName: MapName): void {
     this.currentMap = mapName;
     const def = getMap(mapName);
@@ -2442,6 +2696,18 @@ export class WorldScene extends Phaser.Scene {
     this.destroyWisps();
     if ((WISP_ELIGIBLE_MAPS as readonly string[]).includes(mapName)) {
       this.spawnWisps(pixelWidth, pixelHeight);
+    }
+
+    // Ambient townspeople/fishermen (a later follow-up ask) — same
+    // "cleared unconditionally, re-spawned only if the new map qualifies"
+    // lifecycle as the wisps above.
+    this.destroyTownspeople();
+    if (mapName === 'Floro' || mapName === 'Kortho') {
+      this.spawnTownspeople(mapName);
+    }
+    this.destroyFishermen();
+    if (mapName === 'Kortho') {
+      this.spawnFishermen();
     }
 
     // A lock target/Blockman selection from the PREVIOUS map never
@@ -2706,8 +2972,8 @@ export class WorldScene extends Phaser.Scene {
     // which uses the exact same shape for collision), split into 4 bands
     // so the south one can leave a gap for the bridge rather than
     // drawing over it and then covering it back up.
-    this.moatGraphics?.destroy();
-    this.moatGraphics = null;
+    for (const sprite of this.moatWaterSprites) sprite.destroy();
+    this.moatWaterSprites = [];
     this.bridgeGraphics?.destroy();
     this.bridgeGraphics = null;
     this.gateLeftSprite?.destroy();
@@ -2928,7 +3194,38 @@ export class WorldScene extends Phaser.Scene {
           .setDepth(-0.99)
       );
 
-      const WATER = 0x2f6fa8;
+      // A later follow-up ask: "make the moat around Grimoak Castle more
+      // interactive and wavy, show some animation" — was a flat solid-
+      // color Graphics fill. Now 6 tileSprite bands (the moat ring's own
+      // 6 disjoint rectangles — same shape isMoatBlocked collision uses,
+      // split so the north/south bands can each leave the bridge-width
+      // gap) using the exact same 'water-wave' texture Kortho's
+      // Shimmering Sea/Silverbranch Lake already animate, scrolled
+      // together in update() (see moatWaterSprites there).
+      const addMoatWaterBand = (rowStart: number, rowEnd: number, colStart: number, colEnd: number): void => {
+        if (rowEnd < rowStart || colEnd < colStart) return;
+        const sprite = this.add
+          .tileSprite(
+            colStart * TILE_SIZE,
+            rowStart * TILE_SIZE,
+            (colEnd - colStart + 1) * TILE_SIZE,
+            (rowEnd - rowStart + 1) * TILE_SIZE,
+            'water-wave'
+          )
+          .setOrigin(0, 0)
+          .setDepth(-0.95);
+        this.moatWaterSprites.push(sprite);
+      };
+      // North band leaves the same bridge-width gap the south band
+      // already did (a later follow-up ask: "the same bridge and gate
+      // mechanism going north") — previously drawn as one unbroken span.
+      addMoatWaterBand(MOAT_OUTER_TOP, MOAT_INNER_TOP - 1, MOAT_OUTER_LEFT, BRIDGE_COL_LEFT - 1);
+      addMoatWaterBand(MOAT_OUTER_TOP, MOAT_INNER_TOP - 1, BRIDGE_COL_RIGHT + 1, MOAT_OUTER_RIGHT);
+      addMoatWaterBand(MOAT_INNER_TOP, MOAT_INNER_BOTTOM, MOAT_OUTER_LEFT, MOAT_INNER_LEFT - 1);
+      addMoatWaterBand(MOAT_INNER_TOP, MOAT_INNER_BOTTOM, MOAT_INNER_RIGHT + 1, MOAT_OUTER_RIGHT);
+      addMoatWaterBand(MOAT_INNER_BOTTOM + 1, MOAT_OUTER_BOTTOM, MOAT_OUTER_LEFT, BRIDGE_COL_LEFT - 1);
+      addMoatWaterBand(MOAT_INNER_BOTTOM + 1, MOAT_OUTER_BOTTOM, BRIDGE_COL_RIGHT + 1, MOAT_OUTER_RIGHT);
+
       const fillTileBand = (
         graphics: Phaser.GameObjects.Graphics,
         rowStart: number,
@@ -2941,18 +3238,6 @@ export class WorldScene extends Phaser.Scene {
         graphics.fillStyle(color, 1);
         graphics.fillRect(colStart * TILE_SIZE, rowStart * TILE_SIZE, (colEnd - colStart + 1) * TILE_SIZE, (rowEnd - rowStart + 1) * TILE_SIZE);
       };
-
-      const moat = this.add.graphics().setDepth(-0.95);
-      // North band now leaves the same bridge-width gap the south band
-      // already did (a later follow-up ask: "the same bridge and gate
-      // mechanism going north") — previously drawn as one unbroken span.
-      fillTileBand(moat, MOAT_OUTER_TOP, MOAT_INNER_TOP - 1, MOAT_OUTER_LEFT, BRIDGE_COL_LEFT - 1, WATER);
-      fillTileBand(moat, MOAT_OUTER_TOP, MOAT_INNER_TOP - 1, BRIDGE_COL_RIGHT + 1, MOAT_OUTER_RIGHT, WATER);
-      fillTileBand(moat, MOAT_INNER_TOP, MOAT_INNER_BOTTOM, MOAT_OUTER_LEFT, MOAT_INNER_LEFT - 1, WATER);
-      fillTileBand(moat, MOAT_INNER_TOP, MOAT_INNER_BOTTOM, MOAT_INNER_RIGHT + 1, MOAT_OUTER_RIGHT, WATER);
-      fillTileBand(moat, MOAT_INNER_BOTTOM + 1, MOAT_OUTER_BOTTOM, MOAT_OUTER_LEFT, BRIDGE_COL_LEFT - 1, WATER);
-      fillTileBand(moat, MOAT_INNER_BOTTOM + 1, MOAT_OUTER_BOTTOM, BRIDGE_COL_RIGHT + 1, MOAT_OUTER_RIGHT, WATER);
-      this.moatGraphics = moat;
 
       const bridge = this.add.graphics().setDepth(-0.9);
       const PLANK = 0x8a6238;
@@ -6308,6 +6593,54 @@ export class WorldScene extends Phaser.Scene {
       this.isPunching = false;
       this.setIdle();
     });
+    // A later follow-up ask: "the swords should have a 'slash' effect
+    // when attacking. The bone dagger should have a 'stab' effect when
+    // attacking." Layered on top of the existing swing animation above
+    // (not a replacement — no new character-spritesheet swing art was
+    // generated for this, see this project's own "new sprites are real
+    // generated spritesheets" convention), so a sword vs a dagger vs an
+    // unarmed punch each read as visually distinct without new hand-drawn
+    // attack frames. Local player only (see playWeaponEffect's own doc
+    // comment).
+    const weapon = myProfile?.equipment.weapon;
+    if (weapon && isSwordItem(weapon)) this.playWeaponEffect(facing, 'slash');
+    else if (weapon === 'bone dagger') this.playWeaponEffect(facing, 'stab');
+  }
+
+  // A short-lived cosmetic overlay for playOwnSwingAnim above — a slash
+  // draws a short curved arc swept across the facing direction, a stab
+  // draws a thin line jabbing straight out; both fade out and destroy
+  // themselves well within the swing's own SWING_DURATION_MS. Local-
+  // player-only for this first pass (matching item 12's own "no glow for
+  // OTHER players' wands yet" scoping decision above) — extending this to
+  // remote players'/monsters' own swings would need the weapon type
+  // threaded through applyRemotePunch/playMonsterCounterAnim too, a
+  // separate follow-up if wanted.
+  private static readonly WEAPON_EFFECT_DURATION_MS = 220;
+  private static readonly WEAPON_EFFECT_ANGLE_FOR: Record<Facing, number> = { down: 90, up: -90, left: 180, right: 0 };
+
+  private playWeaponEffect(facing: Facing, kind: 'slash' | 'stab'): void {
+    const offset = this.weaponOffsetFor(facing);
+    const graphics = this.add.graphics().setDepth(2);
+    graphics.lineStyle(3, 0xf0f0ff, 0.95);
+    if (kind === 'slash') {
+      graphics.beginPath();
+      graphics.arc(0, 0, 14, Phaser.Math.DegToRad(-55), Phaser.Math.DegToRad(55), false);
+      graphics.strokePath();
+    } else {
+      graphics.beginPath();
+      graphics.moveTo(0, 0);
+      graphics.lineTo(18, 0);
+      graphics.strokePath();
+    }
+    graphics.setPosition(this.player.x + offset.x, this.player.y + offset.y);
+    graphics.setAngle(WorldScene.WEAPON_EFFECT_ANGLE_FOR[facing]);
+    this.tweens.add({
+      targets: graphics,
+      alpha: 0,
+      duration: WorldScene.WEAPON_EFFECT_DURATION_MS,
+      onComplete: () => graphics.destroy(),
+    });
   }
 
   private performPunch(direction: Direction): void {
@@ -6530,15 +6863,20 @@ export class WorldScene extends Phaser.Scene {
 
     if (event.targetKind === 'player' && event.target === this.myUsername) {
       this.applyOwnStats({ hp: event.targetHp, maxHp: event.targetMaxHp });
+      this.spawnFloatingDamageNumber(this.player, event.damage, this.damageTypeLabelFor(event));
       return; // if we died, a fresh 'sync' follows separately with our respawned position
     }
 
     if (event.targetKind === 'npc') {
       const sprite = this.npcSprites.get(event.target);
-      if (sprite) this.ensureHpBar(sprite, event.targetHp, event.targetMaxHp);
+      if (sprite) {
+        this.ensureHpBar(sprite, event.targetHp, event.targetMaxHp);
+        this.spawnFloatingDamageNumber(sprite, event.damage, this.damageTypeLabelFor(event));
+      }
     } else if (event.targetKind === 'monster') {
       const sprite = this.monsterSprites.get(event.target);
       if (!sprite) return;
+      this.spawnFloatingDamageNumber(sprite, event.damage, this.damageTypeLabelFor(event));
       // Item 2: while autopilot is engaged with this exact monster, this
       // is what actually plays the local player's swing animation now —
       // in sync with the real combat-tick hit the server just resolved,
@@ -6573,7 +6911,10 @@ export class WorldScene extends Phaser.Scene {
       }
     } else if (event.targetKind === 'player') {
       const sprite = this.otherPlayers.get(event.target);
-      if (sprite) this.ensureHpBar(sprite, event.targetHp, event.targetMaxHp);
+      if (sprite) {
+        this.ensureHpBar(sprite, event.targetHp, event.targetMaxHp);
+        this.spawnFloatingDamageNumber(sprite, event.damage, this.damageTypeLabelFor(event));
+      }
     }
   }
 

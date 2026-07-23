@@ -88,7 +88,28 @@ const VENDOR_SEEDS: VendorSeed[] = [
     map: 'Floro Blacksmith',
     row: 3,
     col: 15,
-    items: [{ label: 'bone dagger', price: 5 }],
+    // A later follow-up ask ("make it so that the Floro and Kortho
+    // blacksmith sells 1 of each type of wand... and 1 of each type of
+    // sword... 10 coins each") — one wand and one sword per core stat
+    // (see shared/equipment.ts's own doc comment on the full set/naming;
+    // "wand of intelligence" already existed at Bramwick's own Weapons
+    // shop with this exact +1 int/10 gold shape, reused here rather than
+    // duplicated).
+    items: [
+      { label: 'bone dagger', price: 5 },
+      { label: 'wand of intelligence', price: 10 },
+      { label: 'wand of strength', price: 10 },
+      { label: 'wand of wisdom', price: 10 },
+      { label: 'wand of constitution', price: 10 },
+      { label: 'wand of dexterity', price: 10 },
+      { label: 'wand of luck', price: 10 },
+      { label: 'sword of intelligence', price: 10 },
+      { label: 'sword of strength', price: 10 },
+      { label: 'sword of wisdom', price: 10 },
+      { label: 'sword of constitution', price: 10 },
+      { label: 'sword of dexterity', price: 10 },
+      { label: 'sword of luck', price: 10 },
+    ],
     greeting: 'Forged bone edges, sharp enough to earn their keep. Take a look.',
   },
   {
@@ -209,7 +230,23 @@ const VENDOR_SEEDS: VendorSeed[] = [
     map: 'Kortho Blacksmith',
     row: 3,
     col: 15,
-    items: [{ label: 'bone dagger', price: 5 }],
+    // Same wand/sword-per-stat set as Floro's own Blacksmith above (a
+    // later follow-up ask) — see that shop's own doc comment.
+    items: [
+      { label: 'bone dagger', price: 5 },
+      { label: 'wand of intelligence', price: 10 },
+      { label: 'wand of strength', price: 10 },
+      { label: 'wand of wisdom', price: 10 },
+      { label: 'wand of constitution', price: 10 },
+      { label: 'wand of dexterity', price: 10 },
+      { label: 'wand of luck', price: 10 },
+      { label: 'sword of intelligence', price: 10 },
+      { label: 'sword of strength', price: 10 },
+      { label: 'sword of wisdom', price: 10 },
+      { label: 'sword of constitution', price: 10 },
+      { label: 'sword of dexterity', price: 10 },
+      { label: 'sword of luck', price: 10 },
+    ],
     greeting: "Kortho steel — well, bone, same difference. Sharp enough to earn its keep.",
   },
   {

@@ -2,6 +2,7 @@
 import { myProfile } from '../state.js';
 import { attachTooltip } from './tooltip.js';
 import { SKILL_DESCRIPTIONS, SKILL_CATEGORIES, skillCategory, createCooldownOverlay, isAttackSkill, isUsableSkill, skillIconColor } from './skillMeta.js';
+import { SKILL_SPECIALIZATION_REQUIREMENT } from '../../shared/skills.js';
 import { skillIconGlyphUrl } from './skillIcons.js';
 import { actionBarSkills, assignActionSlot, beginDragVisual, endDragVisual, removeFromActionBar, saveActionBar, updateDragVisual } from './actionBar.js';
 import { logCombatMessage } from './log.js';
@@ -103,8 +104,31 @@ export function renderSkills(): void {
   // stay in SKILL_CATEGORIES' own fixed order, not alphabetical.
   const learned = new Set(Object.keys(myProfile.skills));
 
+  // A later follow-up ask: "put the specialization spells that are
+  // learned under their own section with the title of the
+  // specialization, like 'Druid' or 'Necromancer'" — pulled out into
+  // their own section ahead of the ordinary category breakdown below,
+  // rather than left scattered across Offense/Defense/etc. Specialization
+  // choice is permanent (handleChooseSpecialization refuses a repick —
+  // see SKILL_SPECIALIZATION_REQUIREMENT's own doc comment), so a player
+  // can only ever have learned skills belonging to ONE specialization —
+  // no risk of needing to bucket by more than one.
+  const specializationSkills = myProfile.specialization
+    ? [...learned].filter((s) => SKILL_SPECIALIZATION_REQUIREMENT[s] === myProfile!.specialization).sort((a, b) => a.localeCompare(b))
+    : [];
+  if (specializationSkills.length > 0) {
+    const label = myProfile.specialization!.charAt(0).toUpperCase() + myProfile.specialization!.slice(1);
+    renderCategoryHeader(label);
+    for (const skillName of specializationSkills) {
+      renderSkillRow(skillName, `${myProfile.skills[skillName]}%`);
+    }
+  }
+  const specializationSkillSet = new Set(specializationSkills);
+
   for (const category of SKILL_CATEGORIES) {
-    const learnedInCategory = [...learned].filter((s) => skillCategory(s) === category).sort((a, b) => a.localeCompare(b));
+    const learnedInCategory = [...learned]
+      .filter((s) => skillCategory(s) === category && !specializationSkillSet.has(s))
+      .sort((a, b) => a.localeCompare(b));
     if (learnedInCategory.length === 0) continue;
 
     renderCategoryHeader(category);
