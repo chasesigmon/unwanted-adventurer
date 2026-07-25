@@ -43,8 +43,10 @@ export function renderShopModal(): void {
     // class on top of the shared divider styling (see style.css's
     // .shop-for-sale-header), left off the "Your items"/balance dividers
     // below, which weren't part of the ask.
+    // A follow-up ask: "change the 'For Sale' to say 'Buy'" — same header
+    // styling, new text.
     forSaleHeader.className = 'shop-item-divider shop-for-sale-header';
-    forSaleHeader.textContent = 'For sale';
+    forSaleHeader.textContent = 'Buy';
     shopItemList.appendChild(forSaleHeader);
   }
   // Item 7: "organize items alphabetically" — the vendor's own static
@@ -84,9 +86,12 @@ export function renderShopModal(): void {
   const shopCategory = vendorSellCategory(currentVendor.id);
   const sellableInventory = shopCategory ? myProfile?.inventory.filter((item) => itemSellCategory(item) === shopCategory) : undefined;
   if (sellableInventory && sellableInventory.length > 0) {
+    // A follow-up ask: "instead of showing 'Your Items' have it say
+    // 'Sell' and be styled and centered like the 'Buy' [header]" — same
+    // .shop-for-sale-header treatment the Buy header above uses.
     const divider = document.createElement('li');
-    divider.className = 'shop-item-divider';
-    divider.textContent = 'Your items';
+    divider.className = 'shop-item-divider shop-for-sale-header';
+    divider.textContent = 'Sell';
     shopItemList.appendChild(divider);
 
     // Alphabetized (see groupInventoryItems's own doc comment) — same

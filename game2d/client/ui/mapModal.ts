@@ -73,7 +73,7 @@ function renderConnectionsList(mapName: MapName): HTMLUListElement {
   const list = document.createElement('ul');
   list.className = 'map-connections';
   const def = MAPS[mapName];
-  // A wide road (e.g. Grimoak Grounds <-> Bramwick/Road to Kortho) is
+  // A wide road (e.g. Grimoak Grounds <-> Bramwick/Kortho Road) is
   // really one exit per column across its own width under the hood, so
   // every step across it lands at the matching lateral position on the
   // other side (see bramwickGroundsEntranceExits's own doc comment) — a
@@ -220,7 +220,7 @@ const GRIMOAK_GROUNDS_ASCII_MAP = `
                                           |
                                    [ NORTH BRIDGE + GATE ]
                                           ^
-                    _____________________________________________________   sign: "Road to Kortho"
+                    _____________________________________________________   sign: "Kortho Road"
                    /   ~~~~~~~~~~~~~~~~~~~ MOAT ~~~~~~~~~~~~~~~~~~~~~~~  \\  ------------------> east,
                   /    ~~                                            ~~  \\  dirt road (full width
                  |     ~~                                            ~~   |  walkable) to Road to
@@ -240,9 +240,9 @@ const GRIMOAK_GROUNDS_ASCII_MAP = `
                      10% expansion)
                                           |
                                           v  south, dirt road (full width
-                                             walkable) to Road to Floro ->
+                                             walkable) to Floro Road ->
                                              Floro
-                                sign: "Road to Floro"
+                                sign: "Floro Road"
 `.trim();
 
 const BRAMWICK_ASCII_MAP = `
@@ -271,7 +271,7 @@ const BRAMWICK_ASCII_MAP = `
 `.trim();
 
 // A later follow-up ask: "create ASCII maps to represent the new roads &
-// towns that have been added" — Road to Kortho/Kortho and Road to Floro/
+// towns that have been added" — Kortho Road/Kortho and Floro Road/
 // Floro, same hand-drawn sketch treatment as every area above.
 const ROAD_TO_KORTHO_ASCII_MAP = `
   < Grimoak Grounds                                                      Kortho >
@@ -288,12 +288,12 @@ const KORTHO_ASCII_MAP = `
                     /   [BLACKSMITH]  [GENERAL STORE]   [INN]     [BANK]    \\
                     |         ^               ^            ^         ^       |
                     |     (each shop building now has real collision —       |
-< Road to Kortho    |      walk in only through its own painted-on door)     |
+< Kortho Road    |      walk in only through its own painted-on door)     |
 sign: "Road to      |                                                       |
  Kortho"    <=======|           [ARMORER]    [PET SALESMAN]  [JOBS OFFICE]   |
                     |                ^              ^               ^       |
                     |                                                       |
-                    |             sign: "Road to Kortho"                    |
+                    |             sign: "Kortho Road"                    |
                      \\______________________________________________________/
 `.trim();
 
@@ -312,8 +312,8 @@ const ROAD_TO_FLORO_ASCII_MAP = `
 `.trim();
 
 const FLORO_ASCII_MAP = `
-                                    ^  Road to Floro
-                          sign: "Road to Floro"
+                                    ^  Floro Road
+                          sign: "Floro Road"
                      ______________________________________________________
                     /   [BLACKSMITH]  [GENERAL STORE]   [INN]     [BANK]    \\
                     |         ^               ^            ^         ^       |
@@ -351,9 +351,9 @@ type WorldMapArea =
   | 'Grimoak Castle 4th Floor'
   | 'Grimoak Grounds'
   | 'Bramwick'
-  | 'Road to Kortho'
+  | 'Kortho Road'
   | 'Kortho'
-  | 'Road to Floro'
+  | 'Floro Road'
   | 'Floro'
   | 'Mystical Timberland';
 
@@ -369,9 +369,9 @@ const WORLD_MAP_ASCII: Partial<Record<WorldMapArea, string>> = {
   'Grimoak Castle 4th Floor': FLOOR4_ASCII_MAP,
   'Grimoak Grounds': GRIMOAK_GROUNDS_ASCII_MAP,
   Bramwick: BRAMWICK_ASCII_MAP,
-  'Road to Kortho': ROAD_TO_KORTHO_ASCII_MAP,
+  'Kortho Road': ROAD_TO_KORTHO_ASCII_MAP,
   Kortho: KORTHO_ASCII_MAP,
-  'Road to Floro': ROAD_TO_FLORO_ASCII_MAP,
+  'Floro Road': ROAD_TO_FLORO_ASCII_MAP,
   Floro: FLORO_ASCII_MAP,
   'Mystical Timberland': MYSTICAL_TIMBERLAND_ASCII_MAP,
 };
@@ -387,9 +387,9 @@ const WORLD_MAP_AREAS: WorldMapArea[] = [
   'Grimoak Castle 4th Floor',
   'Grimoak Grounds',
   'Bramwick',
-  'Road to Kortho',
+  'Kortho Road',
   'Kortho',
-  'Road to Floro',
+  'Floro Road',
   'Floro',
   'Mystical Timberland',
 ];
@@ -441,9 +441,9 @@ function buildWorldOverviewElement(): HTMLElement {
   addNode('timb', 'Mystical Timberland', '~2,200 trees, maze-like');
   addConnector('connW', 'h', '↔ dirt road');
   addNode('hub', 'Grimoak Grounds', 'Grimoak Castle lies beneath, entered via the north door');
-  addConnector('connE', 'h', '↔ Road to Kortho');
+  addConnector('connE', 'h', '↔ Kortho Road');
   addNode('korth', 'Kortho', '7 shops, square grid');
-  addConnector('connS', 'v', '↕ Road to Floro');
+  addConnector('connS', 'v', '↕ Floro Road');
   addNode('floro', 'Floro', '7 shops, square grid');
 
   const note = document.createElement('p');

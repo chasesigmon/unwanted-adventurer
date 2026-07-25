@@ -11,7 +11,7 @@ import { itemTooltip, ITEM_DESCRIPTIONS } from './skillMeta.js';
 import { logCombatMessage } from './log.js';
 import { showCenterToastLines } from './toast.js';
 import { updateStatusBar } from './statusBar.js';
-import { equipmentBody, equipmentModal, inventoryCapacity, inventoryList, inventoryModal, refreshOpenModals, registerModalOpenHandler, registerModalRefreshHandler } from './modalCore.js';
+import { equipmentBody, equipmentModal, inventoryCapacity, inventoryList, inventoryModal, refreshOpenModals, registerModalOpenHandler, registerModalRefreshHandler, wholeNumber } from './modalCore.js';
 import { inventoryWeightLbs, maxInventoryItemCount, maxInventoryWeightLbs, INVENTORY_BASE_MAX_ITEMS, INVENTORY_BASE_MAX_WEIGHT_LBS } from '../../shared/inventory.js';
 import { getFollowers } from './groupPanel.js';
 import { isCraftingModalOpen, addItemToCraftingTable } from './craftingModal.js';
@@ -99,7 +99,7 @@ function renderInventoryCapacity(items: string[]): void {
 
   const weightLine = document.createElement('div');
   weightLine.className = 'inventory-capacity-line' + (overweight ? ' over-limit' : '');
-  weightLine.textContent = `${weight}/${maxWeight} lbs (${INVENTORY_BASE_MAX_WEIGHT_LBS} +${weightBonus})`;
+  weightLine.textContent = `${wholeNumber(weight)}/${maxWeight} lbs (${INVENTORY_BASE_MAX_WEIGHT_LBS} +${weightBonus})`;
   if (overweight) weightLine.title = 'Overweight — your movement speed is slowed until you drop enough weight.';
   inventoryCapacity.appendChild(weightLine);
 }
@@ -363,7 +363,7 @@ function applyUseItemAck(ack: UseItemAck): void {
     // broadcast (see WorldScene's own applyOwnStats) until now.
     updateStatusBar();
   }
-  const actionMessage = ack.action === 'equipped' ? 'You equip it.' : ack.action === 'unequipped' ? 'You remove it.' : 'You consume it.';
+  const actionMessage = ack.action === 'equipped' ? 'You equip it.' : ack.action === 'unequipped' ? 'You remove it.' : 'You use it.';
   logCombatMessage(actionMessage);
   if (ack.message) {
     logCombatMessage(ack.message, 'level-up');

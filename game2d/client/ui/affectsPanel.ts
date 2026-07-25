@@ -73,15 +73,22 @@ function activeAffects(): ActiveAffect[] {
     const expiresAt = Math.max(realFlightUntil ?? 0, wispFlightUntil ?? 0);
     affects.push({ label: 'Flight', expiresAt });
   }
-  // Item 11's Transform spell (a later follow-up ask): "put an affect in
-  // the affects window that they are flying ('Flying - Indefinitely')" —
-  // tied to the transform's own (already-shown-elsewhere) duration, not a
-  // separate timer of its own, so baked into the label like "Enhanced
-  // learning - Xh" above rather than given its own expiresAt countdown.
-  if (myProfile.beastTransformActive && isFlyingBeastKind(myProfile.beastTransformKind)) {
+  // Item 11's Transform spell. A follow-up ask ("after a few minutes it
+  // transforms back to human form, but there isn't an affect... to show
+  // that the transform has a time limit") — this used to hardcode
+  // "Flying - Indefinitely" with no countdown at all (and only for a
+  // flying-capable kind, so a non-flying transform got no affect row
+  // whatsoever), even though the transform has always had a real expiry
+  // (PlayerSnapshot.beastTransformUntil, set at cast time — see
+  // game.gateway.ts's handleCastTransform). Now shows a real countdown
+  // for ANY transform kind, flying or not.
+  if (myProfile.beastTransformActive && myProfile.beastTransformUntil) {
     affects.push({
-      label: 'Flying - Indefinitely',
-      tooltip: 'Transformed into a flying beast — you can cross water freely and move faster while transformed.',
+      label: 'Beast Transformation',
+      expiresAt: myProfile.beastTransformUntil,
+      tooltip: isFlyingBeastKind(myProfile.beastTransformKind)
+        ? 'Transformed into a flying beast — you can cross water freely and move faster while transformed.'
+        : 'Transformed into a beast — you move faster while transformed.',
     });
   }
   // The flight spell's own spacebar burst (a later follow-up ask: "show

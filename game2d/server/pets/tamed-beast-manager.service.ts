@@ -59,11 +59,14 @@ export class TamedBeastManagerService {
 
   // A later follow-up ask: "give the player the ability to name their pet
   // or tamed beast and it should persist" — same shape as PetManagerService's
-  // own rename.
-  rename(ownerUsername: string, name: string): TamedBeast | undefined {
+  // own rename, including its later "only 1 time, then permanent" follow-up
+  // (see that method's own doc comment for the null-vs-undefined meaning).
+  rename(ownerUsername: string, name: string): TamedBeast | undefined | null {
     const beast = this.beasts.get(ownerUsername);
     if (!beast) return undefined;
+    if (beast.named) return null;
     beast.name = name;
+    beast.named = true;
     return beast;
   }
 

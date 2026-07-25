@@ -129,11 +129,17 @@ export class PetManagerService {
   // or tamed beast and it should persist" — PetSnapshot.name was already
   // mutable (set to a default label at buy() above), just never had a
   // player-facing way to change it. Same ownership/aliveness gate as
-  // setCommand above.
-  rename(ownerUsername: string, name: string): Pet | undefined {
+  // setCommand above. A still-later follow-up ask: "the player should
+  // only be able to name the pet... 1 time, then it is permanent" —
+  // `null` (distinct from `undefined`'s "no pet at all") signals
+  // "already named" to the caller, which reports a different message
+  // than "no pet" for that case.
+  rename(ownerUsername: string, name: string): Pet | undefined | null {
     const pet = this.pets.get(ownerUsername);
     if (!pet || !pet.alive) return undefined;
+    if (pet.named) return null;
     pet.name = name;
+    pet.named = true;
     return pet;
   }
 

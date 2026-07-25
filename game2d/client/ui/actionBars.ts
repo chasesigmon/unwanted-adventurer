@@ -54,8 +54,15 @@ export const ACTION_BAR_POSITION_LABELS: Record<ActionBarPosition, string> = {
   left: 'Left middle',
 };
 
+// A follow-up ask ("after adding more action bars on the left and right,
+// I was not able to adjust their rows, only their columns") — a
+// side-docked bar's own sensible default (see addActionBar below) used to
+// START at the row cap (4), so the Settings modal's rows stepper had
+// nowhere to go but down, reading as "broken." Rows/cols now share the
+// same 1-10 range regardless of dock side, so there's always headroom in
+// both directions no matter which default a bar started from.
 export const ACTION_BAR_MIN_ROWS = 1;
-export const ACTION_BAR_MAX_ROWS = 4;
+export const ACTION_BAR_MAX_ROWS = 10;
 export const ACTION_BAR_MIN_COLS = 1;
 export const ACTION_BAR_MAX_COLS = 10;
 
@@ -266,10 +273,13 @@ export function addActionBar(position: ActionBarPosition): boolean {
   // A left/right-docked bar reads top-to-bottom, so it defaults to a
   // narrow-and-tall shape instead of the wide 2x10 that suits top/bottom
   // docking — purely a starting point, both dimensions stay adjustable
-  // from the Settings modal afterward either way.
+  // from the Settings modal afterward either way. Deliberately NOT
+  // ACTION_BAR_MAX_ROWS here — starting already pinned at the cap left no
+  // room to adjust rows upward at all, reading as "the rows stepper is
+  // broken" (a follow-up ask) even though it worked, just only downward.
   const isSideDocked = position === 'left' || position === 'right';
-  const rows = isSideDocked ? ACTION_BAR_MAX_ROWS : 2;
-  const cols = isSideDocked ? 2 : ACTION_BAR_MAX_COLS;
+  const rows = isSideDocked ? 5 : 2;
+  const cols = isSideDocked ? 2 : 5;
   bars.push({
     id: `bar-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     position,

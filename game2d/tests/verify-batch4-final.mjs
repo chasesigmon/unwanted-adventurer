@@ -1,8 +1,8 @@
 // Live verification for the 12-item batch: double-click follower detail
 // modal (item 1, client-only — not checked here), Grimoak Grounds south
-// expansion (2), Road to Floro + Floro reconnect (3), map-modal dedupe
+// expansion (2), Floro Road + Floro reconnect (3), map-modal dedupe
 // (4, client-only), where-label area names (5), open walk-through at the
-// Road to Kortho/Floro junctions (6), all-dirt Road to Kortho (7,
+// Kortho Road/Floro junctions (6), all-dirt Kortho Road (7,
 // client-only rendering — checked structurally via absence of a stone
 // stretch constant), Kortho's own entrance sign/patch (8, client-only),
 // Kortho shop sprites (9, client-only), shop interior size/vendor
@@ -78,7 +78,7 @@ try {
   check('south expansion adds noticeably more than 0 rows past 80', lastRow > 80 && steps > 0);
   console.log('south edge reached at row', lastRow, 'after', steps, 'more steps');
 
-  // --- Item 3: Road to Floro connects Grimoak Grounds <-> Floro ---
+  // --- Item 3: Floro Road connects Grimoak Grounds <-> Floro ---
   // GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL = 10 (fixed in shared/maps.ts); the
   // exit sits at (GRIMOAK_GROUNDS_ROWS - 1, 10) = (lastRow, 10). Standing
   // one tile north of it first, same "step onto the exit tile, then move
@@ -92,10 +92,10 @@ try {
   res = await emit(socket, 'move', 'south');
   check('steps onto the new SW exit tile', res.ok === true && res.player?.map === 'Grimoak Grounds' && res.player?.row === lastRow);
   res = await emit(socket, 'move', 'south');
-  check('SW exit transitions to Road to Floro', res.ok === true && res.player?.map === 'Road to Floro');
+  check('SW exit transitions to Floro Road', res.ok === true && res.player?.map === 'Floro Road');
   const roadToFloroRow = res.player?.row;
   const roadToFloroCol = res.player?.col;
-  console.log('arrived at Road to Floro:', roadToFloroRow, roadToFloroCol);
+  console.log('arrived at Floro Road:', roadToFloroRow, roadToFloroCol);
 
   // --- Item 5: where-label shows area names for open-world maps ---
   const whoRes = await emit(socket, 'who', {});
@@ -106,7 +106,7 @@ try {
   // then confirm the real exit tile actually leads into Floro.
   await closeAndWait(socket);
   psql(
-    `UPDATE players SET map='Road to Floro', "row"=${roadToFloroRow + 20}, col=${roadToFloroCol}, equipment='{"weapon":"wand"}'::jsonb WHERE username='${CHAR}';`
+    `UPDATE players SET map='Floro Road', "row"=${roadToFloroRow + 20}, col=${roadToFloroCol}, equipment='{"weapon":"wand"}'::jsonb WHERE username='${CHAR}';`
   );
   ({ token: charToken } = await post(`/characters/${CHAR}/select`, {}, accountToken));
   socket = await connect(charToken);
@@ -122,7 +122,7 @@ try {
     }
     if (r.player?.map === 'Floro') {
       transitioned = true;
-      check('Road to Floro leads into Floro', true);
+      check('Floro Road leads into Floro', true);
       check('arrives inside Floro, not blocked by the town gate (wand equipped)', r.player?.map === 'Floro');
       console.log('arrived in Floro at', r.player?.row, r.player?.col);
     }

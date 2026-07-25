@@ -666,6 +666,15 @@ export interface RenameTamedBeastAck {
   message?: string;
 }
 
+// A follow-up ask extended naming to animated dead/summons too (they had
+// no rename path at all before) — same shape as RenamePetAck/
+// RenameTamedBeastAck above.
+export interface RenameAnimatedMonsterAck {
+  ok: boolean;
+  animatedMonster?: AnimatedMonsterSnapshot;
+  message?: string;
+}
+
 export interface AnimatedMonsterCommandAck {
   ok: boolean;
   animatedMonster?: AnimatedMonsterSnapshot;
@@ -1269,6 +1278,10 @@ export interface ClientToServerEvents {
   // handleRenamePet/handleRenameTamedBeast.
   renamePet: (payload: { name: string }, ack: (res: RenamePetAck) => void) => void;
   renameTamedBeast: (payload: { name: string }, ack: (res: RenameTamedBeastAck) => void) => void;
+  // A follow-up ask extended naming to animated dead/summons too — needs
+  // its own `id` (unlike pet/tamed beast, an owner can have more than one
+  // animated monster at once).
+  renameAnimatedMonster: (payload: { id: string; name: string }, ack: (res: RenameAnimatedMonsterAck) => void) => void;
   // The Summoner's own monster-summons modal pick (a later follow-up
   // ask) — no target selection needed, just which kind to summon.
   castMonsterSummons: (payload: { monsterKind: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;

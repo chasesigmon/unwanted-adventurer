@@ -1,8 +1,8 @@
 // Live verification for batch items 8+9: "add a dirt road going east out
-// of Grimoak grounds... Create 'Road to Kortho'... add the town of Kortho
-// back and have it connect to the Road to Kortho." Confirms: the new NE
-// Grimoak Grounds exit really transitions to Road to Kortho, the far end
-// of Road to Kortho really transitions into Kortho, the pre-existing
+// of Grimoak grounds... Create 'Kortho Road'... add the town of Kortho
+// back and have it connect to the Kortho Road." Confirms: the new NE
+// Grimoak Grounds exit really transitions to Kortho Road, the far end
+// of Kortho Road really transitions into Kortho, the pre-existing
 // weapon-equipped town gate (TOWN_MAPS already included 'Kortho' before
 // this batch) still applies to it, and each of the 7 new shop doors
 // reciprocates into its own interior with a working vendor.
@@ -67,7 +67,7 @@ try {
   const { token: accountToken } = await post('/auth/register', { username: UNAME, email: EMAIL, password: 'testpass123' });
   await post('/characters', { name: CHAR, race: 'human', gender: 'male', hairColor: 'brown', skinTone: 'tan' }, accountToken);
 
-  // --- 1. Grimoak Grounds' new NE exit really leads to Road to Kortho ---
+  // --- 1. Grimoak Grounds' new NE exit really leads to Kortho Road ---
   psql(`UPDATE players SET map='Grimoak Grounds', "row"=${GROUNDS_EXIT_ROW}, col=${GROUNDS_COLS - 2} WHERE username='${CHAR}';`);
   let { token: charToken } = await post(`/characters/${CHAR}/select`, {}, accountToken);
   let socket = await connect(charToken);
@@ -76,18 +76,18 @@ try {
   let res = await emit(socket, 'move', 'east');
   check('steps onto the Grimoak Grounds NE exit tile', res.ok === true && res.player?.map === 'Grimoak Grounds');
   res = await emit(socket, 'move', 'east');
-  check('exit tile transitions to Road to Kortho', res.ok === true && res.player?.map === 'Road to Kortho');
+  check('exit tile transitions to Kortho Road', res.ok === true && res.player?.map === 'Kortho Road');
   check('arrives at the reciprocal west-side tile', res.player?.row === ROAD_MID_ROW && res.player?.col === 1);
 
-  // --- 2. Road to Kortho's east end really leads to Kortho ---
+  // --- 2. Kortho Road's east end really leads to Kortho ---
   await closeAndWait(socket);
-  psql(`UPDATE players SET map='Road to Kortho', "row"=${ROAD_MID_ROW}, col=${ROAD_COLS - 2} WHERE username='${CHAR}';`);
+  psql(`UPDATE players SET map='Kortho Road', "row"=${ROAD_MID_ROW}, col=${ROAD_COLS - 2} WHERE username='${CHAR}';`);
   ({ token: charToken } = await post(`/characters/${CHAR}/select`, {}, accountToken));
   socket = await connect(charToken);
   await new Promise((r) => setTimeout(r, 700));
 
   res = await emit(socket, 'move', 'east');
-  check('steps onto the Road to Kortho east exit tile', res.ok === true && res.player?.map === 'Road to Kortho');
+  check('steps onto the Kortho Road east exit tile', res.ok === true && res.player?.map === 'Kortho Road');
 
   // New characters start with a wand equipped by default (a wizarding
   // school's own starting kit), so the pre-existing TOWN_MAPS weapon gate
@@ -101,12 +101,12 @@ try {
   // --- 3. Gate still blocks when unarmed (mirroring Floro's own
   // pre-existing behavior, unchanged by this batch) ---
   await closeAndWait(socket);
-  psql(`UPDATE players SET map='Road to Kortho', "row"=${ROAD_MID_ROW}, col=${ROAD_COLS - 2}, equipment='{}'::jsonb WHERE username='${CHAR}';`);
+  psql(`UPDATE players SET map='Kortho Road', "row"=${ROAD_MID_ROW}, col=${ROAD_COLS - 2}, equipment='{}'::jsonb WHERE username='${CHAR}';`);
   ({ token: charToken } = await post(`/characters/${CHAR}/select`, {}, accountToken));
   socket = await connect(charToken);
   await new Promise((r) => setTimeout(r, 700));
   res = await emit(socket, 'move', 'east');
-  check('steps onto the exit tile again, unarmed', res.ok === true && res.player?.map === 'Road to Kortho');
+  check('steps onto the exit tile again, unarmed', res.ok === true && res.player?.map === 'Kortho Road');
   res = await emit(socket, 'move', 'east');
   check('unequipped player is turned away at Kortho (town gate)', res.ok === false && /guards of Kortho/.test(res.message || ''));
 

@@ -333,14 +333,14 @@ export const MAP_NAMES = [
   ...BRAMWICK_SHOP_MAPS,
   'Grimoak Grounds',
   // A later follow-up ask: "add a dirt road going east out of Grimoak
-  // grounds... Create 'Road to Kortho'" — the connecting corridor between
+  // grounds... Create 'Kortho Road'" — the connecting corridor between
   // Grimoak Grounds and Kortho, same "real separate map" shape as every
   // other exit here.
-  'Road to Kortho',
+  'Kortho Road',
   // A later follow-up ask: "at the southwest of grimoak grounds add a
   // dirt road... that goes south, leading to Floro" — same "real
-  // separate map" shape as Road to Kortho above.
-  'Road to Floro',
+  // separate map" shape as Kortho Road above.
+  'Floro Road',
   // A later follow-up ask: "create a new World/area called 'Mystical
   // Timberland' that is to the left of Grimoak Grounds" — connects
   // directly off the Grounds' own west edge, same single-shared-border
@@ -414,8 +414,8 @@ export const WISP_ELIGIBLE_MAPS: MapName[] = [
   'Great Plains',
   'Labyrinth',
   'Grimoak Grounds',
-  'Road to Kortho',
-  'Road to Floro',
+  'Kortho Road',
+  'Floro Road',
   'Mystical Timberland',
   'Gobbler Village',
   'Hexstone Cavern',
@@ -449,7 +449,7 @@ export function whereLabelFor(mapName: MapName): string | null {
   // grounds and Road to kortho are still not showing the area" — standing
   // on a town's own open street shows no suffix (a deliberate "no
   // building" case, unchanged from before), but every other open-world
-  // area (Grimoak Grounds, Road to Kortho, Road to Floro, ...) should show
+  // area (Grimoak Grounds, Kortho Road, Floro Road, ...) should show
   // its own name rather than falling through to no label at all.
   if (mapName === 'Floro' || mapName === 'Kortho' || mapName === 'Bramwick') return null;
   return mapName;

@@ -187,6 +187,12 @@ export interface PetSnapshot {
   // False once its hp hits 0 — see this file's own doc comment on
   // resurrection being a future mechanic.
   alive: boolean;
+  // A follow-up ask: "the player should only be able to name the pet...
+  // 1 time, then it is permanent" — set the moment a player-chosen name
+  // is first accepted (see PetManagerService.rename), after which further
+  // rename attempts are rejected. Undefined/false for a pet still on its
+  // purchase-time default name.
+  named?: boolean;
 }
 
 // The Necromancer's own animate dead spell (a later follow-up ask) —
@@ -239,6 +245,10 @@ export interface AnimatedMonsterSnapshot {
   // handleCastAnimateDead), drives both the display name and WorldScene's
   // own bigger-sprite-scale rendering, same as a live rare monster.
   isRare?: boolean;
+  // Same one-time-permanent naming rule as PetSnapshot.named above — a
+  // follow-up ask extended naming to animated dead/summons too (they had
+  // no rename path at all before), so this needs the same guard.
+  named?: boolean;
 }
 
 // A later follow-up ask: "the corpses of pets should be selectable and
@@ -298,6 +308,8 @@ export interface TamedBeastSnapshot {
   command: PetCommand;
   attackTargetKind?: 'monster' | 'player';
   attackTargetId?: string;
+  // Same one-time-permanent naming rule as PetSnapshot.named above.
+  named?: boolean;
 }
 
 // Same TTL every OTHER corpse in this game already uses (see

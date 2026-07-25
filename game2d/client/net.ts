@@ -18,6 +18,7 @@ import type {
   PetCommandAck,
   RenamePetAck,
   RenameTamedBeastAck,
+  RenameAnimatedMonsterAck,
   CommandFollowerAttackAck,
   FollowerItemAck,
   AnimatedMonsterCommandAck,
@@ -1204,6 +1205,21 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('renameTamedBeast', { name }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // A follow-up ask extended naming to animated dead/summons too — same
+  // shape as renamePet/renameTamedBeast above, plus the target's own id.
+  renameAnimatedMonster(id: string, name: string): Promise<RenameAnimatedMonsterAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('renameAnimatedMonster', { id, name }, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

@@ -555,7 +555,7 @@ export class WorldScene extends Phaser.Scene {
   // 'Grimoak Grounds'.
   // Array now instead of a single field — Grimoak Grounds carries TWO
   // simultaneous road patches (the existing Bramwick one plus the new
-  // Road to Kortho one), and "Road to Kortho" itself carries a dirt
+  // Kortho Road one), and "Kortho Road" itself carries a dirt
   // stretch + a stone stretch near Kortho.
   private roadTiles: Phaser.GameObjects.TileSprite[] = [];
   // Kortho's own "Shimmering Sea" (a later follow-up ask) — the two sand
@@ -610,6 +610,10 @@ export class WorldScene extends Phaser.Scene {
   // nextMoveAt to drift the anchor itself every so often (see
   // updateFishermen).
   private static readonly FISHERMAN_COUNT = 6;
+  // Roughly matches the old flat-4000ms drift's own average pace (offsets
+  // up to 3 tiles each axis) while keeping speed CONSTANT regardless of
+  // distance — see updateFishermen's own doc comment on the bug this fixes.
+  private static readonly FISHERMAN_DRIFT_MS_PER_TILE = 1400;
   private fishermen: Array<{
     canoeSprite: Phaser.GameObjects.Sprite;
     riderSprite: Phaser.GameObjects.Sprite;
@@ -1879,6 +1883,8 @@ export class WorldScene extends Phaser.Scene {
   private repositionBarFor(sprite: Phaser.GameObjects.Sprite): void {
     const bar = sprite.getData('hpBar') as Phaser.GameObjects.Graphics | undefined;
     bar?.setPosition(sprite.x, sprite.y + HP_BAR_OFFSET_Y);
+    const nameLabel = sprite.getData('nameLabel') as Phaser.GameObjects.Text | undefined;
+    nameLabel?.setPosition(sprite.x, sprite.y + HP_BAR_OFFSET_Y - 12);
     const weaponSprite = sprite.getData('weaponSprite') as Phaser.GameObjects.Sprite | undefined;
     if (weaponSprite) this.repositionWeaponSprite(weaponSprite, sprite, (sprite.getData('facing') as Facing) ?? 'down');
     const wandSprite = sprite.getData('wandSprite') as Phaser.GameObjects.Sprite | undefined;
@@ -1948,6 +1954,40 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('hpBar', bar);
     }
     drawHpBar(bar, hp, maxHp);
+  }
+
+  // A follow-up ask: "if the player has given them a name then show the
+  // name above the tamed beast/pet/animated dead/summon" — a floating
+  // text label, same "attach via sprite.setData, reposition alongside the
+  // sprite in repositionBarFor, destroy in destroyEntitySprite" shape
+  // ensureHpBar's own bar already uses, sitting just above the hp bar.
+  // Only ever called for a NAMED follower (see this file's own call
+  // sites) — an unnamed one gets no label at all, so any stale label from
+  // before a follower despawned/changed kind is torn down here too.
+  private ensureNameLabel(sprite: Phaser.GameObjects.Sprite, name: string, named: boolean): void {
+    let label = sprite.getData('nameLabel') as Phaser.GameObjects.Text | undefined;
+    if (!named) {
+      if (label) {
+        label.destroy();
+        sprite.setData('nameLabel', undefined);
+      }
+      return;
+    }
+    if (!label) {
+      label = this.add
+        .text(sprite.x, sprite.y + HP_BAR_OFFSET_Y - 12, name, {
+          fontFamily: 'monospace',
+          fontSize: '11px',
+          color: '#f0e8d0',
+          stroke: '#000000',
+          strokeThickness: 3,
+        })
+        .setOrigin(0.5, 1)
+        .setDepth(90);
+      sprite.setData('nameLabel', label);
+    } else if (label.text !== name) {
+      label.setText(name);
+    }
   }
 
   // A later follow-up ask: "show the damage that a player takes on
@@ -2185,6 +2225,7 @@ export class WorldScene extends Phaser.Scene {
     // fireplaces/movement freezing to.
     this.tweens.killTweensOf(sprite);
     (sprite.getData('hpBar') as Phaser.GameObjects.Graphics | undefined)?.destroy();
+    (sprite.getData('nameLabel') as Phaser.GameObjects.Text | undefined)?.destroy();
     (sprite.getData('weaponSprite') as Phaser.GameObjects.Sprite | undefined)?.destroy();
     (sprite.getData('wandSprite') as Phaser.GameObjects.Sprite | undefined)?.destroy();
     (sprite.getData('shieldSprite') as Phaser.GameObjects.Sprite | undefined)?.destroy();
@@ -2321,11 +2362,24 @@ export class WorldScene extends Phaser.Scene {
       if (flying) sprite.setTexture(textureKeyFor(kind), idleFrameFor(kind, facing));
       else sprite.play(walkAnimKey(kind, facing), true);
     }
+    // Bug fix: "the diagonal movement is faster and they move a longer
+    // distance when going diagonal... less smooth than a regular west/
+    // north/south/east movement." REMOTE_STEP_TWEEN_MS is calibrated for
+    // exactly ONE tile of travel — a fixed duration regardless of actual
+    // distance meant any hop covering more ground (a diagonal step,
+    // hypot ≈1.41 tiles; a townsperson's own multi-tile amble via
+    // randomNearbyStreetTile, up to hypot ≈4.24) covered that extra
+    // distance in the SAME time, i.e. moved faster the longer/more
+    // diagonal the hop was. Scaling duration by the actual tile distance
+    // keeps speed constant no matter the direction — a plain cardinal
+    // step (hypot = 1) is unaffected, matching REMOTE_STEP_TWEEN_MS
+    // exactly as before.
+    const tileDistance = Math.hypot(dRow, dCol);
     this.tweens.add({
       targets: sprite,
       x: pos.x,
       y: pos.y,
-      duration: REMOTE_STEP_TWEEN_MS,
+      duration: REMOTE_STEP_TWEEN_MS * tileDistance,
       onComplete: () => {
         if (sprite.getData('isPunching')) return; // let the swing animation keep playing/finish on its own
         if (keepFlapping && !flying) return; // let the flap loop keep looping instead of freezing on a static frame
@@ -2846,7 +2900,16 @@ export class WorldScene extends Phaser.Scene {
       fisherman.riderSprite.setPosition(fisherman.homeX, fisherman.homeY + bobY);
       if (now >= fisherman.nextMoveAt) {
         const next = this.randomNearbySeaTile(fisherman.homeX, fisherman.homeY);
-        this.tweens.add({ targets: fisherman, homeX: next.x, homeY: next.y, duration: 4000, ease: 'Sine.easeInOut' });
+        // Bug fix: same "diagonal covers more ground in the same time"
+        // issue moveOrSnap's own doc comment describes — randomNearbySeaTile
+        // picks row/col offsets independently, so the old flat 4000ms
+        // duration made a short 1-tile drift crawl and a long diagonal
+        // drift dash across the water at very different effective speeds.
+        // Scaling duration by actual pixel distance keeps the drift speed
+        // constant regardless of direction.
+        const distance = Math.hypot(next.x - fisherman.homeX, next.y - fisherman.homeY);
+        const duration = WorldScene.FISHERMAN_DRIFT_MS_PER_TILE * (distance / TILE_SIZE);
+        this.tweens.add({ targets: fisherman, homeX: next.x, homeY: next.y, duration, ease: 'Sine.easeInOut' });
         fisherman.nextMoveAt = now + Phaser.Math.Between(10000, 20000);
       }
     }
@@ -3275,7 +3338,7 @@ export class WorldScene extends Phaser.Scene {
       );
     } else if (mapName === 'Silverbranch Road') {
       // The full-length dirt road overlay (a later follow-up ask: "like
-      // the road to kortho going east") — same shape as Road to Kortho's
+      // the road to kortho going east") — same shape as Kortho Road's
       // own east-west road, spanning the corridor's whole length.
       const silverbranchRoadHeightTiles = SILVERBRANCH_ROAD_HALF_WIDTH_TILES * 2 + 1;
       const silverbranchRoadTopY = (SILVERBRANCH_ROAD_MID_ROW - SILVERBRANCH_ROAD_HALF_WIDTH_TILES) * TILE_SIZE;
@@ -3475,7 +3538,7 @@ export class WorldScene extends Phaser.Scene {
         .setOrigin(1, 0)
         .setFlipX(true)
         .setDepth(-0.85);
-    } else if (mapName === 'Road to Kortho') {
+    } else if (mapName === 'Kortho Road') {
       // A later follow-up ask removed the original stone stretch near
       // Kortho ("remove the stone path, just make it all dirt road") —
       // one uniform dirt TileSprite across the road's whole width now,
@@ -3488,9 +3551,9 @@ export class WorldScene extends Phaser.Scene {
           .setOrigin(0, 0)
           .setDepth(-0.99)
       );
-    } else if (mapName === 'Road to Floro') {
-      // Same shape as Road to Kortho above, transposed for a north-south
-      // road (a later follow-up ask: "make sure Road to Floro and Floro
+    } else if (mapName === 'Floro Road') {
+      // Same shape as Kortho Road above, transposed for a north-south
+      // road (a later follow-up ask: "make sure Floro Road and Floro
       // get the same updates that Kortho is getting").
       const floroRoadWidthTiles = ROAD_TO_FLORO_HALF_WIDTH_TILES * 2 + 1;
       const roadLeftX = (ROAD_TO_FLORO_MID_COL - ROAD_TO_FLORO_HALF_WIDTH_TILES) * TILE_SIZE;
@@ -3501,11 +3564,11 @@ export class WorldScene extends Phaser.Scene {
           .setDepth(-0.99)
       );
     } else if (mapName === 'Kortho') {
-      // A later follow-up ask: "update the exit to Road to Kortho to have
+      // A later follow-up ask: "update the exit to Kortho Road to have
       // a dirt road leading out... the dirt road should be about 25% of
       // the size of the other dirt roads that are used in Grimoak
       // grounds" — a short entrance patch right at the west door, same
-      // width convention as Road to Kortho itself, 25% of
+      // width convention as Kortho Road itself, 25% of
       // GRIMOAK_GROUNDS_ROAD_ROWS deep.
       const korthoEntranceDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
       const korthoEntranceHeight = ROAD_TO_KORTHO_HALF_WIDTH_TILES * 2 + 1;
@@ -3722,7 +3785,7 @@ export class WorldScene extends Phaser.Scene {
       }
     } else if (mapName === 'Floro') {
       // Same entrance-patch treatment as Kortho above (a later follow-up
-      // ask: "make sure Road to Floro and Floro get the same updates that
+      // ask: "make sure Floro Road and Floro get the same updates that
       // Kortho is getting"), at Floro's own north door instead.
       const floroEntranceDepth = Math.max(1, Math.round(GRIMOAK_GROUNDS_ROAD_ROWS * 0.25));
       const floroEntranceWidth = ROAD_TO_FLORO_HALF_WIDTH_TILES * 2 + 1;
@@ -4161,29 +4224,29 @@ export class WorldScene extends Phaser.Scene {
     const signDefs: Array<{ map: MapName; position: { row: number; col: number }; label: string }> = [
       { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_SIGN_POSITION, label: 'Bramwick' },
       { map: 'Bramwick', position: BRAMWICK_SIGN_POSITION, label: 'Grimoak Grounds' },
-      // The new NE "Road to Kortho" exit's own pair (a later follow-up
-      // ask: "a sign like the others that will say 'Road to Kortho'"...
+      // The new NE "Kortho Road" exit's own pair (a later follow-up
+      // ask: "a sign like the others that will say 'Kortho Road'"...
       // "at the end... a sign that will say 'Kortho'").
-      { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION, label: 'Road to Kortho' },
-      { map: 'Road to Kortho', position: ROAD_TO_KORTHO_SIGN_POSITION, label: 'Kortho' },
-      // A later follow-up ask: "put a sign going from Road to Kortho to
+      { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION, label: 'Kortho Road' },
+      { map: 'Kortho Road', position: ROAD_TO_KORTHO_SIGN_POSITION, label: 'Kortho' },
+      // A later follow-up ask: "put a sign going from Kortho Road to
       // Grimoak Grounds" — the road's own opposite end had no sign of
       // its own at all before this.
-      { map: 'Road to Kortho', position: ROAD_TO_KORTHO_GRIMOAK_SIGN_POSITION, label: 'Grimoak Grounds' },
+      { map: 'Kortho Road', position: ROAD_TO_KORTHO_GRIMOAK_SIGN_POSITION, label: 'Grimoak Grounds' },
       // A later follow-up ask: "in kortho update the exit to Road to
       // Kortho to have a dirt road leading out with a sign 'Road to
       // Kortho'" — a third sign sitting just inside the town itself.
-      { map: 'Kortho', position: KORTHO_ROAD_SIGN_POSITION, label: 'Road to Kortho' },
-      // The new SW "Road to Floro" exit's own pair, plus Floro's own
+      { map: 'Kortho', position: KORTHO_ROAD_SIGN_POSITION, label: 'Kortho Road' },
+      // The new SW "Floro Road" exit's own pair, plus Floro's own
       // inside-the-town sign (a later follow-up ask: "make sure Road to
       // Floro and Floro get the same updates that Kortho is getting").
-      { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION, label: 'Road to Floro' },
-      { map: 'Road to Floro', position: ROAD_TO_FLORO_SIGN_POSITION, label: 'Floro' },
-      // Same missing-sign fix as Road to Kortho above (a later follow-up
-      // ask: "same thing, put a sign from Road to Floro to Grimoak
+      { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION, label: 'Floro Road' },
+      { map: 'Floro Road', position: ROAD_TO_FLORO_SIGN_POSITION, label: 'Floro' },
+      // Same missing-sign fix as Kortho Road above (a later follow-up
+      // ask: "same thing, put a sign from Floro Road to Grimoak
       // Grounds").
-      { map: 'Road to Floro', position: ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION, label: 'Grimoak Grounds' },
-      { map: 'Floro', position: FLORO_ROAD_SIGN_POSITION, label: 'Road to Floro' },
+      { map: 'Floro Road', position: ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION, label: 'Grimoak Grounds' },
+      { map: 'Floro', position: FLORO_ROAD_SIGN_POSITION, label: 'Floro Road' },
       // The new west "Mystical Timberland" connection's own sign pair (a
       // later follow-up ask: "have a sign to Mystical Timberland").
       { map: 'Grimoak Grounds', position: GRIMOAK_GROUNDS_MYSTICAL_TIMBERLAND_SIGN_POSITION, label: 'Mystical Timberland' },
@@ -4300,11 +4363,11 @@ export class WorldScene extends Phaser.Scene {
               .setScale(1.35, 1)
               // Every stairs exit used to sit on a south-facing wall (the
               // texture itself is drawn face-on for that orientation) —
-              // floor 2's own new stairs (a later follow-up ask moved them
-              // to the north wall instead, see shared/maps.ts's
-              // FLOOR2_NORTH_STAIRS_COL) is the first one approached from
-              // the opposite side, so it needs a 180° flip to still read
-              // as a staircase leading further in rather than backwards.
+              // several north-wall stairs (floor 2's own down/up-stairs,
+              // floor 4's own down-stairs — see shared/maps.ts's
+              // FLOOR2_LANDING/FLOOR4_LANDING) are approached from the
+              // opposite side, so they need a 180° flip to still read as a
+              // staircase leading further in rather than backwards.
               .setAngle(exit.direction === 'north' ? 180 : 0)
           : this.add.sprite(pos.x, pos.y, GRAND_DOOR_TEXTURE_KEY).setDepth(-0.5);
 
@@ -5034,6 +5097,7 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('equipment', pet.equipment);
       sprite.setData('inventory', pet.inventory);
       this.ensureHpBar(sprite, pet.hp, pet.maxHp);
+      this.ensureNameLabel(sprite, pet.name, Boolean(pet.named));
       sprite.setAlpha(pet.alive ? 1 : 0.4);
     }
     for (const [id, sprite] of this.petSprites) {
@@ -5109,6 +5173,7 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('hp', beast.hp);
       sprite.setData('maxHp', beast.maxHp);
       this.ensureHpBar(sprite, beast.hp, beast.maxHp);
+      this.ensureNameLabel(sprite, beast.name, Boolean(beast.named));
     }
     for (const [id, sprite] of this.tamedBeastSprites) {
       if (!seenTamedBeasts.has(id)) {
@@ -5197,6 +5262,7 @@ export class WorldScene extends Phaser.Scene {
       sprite.setData('equipment', am.equipment);
       sprite.setData('inventory', am.inventory);
       this.ensureHpBar(sprite, am.hp, am.maxHp);
+      this.ensureNameLabel(sprite, am.name, Boolean(am.named));
       sprite.setAlpha(am.alive ? 1 : 0.4);
     }
     for (const [id, sprite] of this.animatedMonsterSprites) {
@@ -5794,7 +5860,37 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
+  // A follow-up ask: "Add collision for the NPCs in Floro/Kortho,
+  // including the ones in the water" — townspeople/fishermen are purely
+  // decorative, client-only ambient sprites (see spawnTownspeople/
+  // spawnFishermen's own doc comments — never synced through the server
+  // at all, each client simulates its own independent wander), so real
+  // server-enforced collision (like a player/monster/vendor gets via
+  // WorldManagerService.isOccupied) isn't something these have any
+  // presence to participate in. This is the client-local equivalent:
+  // refuse to even ATTEMPT a move whose destination tile is currently
+  // occupied by one of THIS client's own rendered townspeople/fishermen,
+  // covering both the street ones and the ones out on the water (a
+  // fisherman's own tile is derived from its drifting homeX/homeY anchor
+  // via tileAt, same as everywhere else that needs it).
+  private townspersonBlockingMessage(row: number, col: number): string | null {
+    for (const person of this.townspeople) {
+      if (person.sprite.getData('row') === row && person.sprite.getData('col') === col) return "Someone's in the way.";
+    }
+    for (const fisherman of this.fishermen) {
+      const tile = this.tileAt(fisherman.homeX, fisherman.homeY);
+      if (tile.row === row && tile.col === col) return "Someone's in the way.";
+    }
+    return null;
+  }
+
   private attemptMove(direction: Direction): void {
+    const { dr, dc } = DIRECTION_DELTAS[direction];
+    const blocked = this.townspersonBlockingMessage(this.row + dr, this.col + dc);
+    if (blocked) {
+      logCombatMessage(blocked);
+      return;
+    }
     this.facing = facingForDirection(direction);
     // Flight (a later follow-up ask: "the player sprite is not walking,
     // but instead floating/flying along") — holds the idle frame instead
@@ -5934,6 +6030,11 @@ export class WorldScene extends Phaser.Scene {
   // west/east-before-north/south precedence the single-key chain below
   // already uses.
   private attemptDiagonalMove(dRow: -1 | 1, dCol: -1 | 1): void {
+    const blockedDiagonal = this.townspersonBlockingMessage(this.row + dRow, this.col + dCol);
+    if (blockedDiagonal) {
+      logCombatMessage(blockedDiagonal);
+      return;
+    }
     const direction: Direction = dCol === -1 ? 'west' : dCol === 1 ? 'east' : dRow === -1 ? 'north' : 'south';
     this.facing = facingForDirection(direction);
     if (myProfile?.flightActive || this.isMyBeastFlying()) this.player.setTexture(textureKeyFor(this.displayKind()), idleFrameFor(this.displayKind(), this.facing));

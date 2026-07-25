@@ -156,6 +156,7 @@ import type {
   PetCommandAck,
   RenamePetAck,
   RenameTamedBeastAck,
+  RenameAnimatedMonsterAck,
   CommandFollowerAttackAck,
   FollowerItemAck,
   AnimatedMonsterCommandAck,
@@ -1752,7 +1753,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.race === 'goblin' && client.data.level >= GOBLIN_MAX_LEVEL) {
       return {
         leveledUp: false,
-        message: `A goblin cannot progress past level ${GOBLIN_MAX_LEVEL} — consume body parts and evolve into a Hobgoblin to grow further.`,
+        message: `A goblin cannot progress past level ${GOBLIN_MAX_LEVEL} — eat body parts and evolve into a Hobgoblin to grow further.`,
       };
     }
 
@@ -1762,7 +1763,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (client.data.race === 'goblin' && level > GOBLIN_MAX_LEVEL) {
       level = GOBLIN_MAX_LEVEL;
       exp = 0;
-      cappedMessage = `You have reached the maximum level for a goblin! Consume body parts and evolve into a Hobgoblin to grow further.`;
+      cappedMessage = `You have reached the maximum level for a goblin! Eat body parts and evolve into a Hobgoblin to grow further.`;
     }
     const levelsGained = level - before;
     client.data.level = level;
@@ -5848,6 +5849,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: 'Enter a name between 1 and 24 characters.' };
     }
     const pet = this.petManager.rename(client.data.username, parsed.data.name);
+    if (pet === null) {
+      return { ok: false, message: 'Your pet already has a permanent name.' };
+    }
     if (!pet) {
       return { ok: false, message: "You don't have a pet (or it needs to be resurrected first)." };
     }
@@ -5863,12 +5867,39 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: 'Enter a name between 1 and 24 characters.' };
     }
     const beast = this.tamedBeastManager.rename(client.data.username, parsed.data.name);
+    if (beast === null) {
+      return { ok: false, message: 'Your tamed beast already has a permanent name.' };
+    }
     if (!beast) {
       return { ok: false, message: "You don't have a tamed beast." };
     }
     void this.persistStats(client);
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
     return { ok: true, tamedBeast: beast };
+  }
+
+  // A follow-up ask: "name the pet/tamed beast/animated dead/summon" —
+  // animated monsters had no rename path at all before this (see
+  // AnimatedMonsterManagerService.rename's own doc comment); same shape
+  // as renamePet/renameTamedBeast above, keyed by `id` since an owner can
+  // have more than one animated monster at once. Not persisted (see
+  // shared/pets.ts's own doc comment on AnimatedMonsterSnapshot), so no
+  // persistStats call is needed here.
+  @SubscribeMessage('renameAnimatedMonster')
+  handleRenameAnimatedMonster(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): RenameAnimatedMonsterAck {
+    const parsed = z.object({ id: z.string(), name: z.string().trim().min(1).max(24) }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Enter a name between 1 and 24 characters.' };
+    }
+    const monster = this.animatedMonsterManager.rename(client.data.username, parsed.data.id, parsed.data.name);
+    if (monster === null) {
+      return { ok: false, message: 'It already has a permanent name.' };
+    }
+    if (!monster) {
+      return { ok: false, message: "You don't have that follower." };
+    }
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    return { ok: true, animatedMonster: monster };
   }
 
   // The 'z' hotkey (a later follow-up ask): "if the player has a pet/

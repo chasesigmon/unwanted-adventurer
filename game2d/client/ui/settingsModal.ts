@@ -43,6 +43,10 @@ function updateSettingsTabButtons(): void {
 function switchSettingsTab(tab: SettingsTab): void {
   activeSettingsTab = tab;
   updateSettingsTabButtons();
+  // A fresh entry into Action Bars always starts clean — any unsaved
+  // row/col edit left over from a previous visit this session is
+  // discarded rather than silently resurfacing later.
+  if (tab === 'actionBars') pendingSizes.clear();
   renderSettingsTab();
 }
 settingsTabAccountBtn.addEventListener('click', () => switchSettingsTab('account'));
@@ -112,9 +116,41 @@ function formatCombo(combo: string | null): string {
     .replace('Key', '');
 }
 
+// A follow-up ask: "add a 'Save Changes' button that the player needs to
+// click after making an update to any row or column box in order for the
+// changes to take effect" — row/col edits no longer call resizeActionBar
+// immediately on every keystroke; they stage into this map (keyed by
+// barId) instead, and only actually apply when Save Changes is clicked.
+// Cleared whenever the tab is freshly entered or a bar is added/removed
+// (a staged size for a bar that just changed/vanished is meaningless),
+// but deliberately PRESERVED across the re-renders a hotkey Set/Clear
+// triggers, so setting a hotkey doesn't silently discard an unsaved
+// row/col edit sitting in the same card.
+const pendingSizes = new Map<string, { rows: number; cols: number }>();
+
 function renderActionBarsTab(): void {
   settingsBody.innerHTML = '';
   const bars = getActionBars();
+
+  if (pendingSizes.size > 0) {
+    const saveRow = document.createElement('div');
+    saveRow.className = 'settings-add-bar-row';
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.textContent = 'Save Changes';
+    saveBtn.addEventListener('click', () => {
+      for (const [barId, size] of pendingSizes) resizeActionBar(barId, size.rows, size.cols);
+      pendingSizes.clear();
+      renderActionBarsTab();
+    });
+    saveRow.appendChild(saveBtn);
+    const hint = document.createElement('span');
+    hint.textContent = 'Unsaved row/column changes — click to apply.';
+    hint.style.fontSize = '11px';
+    hint.style.color = '#f0c040';
+    saveRow.appendChild(hint);
+    settingsBody.appendChild(saveRow);
+  }
 
   for (const bar of bars) {
     const card = document.createElement('div');
@@ -129,11 +165,14 @@ function renderActionBarsTab(): void {
     removeBtn.type = 'button';
     removeBtn.textContent = 'Remove bar';
     removeBtn.addEventListener('click', () => {
+      pendingSizes.delete(bar.id);
       removeActionBar(bar.id);
       renderActionBarsTab();
     });
     header.appendChild(removeBtn);
     card.appendChild(header);
+
+    const staged = pendingSizes.get(bar.id);
 
     const controls = document.createElement('div');
     controls.className = 'settings-actionbar-controls';
@@ -143,11 +182,7 @@ function renderActionBarsTab(): void {
     rowsInput.type = 'number';
     rowsInput.min = String(ACTION_BAR_MIN_ROWS);
     rowsInput.max = String(ACTION_BAR_MAX_ROWS);
-    rowsInput.value = String(bar.rows);
-    rowsInput.addEventListener('change', () => {
-      resizeActionBar(bar.id, Number(rowsInput.value) || bar.rows, bar.cols);
-      renderActionBarsTab();
-    });
+    rowsInput.value = String(staged?.rows ?? bar.rows);
     rowsLabel.appendChild(rowsInput);
     controls.appendChild(rowsLabel);
 
@@ -157,29 +192,37 @@ function renderActionBarsTab(): void {
     colsInput.type = 'number';
     colsInput.min = String(ACTION_BAR_MIN_COLS);
     colsInput.max = String(ACTION_BAR_MAX_COLS);
-    colsInput.value = String(bar.cols);
-    colsInput.addEventListener('change', () => {
-      resizeActionBar(bar.id, bar.rows, Number(colsInput.value) || bar.cols);
-      renderActionBarsTab();
-    });
+    colsInput.value = String(staged?.cols ?? bar.cols);
     colsLabel.appendChild(colsInput);
     controls.appendChild(colsLabel);
     card.appendChild(controls);
 
-    const filledSlots = bar.slots
-      .map((slot, index) => ({ slot, index }))
-      .filter(({ slot }) => slot.skill !== null);
-    if (filledSlots.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'settings-hotkey-row';
-      empty.textContent = 'Drag skills onto this bar in-game to assign them, then set a hotkey here.';
-      card.appendChild(empty);
-    }
-    for (const { slot, index } of filledSlots) {
+    // Neither input applies immediately — both just update the SAME
+    // staged entry (reading whichever field didn't just change from the
+    // other input's own current value), so editing rows then cols (or
+    // vice versa) before ever clicking Save Changes stages both together.
+    const stageSize = () => {
+      pendingSizes.set(bar.id, {
+        rows: Number(rowsInput.value) || bar.rows,
+        cols: Number(colsInput.value) || bar.cols,
+      });
+      renderActionBarsTab();
+    };
+    rowsInput.addEventListener('change', stageSize);
+    colsInput.addEventListener('change', stageSize);
+
+    // Item 4 (follow-up ask): "don't show the skills/spells that are on
+    // the slots, players will drag or fill in those slots themselves
+    // through the spells modal" — hotkeys bind to a SLOT POSITION
+    // (barId + index), not to whatever skill currently happens to sit
+    // there (see actionBars.ts's own setActionBarHotkey), so this lists
+    // every slot by number only, never reading slot.skill.
+    for (let index = 0; index < bar.slots.length; index++) {
+      const slot = bar.slots[index]!;
       const row = document.createElement('div');
       row.className = 'settings-hotkey-row';
       const label = document.createElement('span');
-      label.textContent = slot.skill;
+      label.textContent = `Slot ${index + 1}`;
       row.appendChild(label);
 
       const valueEl = document.createElement('span');

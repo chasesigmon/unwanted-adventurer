@@ -270,7 +270,7 @@ export const GRIMOAK_GROUNDS_EXTENSION_MIN_COL = GRIMOAK_GROUNDS_SIZE;
 // fixed row (55) and fixed offsets from it, not from this size constant,
 // so growing ROWS only adds new open ground south of the existing south
 // gate (already 17-odd rows clear of it) rather than shifting anything.
-// This is also where the new southwest "Road to Floro" exit (a later
+// This is also where the new southwest "Floro Road" exit (a later
 // follow-up ask) actually gets its room — the moat's own footprint spans
 // nearly the full original 80-wide band, so there's no real "southwest"
 // until south of the south gate, which this newly-added strip provides.
@@ -278,7 +278,7 @@ export const GRIMOAK_GROUNDS_ROWS = Math.round(GRIMOAK_GROUNDS_SIZE * 1.1);
 
 // ---------- Mystical Timberland (a later follow-up ask: "create a new
 // World/area called 'Mystical Timberland' that is to the left of Grimoak
-// Grounds... the same size as Grimoak Grounds") — unlike Road to Kortho/
+// Grounds... the same size as Grimoak Grounds") — unlike Kortho Road/
 // Floro, this connects DIRECTLY off Grimoak Grounds' own west edge (no
 // separate corridor map), same single-shared-border shape Bramwick's own
 // north connection already uses. ----------
@@ -286,8 +286,8 @@ export const MYSTICAL_TIMBERLAND_ROWS = GRIMOAK_GROUNDS_ROWS;
 export const MYSTICAL_TIMBERLAND_COLS = GRIMOAK_GROUNDS_COLS;
 export const MYSTICAL_TIMBERLAND_MID_ROW = Math.floor(MYSTICAL_TIMBERLAND_ROWS / 2);
 
-// ---------- Road to Kortho (a later follow-up ask: "at the northeast of
-// Grimoak grounds add a dirt road going east... Create 'Road to Kortho'
+// ---------- Kortho Road (a later follow-up ask: "at the northeast of
+// Grimoak grounds add a dirt road going east... Create 'Kortho Road'
 // which should be a dirt road... with grass surrounding it on either
 // side. The map should be the same width as grimoak grounds, but 25% of
 // its height... at the end... a stone road that leads into Kortho") —
@@ -313,7 +313,7 @@ export const ROAD_TO_KORTHO_HALF_WIDTH_TILES = 2;
 // the map's own new 25%-wider eastern strip.
 export const GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW = 10;
 
-// ---------- Road to Floro (a later follow-up ask: "at the southwest of
+// ---------- Floro Road (a later follow-up ask: "at the southwest of
 // grimoak grounds add a dirt road... that goes south, leading to Floro...
 // make it like the road to kortho") — the same corridor shape as Road to
 // Kortho above, transposed for a north-south road instead of east-west:
@@ -935,49 +935,48 @@ const FLOOR_LANDING_STAIRS_ARRIVAL_ROW = FLOOR_LANDING_ROWS - 2;
 // ENTRANCE_MID_COL); 7 tiles west of that, same row (same south wall).
 const ENTRANCE_HALL_UP_STAIRS = { row: ENTRANCE_ROWS - 1, col: ENTRANCE_MID_COL - 7 };
 
-// The 5 specialization chambers each floor's own landing hangs off its
-// north wall — same door-column spread as ENTRANCE_NORTH_DOORS, just
-// across the landing's own (smaller) width. The first 5 specialization
-// paths live on floor 2, the other 5 on floor 3 (see
-// shared/constants.ts's SPECIALIZATION_PATHS/SPECIALIZATION_CHAMBER_MAPS).
-const FLOOR2_CHAMBER_DOORS: Array<{ col: number; name: MapName }> = [
-  { col: 4, name: 'Necromancer Chamber' },
-  { col: 8, name: 'Shaman Chamber' },
-  { col: 12, name: 'Elementalist Chamber' },
-  { col: 16, name: 'Summoner Chamber' },
-  { col: 20, name: 'Illusionist Chamber' },
+// The 5 specialization chambers each floor's own landing hangs off — a
+// still-later follow-up ask ("put the doors for the Specializations on
+// the left and right walls") moved these off the north wall entirely
+// (which now holds only the two stairs — see FLOOR2_LANDING/FLOOR3_LANDING
+// below), splitting each floor's 5 doors 3-west/2-east instead, spread
+// down the room clear of both stair columns and the south wall.
+interface ChamberDoor {
+  side: 'west' | 'east';
+  row: number;
+  name: MapName;
+}
+const FLOOR2_CHAMBER_DOORS: ChamberDoor[] = [
+  { side: 'west', row: 3, name: 'Necromancer Chamber' },
+  { side: 'west', row: 8, name: 'Shaman Chamber' },
+  { side: 'west', row: 13, name: 'Elementalist Chamber' },
+  { side: 'east', row: 5, name: 'Summoner Chamber' },
+  { side: 'east', row: 11, name: 'Illusionist Chamber' },
 ];
-// A later follow-up ask: "make an update to the stairs on the 2nd floor
-// and instead of them being to the south, put them on the north wall...
-// between Shaman and Elementalist" (the user's own answer resolving an
-// otherwise-impossible "left of Necromancer AND right of Illusionist"
-// literal reading) — the midpoint between Shaman (8) and Elementalist
-// (12) above, clear of both.
-// Exported — shared/lighting.ts's portalPositionsFor needs this same
-// column to keep the 4th floor's own north portal's VISUAL position in
-// sync with where its real MapExit (see FLOOR4_LANDING.exits.push below)
-// actually sits.
-export const FLOOR2_NORTH_STAIRS_COL = 10;
 // One tile south of the north wall — the mirror of
 // FLOOR_LANDING_STAIRS_ARRIVAL_ROW's own "one tile in from the wall you
 // arrived through" convention, for a north-wall arrival instead of south.
 const FLOOR_LANDING_NORTH_ARRIVAL_ROW = 1;
-const FLOOR3_CHAMBER_DOORS: Array<{ col: number; name: MapName }> = [
-  { col: 4, name: 'Battlemage Chamber' },
-  { col: 8, name: 'Cleric Chamber' },
-  { col: 12, name: 'Druid Chamber' },
-  { col: 16, name: 'Diabolist Chamber' },
-  { col: 20, name: 'Hemomancer Chamber' },
+const FLOOR3_CHAMBER_DOORS: ChamberDoor[] = [
+  { side: 'west', row: 3, name: 'Battlemage Chamber' },
+  { side: 'west', row: 8, name: 'Cleric Chamber' },
+  { side: 'west', row: 13, name: 'Druid Chamber' },
+  { side: 'east', row: 5, name: 'Diabolist Chamber' },
+  { side: 'east', row: 11, name: 'Hemomancer Chamber' },
 ];
 
 // A specialization chamber — same shape as classroomOffEntranceHall
 // (13x19, a single south exit back to its own floor's landing), just
-// hung off a floor landing's own north-wall door list instead of the
+// hung off a floor landing's own west/east-wall door list instead of the
 // Entrance Hall's. Deliberately NOT added to CLASSROOM_MAPS (see
 // shared/constants.ts) so it gets zero generic student desks — "similar
 // to the existing classrooms... but no desks in these rooms."
-function chamberOffFloorLanding(name: MapName, landingName: MapName, landingDoors: Array<{ col: number; name: MapName }>): MapDefinition {
+function chamberOffFloorLanding(name: MapName, landingName: MapName, landingDoors: ChamberDoor[]): MapDefinition {
   const landingDoor = landingDoors.find((d) => d.name === name)!;
+  // One tile in from whichever wall the door sits on — same "arrive one
+  // tile past the wall you just walked through" convention every other
+  // reciprocal exit in this file uses.
+  const landingCol = landingDoor.side === 'west' ? 1 : FLOOR_LANDING_COLS - 2;
   return {
     name,
     rows: CLASSROOM_ROWS,
@@ -989,99 +988,93 @@ function chamberOffFloorLanding(name: MapName, landingName: MapName, landingDoor
         col: CLASSROOM_MID_COL,
         direction: 'south',
         toMap: landingName,
-        toRow: 0,
-        toCol: landingDoor.col,
+        toRow: landingDoor.row,
+        toCol: landingCol,
       },
     ],
   };
 }
 
-// A floor landing itself — the 5 chamber doors on its north wall (if
-// any; floor 4 has none), a down-stairs on its south wall back to
-// whichever floor is below, and (for floors 2/3 only) an up-stairs
-// further along that same south wall to the floor above.
-function floorLandingDefinition(
-  name: MapName,
-  chamberDoors: Array<{ col: number; name: MapName }>,
-  downStairs: { toMap: MapName; toRow: number; toCol: number },
-  upStairs?: { toMap: MapName; toRow: number; toCol: number }
-): MapDefinition {
-  const exits: MapExit[] = [
-    ...chamberDoors.map(({ col, name: chamberName }) => ({
-      row: 0,
-      col,
-      direction: 'north' as const,
-      toMap: chamberName,
-      toRow: CLASSROOM_ROWS - 1,
-      toCol: CLASSROOM_MID_COL,
-    })),
-    {
-      row: FLOOR_LANDING_ROWS - 1,
-      col: FLOOR_LANDING_DOWN_STAIRS_COL,
-      direction: 'south',
-      kind: 'stairs',
-      toMap: downStairs.toMap,
-      toRow: downStairs.toRow,
-      toCol: downStairs.toCol,
-    },
-  ];
-  if (upStairs) {
-    exits.push({
-      row: FLOOR_LANDING_ROWS - 1,
-      col: FLOOR_LANDING_UP_STAIRS_COL,
-      direction: 'south',
-      kind: 'stairs',
-      toMap: upStairs.toMap,
-      toRow: upStairs.toRow,
-      toCol: upStairs.toCol,
-    });
-  }
+// A floor landing itself — the 5 chamber doors on its west/east walls (if
+// any; floor 4 has none), plus a down-stairs and (for floors 2/3 only) an
+// up-stairs, each placed by its own caller (see FLOOR2_LANDING/
+// FLOOR3_LANDING/FLOOR4_LANDING below — no longer a single fixed
+// convention here now that floor 2/4's own down-stairs moved off the
+// south wall, see each one's own doc comment).
+function floorLandingDefinition(name: MapName, chamberDoors: ChamberDoor[]): MapDefinition {
+  const exits: MapExit[] = chamberDoors.map(({ side, row, name: chamberName }) => ({
+    row,
+    col: side === 'west' ? 0 : FLOOR_LANDING_COLS - 1,
+    direction: side,
+    toMap: chamberName,
+    toRow: CLASSROOM_ROWS - 1,
+    toCol: CLASSROOM_MID_COL,
+  }));
   return { name, rows: FLOOR_LANDING_ROWS, cols: FLOOR_LANDING_COLS, terrain: 'stone', exits };
 }
 
-// A later follow-up ask moved the 2nd floor's own stairs up to the 3rd
-// floor off this south wall (see FLOOR2_LANDING.exits.push below,
-// FLOOR2_NORTH_STAIRS_COL) — no upStairs 4th argument here anymore.
-const FLOOR2_LANDING = floorLandingDefinition(
-  'Grimoak Castle 2nd Floor',
-  FLOOR2_CHAMBER_DOORS,
-  { toMap: 'Grimoak Entrance Hall', toRow: ENTRANCE_HALL_UP_STAIRS.row - 1, toCol: ENTRANCE_HALL_UP_STAIRS.col }
+// A follow-up ask: "Move the Grimoak Entrance Hall Door stairs directly
+// straight/north and place the stairs against the north wall, facing
+// south like the 3rd floor stairs" — both of floor 2's own stairs now
+// live on its north wall (chamber doors moved to the side walls above),
+// each kept at the SAME column its old south-wall position used
+// (FLOOR_LANDING_DOWN_STAIRS_COL for the down-stairs, FLOOR_LANDING_
+// UP_STAIRS_COL for the up-stairs — "directly north of where they would
+// have been"), just relocated to row 0 with direction 'north' (which
+// WorldScene's own stairs-sprite renderer already flips 180° for, so it
+// reads as "facing south" into the room exactly like a normal south-wall
+// staircase would).
+const FLOOR2_LANDING = floorLandingDefinition('Grimoak Castle 2nd Floor', FLOOR2_CHAMBER_DOORS);
+FLOOR2_LANDING.exits.push(
+  {
+    row: 0,
+    col: FLOOR_LANDING_DOWN_STAIRS_COL,
+    direction: 'north',
+    kind: 'stairs',
+    toMap: 'Grimoak Entrance Hall',
+    toRow: ENTRANCE_HALL_UP_STAIRS.row - 1,
+    toCol: ENTRANCE_HALL_UP_STAIRS.col,
+  },
+  {
+    row: 0,
+    col: FLOOR_LANDING_UP_STAIRS_COL,
+    direction: 'north',
+    kind: 'stairs',
+    toMap: 'Grimoak Castle 3rd Floor',
+    toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW,
+    toCol: FLOOR_LANDING_DOWN_STAIRS_COL,
+  }
 );
-// The reciprocal north-wall stairs itself — pushed on afterward, same
-// "define the room, then push an additional exit once the target's own
-// info is known" shape FLOOR4_LANDING's own portals below already use.
-// Leads to the exact same arrival point on floor 3 the old south-wall
-// up-stairs did (floor 3's own down-stairs, unchanged) — only THIS side's
-// position/orientation moved, not where it leads.
-FLOOR2_LANDING.exits.push({
-  row: 0,
-  col: FLOOR2_NORTH_STAIRS_COL,
-  direction: 'north',
-  kind: 'stairs',
-  toMap: 'Grimoak Castle 3rd Floor',
-  toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW,
-  toCol: FLOOR_LANDING_DOWN_STAIRS_COL,
-});
-const FLOOR3_LANDING = floorLandingDefinition(
-  'Grimoak Castle 3rd Floor',
-  FLOOR3_CHAMBER_DOORS,
-  // A later follow-up ask moved floor 2's own reciprocal stairs from its
-  // south wall to its north wall (FLOOR2_NORTH_STAIRS_COL) — this arrival
-  // point follows it there instead of the old south-wall position.
-  { toMap: 'Grimoak Castle 2nd Floor', toRow: FLOOR_LANDING_NORTH_ARRIVAL_ROW, toCol: FLOOR2_NORTH_STAIRS_COL },
-  { toMap: 'Grimoak Castle 4th Floor', toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW, toCol: FLOOR_LANDING_DOWN_STAIRS_COL }
+const FLOOR3_LANDING = floorLandingDefinition('Grimoak Castle 3rd Floor', FLOOR3_CHAMBER_DOORS);
+FLOOR3_LANDING.exits.push(
+  {
+    row: FLOOR_LANDING_ROWS - 1,
+    col: FLOOR_LANDING_DOWN_STAIRS_COL,
+    direction: 'south',
+    kind: 'stairs',
+    toMap: 'Grimoak Castle 2nd Floor',
+    // A follow-up ask moved floor 2's own reciprocal stairs from its old
+    // north-wall spot between Shaman/Elementalist to FLOOR_LANDING_UP_STAIRS_COL
+    // (see FLOOR2_LANDING's own doc comment) — this arrival point follows
+    // it there.
+    toRow: FLOOR_LANDING_NORTH_ARRIVAL_ROW,
+    toCol: FLOOR_LANDING_UP_STAIRS_COL,
+  },
+  {
+    row: FLOOR_LANDING_ROWS - 1,
+    col: FLOOR_LANDING_UP_STAIRS_COL,
+    direction: 'south',
+    kind: 'stairs',
+    toMap: 'Grimoak Castle 4th Floor',
+    toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW,
+    toCol: FLOOR_LANDING_DOWN_STAIRS_COL,
+  }
 );
-// Floor 4 has no chambers of its own (no north-wall doors) and nothing
-// above it — just the down-stairs back to floor 3, plus 4 portals (a
-// later follow-up ask made these real exits — see the block below that
-// pushes them on, same "define the room, then push an additional exit
-// once the target's own info is known" shape the Entrance Hall's own
-// up-stairs already uses).
-const FLOOR4_LANDING = floorLandingDefinition('Grimoak Castle 4th Floor', [], {
-  toMap: 'Grimoak Castle 3rd Floor',
-  toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW,
-  toCol: FLOOR_LANDING_UP_STAIRS_COL,
-});
+// Floor 4 has no chambers of its own (no side-wall doors) — just the
+// down-stairs back to floor 3, plus 4 portals (both pushed on below, same
+// "define the room, then push additional exits once the target's own
+// info is known" shape the Entrance Hall's own up-stairs already uses).
+const FLOOR4_LANDING = floorLandingDefinition('Grimoak Castle 4th Floor', []);
 
 // ---------- The 4th floor's 4 portals, each a real exit now (a later
 // follow-up ask: "add some places the portals will take the player,
@@ -1145,19 +1138,35 @@ function portalDungeonDefinition(name: MapName, returnRow: number, returnCol: nu
 }
 
 const FLOOR4_PORTAL_MID_COL = Math.floor(FLOOR_LANDING_COLS / 2);
+// A follow-up ask: "place the 3rd floor door stairs directly straight/
+// north on the north wall, facing south" — moved off the south wall
+// (same column it used there, FLOOR_LANDING_DOWN_STAIRS_COL) onto the
+// north wall instead; 'north' direction is what WorldScene's own stairs-
+// sprite renderer flips 180° for, so it reads as facing south into the
+// room. Pushed in the same call as the portals below since it's the same
+// "define the room, then push additional exits" shape.
 FLOOR4_LANDING.exits.push(
   {
     row: 0,
-    // A later follow-up ask: "move the door on the 4th floor to the north
-    // wall in the same position as the door on the left/north wall of the
-    // 2nd floor" — this north portal (the only one on the north wall)
-    // moves off dead-center to line up in the exact same column as floor
-    // 2's own new north-wall stairs (FLOOR2_NORTH_STAIRS_COL), stacking
-    // the two vertically. See shared/lighting.ts's own portalPositionsFor
-    // for the matching visual-position update (kept in sync by hand —
-    // that file can't import this constant, see this file's own
-    // circular-import doc comment elsewhere).
-    col: FLOOR2_NORTH_STAIRS_COL,
+    col: FLOOR_LANDING_DOWN_STAIRS_COL,
+    direction: 'north',
+    kind: 'stairs',
+    toMap: 'Grimoak Castle 3rd Floor',
+    toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW,
+    toCol: FLOOR_LANDING_UP_STAIRS_COL,
+  },
+  {
+    row: 0,
+    // A follow-up ask: "move the portal for Monsters 10-15 slightly to
+    // the right so it is directly north of the Monsters 15-20 portal" —
+    // now lines up with the south portal's own column (FLOOR4_PORTAL_MID_COL)
+    // instead of floor 2's own stairs column (the previous rationale,
+    // which no longer applies now that floor 2's stairs moved off that
+    // column too — see FLOOR2_LANDING's own doc comment). See shared/
+    // lighting.ts's own portalPositionsFor for the matching visual-
+    // position update (kept in sync by hand — that file can't import this
+    // constant, see this file's own circular-import doc comment elsewhere).
+    col: FLOOR4_PORTAL_MID_COL,
     direction: 'north',
     toMap: 'Sunken Crypt',
     toRow: PORTAL_DUNGEON_SIZE_ROWS - 2,
@@ -1197,13 +1206,16 @@ FLOOR4_LANDING.exits.push(
 // pushed on afterward (same "define the room, then push an additional
 // exit once the target's own info is known" shape the secret door below
 // already uses for Utility Classroom).
+// A follow-up ask moved floor 2's own reciprocal stairs from its south
+// wall to its north wall (see FLOOR2_LANDING's own doc comment) — this
+// arrival point follows it there instead of the old south-wall position.
 ENTRANCE_HALL.exits.push({
   row: ENTRANCE_HALL_UP_STAIRS.row,
   col: ENTRANCE_HALL_UP_STAIRS.col,
   direction: 'south',
   kind: 'stairs',
   toMap: 'Grimoak Castle 2nd Floor',
-  toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW,
+  toRow: FLOOR_LANDING_NORTH_ARRIVAL_ROW,
   toCol: FLOOR_LANDING_DOWN_STAIRS_COL,
 });
 
@@ -1396,12 +1408,12 @@ export { BRAMWICK_MID_COL, BRAMWICK_ENTRANCE_ROW };
 // fix ("the entire width/height of the dirt roads... should allow the
 // player to walk through at any part of it... instead of showing the
 // message 'You can't go that way'") to every OTHER road junction this
-// project has since added (Road to Kortho/Kortho, Road to Floro/Floro),
+// project has since added (Kortho Road/Kortho, Floro Road/Floro),
 // which had regressed back to a single-tile choke point — one exit per
 // tile across the road's own half-width band, each preserving its own
 // lateral offset on both sides. `spread` picks which coordinate the band
-// varies across: 'row' for an east-west road (Road to Kortho), 'col' for
-// a north-south one (Road to Floro).
+// varies across: 'row' for an east-west road (Kortho Road), 'col' for
+// a north-south one (Floro Road).
 function roadBandExits(config: {
   row: number;
   col: number;
@@ -1500,7 +1512,7 @@ function gobblerHutDoorExits(): MapExit[] {
 // Mystical Timberland/Gobbler Village's own connections to Grimoak
 // Grounds, rather than a separate corridor map (nothing here was asked
 // for a "Road to Great Plains" in between). Northeast placement on Great
-// Plains' own side mirrors how "Road to Kortho" sits at the NE of
+// Plains' own side mirrors how "Kortho Road" sits at the NE of
 // Grimoak Grounds as an EAST-facing exit near the top of that map, not
 // dead center.
 export const GREAT_PLAINS_FLORO_ROW = 15;
@@ -1580,7 +1592,7 @@ export function isRunestoneWayOffRoadBlocked(mapName: MapName, row: number, col:
 // like the road to kortho going east... a dirt road connection to the
 // west for Bramwick with sign 'Bramwick'... trees on the grass with
 // silver branches with collision") — same east-west corridor shape as
-// Road to Kortho, relative to Bramwick instead of Grimoak Grounds, plain
+// Kortho Road, relative to Bramwick instead of Grimoak Grounds, plain
 // grass (not boulder-walled like Runestone Way above) with real trees
 // (see shared/trees.ts's own silverbranchRoadTreePositions) rather than
 // a blanket off-road wall. No second connection at its own far end,
@@ -1868,7 +1880,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
         row: 0,
         col: TOWN_MID_COL,
         direction: 'north',
-        toMap: 'Road to Floro',
+        toMap: 'Floro Road',
         toRow: ROAD_TO_FLORO_ROWS - 2,
         toCol: ROAD_TO_FLORO_MID_COL,
         halfWidthTiles: ROAD_TO_FLORO_HALF_WIDTH_TILES,
@@ -1913,7 +1925,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
     terrain: 'stone',
     exits: [
       // A later follow-up ask ("add the town of Kortho back... connect it
-      // to the Road to Kortho") replaced the old (long-orphaned, since
+      // to the Kortho Road") replaced the old (long-orphaned, since
       // Great Plains isn't reachable from anywhere in the current
       // Grimoak-centric world) exit back to Great Plains with the real
       // new connection. A further follow-up ask widened this from a
@@ -1926,7 +1938,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
         row: TOWN_MID_ROW,
         col: 0,
         direction: 'west',
-        toMap: 'Road to Kortho',
+        toMap: 'Kortho Road',
         toRow: ROAD_TO_KORTHO_MID_ROW,
         toCol: ROAD_TO_KORTHO_COLS - 2,
         halfWidthTiles: ROAD_TO_KORTHO_HALF_WIDTH_TILES,
@@ -1958,8 +1970,8 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Kortho Boat Shop': korthoShopInteriorDefinition('Kortho Boat Shop'),
   'Kortho Auction House': korthoShopInteriorDefinition('Kortho Auction House'),
   'Kortho Crafting Shop': korthoShopInteriorDefinition('Kortho Crafting Shop'),
-  'Road to Kortho': {
-    name: 'Road to Kortho',
+  'Kortho Road': {
+    name: 'Kortho Road',
     rows: ROAD_TO_KORTHO_ROWS,
     cols: ROAD_TO_KORTHO_COLS,
     // The dirt road itself is a client-side TileSprite overlay (see
@@ -2014,11 +2026,11 @@ export const MAPS: Record<MapName, MapDefinition> = {
       },
     ],
   },
-  'Road to Floro': {
-    name: 'Road to Floro',
+  'Floro Road': {
+    name: 'Floro Road',
     rows: ROAD_TO_FLORO_ROWS,
     cols: ROAD_TO_FLORO_COLS,
-    // Same overlay approach as Road to Kortho above — base terrain is
+    // Same overlay approach as Kortho Road above — base terrain is
     // grass, the dirt road itself is a client-side TileSprite (see
     // WorldScene's own renderMap).
     terrain: 'grass',
@@ -2215,7 +2227,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
     name: 'Silverbranch Road',
     rows: SILVERBRANCH_ROAD_ROWS,
     cols: SILVERBRANCH_ROAD_COLS,
-    // Same overlay approach as Road to Kortho — base terrain is grass,
+    // Same overlay approach as Kortho Road — base terrain is grass,
     // the dirt road itself is a client-side TileSprite.
     terrain: 'grass',
     exits: [
@@ -2318,7 +2330,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
       // follow-up ask: "a dirt road leading north").
       ...bramwickGroundsEntranceExits('north'),
       // A later follow-up ask: "at the northeast of Grimoak grounds add a
-      // dirt road going east... Create 'Road to Kortho'" — well clear of
+      // dirt road going east... Create 'Kortho Road'" — well clear of
       // the moat/castle rectangle (rows 0-26 are open ground). A further
       // follow-up ask widened this from a single choke-point tile to the
       // road's own full width (see roadBandExits).
@@ -2326,7 +2338,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
         row: GRIMOAK_GROUNDS_ROAD_TO_KORTHO_ROW,
         col: GRIMOAK_GROUNDS_COLS - 1,
         direction: 'east',
-        toMap: 'Road to Kortho',
+        toMap: 'Kortho Road',
         toRow: ROAD_TO_KORTHO_MID_ROW,
         toCol: 1,
         halfWidthTiles: ROAD_TO_KORTHO_HALF_WIDTH_TILES,
@@ -2342,7 +2354,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
         row: GRIMOAK_GROUNDS_ROWS - 1,
         col: GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL,
         direction: 'south',
-        toMap: 'Road to Floro',
+        toMap: 'Floro Road',
         toRow: 1,
         toCol: ROAD_TO_FLORO_MID_COL,
         halfWidthTiles: ROAD_TO_FLORO_HALF_WIDTH_TILES,

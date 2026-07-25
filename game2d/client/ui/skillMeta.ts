@@ -258,14 +258,14 @@ export const ITEM_DESCRIPTIONS: Record<string, string> = {
   'bone shield': 'A plated bone shield. Equip it for a chance to block incoming hits.',
   torch: 'A carried light source. Equip it in place of a shield to see in the dark — burns out after 15 minutes of equipped use.',
   wand: "A basic wooden wand. Equip it in place of a weapon to cast spells — for now, just light (learnable in the Utility Classroom).",
-  'wild goblin ear': "A wild goblin's ear. Consume it for exp and a small chance of learning normal-monster resistance.",
-  'goblin ear': "A goblin's ear. Consume it for exp and a small chance of learning normal-monster resistance.",
-  'hobgoblin ear': "A hobgoblin's ear. Consume it for exp and a small chance of learning normal-monster resistance.",
-  'wild skeleton bone': "A wild skeleton's bone. Consume it for exp and a higher chance of learning undead-monster resistance.",
-  'skeleton bone': "A skeleton's bone. Consume it for exp and a higher chance of learning undead-monster resistance.",
-  'zombie finger': "A zombie's severed finger. Consume it for exp.",
-  'dragonborn scale': "A dragonborn's scale. Consume it for exp.",
-  'slime residue': "A slime's residue. Consume it for exp.",
+  'wild goblin ear': "A wild goblin's ear. Eat it for exp and a small chance of learning normal-monster resistance.",
+  'goblin ear': "A goblin's ear. Eat it for exp and a small chance of learning normal-monster resistance.",
+  'hobgoblin ear': "A hobgoblin's ear. Eat it for exp and a small chance of learning normal-monster resistance.",
+  'wild skeleton bone': "A wild skeleton's bone. Eat it for exp and a higher chance of learning undead-monster resistance.",
+  'skeleton bone': "A skeleton's bone. Eat it for exp and a higher chance of learning undead-monster resistance.",
+  'zombie finger': "A zombie's severed finger. Eat it for exp.",
+  'dragonborn scale': "A dragonborn's scale. Eat it for exp.",
+  'slime residue': "A slime's residue. Eat it for exp.",
   canteen: `Holds up to ${CANTEEN_CAPACITY} drinks of water. Click to target it, then use drink, pour out, or waterfill from your action bar.`,
   'lesser mana crystal': 'A dim, roughly-cut crystal — a monster\'s drop, replacing body parts (a follow-up ask). No use yet; hold onto it.',
   'minor mana crystal': 'A faintly glowing crystal, a step up from the lesser tier. No use yet; hold onto it.',
@@ -273,12 +273,12 @@ export const ITEM_DESCRIPTIONS: Record<string, string> = {
   'greater mana crystal': 'A brightly glowing crystal, dense with power. No use yet; hold onto it.',
   'superior mana crystal': 'A brilliant, near-blinding crystal — the rarest tier. No use yet; hold onto it.',
   // Item 32: shop items previously had no hover description at all.
-  'a cup of water': 'A simple cup of water. Consume it to ease your thirst a little.',
-  'some jerky': 'A strip of dried jerky. Consume it to ease your hunger a little.',
-  salmon: 'A fresh-caught salmon. Consume it to fill your belly nicely.',
-  'hp potion': 'A bottled potion. Consume it to recover some health.',
-  'mp potion': 'A bottled potion. Consume it to recover some mana.',
-  liniment: 'A soothing rub for tired legs. Consume it to recover some movement points.',
+  'a cup of water': 'A simple cup of water. Drink it to ease your thirst a little.',
+  'some jerky': 'A strip of dried jerky. Eat it to ease your hunger a little.',
+  salmon: 'A fresh-caught salmon. Eat it to fill your belly nicely.',
+  'hp potion': 'A bottled potion. Drink it to recover some health.',
+  'mp potion': 'A bottled potion. Drink it to recover some mana.',
+  liniment: 'A soothing rub for tired legs. Use it to recover some movement points.',
   // Gobbler Village's own hut bosses (item 22).
   'Grimrot Wand': "The Gobbler Necromancer's own wand, still faintly humming. Equip it as a weapon.",
   'Muckfang Blade': "The Gobbler Warrior's own crude but wicked blade. Equip it as a weapon.",
@@ -293,7 +293,7 @@ export function itemTooltip(item: string): string {
   const description = ITEM_DESCRIPTIONS[item];
   if (isFillableItem(item)) return description ?? 'Click to target it, then act on it from your action bar.';
   if (isManaCrystal(item)) return description ?? 'No use yet; hold onto it.';
-  return description ? `${description}\n\nClick to use, right-click to consume.` : 'Click to use, right-click to consume.';
+  return description ? `${description}\n\nClick to use, right-click to force-use it.` : 'Click to use, right-click to force-use it.';
 }
 
 // ---------- Cooldown visualization — shared between the Skills modal's

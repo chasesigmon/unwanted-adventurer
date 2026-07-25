@@ -153,11 +153,15 @@ function buildMemberCard(
   onCommand: (command: PetCommand) => void,
   itemsSection: HTMLDivElement,
   onRemove?: () => void,
-  // A later follow-up ask: "give the player the ability to name their pet
-  // or tamed beast and it should persist" — animated monsters aren't part
-  // of that ask, so onRename is simply absent for their own card, same
-  // "not every card gets every action" shape onRemove already uses above.
-  onRename?: (name: string) => void
+  // A follow-up ask: "give the player the ability to name their pet or
+  // tamed beast and it should persist" — later extended to animated dead/
+  // summons too, so every follower card can now receive this.
+  onRename?: (name: string) => void,
+  // A still-later follow-up ask: "the player should only be able to name
+  // the pet... 1 time, then it is permanent" — once true, the rename row
+  // is never shown at all (nothing left to rename), regardless of
+  // whether onRename is provided.
+  named = false
 ): HTMLDivElement {
   const card = document.createElement('div');
   card.className = 'group-member';
@@ -167,7 +171,7 @@ function buildMemberCard(
   nameEl.textContent = alive ? name : `${name} — fallen`;
   card.appendChild(nameEl);
 
-  if (onRename) {
+  if (onRename && !named) {
     const renameRow = document.createElement('div');
     renameRow.className = 'group-member-rename-row';
     const input = document.createElement('input');
@@ -286,9 +290,21 @@ export function updateGroupPanel(
   animatedMonsters: AnimatedMonsterSnapshot[] = [],
   tamedBeast: TamedBeastSnapshot | null = null
 ): void {
+  // A follow-up ask: "when I tried to name the tamed beast... after a
+  // second it would automatically clear the textbox out" — this function
+  // runs on every single map:state broadcast (WorldScene's applyMapState),
+  // which fires far more often than a player types, and used to
+  // unconditionally wipe/rebuild the whole panel (including the rename
+  // `<input>`) every time — discarding whatever the player had typed so
+  // far mid-keystroke. Latest data is still cached for whenever the DOM
+  // rebuild actually happens next, but the DOM itself is left untouched
+  // while a rename input has focus, so typing is never interrupted.
+  const activeInput = document.activeElement;
+  const typingRename = activeInput instanceof HTMLInputElement && activeInput.type === 'text' && groupMembers.contains(activeInput);
   currentPet = pet;
   currentAnimatedMonsters = animatedMonsters;
   currentTamedBeast = tamedBeast;
+  if (typingRename) return;
   if (!pet && animatedMonsters.length === 0 && !tamedBeast) {
     groupPanel.hidden = true;
     groupMembers.innerHTML = '';
@@ -324,7 +340,8 @@ export function updateGroupPanel(
           network.renamePet(name).then((ack) => {
             if (!ack.ok && ack.message) logCombatMessage(ack.message);
             else if (ack.ok && ack.pet) updateGroupPanel(ack.pet, animatedMonsters, currentTamedBeast);
-          })
+          }),
+        pet.named
       )
     );
   }
@@ -351,7 +368,8 @@ export function updateGroupPanel(
           network.renameTamedBeast(name).then((ack) => {
             if (!ack.ok && ack.message) logCombatMessage(ack.message);
             else if (ack.ok && ack.tamedBeast) updateGroupPanel(currentPet, animatedMonsters, ack.tamedBeast);
-          })
+          }),
+        tamedBeast.named
       )
     );
   }
@@ -373,7 +391,22 @@ export function updateGroupPanel(
         () =>
           network.removeAnimatedMonster(am.id).then((ack) => {
             if (!ack.ok && ack.message) logCombatMessage(ack.message);
-          })
+          }),
+        // A follow-up ask extended naming to animated dead/summons too —
+        // replaces just this one monster in the array (an owner can have
+        // more than one) rather than assuming it's the only one.
+        (name) =>
+          network.renameAnimatedMonster(am.id, name).then((ack) => {
+            if (!ack.ok && ack.message) logCombatMessage(ack.message);
+            else if (ack.ok && ack.animatedMonster) {
+              updateGroupPanel(
+                currentPet,
+                animatedMonsters.map((m) => (m.id === am.id ? ack.animatedMonster! : m)),
+                currentTamedBeast
+              );
+            }
+          }),
+        am.named
       )
     );
   }

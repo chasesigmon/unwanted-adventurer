@@ -1297,7 +1297,14 @@ body {
   cursor: not-allowed;
 }
 
-#crafting-spinner-overlay {
+/* :not([hidden]) — same "an ID selector's bare `display` beats the
+   browser's own `[hidden] { display: none }` rule" pitfall documented at
+   the top of this file (see #auth-screen's own note); without this guard
+   the overlay stayed visibly flexed (and blocking every click under it)
+   even while its own `hidden` attribute was set, which is exactly the
+   bug reported ("it already has the spinner active and I am unable to do
+   anything else in the modal" the instant it opens). */
+#crafting-spinner-overlay:not([hidden]) {
   position: absolute;
   top: -24px;
   left: -28px;
@@ -1637,12 +1644,15 @@ body {
 
 /* A later follow-up ask: "center the 'For Sale' text and make it bolder
    and a little bigger and more noticeable" — layered on top of the shared
-   .shop-item-divider styling above, only for that one header. */
+   .shop-item-divider styling above. A still-later ask ("make the Buy and
+   Sell text yellow like the gold text") reused this same class for the
+   Sell header too (previously just "Your items") and recolored both to
+   match #shop-gold-line's own gold. */
 .shop-for-sale-header {
   text-align: center;
   font-size: 14px;
   font-weight: 700;
-  color: #ddd;
+  color: #f0c040;
 }
 
 /* Item 17's Bank amount input — plain number field matching the shop
@@ -1926,6 +1936,28 @@ body {
 
 #corpse-sacrifice:hover {
   background: #6a4f24;
+}
+
+/* A follow-up ask: "Improve the styling and formatting of the 'Fill vial
+   with monster blood' button" — this had no styling at all before (a bare
+   browser-default button), unlike every sibling action button above it.
+   Same shape as those, with its own blood-red accent to match what it
+   actually does. */
+#corpse-fill-vial {
+  margin-top: 8px;
+  width: 100%;
+  padding: 8px;
+  background: #4d1a1a;
+  border: 1px solid #a83030;
+  color: #eee;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  border-radius: 4px;
+}
+
+#corpse-fill-vial:hover {
+  background: #6a2424;
 }
 
 /* ---------- Bed sleep-confirmation modal (a later follow-up ask) ---------- */

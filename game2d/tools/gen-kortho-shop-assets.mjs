@@ -26,7 +26,16 @@ const outPath = join(__dirname, '..', 'assets', 'kortho-shop-spritesheet.png');
 // Kortho") added an 8th frame — FLORO_SHOP_MAPS/KORTHO_SHOP_MAPS both got
 // their own new entry appended in the same position, so this stays in
 // sync with WorldScene's own .indexOf(...) frame lookup.
-const SHOP_NAMES = ['Blacksmith', 'General Store', 'Inn', 'Bank', 'Armorer', 'Pet Salesman', 'Boat Shop', 'Auction House'];
+//
+// A still-later follow-up ask ("Add a 'Crafting Shop' in Floro, Kortho,
+// and Bramwick") appended a 9th entry the SAME way — but this array
+// itself was never updated to match, so WorldScene's frame index 8 (out
+// of range for an 8-frame sheet) silently fell back to frame 0
+// ("Blacksmith"), which is the exact bug reported ("you named the new
+// shop 'Blacksmith' so there are 2 blacksmith shops"). Keep this in sync
+// with FLORO_SHOP_MAPS/KORTHO_SHOP_MAPS (shared/constants.ts) every time
+// either gains a new shop.
+const SHOP_NAMES = ['Blacksmith', 'General Store', 'Inn', 'Bank', 'Armorer', 'Pet Salesman', 'Boat Shop', 'Auction House', 'Crafting Shop'];
 
 const python = `
 import random

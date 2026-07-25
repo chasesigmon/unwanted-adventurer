@@ -1,5 +1,5 @@
 // Live verification for the follow-up batch: shop counter collision (1),
-// shop building collision (2), Grimoak Grounds <-> Road to Kortho/Floro
+// shop building collision (2), Grimoak Grounds <-> Kortho Road/Floro
 // signs (3/5, client-only — not checked here), full-width road band
 // transitions (4), Floro shop sprite/parity (6), recall list additions
 // (7), world-map ASCII dropdown (8, client-only), and the new square/
@@ -52,7 +52,7 @@ try {
   const { token: accountToken } = await post('/auth/register', { username: UNAME, email: EMAIL, password: 'testpass123' });
   await post('/characters', { name: CHAR, race: 'human', gender: 'male', hairColor: 'brown', skinTone: 'tan' }, accountToken);
 
-  // --- Item 4: full-width road band — enter Road to Kortho from an
+  // --- Item 4: full-width road band — enter Kortho Road from an
   // OFFSET row (8, not the exact old center 10), which used to be
   // rejected with "You can't go that way".
   psql(`UPDATE players SET map='Grimoak Grounds', "row"=8, col=98, equipment='{"weapon":"wand"}'::jsonb WHERE username='${CHAR}';`);
@@ -61,12 +61,12 @@ try {
   await new Promise((r) => setTimeout(r, 700));
 
   let res = await emit(socket, 'move', 'east');
-  check('steps onto the Road to Kortho band at an OFFSET row (8, not center)', res.ok === true && res.player?.map === 'Grimoak Grounds');
+  check('steps onto the Kortho Road band at an OFFSET row (8, not center)', res.ok === true && res.player?.map === 'Grimoak Grounds');
   res = await emit(socket, 'move', 'east');
   // Offset is preserved relative to each side's OWN center (10 on the
-  // Grounds side, 11 on Road to Kortho's own side) — a -2 offset from 10
+  // Grounds side, 11 on Kortho Road's own side) — a -2 offset from 10
   // lands at 11-2=9, not the same raw row number.
-  check('full-width band transitions at offset row too (item 4)', res.ok === true && res.player?.map === 'Road to Kortho');
+  check('full-width band transitions at offset row too (item 4)', res.ok === true && res.player?.map === 'Kortho Road');
   check('lands at the matching (relative-offset) row on the other side', res.player?.row === 9);
 
   // --- Item 4 (Floro road too): offset column instead of center ---
@@ -76,17 +76,17 @@ try {
   socket = await connect(charToken);
   await new Promise((r) => setTimeout(r, 700));
   res = await emit(socket, 'move', 'south');
-  check('steps onto the Road to Floro band at an OFFSET col (8, not center 10)', res.ok === true && res.player?.map === 'Grimoak Grounds');
+  check('steps onto the Floro Road band at an OFFSET col (8, not center 10)', res.ok === true && res.player?.map === 'Grimoak Grounds');
   res = await emit(socket, 'move', 'south');
-  check('full-width band transitions at offset col too (item 4)', res.ok === true && res.player?.map === 'Road to Floro');
+  check('full-width band transitions at offset col too (item 4)', res.ok === true && res.player?.map === 'Floro Road');
   check('lands at the matching (relative-offset) col on the other side', res.player?.col === 10);
 
   // --- Item 7: recall list — Kortho should now be a visited POI. Must
-  // be a REAL transition (walking in from Road to Kortho), not a raw SQL
+  // be a REAL transition (walking in from Kortho Road), not a raw SQL
   // teleport, since the recall-visited check only fires on `transitioned`.
   await closeAndWait(socket);
   psql(
-    `UPDATE players SET map='Road to Kortho', "row"=11, col=98, equipment='{"weapon":"wand"}'::jsonb WHERE username='${CHAR}';`
+    `UPDATE players SET map='Kortho Road', "row"=11, col=98, equipment='{"weapon":"wand"}'::jsonb WHERE username='${CHAR}';`
   );
   ({ token: charToken } = await post(`/characters/${CHAR}/select`, {}, accountToken));
   socket = await connect(charToken);

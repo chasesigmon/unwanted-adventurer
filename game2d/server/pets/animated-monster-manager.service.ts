@@ -94,6 +94,22 @@ export class AnimatedMonsterManagerService {
     return monster;
   }
 
+  // A follow-up ask: "name the pet/tamed beast/animated dead/summon" —
+  // animated monsters had no rename path at all before this; same
+  // one-time-permanent shape as PetManagerService.rename (see its own doc
+  // comment for the null-vs-undefined meaning), not persisted (animated
+  // monsters themselves aren't — see shared/pets.ts's own doc comment on
+  // AnimatedMonsterSnapshot), so the name only needs to last the monster's
+  // own session-bound lifetime anyway.
+  rename(ownerUsername: string, id: string, name: string): AnimatedMonster | undefined | null {
+    const monster = this.monsters.get(ownerUsername)?.find((m) => m.id === id);
+    if (!monster || !monster.alive) return undefined;
+    if (monster.named) return null;
+    monster.name = name;
+    monster.named = true;
+    return monster;
+  }
+
   // The 'z' hotkey (a later follow-up ask) — same shape as
   // PetManagerService.commandAttack, just needs the specific monster's
   // own id too since an owner can have more than one at once.

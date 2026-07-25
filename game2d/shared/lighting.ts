@@ -20,7 +20,6 @@ import {
   MOAT_INNER_TOP,
   MOAT_INNER_BOTTOM,
   FLOOR_LANDING_ROWS,
-  FLOOR2_NORTH_STAIRS_COL,
   FLOOR_LANDING_COLS,
   FLOOR_LANDING_MID_ROW,
   BRAMWICK_MID_COL,
@@ -682,12 +681,12 @@ export function portalPositionsFor(mapName: MapName): Array<{ row: number; col: 
   if (mapName === 'Grimoak Castle 4th Floor') {
     const midCol = Math.floor(FLOOR_LANDING_COLS / 2);
     return [
-      // A later follow-up ask ("move the door on the 4th floor to the
-      // north wall in the same position as the door on the 2nd floor")
-      // moved this off dead-center onto the same column floor 2's own new
-      // north-wall stairs uses (see shared/maps.ts's own
+      // A follow-up ask: "move the portal for Monsters 10-15 slightly to
+      // the right so it is directly north of the Monsters 15-20 portal" —
+      // same column as the south-wall portal below (midCol), not floor
+      // 2's own stairs column anymore (see shared/maps.ts's own
       // FLOOR4_LANDING.exits.push for the matching real MapExit).
-      { row: 0, col: FLOOR2_NORTH_STAIRS_COL }, // north wall
+      { row: 0, col: midCol }, // north wall
       // A later follow-up ask moved this off the (unused) up-stairs slot
       // and onto the wall's own center, clear of the real down-stairs
       // (FLOOR_LANDING_DOWN_STAIRS_COL).
@@ -813,7 +812,7 @@ const SIGN_TOP_EDGE_ROW = 2;
 export const BRAMWICK_SIGN_POSITION = { row: BRAMWICK_ENTRANCE_ROW, col: BRAMWICK_MID_COL + 4 };
 export const GRIMOAK_GROUNDS_SIGN_POSITION = { row: SIGN_TOP_EDGE_ROW, col: CASTLE_DOOR_ON_GROUNDS.col + 4 };
 
-// Same pair-of-signs convention for the new NE "Road to Kortho" exit (a
+// Same pair-of-signs convention for the new NE "Kortho Road" exit (a
 // later follow-up ask) — one sign on each side of the shared entrance,
 // each naming the destination the road leads TO, sitting exactly on the
 // map's own true edge column, offset in row (this road runs east-west)
@@ -823,14 +822,14 @@ export const GRIMOAK_GROUNDS_ROAD_TO_KORTHO_SIGN_POSITION = {
   col: GRIMOAK_GROUNDS_COLS - 1,
 };
 export const ROAD_TO_KORTHO_SIGN_POSITION = { row: ROAD_TO_KORTHO_MID_ROW + 4, col: ROAD_TO_KORTHO_COLS - 1 };
-// A later follow-up ask: "put a sign going from Road to Kortho to
-// Grimoak Grounds that says 'Grimoak Grounds'" — Road to Kortho's own
+// A later follow-up ask: "put a sign going from Kortho Road to
+// Grimoak Grounds that says 'Grimoak Grounds'" — Kortho Road's own
 // WEST end had no sign of its own at all before this (only Grimoak
 // Grounds' side of that same junction did); mirrors ROAD_TO_KORTHO_SIGN_
 // POSITION's own offset, just against the opposite (west) edge.
 export const ROAD_TO_KORTHO_GRIMOAK_SIGN_POSITION = { row: ROAD_TO_KORTHO_MID_ROW + 4, col: 0 };
 
-// Same pair-of-signs convention for the new SW "Road to Floro" exit (a
+// Same pair-of-signs convention for the new SW "Floro Road" exit (a
 // later follow-up ask), transposed for a north-south road — the
 // perpendicular offset is now COLUMN (not row), sitting exactly on the
 // map's own true edge row.
@@ -839,14 +838,14 @@ export const GRIMOAK_GROUNDS_ROAD_TO_FLORO_SIGN_POSITION = {
   col: GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL + 4,
 };
 export const ROAD_TO_FLORO_SIGN_POSITION = { row: ROAD_TO_FLORO_ROWS - 1, col: ROAD_TO_FLORO_MID_COL + 4 };
-// Same missing-sign fix as Road to Kortho above (a later follow-up ask:
-// "same thing, put a sign from Road to Floro to Grimoak Grounds") — Road
+// Same missing-sign fix as Kortho Road above (a later follow-up ask:
+// "same thing, put a sign from Floro Road to Grimoak Grounds") — Road
 // to Floro's own NORTH end, mirroring ROAD_TO_FLORO_SIGN_POSITION's own
 // offset against the opposite (north) edge.
 export const ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION = { row: SIGN_TOP_EDGE_ROW, col: ROAD_TO_FLORO_MID_COL + 4 };
 
-// A later follow-up ask: "in kortho update the exit to Road to Kortho to
-// have a dirt road leading out with a sign 'Road to Kortho'" — a third
+// A later follow-up ask: "in kortho update the exit to Kortho Road to
+// have a dirt road leading out with a sign 'Kortho Road'" — a third
 // sign, this one sitting just inside the TOWN itself pointing back out,
 // unlike the two pairs above which both sit on the connecting road's own
 // two ends.
@@ -1037,13 +1036,13 @@ export function isBramwickSignBlocked(mapName: MapName, row: number, col: number
   if (mapName === 'Gobbler Village') {
     return row === GOBBLER_VILLAGE_SIGN_POSITION.row && col === GOBBLER_VILLAGE_SIGN_POSITION.col;
   }
-  if (mapName === 'Road to Kortho') {
+  if (mapName === 'Kortho Road') {
     return (
       (row === ROAD_TO_KORTHO_SIGN_POSITION.row && col === ROAD_TO_KORTHO_SIGN_POSITION.col) ||
       (row === ROAD_TO_KORTHO_GRIMOAK_SIGN_POSITION.row && col === ROAD_TO_KORTHO_GRIMOAK_SIGN_POSITION.col)
     );
   }
-  if (mapName === 'Road to Floro') {
+  if (mapName === 'Floro Road') {
     return (
       (row === ROAD_TO_FLORO_SIGN_POSITION.row && col === ROAD_TO_FLORO_SIGN_POSITION.col) ||
       (row === ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION.row && col === ROAD_TO_FLORO_GRIMOAK_SIGN_POSITION.col)
