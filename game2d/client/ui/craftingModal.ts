@@ -20,6 +20,7 @@ import {
   craftingOutputSlot,
   craftingCraftBtn,
   craftingSpinnerOverlay,
+  applyModalPairPositions,
   closeAllModals,
   refreshOpenModals,
   registerModalRefreshHandler,
@@ -193,6 +194,11 @@ export function openCraftingModal(): void {
   // AFTER this one would already see it, but an already-rendered one
   // wouldn't without this.
   refreshOpenModals();
+  // A follow-up ask: "the inventory modal should open up to the left of
+  // it, not directly behind it" — re-evaluated now that craftingModal is
+  // actually visible (closeAllModals above already ran this once, but too
+  // early — craftingModal was still hidden at that point).
+  applyModalPairPositions();
 }
 
 registerModalRefreshHandler(craftingModal, () => {

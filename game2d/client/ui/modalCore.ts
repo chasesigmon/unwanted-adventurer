@@ -272,13 +272,13 @@ export function hideModal(modal: HTMLDivElement): void {
 }
 
 // `opening` (a later follow-up ask: "while the Crafting table modal is
-// open the player can also open the inventory modal alongside it to the
-// right") is the one exception to "only one modal open at a time" in this
-// whole project — passed through from toggleModal/openCraftingModal below
-// so closing every OTHER modal doesn't ALSO close the one pairing partner
-// this specific modal is about to open alongside. Every other caller
-// (Escape, a backdrop click, ...) omits it and gets the original
-// close-everything behavior.
+// open the player can also open the inventory modal alongside it") is the
+// one exception to "only one modal open at a time" in this whole project
+// — passed through from toggleModal/openCraftingModal below so closing
+// every OTHER modal doesn't ALSO close the one pairing partner this
+// specific modal is about to open alongside. Every other caller (Escape,
+// a backdrop click, ...) omits it and gets the original close-everything
+// behavior.
 export function closeAllModals(opening?: HTMLDivElement): void {
   for (const modal of ALL_MODALS) {
     if (opening === inventoryModal && modal === craftingModal) continue;
@@ -286,6 +286,33 @@ export function closeAllModals(opening?: HTMLDivElement): void {
     hideModal(modal);
   }
   updateInputCaptured();
+  applyModalPairPositions();
+}
+
+// A follow-up ask: "the inventory modal should open up to the left of it
+// [the crafting modal], not directly behind it" — both are independent
+// full-screen overlays that each center their own box by default, so open
+// together they land exactly on top of each other. Purely a visual class
+// toggle (see style.css's own #inventory-modal.paired-with-crafting) —
+// re-evaluated after anything that could change which modals are open.
+export function applyModalPairPositions(): void {
+  const bothOpen = !inventoryModal.hidden && !craftingModal.hidden;
+  inventoryModal.classList.toggle('paired-with-crafting', bothOpen);
+  // A follow-up bug report: "I was not able to click to select or drag
+  // inventory items to the crafting table, when I would try it would
+  // close the crafting table modal" — every `.modal` is a FULL-SCREEN
+  // (inset: 0) click-catcher (that's how backdrop-click-to-close works),
+  // and craftingModal sits later in the DOM than inventoryModal (see
+  // index.html), so with both open craftingModal's own invisible backdrop
+  // rendered ON TOP of inventoryModal's box, silently swallowing every
+  // click meant for an inventory item as a "clicked the crafting modal's
+  // backdrop" instead — which is exactly what hideModal(craftingModal)
+  // reacted to. Disabling pointer-events on craftingModal's own backdrop
+  // while paired (re-enabled on its own .modal-box child, see style.css's
+  // #crafting-modal.paired-with-inventory) lets clicks pass through to
+  // whatever's actually underneath — inventoryModal's box, or its own
+  // backdrop — instead of being captured by crafting's invisible layer.
+  craftingModal.classList.toggle('paired-with-inventory', bothOpen);
 }
 
 // Char sheet / inventory / skills / equipment / map: plain toggle,
@@ -299,6 +326,7 @@ export function toggleModal(modal: HTMLDivElement): void {
   modal.hidden = false;
   updateInputCaptured();
   modalOpenHandlers.get(modal)?.();
+  applyModalPairPositions();
 }
 
 // autopilotModal is deliberately excluded from both generic listeners

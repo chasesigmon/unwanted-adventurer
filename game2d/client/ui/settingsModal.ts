@@ -10,6 +10,7 @@ import {
   settingsTabAccountBtn,
   settingsTabActionBarsBtn,
 } from './modalCore.js';
+import { showCenterToast } from './toast.js';
 import {
   ACTION_BAR_MAX_COLS,
   ACTION_BAR_MAX_ROWS,
@@ -132,26 +133,6 @@ function renderActionBarsTab(): void {
   settingsBody.innerHTML = '';
   const bars = getActionBars();
 
-  if (pendingSizes.size > 0) {
-    const saveRow = document.createElement('div');
-    saveRow.className = 'settings-add-bar-row';
-    const saveBtn = document.createElement('button');
-    saveBtn.type = 'button';
-    saveBtn.textContent = 'Save Changes';
-    saveBtn.addEventListener('click', () => {
-      for (const [barId, size] of pendingSizes) resizeActionBar(barId, size.rows, size.cols);
-      pendingSizes.clear();
-      renderActionBarsTab();
-    });
-    saveRow.appendChild(saveBtn);
-    const hint = document.createElement('span');
-    hint.textContent = 'Unsaved row/column changes — click to apply.';
-    hint.style.fontSize = '11px';
-    hint.style.color = '#f0c040';
-    saveRow.appendChild(hint);
-    settingsBody.appendChild(saveRow);
-  }
-
   for (const bar of bars) {
     const card = document.createElement('div');
     card.className = 'settings-actionbar-card';
@@ -235,7 +216,18 @@ function renderActionBarsTab(): void {
       setBtn.textContent = 'Set';
       setBtn.addEventListener('click', () => {
         beginHotkeyCapture(valueEl, (combo) => {
-          if (combo) setActionBarHotkey(bar.id, index, combo);
+          if (combo) {
+            // A follow-up ask: "allow the mapping update but show a
+            // tooltip message that the old mapping has been removed" —
+            // setActionBarHotkey silently steals a hotkey from wherever
+            // else it was bound; this is the one place that matters to a
+            // player, so it's surfaced here rather than inside that
+            // function itself.
+            const stolenFromElsewhere = setActionBarHotkey(bar.id, index, combo);
+            if (stolenFromElsewhere) {
+              showCenterToast(`${formatCombo(combo)} was already bound to another slot — that mapping has been removed.`);
+            }
+          }
           renderActionBarsTab();
         });
       });
@@ -279,6 +271,30 @@ function renderActionBarsTab(): void {
     });
     addRow.appendChild(addBtn);
     settingsBody.appendChild(addRow);
+  }
+
+  // A follow-up ask: "move the save changes button for settings/action
+  // bars to appear at the bottom instead of the top" — rendered last, so
+  // it always sits below every bar card and the "Add Action Bar" row
+  // above, regardless of how many bars are configured.
+  if (pendingSizes.size > 0) {
+    const saveRow = document.createElement('div');
+    saveRow.className = 'settings-add-bar-row';
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.textContent = 'Save Changes';
+    saveBtn.addEventListener('click', () => {
+      for (const [barId, size] of pendingSizes) resizeActionBar(barId, size.rows, size.cols);
+      pendingSizes.clear();
+      renderActionBarsTab();
+    });
+    saveRow.appendChild(saveBtn);
+    const hint = document.createElement('span');
+    hint.textContent = 'Unsaved row/column changes — click to apply.';
+    hint.style.fontSize = '11px';
+    hint.style.color = '#f0c040';
+    saveRow.appendChild(hint);
+    settingsBody.appendChild(saveRow);
   }
 }
 

@@ -257,7 +257,7 @@ export const ITEM_DESCRIPTIONS: Record<string, string> = {
   'bone dagger': 'A crude blade carved from bone. Equip it as a weapon for bonus damage and the dagger skill.',
   'bone shield': 'A plated bone shield. Equip it for a chance to block incoming hits.',
   torch: 'A carried light source. Equip it in place of a shield to see in the dark — burns out after 15 minutes of equipped use.',
-  wand: "A basic wooden wand. Equip it in place of a weapon to cast spells — for now, just light (learnable in the Utility Classroom).",
+  wand: 'A basic wooden wand. Equip it in place of a weapon to cast spells.',
   'wild goblin ear': "A wild goblin's ear. Eat it for exp and a small chance of learning normal-monster resistance.",
   'goblin ear': "A goblin's ear. Eat it for exp and a small chance of learning normal-monster resistance.",
   'hobgoblin ear': "A hobgoblin's ear. Eat it for exp and a small chance of learning normal-monster resistance.",
@@ -293,7 +293,7 @@ export function itemTooltip(item: string): string {
   const description = ITEM_DESCRIPTIONS[item];
   if (isFillableItem(item)) return description ?? 'Click to target it, then act on it from your action bar.';
   if (isManaCrystal(item)) return description ?? 'No use yet; hold onto it.';
-  return description ? `${description}\n\nClick to use, right-click to force-use it.` : 'Click to use, right-click to force-use it.';
+  return description ? `${description}\n\nClick to use.` : 'Click to use.';
 }
 
 // ---------- Cooldown visualization — shared between the Skills modal's

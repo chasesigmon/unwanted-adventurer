@@ -467,16 +467,39 @@ export function craftingTablePositionFor(mapName: MapName): { row: number; col: 
   return undefined;
 }
 
-export function isCraftingTableBlocked(mapName: MapName, row: number, col: number): boolean {
+// A follow-up bug report: "the crafting table is still lacking collision
+// around the entire square of the table" — the sprite itself is 64x64px
+// (2x2 tiles, see tools/gen-crafting-table.mjs), but only the single
+// anchor tile craftingTablePositionFor returns (used for the SPRITE's own
+// render position — kept as-is, unrelated callers still want that one
+// point) was ever collision-blocked, letting a player walk onto the other
+// 3 tiles the art visually covers. Same "a real rectangular footprint,
+// not just a single point" treatment as the Great Hall's own dining table
+// (see greatHallTableFootprint/isGreatHallTableBlocked above) — a 2x2
+// block anchored one tile up-and-left of the sprite's own render point,
+// which is where the art actually sits given its (0.5, 0.75) origin.
+function craftingTableFootprint(mapName: MapName): { rowStart: number; rowEnd: number; colStart: number; colEnd: number } | undefined {
   const pos = craftingTablePositionFor(mapName);
-  return pos !== undefined && pos.row === row && pos.col === col;
+  if (!pos) return undefined;
+  return { rowStart: pos.row - 1, rowEnd: pos.row, colStart: pos.col - 1, colEnd: pos.col };
+}
+
+export function isCraftingTableBlocked(mapName: MapName, row: number, col: number): boolean {
+  const table = craftingTableFootprint(mapName);
+  return table !== undefined && row >= table.rowStart && row <= table.rowEnd && col >= table.colStart && col <= table.colEnd;
 }
 
 // Same Chebyshev-distance-1 "close enough" reach every other interactive
-// prop here (isNearBench, BED_REACH_TILES) uses.
+// prop here (isNearBench, BED_REACH_TILES) uses, measured from whichever
+// footprint tile is actually closest (not just the single render anchor),
+// so every side of the now-2x2 table remains reachable from an adjacent
+// tile.
 export function isNearCraftingTable(mapName: MapName, row: number, col: number): boolean {
-  const pos = craftingTablePositionFor(mapName);
-  return pos !== undefined && Math.abs(row - pos.row) <= 1 && Math.abs(col - pos.col) <= 1;
+  const table = craftingTableFootprint(mapName);
+  if (!table) return false;
+  const nearestRow = Math.max(table.rowStart, Math.min(row, table.rowEnd));
+  const nearestCol = Math.max(table.colStart, Math.min(col, table.colEnd));
+  return Math.abs(row - nearestRow) <= 1 && Math.abs(col - nearestCol) <= 1;
 }
 
 // The Dorms rooms' own 5 beds (a later follow-up ask) — evenly spaced

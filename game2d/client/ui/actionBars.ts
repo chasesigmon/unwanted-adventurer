@@ -312,20 +312,30 @@ export function resizeActionBar(barId: string, rows: number, cols: number): void
   renderAllActionBars();
 }
 
-export function setActionBarHotkey(barId: string, index: number, combo: string | null): void {
+// Returns whether an EXISTING binding elsewhere had to be removed to make
+// room for this one (a follow-up ask: "allow the mapping update but show
+// a tooltip message that the old mapping has been removed") — the caller
+// (settingsModal.ts) uses this to decide whether to surface that toast;
+// setActionBarHotkey itself stays silent either way.
+export function setActionBarHotkey(barId: string, index: number, combo: string | null): boolean {
   const bar = getActionBar(barId);
-  if (!bar || !bar.slots[index]) return;
+  if (!bar || !bar.slots[index]) return false;
   // A hotkey can only ever trigger one slot — stealing it from wherever
   // else it was bound (any bar) avoids a silently-ambiguous double binding.
+  let stolen = false;
   if (combo) {
     for (const other of bars) {
       other.slots.forEach((s) => {
-        if (s.hotkey === combo) s.hotkey = null;
+        if (s.hotkey === combo && !(other.id === barId && other.slots.indexOf(s) === index)) {
+          s.hotkey = null;
+          stolen = true;
+        }
       });
     }
   }
   bar.slots[index]!.hotkey = combo;
   saveActionBars();
+  return stolen;
 }
 
 export function toggleActionBarCollapsed(barId: string): void {

@@ -1162,6 +1162,32 @@ body {
   overflow-y: auto;
 }
 
+/* A follow-up ask: "when the crafting table modal is open, the inventory
+   modal should open up to the left of it, not directly behind it" — both
+   #inventory-modal and #crafting-modal are independent full-screen
+   overlays that each center their own box, so open together they land
+   exactly on top of each other by default. Toggled by JS (see
+   modalCore.ts's own applyModalPairPositions) whenever both are open at
+   once; a plain visual offset, not a layout change, so it can't disturb
+   the box's own centering math. -390px clears crafting's own 420px-wide
+   box (see #crafting-modal .modal-box) plus a comfortable gap either side. */
+#inventory-modal.paired-with-crafting .modal-box {
+  transform: translateX(-390px);
+}
+
+/* See modalCore.ts's own applyModalPairPositions doc comment — craftingModal
+   sits later in the DOM than inventoryModal, so its own full-screen
+   backdrop normally sits on top, silently swallowing clicks meant for an
+   inventory item underneath. Disabled only while paired; re-enabled on
+   its own box so the crafting modal itself stays fully interactive. */
+#crafting-modal.paired-with-inventory {
+  pointer-events: none;
+}
+
+#crafting-modal.paired-with-inventory .modal-box {
+  pointer-events: auto;
+}
+
 /* A later follow-up ask: "make it so that all of the modals that open
    are draggable with a thin line at the top like the group label" —
    same thin grabbable strip convention as #group-panel's own
