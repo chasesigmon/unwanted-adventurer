@@ -20,6 +20,7 @@ import {
   MOAT_INNER_TOP,
   MOAT_INNER_BOTTOM,
   FLOOR_LANDING_ROWS,
+  FLOOR2_NORTH_STAIRS_COL,
   FLOOR_LANDING_COLS,
   FLOOR_LANDING_MID_ROW,
   BRAMWICK_MID_COL,
@@ -454,6 +455,31 @@ export function isNearBench(mapName: MapName, row: number, col: number): boolean
   return benchPositionsFor(mapName).some((p) => Math.abs(row - p.row) <= 1 && Math.abs(col - p.col) <= 1);
 }
 
+// A later follow-up ask: "Add a 'Crafting Shop' in Floro, Kortho, and
+// Bramwick... create a crafting table on the right wall of each Crafting
+// Shop, facing east." One fixed position per Crafting Shop interior — the
+// Floro/Kortho interiors (TOWN_SHOP_INTERIOR_SIZE, 30x15) and Bramwick's
+// own (SHOP_INTERIOR_SIZE, 10x10) are different sizes, so this is a
+// direct per-map lookup rather than a derived-from-room-shape formula
+// like benchPositionsFor above.
+export function craftingTablePositionFor(mapName: MapName): { row: number; col: number } | undefined {
+  if (mapName === 'Floro Crafting Shop' || mapName === 'Kortho Crafting Shop') return { row: 6, col: 27 };
+  if (mapName === 'Bramwick Crafting Shop') return { row: 4, col: 8 };
+  return undefined;
+}
+
+export function isCraftingTableBlocked(mapName: MapName, row: number, col: number): boolean {
+  const pos = craftingTablePositionFor(mapName);
+  return pos !== undefined && pos.row === row && pos.col === col;
+}
+
+// Same Chebyshev-distance-1 "close enough" reach every other interactive
+// prop here (isNearBench, BED_REACH_TILES) uses.
+export function isNearCraftingTable(mapName: MapName, row: number, col: number): boolean {
+  const pos = craftingTablePositionFor(mapName);
+  return pos !== undefined && Math.abs(row - pos.row) <= 1 && Math.abs(col - pos.col) <= 1;
+}
+
 // The Dorms rooms' own 5 beds (a later follow-up ask) — evenly spaced
 // along one row, well clear of the room's own door (see
 // dormsOffCommonRoom in shared/maps.ts).
@@ -656,12 +682,15 @@ export function portalPositionsFor(mapName: MapName): Array<{ row: number; col: 
   if (mapName === 'Grimoak Castle 4th Floor') {
     const midCol = Math.floor(FLOOR_LANDING_COLS / 2);
     return [
-      { row: 0, col: midCol }, // north wall
+      // A later follow-up ask ("move the door on the 4th floor to the
+      // north wall in the same position as the door on the 2nd floor")
+      // moved this off dead-center onto the same column floor 2's own new
+      // north-wall stairs uses (see shared/maps.ts's own
+      // FLOOR4_LANDING.exits.push for the matching real MapExit).
+      { row: 0, col: FLOOR2_NORTH_STAIRS_COL }, // north wall
       // A later follow-up ask moved this off the (unused) up-stairs slot
       // and onto the wall's own center, clear of the real down-stairs
-      // (FLOOR_LANDING_DOWN_STAIRS_COL) — see torchWallPositionsFor's own
-      // floor-4-specific torch layout, nudged apart to make room for both
-      // this and the north portal sharing the same center column.
+      // (FLOOR_LANDING_DOWN_STAIRS_COL).
       { row: FLOOR_LANDING_ROWS - 1, col: midCol }, // south wall
       { row: FLOOR_LANDING_MID_ROW, col: FLOOR_LANDING_COLS - 1 }, // east wall
       { row: FLOOR_LANDING_MID_ROW, col: 0 }, // west wall
@@ -931,11 +960,16 @@ export const BRIMSTONE_BRAMWICK_SIGN_POSITION = { row: BRIMSTONE_CAVE_MID_ROW - 
 // Bramwick with sign 'Boulder Pass'" — only the one sign was asked for
 // (Bramwick's own side); Runestone Way's own far end has no reciprocal
 // sign since nothing was asked to be there. The perpendicular offset
-// moves WEST (-4, toward the gap between the Weapons shop's own
-// footprint and the exit band) rather than +4 — BRAMWICK_RUNESTONE_COL
-// (36) + 4 would land at col 40, one past Bramwick's own last valid
-// column (39).
-export const BRAMWICK_RUNESTONE_SIGN_POSITION = { row: SIGN_TOP_EDGE_ROW, col: BRAMWICK_RUNESTONE_COL - 4 };
+// moves WEST (-4, into the clear gap between the General Shop's own
+// footprint and the Pet Shop's, now that BRAMWICK_RUNESTONE_COL sits at
+// BRAMWICK_MID_COL — see its own doc comment) rather than +4.
+// A still-later follow-up ask ("put the sign all the way against the
+// north wall next to the entrance") swapped the generic SIGN_TOP_EDGE_ROW
+// inset for row 1 instead — the same fix already proven above for
+// GREAT_PLAINS_LABYRINTH_SIGN_POSITION (row 0 itself was confirmed,
+// visually, to clip off-screen against the camera's own top bound; row 1
+// is the closest a north-edge sign can sit to the true wall).
+export const BRAMWICK_RUNESTONE_SIGN_POSITION = { row: 1, col: BRAMWICK_RUNESTONE_COL - 4 };
 
 // A later follow-up ask: "a dirt road connection to the east of Bramwick
 // with sign 'Silverbranch Road'... a dirt road connection to the west

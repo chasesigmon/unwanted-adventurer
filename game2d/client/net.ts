@@ -16,6 +16,8 @@ import type {
   BankAck,
   RestAtInnAck,
   PetCommandAck,
+  RenamePetAck,
+  RenameTamedBeastAck,
   CommandFollowerAttackAck,
   FollowerItemAck,
   AnimatedMonsterCommandAck,
@@ -86,12 +88,32 @@ export class NetworkManager extends EventTarget {
   // pick it back up without making the player log in again.
   private accountToken: string | null = null;
   private static readonly ACCOUNT_TOKEN_STORAGE_KEY = 'accountToken';
+  // A refresh (or a crash) mid-game used to always bounce back to
+  // character select — main.ts had no path that ever skipped it — because
+  // `token` above only ever lived in memory. Mirrored into localStorage
+  // the same way accountToken is, so a plain page reload can resume the
+  // SAME character instead of forcing a re-pick. Deliberately cleared any
+  // time the player explicitly leaves a character session (logout,
+  // "back to character select") — see leaveCharacterSession/
+  // disconnectAndReset — so that a deliberate exit still lands on
+  // character select rather than snapping straight back in.
+  private static readonly CHARACTER_TOKEN_STORAGE_KEY = 'characterToken';
 
   private setAccountToken(token: string | null): void {
     this.accountToken = token;
     try {
       if (token) localStorage.setItem(NetworkManager.ACCOUNT_TOKEN_STORAGE_KEY, token);
       else localStorage.removeItem(NetworkManager.ACCOUNT_TOKEN_STORAGE_KEY);
+    } catch {
+      /* localStorage unavailable (private browsing etc.) — not worth surfacing */
+    }
+  }
+
+  private setToken(token: string | null): void {
+    this.token = token;
+    try {
+      if (token) localStorage.setItem(NetworkManager.CHARACTER_TOKEN_STORAGE_KEY, token);
+      else localStorage.removeItem(NetworkManager.CHARACTER_TOKEN_STORAGE_KEY);
     } catch {
       /* localStorage unavailable (private browsing etc.) — not worth surfacing */
     }
@@ -117,6 +139,52 @@ export class NetworkManager extends EventTarget {
       this.setAccountToken(null);
       return false;
     }
+  }
+
+  // Called once at page load (see main.ts), only after restoreAccountSession
+  // succeeds — a refresh mid-game should resume the SAME character rather
+  // than dropping to character select. Unlike restoreAccountSession (a
+  // plain HTTP round-trip), validating a character token IS connecting the
+  // game socket, so this drives connectSocket() itself directly and only
+  // resolves true once a real 'sync' actually arrives — any connect_error/
+  // disconnect/timeout is treated as an invalid/stale token, clearing it
+  // and falling back to character select same as if none had been stored.
+  async restoreCharacterSession(): Promise<boolean> {
+    let stored: string | null = null;
+    try {
+      stored = localStorage.getItem(NetworkManager.CHARACTER_TOKEN_STORAGE_KEY);
+    } catch {
+      return false;
+    }
+    if (!stored) return false;
+    this.token = stored;
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.removeEventListener('sync', onSync);
+        this.removeEventListener('connect_error', onFail);
+        this.removeEventListener('disconnected', onFail);
+      };
+      const onSync = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(true);
+      };
+      const onFail = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        this.disconnectAndReset();
+        resolve(false);
+      };
+      const timer = setTimeout(onFail, 8000);
+      this.addEventListener('sync', onSync);
+      this.addEventListener('connect_error', onFail);
+      this.addEventListener('disconnected', onFail);
+      this.connectSocket();
+    });
   }
 
   constructor(serverUrl: string) {
@@ -153,6 +221,23 @@ export class NetworkManager extends EventTarget {
   async login(username: string, password: string): Promise<void> {
     const { token } = await this.authFetch('/auth/login', { username, password });
     this.setAccountToken(token);
+  }
+
+  // Item 3's Settings modal Account tab — the game socket only ever knows
+  // the CHARACTER's own name, never the real account username/email (see
+  // server/auth/auth.service.ts's getAccountInfo doc comment), hence this
+  // hits a brand new endpoint with the ACCOUNT token (still held in
+  // `accountToken` throughout an entire in-game session, same as
+  // listCharacters above), not the character token the socket uses.
+  async getAccountInfo(): Promise<{ username: string; email: string }> {
+    const res = await fetch(`${this.serverUrl}/auth/me`, {
+      headers: { Authorization: `Bearer ${this.accountToken}` },
+    });
+    const data = (await res.json().catch(() => null)) as ({ ok: true; username: string; email: string } | { ok: false; error: string }) | null;
+    if (!res.ok || !data || !data.ok) {
+      throw new Error(data && !data.ok ? data.error : 'Request failed.');
+    }
+    return { username: data.username, email: data.email };
   }
 
   async listCharacters(): Promise<CharacterSummary[]> {
@@ -193,7 +278,7 @@ export class NetworkManager extends EventTarget {
     if (!res.ok || !data || !data.ok) {
       throw new Error(data && !data.ok ? data.error : 'Request failed.');
     }
-    this.token = data.token;
+    this.setToken(data.token);
   }
 
   // A follow-up ask: "the ability for people to delete players from
@@ -210,7 +295,23 @@ export class NetworkManager extends EventTarget {
     }
   }
 
+  // The last 'sync' payload received, replayed to a scene that registers
+  // its listeners AFTER the socket is already connected (see the reuse
+  // branch below) — EventTarget doesn't replay missed events on its own,
+  // and WorldScene.create's own applyMapState refuses to render anything
+  // until applySync has run at least once.
+  private lastSync: SyncPayload | null = null;
+
   connectSocket(): void {
+    if (this.socket?.connected) {
+      // restoreCharacterSession already validated + connected this socket
+      // before any scene existed to register listeners — reusing it here
+      // (rather than opening a SECOND live socket for the same character
+      // token, which the server happily allows without ever kicking
+      // either one) just replays the state a fresh listener missed.
+      if (this.lastSync) this.dispatchEvent(new CustomEvent<SyncPayload>('sync', { detail: this.lastSync }));
+      return;
+    }
     const socket: GameClientSocket = io(this.serverUrl, {
       auth: { token: this.token },
       transports: ['websocket'],
@@ -221,7 +322,10 @@ export class NetworkManager extends EventTarget {
     });
     this.socket = socket;
 
-    socket.on('sync', (data: SyncPayload) => this.dispatchEvent(new CustomEvent<SyncPayload>('sync', { detail: data })));
+    socket.on('sync', (data: SyncPayload) => {
+      this.lastSync = data;
+      this.dispatchEvent(new CustomEvent<SyncPayload>('sync', { detail: data }));
+    });
     socket.on('session:kicked', (data: KickedPayload) =>
       this.dispatchEvent(new CustomEvent<KickedPayload>('kicked', { detail: data }))
     );
@@ -259,7 +363,8 @@ export class NetworkManager extends EventTarget {
   disconnectAndReset(): void {
     this.socket?.disconnect();
     this.socket = null;
-    this.token = null;
+    this.lastSync = null;
+    this.setToken(null);
   }
 
   // A later follow-up ask: "the logout from the top right of the game
@@ -274,7 +379,8 @@ export class NetworkManager extends EventTarget {
     const token = this.token;
     this.socket?.disconnect();
     this.socket = null;
-    this.token = null;
+    this.lastSync = null;
+    this.setToken(null);
     if (!token) return;
     try {
       await fetch(`${this.serverUrl}/auth/logout`, {
@@ -565,6 +671,22 @@ export class NetworkManager extends EventTarget {
     });
   }
 
+  // A later follow-up ask: "it should remain in the auction house waiting
+  // for someone to collect it" — see game.gateway.ts's
+  // handleCollectAuctionItem.
+  collectAuctionItem(listingId: string): Promise<{ ok: boolean; message?: string; full?: boolean }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('collectAuctionItem', listingId, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
   // Item 17's Bank vendor — amount omitted deposits/withdraws everything.
   depositGold(amount?: number): Promise<BankAck> {
     return new Promise((resolve, reject) => {
@@ -709,6 +831,50 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('sacrificeCorpse', corpseId, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // A later follow-up ask: "fill a vial with monster blood" — see
+  // shared/types.ts's own fillVialFromCorpse doc comment.
+  fillVialFromCorpse(corpseId: string): Promise<{ ok: boolean; inventory?: string[]; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('fillVialFromCorpse', corpseId, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // A later follow-up ask: "Add a 'Crafting Shop'... create a crafting
+  // table" — see shared/types.ts's own craftItem/claimCraftedItem doc
+  // comment.
+  craftItem(slots: Array<{ item: string; count: number } | null>): Promise<{ ok: boolean; resultItem?: string; inventory?: string[]; message?: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('craftItem', { slots }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  claimCraftedItem(): Promise<{ ok: boolean; inventory?: string[]; message?: string; full?: boolean }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('claimCraftedItem', (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });
@@ -1009,6 +1175,35 @@ export class NetworkManager extends EventTarget {
         return;
       }
       this.socket.emit('removePet', (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  // A later follow-up ask: "give the player the ability to name their pet
+  // or tamed beast and it should persist" — same shape as
+  // removePet/removeTamedBeast above.
+  renamePet(name: string): Promise<RenamePetAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('renamePet', { name }, (res) => {
+        if (res) resolve(res);
+        else reject(new Error('No response from server.'));
+      });
+    });
+  }
+
+  renameTamedBeast(name: string): Promise<RenameTamedBeastAck> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error('Not connected.'));
+        return;
+      }
+      this.socket.emit('renameTamedBeast', { name }, (res) => {
         if (res) resolve(res);
         else reject(new Error('No response from server.'));
       });

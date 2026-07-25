@@ -7,7 +7,7 @@ import { myProfile, network, setMyProfile } from '../state.js';
 import type { VendorSnapshot } from '../../shared/types.js';
 import { groupInventoryItems } from '../../shared/items.js';
 import { vendorSellCategory, itemSellCategory } from '../../shared/equipment.js';
-import { logCombatMessage } from './log.js';
+import { logCombatMessage, logAckMessage } from './log.js';
 import { closeAllModals, refreshOpenModals, registerModalRefreshHandler, shopGoldLine, shopGreeting, shopItemList, shopModal, shopModalTitle, updateInputCaptured } from './modalCore.js';
 import { updateStatusBar } from './statusBar.js';
 import { attachTooltip } from './tooltip.js';
@@ -38,7 +38,12 @@ export function renderShopModal(): void {
   // "Your items" divider that already separated them visually.
   if (currentVendor.items.length > 0) {
     const forSaleHeader = document.createElement('li');
-    forSaleHeader.className = 'shop-item-divider';
+    // A later follow-up ask: "center the 'For Sale' text and make it
+    // bolder and a little bigger and more noticeable" — its own dedicated
+    // class on top of the shared divider styling (see style.css's
+    // .shop-for-sale-header), left off the "Your items"/balance dividers
+    // below, which weren't part of the ask.
+    forSaleHeader.className = 'shop-item-divider shop-for-sale-header';
     forSaleHeader.textContent = 'For sale';
     shopItemList.appendChild(forSaleHeader);
   }
@@ -269,7 +274,7 @@ function buyVendorItem(itemLabel: string): void {
     .buyItem(currentVendor.id, itemLabel)
     .then((ack) => {
       if (!ack.ok) {
-        if (ack.message) logCombatMessage(ack.message);
+        logAckMessage(ack);
         return;
       }
       if (myProfile) {

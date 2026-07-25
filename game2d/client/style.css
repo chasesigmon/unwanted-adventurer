@@ -615,6 +615,42 @@ body {
   margin-bottom: 4px;
 }
 
+/* A later follow-up ask: "give the player the ability to name their pet
+   or tamed beast" — a compact inline text field + button, same flex-row
+   shape .group-member-commands already uses below. */
+.group-member-rename-row {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.group-member-rename-row input {
+  flex: 1;
+  min-width: 0;
+  background: #1e1e2a;
+  border: 1px solid #444;
+  color: #eee;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+}
+
+.group-member-rename-row button {
+  flex-shrink: 0;
+  background: #1e1e2a;
+  border: 1px solid #444;
+  color: #ccc;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.group-member-rename-row button:hover {
+  background: #2a2a3a;
+}
+
 .group-member-hp-bar {
   width: 100%;
   height: 6px;
@@ -855,7 +891,7 @@ body {
      positioned sibling that has an explicit z-index — so at night the
      fog/tint painted over the chat/combat log, same underlying stacking
      rule as the earlier "modals unreadable at night" bug.
-     Raised above #action-bar's own 80 (a follow-up bug fix) — this panel
+     Raised above #action-bars-root's own 80 (a follow-up bug fix) — this panel
      is user-draggable/resizable and the action bar isn't, so if the two
      ever end up spatially overlapping, the action bar previously won
      the stacking order and permanently intercepted every pointer event
@@ -1163,6 +1199,133 @@ body {
   width: min(760px, 92vw);
 }
 
+/* The Crafting Shop's own crafting table modal — a 3x3 staging grid on
+   the left, a hint/output-slot/Craft button column on the right. */
+#crafting-modal .modal-box {
+  width: min(420px, 92vw);
+}
+
+.crafting-layout {
+  display: flex;
+  gap: 16px;
+  position: relative;
+}
+
+.crafting-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 52px);
+  grid-template-rows: repeat(3, 52px);
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.crafting-slot {
+  width: 52px;
+  height: 52px;
+  background: rgba(20, 20, 28, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.2;
+  color: #ccc;
+  word-break: break-word;
+  padding: 2px;
+}
+
+.crafting-slot.filled {
+  cursor: pointer;
+  border-color: #f0c040;
+  background: rgba(240, 192, 64, 0.15);
+  color: #f0e8d0;
+}
+
+.crafting-side {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#crafting-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #aaa;
+  line-height: 1.4;
+}
+
+.crafting-output-slot {
+  min-height: 40px;
+  padding: 8px 10px;
+  background: rgba(240, 192, 64, 0.12);
+  border: 1px solid #f0c040;
+  border-radius: 4px;
+  color: #f0c040;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+#crafting-craft-btn {
+  margin-top: auto;
+  padding: 10px;
+  background: #2a4d3a;
+  border: 1px solid #3f7a56;
+  color: #eee;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  border-radius: 4px;
+}
+
+#crafting-craft-btn:hover:not(:disabled) {
+  background: #386a4c;
+}
+
+#crafting-craft-btn:disabled {
+  background: #2a2a2e;
+  border-color: #444;
+  color: #777;
+  cursor: not-allowed;
+}
+
+#crafting-spinner-overlay {
+  position: absolute;
+  top: -24px;
+  left: -28px;
+  right: -28px;
+  bottom: -24px;
+  background: rgba(10, 10, 16, 0.75);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+}
+
+.crafting-spinner {
+  width: 36px;
+  height: 36px;
+  border: 4px solid rgba(240, 192, 64, 0.25);
+  border-top-color: #f0c040;
+  border-radius: 50%;
+  animation: crafting-spin 0.8s linear infinite;
+}
+
+@keyframes crafting-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .modal-box h2 {
   margin: 0 0 14px 0;
   color: #f0c040;
@@ -1354,6 +1517,20 @@ body {
   color: #d0a840;
 }
 
+.inventory-capacity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #999;
+}
+
+.inventory-capacity-line.over-limit {
+  color: #e05050;
+  font-weight: bold;
+}
+
 .inventory-list {
   list-style: none;
   margin: 0;
@@ -1458,6 +1635,16 @@ body {
   color: #888;
 }
 
+/* A later follow-up ask: "center the 'For Sale' text and make it bolder
+   and a little bigger and more noticeable" — layered on top of the shared
+   .shop-item-divider styling above, only for that one header. */
+.shop-for-sale-header {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ddd;
+}
+
 /* Item 17's Bank amount input — plain number field matching the shop
    modal's own dark theme. */
 .shop-bank-amount {
@@ -1484,6 +1671,37 @@ body {
 }
 
 /* ---------- Map modal (Here / World Map / Who / Where) ---------- */
+
+/* Item 3's Settings modal — same shape as .map-tabs/.map-tab, kept as its
+   own generically-named class (rather than reusing .map-tab) since it's
+   used outside the map modal too. */
+.modal-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.modal-tab {
+  background: transparent;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #999;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.modal-tab:hover {
+  color: #eee;
+}
+
+.modal-tab.active {
+  background: #2a2a3a;
+  border-color: #f0c040;
+  color: #f0c040;
+}
 
 .map-tabs {
   display: flex;
@@ -1913,112 +2131,191 @@ body {
   border-color: #a85050;
 }
 
-/* ---------- Action bar (2x10 skill slots — item 13) ---------- */
+/* ---------- Action bars (item 3: any number of them, each independently
+   positioned/sized/collapsible via the Settings modal's Action Bars tab —
+   replaces the old single hardcoded bottom bar) ---------- */
 
-#action-bar-wrapper {
+#action-bars-root {
   position: absolute;
-  bottom: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  inset: 0;
+  /* The root itself never captures clicks — only the bars/slots inside it
+     do (each bar wrapper below re-enables it). Lets map clicks reach
+     through the empty space around wherever bars happen to be docked. */
+  pointer-events: none;
   /* Higher than .modal (70) deliberately — dragging a skill icon out of
-     the (open) Skills modal onto this bar is the whole point of it, but
-     a modal's full-screen backdrop sitting above it meant every 'drop'
+     the (open) Skills modal onto a bar is the whole point of it, but a
+     modal's full-screen backdrop sitting above it meant every 'drop'
      landed on the backdrop instead of a slot, so nothing ever registered.
-     Sitting above modals is a minor visual quirk (the bar renders in
-     front of an open modal near the bottom of the screen) that's worth
-     it for drag-and-drop to actually work. */
+     Sitting above modals is a minor visual quirk (a bar can render in
+     front of an open modal) that's worth it for drag-and-drop to work. */
   z-index: 80;
 }
 
-/* Collapsible (a follow-up ask) — a small tab above the bar toggles it
-   out of the way entirely rather than just shrinking it, so a collapsed
-   bar reclaims the full width of screen it was covering. */
-#action-bar-toggle {
-  width: 28px;
-  height: 14px;
-  margin-bottom: 3px;
+.action-bar-wrapper {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  pointer-events: auto;
+}
+
+.action-bar-wrapper.pos-bottom {
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  flex-direction: column;
+}
+
+.action-bar-wrapper.pos-top {
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  flex-direction: column-reverse;
+}
+
+.action-bar-wrapper.pos-left {
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  flex-direction: row-reverse;
+}
+
+.action-bar-wrapper.pos-right {
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  flex-direction: row;
+}
+
+/* Collapsible (a follow-up ask, generalized per-bar for item 3) — a
+   small tab toggles the grid out of the way entirely rather than just
+   shrinking it, so a collapsed bar reclaims the screen space it covered. */
+.action-bar-toggle {
   padding: 0;
   background: rgba(20, 20, 28, 0.7);
   border: 1px solid rgba(255, 255, 255, 0.15);
-  border-bottom: none;
-  border-radius: 4px 4px 0 0;
   color: #f0e8d0;
   font-size: 10px;
   line-height: 1;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
-#action-bar-toggle:hover {
+.action-bar-toggle:hover {
   background: rgba(40, 40, 54, 0.85);
 }
 
-#action-bar {
+.pos-bottom .action-bar-toggle {
+  width: 28px;
+  height: 14px;
+  margin-bottom: 3px;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+}
+
+.pos-top .action-bar-toggle {
+  width: 28px;
+  height: 14px;
+  margin-top: 3px;
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+}
+
+.pos-left .action-bar-toggle {
+  width: 14px;
+  height: 28px;
+  margin-left: 3px;
+  border-left: none;
+  border-radius: 0 4px 4px 0;
+}
+
+.pos-right .action-bar-toggle {
+  width: 14px;
+  height: 28px;
+  margin-right: 3px;
+  border-right: none;
+  border-radius: 4px 0 0 4px;
+}
+
+.action-bar-grid {
   display: grid;
-  grid-template-columns: repeat(10, 36px);
-  grid-template-rows: repeat(2, 36px);
   gap: 4px;
 }
 
-#action-bar.collapsed {
+.action-bar-grid.collapsed {
   display: none;
 }
 
-/* Docking (a follow-up ask) — left/right dock reshapes the same 20
-   slots into a 2-wide x 10-tall grid instead of 10-wide x 2-tall; each
-   slot's own grid-row/grid-column is set directly in JS (see
-   actionBar.ts's applyDockLayout) rather than relying on the grid's own
-   auto-flow, since which of the two original rows lands in which of the
-   two new columns flips between left- and right-docked. */
-#action-bar.dock-vertical {
-  grid-template-columns: repeat(2, 36px);
-  grid-template-rows: repeat(10, 36px);
-}
+/* ---------- Settings modal (item 3) ---------- */
 
-#action-bar-wrapper.dock-left {
-  left: 12px;
-  bottom: auto;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-#action-bar-wrapper.dock-right {
-  left: auto;
-  right: 12px;
-  bottom: auto;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-/* The dock-switch arrows sit below the bar always (same place the down
-   arrow needs to be "at the bottom of the action bar" once docked to a
-   side) — only the relevant 1-2 buttons for the CURRENT dock are ever
-   shown (see actionBar.ts's updateDockControlVisibility), the others
-   just `hidden`. */
-#action-bar-dock-controls {
+.settings-account-row {
   display: flex;
-  gap: 4px;
-  margin-top: 3px;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
 }
 
-#action-bar-dock-controls button {
-  width: 28px;
-  height: 14px;
-  padding: 0;
-  background: rgba(20, 20, 28, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-top: none;
-  border-radius: 0 0 4px 4px;
+.settings-account-row .stat-label {
+  color: #999;
+}
+
+.settings-actionbar-card {
+  background: #1e1e2a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.settings-actionbar-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-weight: bold;
+  color: #f0c040;
+}
+
+.settings-actionbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #ccc;
+}
+
+.settings-actionbar-controls input[type='number'] {
+  width: 44px;
+}
+
+.settings-hotkey-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  border-top: 1px solid #2a2a36;
+  font-size: 12px;
+}
+
+.settings-hotkey-value {
   color: #f0e8d0;
-  font-size: 9px;
-  line-height: 1;
-  cursor: pointer;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  padding: 1px 6px;
+  min-width: 60px;
+  text-align: center;
 }
 
-#action-bar-dock-controls button:hover {
-  background: rgba(40, 40, 54, 0.85);
+.settings-hotkey-value.capturing {
+  color: #f0c040;
+  border: 1px solid #f0c040;
+}
+
+.settings-add-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .action-slot {

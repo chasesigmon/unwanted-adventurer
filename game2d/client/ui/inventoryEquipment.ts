@@ -11,8 +11,10 @@ import { itemTooltip, ITEM_DESCRIPTIONS } from './skillMeta.js';
 import { logCombatMessage } from './log.js';
 import { showCenterToastLines } from './toast.js';
 import { updateStatusBar } from './statusBar.js';
-import { equipmentBody, equipmentModal, inventoryList, inventoryModal, refreshOpenModals, registerModalOpenHandler, registerModalRefreshHandler } from './modalCore.js';
+import { equipmentBody, equipmentModal, inventoryCapacity, inventoryList, inventoryModal, refreshOpenModals, registerModalOpenHandler, registerModalRefreshHandler } from './modalCore.js';
+import { inventoryWeightLbs, maxInventoryItemCount, maxInventoryWeightLbs, INVENTORY_BASE_MAX_ITEMS, INVENTORY_BASE_MAX_WEIGHT_LBS } from '../../shared/inventory.js';
 import { getFollowers } from './groupPanel.js';
+import { isCraftingModalOpen, addItemToCraftingTable } from './craftingModal.js';
 
 // ---------- Inventory ----------
 
@@ -70,9 +72,42 @@ function giveItemToFollower(itemIndex: number, followerKind: 'pet' | 'animatedMo
     });
 }
 
+// Item 29: "a formula created that is based off of dexterity that
+// increases that amount shown with the parentheses to the right" (items),
+// same idea for weight/strength — a small header line above the item
+// list, e.g. "14/23 items (20 +3)" and "62/182 lbs (150 +32)". The weight
+// line gets an 'over-limit' class (see style.css) once actually overweight,
+// matching WorldScene's own movement-slowdown trigger exactly (see
+// shared/inventory.ts's maxInventoryWeightLbs).
+function renderInventoryCapacity(items: string[]): void {
+  if (!myProfile) {
+    inventoryCapacity.textContent = '';
+    return;
+  }
+  const maxItems = maxInventoryItemCount(myProfile.dexterity, myProfile.level);
+  const itemBonus = maxItems - INVENTORY_BASE_MAX_ITEMS;
+  const weight = inventoryWeightLbs(items);
+  const maxWeight = maxInventoryWeightLbs(myProfile.strength, myProfile.level);
+  const weightBonus = maxWeight - INVENTORY_BASE_MAX_WEIGHT_LBS;
+  const overweight = weight > maxWeight;
+
+  inventoryCapacity.innerHTML = '';
+  const itemsLine = document.createElement('div');
+  itemsLine.className = 'inventory-capacity-line' + (items.length >= maxItems ? ' over-limit' : '');
+  itemsLine.textContent = `${items.length}/${maxItems} items (${INVENTORY_BASE_MAX_ITEMS} +${itemBonus})`;
+  inventoryCapacity.appendChild(itemsLine);
+
+  const weightLine = document.createElement('div');
+  weightLine.className = 'inventory-capacity-line' + (overweight ? ' over-limit' : '');
+  weightLine.textContent = `${weight}/${maxWeight} lbs (${INVENTORY_BASE_MAX_WEIGHT_LBS} +${weightBonus})`;
+  if (overweight) weightLine.title = 'Overweight — your movement speed is slowed until you drop enough weight.';
+  inventoryCapacity.appendChild(weightLine);
+}
+
 export function renderInventory(): void {
   inventoryList.innerHTML = '';
   const items = myProfile?.inventory ?? [];
+  renderInventoryCapacity(items);
   if (items.length === 0) {
     const li = document.createElement('li');
     li.className = 'inventory-empty';
@@ -258,6 +293,24 @@ export function renderInventory(): void {
         dropInventoryItem(indices[0]!);
       });
       menuRow.appendChild(dropBtn);
+
+      // A later follow-up ask: "while the Crafting table modal is open
+      // and an item is selected then there should be an extra option to
+      // add it to the crafting table queue, otherwise that option should
+      // be completely hidden" — same openMenuIndex-gated visibility as
+      // Equip/Use/Drop above, PLUS only while the crafting modal itself
+      // is actually open.
+      if (isCraftingModalOpen()) {
+        const addToCraftingBtn = document.createElement('button');
+        addToCraftingBtn.type = 'button';
+        addToCraftingBtn.textContent = 'Add to crafting table';
+        addToCraftingBtn.addEventListener('click', () => {
+          openMenuIndex = null;
+          addItemToCraftingTable(item);
+          renderInventory();
+        });
+        menuRow.appendChild(addToCraftingBtn);
+      }
 
       li.appendChild(menuRow);
     }

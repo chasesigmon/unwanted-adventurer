@@ -154,6 +154,8 @@ import type {
   BankAck,
   RestAtInnAck,
   PetCommandAck,
+  RenamePetAck,
+  RenameTamedBeastAck,
   CommandFollowerAttackAck,
   FollowerItemAck,
   AnimatedMonsterCommandAck,
@@ -191,8 +193,12 @@ import {
   isNearBench,
   isBenchBlocked,
   isPortalBlocked,
+  isNearCraftingTable,
 } from '../../shared/lighting.js';
+import { hasLineOfSight } from '../../shared/lineOfSight.js';
 import { WAND_ITEM, isWandItem } from '../../shared/equipment.js';
+import { craftedItemBaseName, craftedItemManaBonus, matchRecipe, type CraftSlot } from '../../shared/crafting.js';
+import { maxInventoryItemCount } from '../../shared/inventory.js';
 import {
   LIGHT_SKILL,
   WATERFILL_SKILL,
@@ -315,6 +321,8 @@ import {
   POTION_RESTORE_AMOUNT,
   LINIMENT_ITEM,
   LINIMENT_MV_RESTORE_AMOUNT,
+  EMPTY_VIAL_ITEM,
+  FILLED_VIAL_ITEM,
 } from '../../shared/items.js';
 import { questDefinition, QUESTS, LEARN_SPELLS_QUEST_ID, allObjectivesDone } from '../../shared/quests.js';
 import { RECALL_POINTS, recallPointForMap, recallPointById } from '../../shared/recall.js';
@@ -859,13 +867,31 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.engagePlayersOntoFollowerTargets();
     }, FOLLOWER_STEP_MS);
 
-    // The Auction House's own resolution sweep (a later follow-up ask) —
-    // 5s is plenty responsive for something measured in minutes, no need
-    // to piggyback on the much faster follower-step tick above.
+    // The Auction House's own expiry sweep (a later follow-up ask) — 5s is
+    // plenty responsive for something measured in minutes, no need to
+    // piggyback on the much faster follower-step tick above. A still-later
+    // follow-up ask ("it should remain in the auction house waiting for
+    // someone to collect it, labelled 'Expired'") replaced the old
+    // auto-resolve-on-expiry behavior — this just flips the flag/notifies
+    // whoever's now entitled to it, if they're online; the actual gold/
+    // item transfer only happens once they explicitly collect (see
+    // handleCollectAuctionItem below).
     setInterval(() => {
-      const expired = this.auctionHouse.takeExpired();
-      if (expired.length === 0) return;
-      for (const listing of expired) void this.resolveAuction(listing);
+      const justExpired = this.auctionHouse.takeExpired();
+      if (justExpired.length === 0) return;
+      for (const listing of justExpired) {
+        const entitled = listing.currentBidderUsername ?? listing.sellerUsername;
+        const entitledSocketId = this.activeConnections.getActiveSocketId(entitled);
+        const entitledSocket = entitledSocketId ? (this.server.sockets.sockets.get(entitledSocketId) as GameSocket | undefined) : undefined;
+        if (entitledSocket) {
+          this.systemMessage(
+            entitledSocket,
+            listing.currentBidderUsername
+              ? `Your winning Auction House bid for ${listing.itemLabel} is ready to collect.`
+              : `Your unsold Auction House listing for ${listing.itemLabel} is ready to collect.`
+          );
+        }
+      }
       this.server.emit('auctionState', this.auctionHouse.getAll());
     }, 5000);
 
@@ -1191,6 +1217,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       specialization: client.data.specialization ?? undefined,
       visitedPois: client.data.visitedPois,
       recallPointId: client.data.recallPointId,
+      pendingCraftedItem: client.data.pendingCraftedItem,
       respawningUntil: client.data.respawningUntil,
       corpseLocation: this.corpseManager.findForOwner(client.data.username)?.map ?? null,
       killedMonsterKinds: client.data.killedMonsterKinds,
@@ -1687,6 +1714,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
         specialization: client.data.specialization,
         visitedPois: client.data.visitedPois,
         recallPointId: client.data.recallPointId,
+        pendingCraftedItem: client.data.pendingCraftedItem,
         killedMonsterKinds: client.data.killedMonsterKinds,
         tamedBeastKinds: client.data.tamedBeastKinds,
         // A follow-up bug fix: "the pet is a permanent part of the
@@ -3017,9 +3045,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // here.
     client.data.torchRemainingMs = TORCH_LIFETIME_MS;
     client.data.torchLitAt = client.data.equipment.shield === TORCH_ITEM ? Date.now() : null;
-    // Never persisted — a fresh connection always starts every skill off
-    // cooldown, same tradeoff as restState/eatBrainsReadyAtTick above.
-    client.data.skillCooldowns = {};
+    // Persisted (item 22 follow-up: "the cooldown should be honored even
+    // through a refresh or logout/login") — unlike the buff-ACTIVE flags
+    // below, which still intentionally reset every reconnect. See
+    // player.entity.ts's own skillCooldowns column comment.
+    client.data.skillCooldowns = doc?.skillCooldowns ?? {};
     // A wand never relights itself on reconnect (unlike a torch) — always
     // starts unlit; same tradeoff as restState.
     client.data.wandLit = false;
@@ -3081,6 +3111,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.data.beastTransformKind = null;
     client.data.beastTransformUntil = null;
     client.data.recallPointId = doc?.recallPointId ?? null;
+    client.data.pendingCraftedItem = doc?.pendingCraftedItem ?? null;
     // Reconnecting mid-lake (rare, but possible if the connection dropped
     // while riding a boat) should still show the boat sprite rather than
     // waiting for the next move.
@@ -3567,6 +3598,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!isWithinRadius(client.data.row, client.data.col, targetLoc.row, targetLoc.col, WAND_BOLT_RANGE_TILES)) {
       return { ok: false, message: "You're too far away to hit that with your wand." };
     }
+    if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, targetLoc.row, targetLoc.col)) {
+      return { ok: false, message: "You don't have a clear line of sight to that." };
+    }
     // A later follow-up ask: same PvP eligibility gate the melee path
     // (engageInDirection) already had — this is the DEFAULT attack for
     // anyone with a wand equipped (every character starts with one), so
@@ -3657,6 +3691,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (durationMs === undefined) return;
     client.data.skillCooldowns = { ...client.data.skillCooldowns, [skill]: Date.now() + durationMs };
     this.worldManager.updateState(client.data.username, { skillCooldowns: client.data.skillCooldowns });
+    // Persisted so a refresh/relogin mid-cooldown still honors the
+    // remaining time (item 22 follow-up) — best-effort, same fire-and-
+    // forget shape as every other updateStats call in this file.
+    void this.playersService.updateStats(client.data.username, { skillCooldowns: client.data.skillCooldowns });
     // Without this, the client's own myProfile.skillCooldowns only ever
     // refreshed on the next full 'sync' (level-up, respawn, map change),
     // which could be minutes away — the action bar/Skills modal cooldown
@@ -3791,12 +3829,19 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // behavior at all. A ranged session (session.range set — today only
       // WAND_BOLT_SKILL) instead uses a square radius, same shape as
       // shared/lighting.ts's isWithinRadius.
+      //
+      // A later follow-up ask: "you should not be able to attack them
+      // through a wall... players shouldn't be able to attack monsters or
+      // players through collision/walls" — hasLineOfSight is a no-op for
+      // melee (adjacent tiles always have line of sight, nothing can sit
+      // between them) but genuinely gates the ranged wand-bolt case.
       const inRange =
         targetLoc !== undefined &&
         targetLoc.mapName === client.data.map &&
         (session.range === undefined
           ? Math.abs(targetLoc.row - client.data.row) + Math.abs(targetLoc.col - client.data.col) === 1
-          : Math.abs(targetLoc.row - client.data.row) <= session.range && Math.abs(targetLoc.col - client.data.col) <= session.range);
+          : Math.abs(targetLoc.row - client.data.row) <= session.range && Math.abs(targetLoc.col - client.data.col) <= session.range) &&
+        hasLineOfSight(client.data.map, client.data.row, client.data.col, targetLoc.row, targetLoc.col);
 
       if (!inRange) {
         // A monster target that's STILL actively chasing this exact
@@ -4763,7 +4808,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleLoot(
     @ConnectedSocket() client: GameSocket,
     @MessageBody() corpseId: unknown
-  ): { ok: boolean; inventory?: string[]; gold?: number; message?: string } {
+  ): { ok: boolean; inventory?: string[]; gold?: number; message?: string; full?: boolean } {
     if (typeof corpseId !== 'string') {
       return { ok: false, message: 'Invalid corpse.' };
     }
@@ -4778,6 +4823,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!this.canLootCorpse(client, corpse)) {
       return { ok: false, message: 'You cannot loot that corpse — it was killed by another player.' };
     }
+    const capacityRejection = this.inventoryCapacityRejection(client, corpse.items.length);
+    if (capacityRejection) return capacityRejection;
 
     // Captured BEFORE clearItems — `corpse` is a live reference into the
     // corpse manager's own map, so clearing it in place would otherwise
@@ -4842,8 +4889,134 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, gold: client.data.gold, message: `You sacrifice the ${corpse.kind} corpse to the gods, receiving ${goldReward} gold.` };
   }
 
+  // A later follow-up ask: "add a mechanic to opening a monster's corpse.
+  // If the player has any 'empty vial' in their inventory then they
+  // should have another option... to fill a vial with monster blood" —
+  // consumes one empty vial, grants one filled vial; doesn't touch the
+  // corpse's own item/gold list at all (a wholly separate action from
+  // looting/sacrificing, so the corpse stays exactly as lootable as
+  // before this).
+  @SubscribeMessage('fillVialFromCorpse')
+  handleFillVialFromCorpse(@ConnectedSocket() client: GameSocket, @MessageBody() corpseId: unknown): { ok: boolean; inventory?: string[]; message?: string } {
+    if (typeof corpseId !== 'string') {
+      return { ok: false, message: 'Invalid corpse.' };
+    }
+    const corpse = this.corpseManager.get(corpseId);
+    if (!corpse || corpse.map !== client.data.map) {
+      return { ok: false, message: "That's already gone." };
+    }
+    if (!this.isWithinLootReach(client, corpse.row, corpse.col)) {
+      return { ok: false, message: "You're too far away to reach that." };
+    }
+    if (!(MONSTER_KINDS as readonly string[]).includes(corpse.kind)) {
+      return { ok: false, message: 'Only a monster corpse has blood to draw.' };
+    }
+    const vialIndex = client.data.inventory.indexOf(EMPTY_VIAL_ITEM);
+    if (vialIndex === -1) {
+      return { ok: false, message: "You don't have an empty vial." };
+    }
+    const inventory = [...client.data.inventory];
+    inventory.splice(vialIndex, 1, FILLED_VIAL_ITEM);
+    client.data.inventory = inventory;
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    void this.persistStats(client);
+
+    return { ok: true, inventory: client.data.inventory, message: `You fill the vial with ${corpse.kind} blood.` };
+  }
+
+  // A later follow-up ask: "Add a 'Crafting Shop'... create a crafting
+  // table... a modal should open with 9 different slots in a 3x3 grid...
+  // once the player clicks craft if they have the appropriate items to
+  // craft something from a recipe then... after that there [is a] new
+  // item with a unique name... in the crafting table queue... otherwise
+  // if the items are incorrect then say that those items don't form a
+  // recipe." Re-verifies the player actually has what they claim in each
+  // slot (never trusts the client's own count) before matching against
+  // shared/crafting.ts's matchRecipe. Only ever removes ingredients and
+  // sets pendingCraftedItem on an actual match — a failed match touches
+  // nothing.
+  @SubscribeMessage('craftItem')
+  handleCraftItem(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): { ok: boolean; resultItem?: string; inventory?: string[]; message?: string } {
+    if (client.data.pendingCraftedItem) {
+      return { ok: false, message: 'Claim your last crafted item before crafting another.' };
+    }
+    if (!isNearCraftingTable(client.data.map, client.data.row, client.data.col)) {
+      return { ok: false, message: "You're too far away to reach the crafting table." };
+    }
+    const slotSchema = z.object({ item: z.string(), count: z.number().int().min(1) }).nullable();
+    const parsed = z.object({ slots: z.array(slotSchema).length(9) }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Invalid crafting slots.' };
+    }
+    const slots: Array<CraftSlot | null> = parsed.data.slots;
+
+    const inventoryCounts = new Map<string, number>();
+    for (const item of client.data.inventory) inventoryCounts.set(item, (inventoryCounts.get(item) ?? 0) + 1);
+    for (const slot of slots) {
+      if (!slot) continue;
+      if ((inventoryCounts.get(slot.item) ?? 0) < slot.count) {
+        return { ok: false, message: `You don't have ${slot.count} ${slot.item}.` };
+      }
+    }
+
+    const result = matchRecipe(slots);
+    if (!result.ok) {
+      return { ok: false, message: "Those items don't form a recipe." };
+    }
+
+    const inventory = [...client.data.inventory];
+    for (const consumed of result.consumed) {
+      for (let i = 0; i < consumed.count; i++) {
+        const idx = inventory.indexOf(consumed.item);
+        if (idx !== -1) inventory.splice(idx, 1);
+      }
+    }
+    client.data.inventory = inventory;
+    client.data.pendingCraftedItem = result.resultItem;
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    return { ok: true, resultItem: result.resultItem, inventory: client.data.inventory };
+  }
+
+  // "Once the item has been crafted the player should be able to click
+  // it and add it to their inventory" — the crafting table's own
+  // separate "queue slot," claimed independently of the craft action
+  // itself (see pendingCraftedItem's own doc comment for why this is a
+  // real two-step flow rather than adding it to the inventory outright).
+  @SubscribeMessage('claimCraftedItem')
+  handleClaimCraftedItem(@ConnectedSocket() client: GameSocket): { ok: boolean; inventory?: string[]; message?: string; full?: boolean } {
+    if (!client.data.pendingCraftedItem) {
+      return { ok: false, message: "There's nothing to claim." };
+    }
+    const capacityRejection = this.inventoryCapacityRejection(client, 1);
+    if (capacityRejection) return capacityRejection;
+    client.data.inventory = [...client.data.inventory, client.data.pendingCraftedItem];
+    client.data.pendingCraftedItem = null;
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    return { ok: true, inventory: client.data.inventory };
+  }
+
   private isWithinLootReach(client: GameSocket, row: number, col: number): boolean {
     return Math.abs(row - client.data.row) <= 1 && Math.abs(col - client.data.col) <= 1;
+  }
+
+  // Item 29: "If a player has too many items and tries to pick up another
+  // one then show a tooltip message and chat message." Checked immediately
+  // before adding to inventory at every real "gain a new item" call site
+  // (corpse/ground/pet-corpse loot, vendor buy, crafted-item claim, auction
+  // collect, take-from-follower). The `full` flag lets the client show a
+  // center-screen toast on top of its usual chat-log line for this specific
+  // rejection (see WorldScene's castToggleSpell doc comment for that same
+  // toast+log convention elsewhere).
+  private inventoryCapacityRejection(client: GameSocket, addingCount: number): { ok: false; full: true; message: string } | null {
+    const maxItems = maxInventoryItemCount(client.data.dexterity, client.data.level);
+    if (client.data.inventory.length + addingCount > maxItems) {
+      return { ok: false, full: true, message: `Your inventory is full (${maxItems} items max) — drop something first.` };
+    }
+    return null;
   }
 
   // A later follow-up ask: "if a player clicks on a corpse that they did
@@ -4870,7 +5043,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleLootItem(
     @ConnectedSocket() client: GameSocket,
     @MessageBody() payload: unknown
-  ): { ok: boolean; inventory?: string[]; message?: string } {
+  ): { ok: boolean; inventory?: string[]; message?: string; full?: boolean } {
     if (
       typeof payload !== 'object' ||
       payload === null ||
@@ -4891,6 +5064,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!this.canLootCorpse(client, corpse)) {
       return { ok: false, message: 'You cannot loot that corpse — it was killed by another player.' };
     }
+    const capacityRejection = this.inventoryCapacityRejection(client, 1);
+    if (capacityRejection) return capacityRejection;
 
     const item = this.corpseManager.removeItem(corpseId, itemIndex);
     if (item === undefined) {
@@ -4973,7 +5148,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleLootDroppedChest(
     @ConnectedSocket() client: GameSocket,
     @MessageBody() chestId: unknown
-  ): { ok: boolean; inventory?: string[]; chestGone?: boolean; message?: string } {
+  ): { ok: boolean; inventory?: string[]; chestGone?: boolean; message?: string; full?: boolean } {
     if (typeof chestId !== 'string') {
       return { ok: false, message: 'Invalid chest.' };
     }
@@ -4984,6 +5159,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!this.isWithinLootReach(client, chest.row, chest.col)) {
       return { ok: false, message: "You're too far away to reach that." };
     }
+    const capacityRejection = this.inventoryCapacityRejection(client, chest.items.length);
+    if (capacityRejection) return capacityRejection;
 
     const items = this.droppedItemManager.takeAll(chestId) ?? [];
     client.data.inventory = [...client.data.inventory, ...items];
@@ -5003,7 +5180,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleLootDroppedChestItem(
     @ConnectedSocket() client: GameSocket,
     @MessageBody() payload: unknown
-  ): { ok: boolean; inventory?: string[]; chestGone?: boolean; message?: string } {
+  ): { ok: boolean; inventory?: string[]; chestGone?: boolean; message?: string; full?: boolean } {
     if (
       typeof payload !== 'object' ||
       payload === null ||
@@ -5021,6 +5198,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (!this.isWithinLootReach(client, chest.row, chest.col)) {
       return { ok: false, message: "You're too far away to reach that." };
     }
+    const capacityRejection = this.inventoryCapacityRejection(client, 1);
+    if (capacityRejection) return capacityRejection;
 
     const result = this.droppedItemManager.takeItem(chestId, itemIndex);
     if (!result) {
@@ -5048,7 +5227,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleLootPetCorpse(
     @ConnectedSocket() client: GameSocket,
     @MessageBody() corpseId: unknown
-  ): { ok: boolean; inventory?: string[]; message?: string } {
+  ): { ok: boolean; inventory?: string[]; message?: string; full?: boolean } {
     if (typeof corpseId !== 'string') {
       return { ok: false, message: 'Invalid corpse.' };
     }
@@ -5062,6 +5241,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (corpse.ownerUsername !== client.data.username) {
       return { ok: false, message: 'Only the owner can loot their own pet.' };
     }
+    const capacityRejection = this.inventoryCapacityRejection(client, corpse.items.length);
+    if (capacityRejection) return capacityRejection;
 
     const items = [...corpse.items];
     this.petCorpseManager.clearItems(corpseId);
@@ -5078,7 +5259,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   handleLootPetCorpseItem(
     @ConnectedSocket() client: GameSocket,
     @MessageBody() payload: unknown
-  ): { ok: boolean; inventory?: string[]; message?: string } {
+  ): { ok: boolean; inventory?: string[]; message?: string; full?: boolean } {
     if (
       typeof payload !== 'object' ||
       payload === null ||
@@ -5099,6 +5280,8 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (corpse.ownerUsername !== client.data.username) {
       return { ok: false, message: 'Only the owner can loot their own pet.' };
     }
+    const capacityRejection = this.inventoryCapacityRejection(client, 1);
+    if (capacityRejection) return capacityRejection;
 
     const item = this.petCorpseManager.removeItem(corpseId, itemIndex);
     if (item === undefined) {
@@ -5193,6 +5376,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
       return { ok: true, gold: client.data.gold, message: `You buy a ${item.label} for ${item.price} gold. It's yours now!` };
     }
+
+    const capacityRejection = this.inventoryCapacityRejection(client, 1);
+    if (capacityRejection) return capacityRejection;
 
     client.data.gold -= item.price;
     client.data.inventory = [...client.data.inventory, item.label];
@@ -5351,44 +5537,62 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true, message: result.extended ? 'Bid placed! The auction was extended by 2 minutes.' : 'Bid placed!' };
   }
 
-  // Resolves one expired auction — called from the periodic sweep below.
-  // Re-validates the winning bidder can actually still afford it (no
-  // escrow was ever taken at bid time) rather than trusting the stale
-  // amount; works whether the seller/winner are online or not, since a
-  // real-money-value transfer shouldn't ever silently fail to happen just
-  // because someone logged off.
-  private async resolveAuction(listing: AuctionListingSnapshot): Promise<void> {
-    const winner = listing.currentBidderUsername;
-    if (winner) {
-      const winnerSocketId = this.activeConnections.getActiveSocketId(winner);
-      const winnerSocket = winnerSocketId ? (this.server.sockets.sockets.get(winnerSocketId) as GameSocket | undefined) : undefined;
-      if (winnerSocket) {
-        if (winnerSocket.data.gold >= listing.currentBid) {
-          winnerSocket.data.gold -= listing.currentBid;
-          winnerSocket.data.inventory = [...winnerSocket.data.inventory, listing.itemLabel];
-          this.worldManager.updateState(winner, { gold: winnerSocket.data.gold, inventory: winnerSocket.data.inventory });
-          void this.persistStats(winnerSocket);
-          winnerSocket.emit('sync', { player: this.snapshotFor(winnerSocket) });
-          this.systemMessage(winnerSocket, `You won the Auction House bid for ${listing.itemLabel} at ${listing.currentBid} gold!`);
-          await this.creditAuctionSeller(listing.sellerUsername, listing.currentBid, `Your Auction House listing for ${listing.itemLabel} sold for ${listing.currentBid} gold!`);
-          return;
-        }
-        this.systemMessage(
-          winnerSocket,
-          `You won the Auction House bid for ${listing.itemLabel} but no longer have enough gold (${listing.currentBid} needed) — forfeited.`
-        );
-      } else {
-        const doc = await this.playersService.findByUsername(winner);
-        if (doc && doc.gold >= listing.currentBid) {
-          await this.playersService.updateStats(winner, { gold: doc.gold - listing.currentBid, inventory: [...doc.inventory, listing.itemLabel] });
-          await this.creditAuctionSeller(listing.sellerUsername, listing.currentBid, `Your Auction House listing for ${listing.itemLabel} sold for ${listing.currentBid} gold!`);
-          return;
-        }
-      }
+  // A later follow-up ask: "it should remain in the auction house waiting
+  // for someone to collect it... the player to collect it will either be
+  // the highest bidder or the player that originally placed the item for
+  // auction if no one bid on it" — replaces the old auto-resolve-on-expiry
+  // behavior (see this method's own former resolveAuction). The caller IS
+  // the collecting player's own live socket (auctionHouse.collectItem
+  // already checked they're the one entitled to this listing), so unlike
+  // the old resolveAuction there's no online/offline branch to handle for
+  // THEM — only the OTHER party (the seller, when a bidder collects) might
+  // be offline, same as creditAuctionSeller already accounts for.
+  @SubscribeMessage('collectAuctionItem')
+  async handleCollectAuctionItem(@ConnectedSocket() client: GameSocket, @MessageBody() listingId: unknown): Promise<{ ok: boolean; message?: string; full?: boolean }> {
+    if (typeof listingId !== 'string') {
+      return { ok: false, message: 'Invalid listing.' };
     }
-    // No winner, or the winner couldn't actually pay — the item goes back
-    // to the seller.
-    await this.returnAuctionItemToSeller(listing.sellerUsername, listing.itemLabel);
+    // Checked BEFORE collectItem (which deletes the listing on success —
+    // see AuctionHouseService.peek's own doc comment on why capacity must
+    // be checked against this read-only peek first).
+    if (this.auctionHouse.peek(listingId)) {
+      const capacityRejection = this.inventoryCapacityRejection(client, 1);
+      if (capacityRejection) return capacityRejection;
+    }
+    const result = this.auctionHouse.collectItem(listingId, client.data.username);
+    if (!result.ok) return result;
+    const { listing } = result;
+
+    if (listing.currentBidderUsername === client.data.username) {
+      // Collecting as the winning bidder — re-validates they can still
+      // actually afford it (no escrow was ever taken at bid time) rather
+      // than trusting the stale amount.
+      if (client.data.gold < listing.currentBid) {
+        await this.returnAuctionItemToSeller(listing.sellerUsername, listing.itemLabel);
+        this.server.emit('auctionState', this.auctionHouse.getAll());
+        return {
+          ok: false,
+          message: `You no longer have enough gold (${listing.currentBid} needed) — forfeited, and the item was returned to the seller.`,
+        };
+      }
+      client.data.gold -= listing.currentBid;
+      client.data.inventory = [...client.data.inventory, listing.itemLabel];
+      this.worldManager.updateState(client.data.username, { gold: client.data.gold, inventory: client.data.inventory });
+      void this.persistStats(client);
+      client.emit('sync', { player: this.snapshotFor(client) });
+      await this.creditAuctionSeller(listing.sellerUsername, listing.currentBid, `Your Auction House listing for ${listing.itemLabel} sold for ${listing.currentBid} gold!`);
+      this.server.emit('auctionState', this.auctionHouse.getAll());
+      return { ok: true, message: `You collected ${listing.itemLabel} for ${listing.currentBid} gold.` };
+    }
+
+    // Collecting as the original seller — no bids ever came in, so the
+    // item just comes straight back, no gold changes hands.
+    client.data.inventory = [...client.data.inventory, listing.itemLabel];
+    this.worldManager.updateState(client.data.username, { inventory: client.data.inventory });
+    void this.persistStats(client);
+    client.emit('sync', { player: this.snapshotFor(client) });
+    this.server.emit('auctionState', this.auctionHouse.getAll());
+    return { ok: true, message: `You collected your unsold item: ${listing.itemLabel}.` };
   }
 
   private async creditAuctionSeller(sellerUsername: string, amount: number, message: string): Promise<void> {
@@ -5406,6 +5610,10 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (doc) await this.playersService.updateStats(sellerUsername, { gold: doc.gold + amount });
   }
 
+  // Only reached now when the entitled bidder tried to collect but could
+  // no longer afford it (see handleCollectAuctionItem above) — a listing
+  // with no bids at all is instead collected directly by the seller
+  // themselves, same as the winning bidder's own collect path.
   private async returnAuctionItemToSeller(sellerUsername: string, itemLabel: string): Promise<void> {
     const sellerSocketId = this.activeConnections.getActiveSocketId(sellerUsername);
     const sellerSocket = sellerSocketId ? (this.server.sockets.sockets.get(sellerSocketId) as GameSocket | undefined) : undefined;
@@ -5414,7 +5622,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       this.worldManager.updateState(sellerUsername, { inventory: sellerSocket.data.inventory });
       void this.persistStats(sellerSocket);
       sellerSocket.emit('sync', { player: this.snapshotFor(sellerSocket) });
-      this.systemMessage(sellerSocket, `Your Auction House listing for ${itemLabel} ended with no winning bid — returned to your inventory.`);
+      this.systemMessage(sellerSocket, `Your Auction House listing for ${itemLabel} sold, but the winning bidder couldn't pay — returned to your inventory.`);
       return;
     }
     const doc = await this.playersService.findByUsername(sellerUsername);
@@ -5628,6 +5836,41 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     return { ok: true };
   }
 
+  // A later follow-up ask: "give the player the ability to name their pet
+  // or tamed beast and it should persist" — same trim/length validation,
+  // ownership check via the manager's own rename (undefined = no pet or
+  // it's dead), and persist-then-broadcast shape every other pet-mutating
+  // handler above already uses.
+  @SubscribeMessage('renamePet')
+  handleRenamePet(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): RenamePetAck {
+    const parsed = z.object({ name: z.string().trim().min(1).max(24) }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Enter a name between 1 and 24 characters.' };
+    }
+    const pet = this.petManager.rename(client.data.username, parsed.data.name);
+    if (!pet) {
+      return { ok: false, message: "You don't have a pet (or it needs to be resurrected first)." };
+    }
+    void this.persistStats(client);
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    return { ok: true, pet };
+  }
+
+  @SubscribeMessage('renameTamedBeast')
+  handleRenameTamedBeast(@ConnectedSocket() client: GameSocket, @MessageBody() payload: unknown): RenameTamedBeastAck {
+    const parsed = z.object({ name: z.string().trim().min(1).max(24) }).safeParse(payload);
+    if (!parsed.success) {
+      return { ok: false, message: 'Enter a name between 1 and 24 characters.' };
+    }
+    const beast = this.tamedBeastManager.rename(client.data.username, parsed.data.name);
+    if (!beast) {
+      return { ok: false, message: "You don't have a tamed beast." };
+    }
+    void this.persistStats(client);
+    this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    return { ok: true, tamedBeast: beast };
+  }
+
   // The 'z' hotkey (a later follow-up ask): "if the player has a pet/
   // summon/animated undead (follower) and... a selected target that can
   // be attacked... send the monster to auto attack the target." Commands
@@ -5716,6 +5959,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     const parsed = this.followerRefSchema.extend({ itemIndex: z.number().int() }).safeParse(payload);
     if (!parsed.success) return { ok: false, message: 'Invalid request.' };
     const { followerKind, followerId, itemIndex } = parsed.data;
+
+    const capacityRejection = this.inventoryCapacityRejection(client, 1);
+    if (capacityRejection) return capacityRejection;
 
     const result =
       followerKind === 'pet'
@@ -6080,6 +6326,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, AUGUE_RANGE_TILES)) {
         return { ok: false, message: "You're too far away to hit that with arcane bolt." };
       }
+      // A later follow-up ask: "players shouldn't be able to attack
+      // monsters or players through collision/walls" — see
+      // shared/lineOfSight.ts's own doc comment.
+      if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, npc.row, npc.col)) {
+        return { ok: false, message: "You don't have a clear line of sight to that." };
+      }
 
       client.data.mana -= ARCANE_BOLT_MANA_COST;
       this.startSkillCooldown(client, ARCANE_BOLT_SKILL);
@@ -6167,6 +6419,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!isWithinRadius(client.data.row, client.data.col, targetLoc.row, targetLoc.col, AUGUE_RANGE_TILES)) {
         return { ok: false, message: "You're too far away to hit that with arcane bolt." };
       }
+      if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, targetLoc.row, targetLoc.col)) {
+        return { ok: false, message: "You don't have a clear line of sight to that." };
+      }
 
       client.data.mana -= ARCANE_BOLT_MANA_COST;
       this.startSkillCooldown(client, ARCANE_BOLT_SKILL);
@@ -6223,6 +6478,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (!isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, AUGUE_RANGE_TILES)) {
       return { ok: false, message: "You're too far away to hit that with arcane bolt." };
+    }
+    if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, monster.row, monster.col)) {
+      return { ok: false, message: "You don't have a clear line of sight to that." };
     }
 
     client.data.mana -= ARCANE_BOLT_MANA_COST;
@@ -6372,6 +6630,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, SPELL_ATTACK_RANGE_TILES)) {
         return { ok: false, message: `You're too far away to hit that with ${skill}.` };
       }
+      if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, npc.row, npc.col)) {
+        return { ok: false, message: "You don't have a clear line of sight to that." };
+      }
 
       client.data.mana -= manaCost;
       this.startSkillCooldown(client, skill);
@@ -6453,6 +6714,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (!isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, SPELL_ATTACK_RANGE_TILES)) {
       return { ok: false, message: `You're too far away to hit that with ${skill}.` };
+    }
+    if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, monster.row, monster.col)) {
+      return { ok: false, message: "You don't have a clear line of sight to that." };
     }
 
     client.data.mana -= manaCost;
@@ -6672,6 +6936,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, SPELL_ATTACK_RANGE_TILES)) {
         return { ok: false, message: "You're too far away to hit that with sap health." };
       }
+      if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, npc.row, npc.col)) {
+        return { ok: false, message: "You don't have a clear line of sight to that." };
+      }
 
       const overdraftMessage = applyBpCost();
       this.startSkillCooldown(client, SAP_HEALTH_SKILL);
@@ -6741,6 +7008,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (!isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, SPELL_ATTACK_RANGE_TILES)) {
       return { ok: false, message: "You're too far away to hit that with sap health." };
+    }
+    if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, monster.row, monster.col)) {
+      return { ok: false, message: "You don't have a clear line of sight to that." };
     }
 
     const overdraftMessage = applyBpCost();
@@ -7397,6 +7667,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, SPELL_ATTACK_RANGE_TILES)) {
         return { ok: false, message: "You're too far away to hit that with stun." };
       }
+      if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, npc.row, npc.col)) {
+        return { ok: false, message: "You don't have a clear line of sight to that." };
+      }
       client.data.mana -= STUPEFACIANT_MANA_COST;
       this.startSkillCooldown(client, STUN_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
@@ -7430,6 +7703,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!isWithinRadius(client.data.row, client.data.col, targetLoc.row, targetLoc.col, SPELL_ATTACK_RANGE_TILES)) {
         return { ok: false, message: "You're too far away to hit that with stun." };
       }
+      if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, targetLoc.row, targetLoc.col)) {
+        return { ok: false, message: "You don't have a clear line of sight to that." };
+      }
       client.data.mana -= STUPEFACIANT_MANA_COST;
       this.startSkillCooldown(client, STUN_SKILL);
       this.startAutoAttackAfterSpell(client, 'player', targetUsername);
@@ -7458,6 +7734,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (!isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, SPELL_ATTACK_RANGE_TILES)) {
       return { ok: false, message: "You're too far away to hit that with stun." };
+    }
+    if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, monster.row, monster.col)) {
+      return { ok: false, message: "You don't have a clear line of sight to that." };
     }
 
     client.data.mana -= STUPEFACIANT_MANA_COST;
@@ -7516,6 +7795,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!isWithinRadius(client.data.row, client.data.col, npc.row, npc.col, SPELL_ATTACK_RANGE_TILES)) {
         return { ok: false, message: "You're too far away to hit that with disarm." };
       }
+      if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, npc.row, npc.col)) {
+        return { ok: false, message: "You don't have a clear line of sight to that." };
+      }
       client.data.mana -= EXARME_MANA_COST;
       this.startSkillCooldown(client, DISARM_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
@@ -7568,6 +7850,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!isWithinRadius(client.data.row, client.data.col, targetLoc.row, targetLoc.col, SPELL_ATTACK_RANGE_TILES)) {
         return { ok: false, message: "You're too far away to hit that with disarm." };
       }
+      if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, targetLoc.row, targetLoc.col)) {
+        return { ok: false, message: "You don't have a clear line of sight to that." };
+      }
       const targetClient = this.getActiveClient(targetUsername);
       if (!targetClient) {
         return { ok: false, message: 'Your target is no longer here.' };
@@ -7613,6 +7898,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (!isWithinRadius(client.data.row, client.data.col, monster.row, monster.col, SPELL_ATTACK_RANGE_TILES)) {
       return { ok: false, message: "You're too far away to hit that with disarm." };
+    }
+    if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, monster.row, monster.col)) {
+      return { ok: false, message: "You don't have a clear line of sight to that." };
     }
 
     client.data.mana -= EXARME_MANA_COST;
@@ -9042,6 +9330,22 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
 
   // Persists/broadcasts/builds the ack after either an equip or a
   // consume — both useItem and consumeItem end the same way.
+  //
+  // Bug fix: "I was wearing a wand... magic damage as 33 (1)... I removed
+  // the wand and the (1) bonus was gone. Then I equipped the wand again
+  // and the bonus did not re-appear." UseItemAck only ever carried
+  // inventory/equipment/skills/hunger/thirst (see its own type) — every
+  // OTHER equipment-derived stat the char sheet shows (magicDamageBonus,
+  // physicalDamageBonus, armorVsPhysical/armorVsMagicalBonus, ...) lives
+  // only on the full PlayerSnapshot a 'sync' carries, which the client's
+  // own applyUseItemAck never triggers itself. Those fields drifted stale
+  // until some UNRELATED action happened to fire a fresh sync (a move, a
+  // level-up, ...) — explaining why unequipping only "looked" like it
+  // worked (an incidental sync from moving around afterward finally
+  // caught up), while re-equipping right before checking never got that
+  // same lucky timing. A fresh sync on every equip/unequip/consume closes
+  // the gap for all of these at once instead of special-casing just this
+  // one field.
   private finishItemAction(
     client: GameSocket,
     inventory: string[],
@@ -9057,6 +9361,7 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     });
     void this.persistStats(client);
     this.server.to(client.data.map).emit('map:state', this.mapStateFor(client.data.map));
+    client.emit('sync', { player: this.snapshotFor(client) });
 
     return {
       ok: true,
@@ -9078,8 +9383,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
   // never subtracts further — so an equip/unequip/equip cycle can't be
   // farmed for free mana.
   private applyManaBonusDelta(client: GameSocket, removedItem: string | undefined, addedItem: string | undefined): void {
-    const removedBonus = removedItem ? (MANA_ITEM_BONUS[removedItem] ?? 0) : 0;
-    const addedBonus = addedItem ? (MANA_ITEM_BONUS[addedItem] ?? 0) : 0;
+    // A later follow-up ask's own crafted weapons/shields ("+1 mana per
+    // lesser mana crystal... +5... +10...") carry their own bonus encoded
+    // right in the item name (see shared/crafting.ts's craftedItemManaBonus)
+    // — added on top of the ordinary MANA_ITEM_BONUS table (Grimrot Wand),
+    // which a crafted item's own suffixed name would never match anyway.
+    const removedBonus = removedItem ? (MANA_ITEM_BONUS[removedItem] ?? 0) + craftedItemManaBonus(removedItem) : 0;
+    const addedBonus = addedItem ? (MANA_ITEM_BONUS[addedItem] ?? 0) + craftedItemManaBonus(addedItem) : 0;
     const delta = addedBonus - removedBonus;
     if (delta === 0) return;
     client.data.maxMana += delta;
@@ -9117,6 +9427,13 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     if (isManaCrystal(item)) {
       return { ok: false, message: "It hums faintly, but doesn't do anything yet. Hold onto it." };
     }
+    // Vials (a later follow-up ask) aren't equippable/consumable either —
+    // an empty one is only ever acted on via the corpse modal's own "fill
+    // vial" option, and a filled one is a future crafting ingredient.
+    // Guarded here so a stray click doesn't delete either one.
+    if (item === EMPTY_VIAL_ITEM || item === FILLED_VIAL_ITEM) {
+      return { ok: false, message: 'Hold onto it — this is used elsewhere, not clicked directly.' };
+    }
 
     const inventory = [...client.data.inventory];
     inventory.splice(itemIndex, 1);
@@ -9125,7 +9442,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // fresh against whichever hands are already occupied every time one
     // gets equipped, instead of EQUIPMENT_SLOT_FOR_ITEM's ordinary static
     // per-item slot.
-    const slot = isRingItem(item) ? resolveRingSlot(client.data.equipment) : EQUIPMENT_SLOT_FOR_ITEM[item];
+    // A crafted item (a later follow-up ask) carries a " of Mana +N"
+    // suffix on top of its base name (see shared/crafting.ts's own doc
+    // comment) — falls back to the base item's own slot so a crafted
+    // "sword of strength of Mana +12" still equips as a weapon.
+    const slot = isRingItem(item) ? resolveRingSlot(client.data.equipment) : (EQUIPMENT_SLOT_FOR_ITEM[item] ?? EQUIPMENT_SLOT_FOR_ITEM[craftedItemBaseName(item)]);
     if (slot) {
       const previous = client.data.equipment[slot];
       if (previous) inventory.push(previous);
@@ -9160,6 +9481,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (isManaCrystal(item)) {
       return { ok: false, message: "It hums faintly, but doesn't do anything yet. Hold onto it." };
+    }
+    if (item === EMPTY_VIAL_ITEM || item === FILLED_VIAL_ITEM) {
+      return { ok: false, message: 'Hold onto it — this is used elsewhere, not clicked directly.' };
     }
 
     const inventory = [...client.data.inventory];

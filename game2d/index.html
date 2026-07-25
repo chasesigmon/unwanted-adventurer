@@ -161,6 +161,7 @@
             <!-- Item 10's zoom toggle — see keyboard.ts's own 'v' binding
                  and WorldScene.toggleZoom. -->
             <button type="button" id="zoom-btn" class="corner-btn" data-tooltip="Zoom in (v)">🔍</button>
+            <button type="button" id="settings-btn" class="corner-btn" data-tooltip="Settings">⚙️</button>
           </div>
         </div>
 
@@ -194,7 +195,23 @@
           <div class="modal-box">
             <button type="button" class="modal-close">&times;</button>
             <h2>Inventory</h2>
+            <div id="inventory-capacity" class="inventory-capacity"></div>
             <ul id="inventory-list" class="inventory-list"></ul>
+          </div>
+        </div>
+
+        <!-- Item 3: gear-icon Settings modal — Account (real account
+             username + current character name) and Action Bars (fully
+             customizable multi-position action bar system) tabs. -->
+        <div id="settings-modal" class="modal" hidden>
+          <div class="modal-box">
+            <button type="button" class="modal-close">&times;</button>
+            <h2>Settings</h2>
+            <div class="modal-tabs">
+              <button type="button" id="settings-tab-account" class="modal-tab active" data-tab="account">Account</button>
+              <button type="button" id="settings-tab-actionbars" class="modal-tab" data-tab="actionBars">Action Bars</button>
+            </div>
+            <div id="settings-body"></div>
           </div>
         </div>
 
@@ -348,6 +365,12 @@
             <button type="button" id="corpse-grab-all">Grab all</button>
             <button type="button" id="corpse-eat-brains" hidden>Eat Brains</button>
             <button type="button" id="corpse-sacrifice" hidden>Sacrifice Corpse</button>
+            <!-- A later follow-up ask: "if the player has any 'empty
+                 vial' in their inventory then they should have another
+                 option in the corpse modal of a monster to fill a vial
+                 with monster blood" — hidden entirely (not just
+                 disabled/greyed) whenever the player has no empty vial. -->
+            <button type="button" id="corpse-fill-vial" hidden>Fill vial with monster blood</button>
           </div>
         </div>
 
@@ -389,6 +412,30 @@
           </div>
         </div>
 
+        <!-- A later follow-up ask: "Add a 'Crafting Shop'... a crafting
+             table... a modal... with 9 different slots in a 3x3 grid and
+             a message on the right." The Inventory modal is deliberately
+             allowed to stay open ALONGSIDE this one (see modalCore.ts's
+             own closeAllModals exception) — the one pairing in this whole
+             project that isn't "only one modal at a time." -->
+        <div id="crafting-modal" class="modal" hidden>
+          <div class="modal-box">
+            <button type="button" class="modal-close">&times;</button>
+            <h2>Crafting Table</h2>
+            <div class="crafting-layout">
+              <div id="crafting-grid" class="crafting-grid"></div>
+              <div class="crafting-side">
+                <p id="crafting-hint">Add the recipe components for whatever you are trying to craft.</p>
+                <div id="crafting-output-slot" class="crafting-output-slot" hidden></div>
+                <button type="button" id="crafting-craft-btn" disabled>Craft</button>
+              </div>
+            </div>
+            <div id="crafting-spinner-overlay" hidden>
+              <div class="crafting-spinner"></div>
+            </div>
+          </div>
+        </div>
+
         <div id="identify-modal" class="modal" hidden>
           <div class="modal-box">
             <button type="button" class="modal-close">&times;</button>
@@ -419,15 +466,11 @@
         </div>
         <div id="autopilot-status" hidden></div>
 
-        <div id="action-bar-wrapper">
-          <button id="action-bar-toggle" type="button" title="Collapse action bar">&#9662;</button>
-          <div id="action-bar"></div>
-          <div id="action-bar-dock-controls">
-            <button id="action-bar-dock-left" type="button" title="Dock left">&#9664;</button>
-            <button id="action-bar-dock-down" type="button" title="Dock bottom" hidden>&#9660;</button>
-            <button id="action-bar-dock-right" type="button" title="Dock right">&#9654;</button>
-          </div>
-        </div>
+        <!-- Item 3: replaces the old single hardcoded bottom bar — each
+             configured bar (position/rows/cols customizable via the
+             Settings modal's Action Bars tab) gets its own wrapper
+             appended here at runtime by client/ui/actionBars.ts. -->
+        <div id="action-bars-root"></div>
 
         <div id="sleep-overlay" hidden>
           <div id="sleep-overlay-text">Zzz... (move to wake up)</div>

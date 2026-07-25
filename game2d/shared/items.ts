@@ -21,6 +21,25 @@ export function isFillableItem(item: string): boolean {
   return FILLABLE_ITEMS.includes(item);
 }
 
+// A later follow-up ask: "add a mechanic to opening a monster's corpse.
+// If the player has any 'empty vial' in their inventory then they should
+// have another option... to fill a vial with monster blood" — the
+// Crafting Shop (a still-later follow-up ask) sells empty vials outright;
+// this is the one shared constant both that shop and the corpse modal's
+// own gate read from.
+export const EMPTY_VIAL_ITEM = 'empty vial';
+export const FILLED_VIAL_ITEM = 'vial of monster blood';
+
+export function isEmptyVialItem(item: string): boolean {
+  return item === EMPTY_VIAL_ITEM;
+}
+
+// The Crafting Shop's own second material (a later follow-up ask) —
+// "required for slotting things into weapons and armor for crafting."
+// Sold alongside the empty vial above; consumed 1-per-craft by every
+// weapon/shield crafting recipe (see shared/crafting.ts).
+export const FOCUS_GEM_ITEM = 'focus gem';
+
 // Mana crystals (a follow-up ask: "monsters are no longer going to drop
 // body parts, instead a monster is going to now drop a mana crystal of
 // varying level (1 to 5) depending on the level of the monster") —

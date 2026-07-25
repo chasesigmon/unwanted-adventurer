@@ -229,6 +229,18 @@ export class Player {
   @Column({ type: 'jsonb', default: () => "'{}'" })
   quests!: Record<string, QuestProgress>;
 
+  // Skill name -> cooldown-expiry timestamp (ms epoch), item 22 follow-up:
+  // "the cooldown should be honored even through a refresh or
+  // logout/login" — unlike the various buff-ACTIVE flags (wandLit,
+  // celeritasActive, flightActive, ...), which still intentionally reset
+  // on reconnect (see game.gateway.ts's handleConnection, each with its
+  // own "never persisted" comment), a cooldown still counting down is
+  // real elapsed time the player shouldn't get back for free just by
+  // refreshing. An already-expired entry read back here is harmless —
+  // every cooldown check already compares against Date.now().
+  @Column({ name: 'skill_cooldowns', type: 'jsonb', default: () => "'{}'" })
+  skillCooldowns!: Record<string, number>;
+
   // The house/specialization system (a follow-up ask) — both null until
   // chosen, permanent afterward (see game.gateway.ts's handleChooseHouse/
   // handleChooseSpecialization).
@@ -253,6 +265,12 @@ export class Player {
   // respawnDefeatedPlayer) once set, falling back to Grimoak Castle.
   @Column({ name: 'recall_point_id', type: 'varchar', length: 32, nullable: true, default: null })
   recallPointId!: string | null;
+
+  // A later follow-up ask's crafting table — see shared/types.ts's
+  // SocketData.pendingCraftedItem doc comment for why this persists
+  // instead of resetting on reconnect.
+  @Column({ name: 'pending_crafted_item', type: 'varchar', length: 64, nullable: true, default: null })
+  pendingCraftedItem!: string | null;
 
   // Summoner's own kill-tracking (a later follow-up ask) — see
   // shared/types.ts's own doc comment.

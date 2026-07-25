@@ -18,6 +18,7 @@ import {
   isGreatHallChairBlocked,
   isBramwickSignBlocked,
   isStandingTorchBlocked,
+  isCraftingTableBlocked,
 } from '../../shared/lighting.js';
 import {
   getMap,
@@ -193,6 +194,7 @@ export class WorldManagerService {
     if (isGateTile(mapName, row, col) && !this.isGateOpen(mapName, row)) return true;
     if (isFireplaceBlocked(mapName, row, col)) return true;
     if (isBenchBlocked(mapName, row, col)) return true;
+    if (isCraftingTableBlocked(mapName, row, col)) return true;
     if (isBedBlocked(mapName, row, col)) return true;
     if (studentDeskPositionsFor(mapName).some((p) => p.row === row && p.col === col)) return true;
     if (isGreatHallTableBlocked(mapName, row, col)) return true;

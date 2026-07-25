@@ -4,21 +4,21 @@
 // here rather than being duplicated.
 import type { Race, SpecializationPath, MonsterKind } from './constants.js';
 import { isFlyingBeastKind } from './constants.js';
+import { OVERWEIGHT_MOVE_COOLDOWN_FACTOR } from './inventory.js';
 
 // A follow-up ask: "once a skill is learned, start it out at 10% instead
 // of 1%" — applies uniformly to every skill grant in the game (starting
 // kit, race-innate exceptions aside, evolution skills, teacher-taught
 // spells, the bone-finger-strike bonus, ...) since they all funnel
 // through this one constant. Raised to 15% by a later follow-up ask, then
-// to 70% by a still-later one ("disregard the starting percentage of each
-// spell/skill described so far, instead every spell/skill... should be
-// learned at 70%") replacing the old podium-reading system's own learn
-// chance with a flat practice-point cost instead (see
-// SKILL_LEVEL_REQUIREMENT/practicePointCostFor below). A small number of
-// skills explicitly stated to start at 100% (future specialization
-// passives) are hardcoded to MAX_SKILL_PERCENT at their own grant site
-// instead of using this constant.
-export const STARTING_SKILL_PERCENT = 70;
+// to 70% by a still-later one, then down to 50% by a still-later one
+// ("make the starting percentage that spells are learned at to be 50%")
+// replacing the old podium-reading system's own learn chance with a flat
+// practice-point cost instead (see SKILL_LEVEL_REQUIREMENT/
+// practicePointCostFor below). A small number of skills explicitly stated
+// to start at 100% (future specialization passives) are hardcoded to
+// MAX_SKILL_PERCENT at their own grant site instead of using this constant.
+export const STARTING_SKILL_PERCENT = 50;
 export const MAX_SKILL_PERCENT = 100;
 
 export function skillLevelRequirement(skill: string): number {
@@ -154,13 +154,6 @@ export const ARCANE_BOLT_SKILL = 'arcane bolt';
 // STONE_WALL_MANA_COST below) once it became clear that flat shared
 // number was covering 4 very differently-powered spells.
 export const ARCANE_BOLT_MANA_COST = 7;
-
-// Basic actions every human wizard starts knowing outright (item 7) —
-// not practiced up or learned from a podium, just part of the universal
-// kit (see RACE_INNATE_SKILLS.human below). Both act on a targeted
-// inventory item the same way WATERFILL_SKILL does.
-export const DRINK_SKILL = 'drink';
-export const POUR_SKILL = 'pour out';
 
 // The Offense Classroom's second and third podiums (a later follow-up
 // ask) — same targeted-attack shape as augue (a monster target within
@@ -641,6 +634,12 @@ export interface MoveSpeedState {
   beastTransformKind: MonsterKind | null;
   dexterity: number;
   bootsItem: string | undefined;
+  // Item 29: "If the player goes over their max weight... it should slow
+  // the player's movement speed down considerably" — computed by the
+  // caller (server: inventoryWeightLbs(inventory) > maxInventoryWeightLbs
+  // (strength, level); client: WorldScene's own duplicate) since this
+  // module has no access to a player's live inventory/stat state itself.
+  overweight: boolean;
 }
 
 export function effectiveMoveCooldownMs(state: MoveSpeedState): number {
@@ -652,7 +651,9 @@ export function effectiveMoveCooldownMs(state: MoveSpeedState): number {
   }
   if (state.beastTransformActive) base = Math.round(base * 0.9);
   const dexReduction = Math.max(0, state.dexterity - 1) * DEX_MOVE_SPEED_PERCENT_PER_POINT;
-  return Math.round(base * Math.max(MIN_MOVE_COOLDOWN_FACTOR, 1 - dexReduction));
+  base = Math.round(base * Math.max(MIN_MOVE_COOLDOWN_FACTOR, 1 - dexReduction));
+  if (state.overweight) base = Math.round(base * OVERWEIGHT_MOVE_COOLDOWN_FACTOR);
+  return base;
 }
 
 // The small number of skills explicitly stated to start at 100% instead
@@ -851,14 +852,17 @@ export const RACE_INNATE_SKILLS: Record<Race, string[]> = {
   slime: [],
   // Hobgoblin is evolution-only (never a starting race).
   hobgoblin: [],
-  // Drink/pour are basic actions everyone can do from day one (item 7) —
-  // spellcasting skills (light, waterfill, ...) are still learned
+  // Drinking/pouring are basic inventory actions everyone can do outright
+  // (item 22 follow-up removed the separate "drink"/"pour out" Skills-modal
+  // entries entirely — the player is capable of these things by default
+  // from the inventory, not something to learn or track a percent for).
+  // Spellcasting skills (light, waterfill, ...) are still learned
   // separately from their classroom teachers, not granted here. A later
   // follow-up ask made 4 more races playable alongside human — same
   // universal starting kit, no bespoke racial ability for any of them.
-  human: [DRINK_SKILL, POUR_SKILL],
-  elf: [DRINK_SKILL, POUR_SKILL],
-  'half-elf': [DRINK_SKILL, POUR_SKILL],
-  viravis: [DRINK_SKILL, POUR_SKILL],
-  pixie: [DRINK_SKILL, POUR_SKILL],
+  human: [],
+  elf: [],
+  'half-elf': [],
+  viravis: [],
+  pixie: [],
 };

@@ -77,6 +77,10 @@ export const FLORO_SHOP_MAPS = [
   // Kortho" — a brand new 8th shop slot (see FLORO_SHOP_DOORS), not a
   // repurposed existing one like the Boat Shop above.
   'Floro Auction House',
+  // A later follow-up ask: "Add a 'Crafting Shop' in Floro, Kortho, and
+  // Bramwick" — a brand new 9th slot, same shape as the Auction House
+  // above (see FLORO_SHOP_DOORS for its own street position).
+  'Floro Crafting Shop',
 ] as const;
 
 // Kortho (a later follow-up ask: "add the town of Kortho back... same
@@ -102,6 +106,9 @@ export const KORTHO_SHOP_MAPS = [
   // A later follow-up ask: "Create an Auction House in both Floro and
   // Kortho" — same new 8th shop slot as Floro's own above.
   'Kortho Auction House',
+  // A later follow-up ask: "Add a 'Crafting Shop' in Floro, Kortho, and
+  // Bramwick" — same new 9th shop slot as Floro's own above.
+  'Kortho Crafting Shop',
 ] as const;
 
 // Bramwick (a later follow-up ask) — a small village just north of
@@ -116,7 +123,11 @@ export const KORTHO_SHOP_MAPS = [
 // Phase C's own "pet shop cottage" ask — the pet vendor used to stand
 // bare on Bramwick's open street (see server/worlds/vendors.ts); it gets
 // its own 5th cottage now, same hub-and-spoke shape as the 4 above.
-export const BRAMWICK_SHOP_MAPS = ['Bramwick General Shop', 'Bramwick Weapons', 'Bramwick Armor', 'Bramwick Potions', 'Bramwick Pet Shop'] as const;
+// A later follow-up ask: "Add a 'Crafting Shop' in Floro, Kortho, and
+// Bramwick" — a 6th cottage, same shape as Pet Shop's own addition above,
+// slotted into the one free spot left in Bramwick's existing 2x3 cottage
+// grid (see BRAMWICK_SHOP_DOORS's own doc comment).
+export const BRAMWICK_SHOP_MAPS = ['Bramwick General Shop', 'Bramwick Weapons', 'Bramwick Armor', 'Bramwick Potions', 'Bramwick Pet Shop', 'Bramwick Crafting Shop'] as const;
 
 // Gobbler Village (a later follow-up ask: "add a new World... called
 // 'Gobbler Village'... a small village structure with huts to go into") —
@@ -464,6 +475,18 @@ export function townGroupFor(mapName: MapName): MapName {
   if (mapName === 'Bramwick' || (BRAMWICK_SHOP_MAPS as readonly string[]).includes(mapName)) return 'Bramwick';
   if ((GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return 'Grimoak Entrance Hall';
   return mapName;
+}
+
+// A later follow-up ask: "in the towns on the map modal remove the shops
+// from showing as exits" — a shop door reads as a building entrance, not
+// a real place-to-place connection worth listing alongside roads/caves/
+// portals (see mapModal.ts's own renderConnectionsList).
+export function isShopMap(mapName: MapName): boolean {
+  return (
+    (FLORO_SHOP_MAPS as readonly string[]).includes(mapName) ||
+    (KORTHO_SHOP_MAPS as readonly string[]).includes(mapName) ||
+    (BRAMWICK_SHOP_MAPS as readonly string[]).includes(mapName)
+  );
 }
 
 export const DIRECTIONS = ['north', 'south', 'east', 'west'] as const;

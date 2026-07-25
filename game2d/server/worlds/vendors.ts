@@ -219,6 +219,21 @@ const VENDOR_SEEDS: VendorSeed[] = [
     items: [],
     greeting: 'Looking to buy or sell? Step right up.',
   },
+  // A later follow-up ask: "Add a 'Crafting Shop' in Floro, Kortho, and
+  // Bramwick. The shopkeepers for now should sell 'empty vial' for 5
+  // coins each... 'a focus gem' for 10 coins each."
+  {
+    id: 'floro-crafting-shop',
+    name: 'Artificer',
+    map: 'Floro Crafting Shop',
+    row: 3,
+    col: 15,
+    items: [
+      { label: 'empty vial', price: 5 },
+      { label: 'focus gem', price: 10 },
+    ],
+    greeting: 'Vials, focus gems, whatever your crafting table needs.',
+  },
   // --- Kortho, Floro's own rival-town twin (a later follow-up ask: "add
   // the town of Kortho back... same size and rules and shops as when it
   // was being used before") — same "one shopkeeper just inside the door"
@@ -356,6 +371,18 @@ const VENDOR_SEEDS: VendorSeed[] = [
     items: [],
     greeting: 'Looking to buy or sell? Step right up.',
   },
+  {
+    id: 'kortho-crafting-shop',
+    name: 'Artificer',
+    map: 'Kortho Crafting Shop',
+    row: 3,
+    col: 15,
+    items: [
+      { label: 'empty vial', price: 5 },
+      { label: 'focus gem', price: 10 },
+    ],
+    greeting: 'Vials, focus gems, whatever your crafting table needs.',
+  },
   // --- Bramwick, the small village north of Grimoak Grounds (a later
   // follow-up ask) — same "one shopkeeper just inside the door" shape as
   // Floro's own shops above. Greeting-only for now ("mechanics for the
@@ -440,6 +467,18 @@ const VENDOR_SEEDS: VendorSeed[] = [
       { label: 'piglet', price: 15 },
     ],
     greeting: 'Every one of these is looking for a companion — pick whichever one suits you.',
+  },
+  {
+    id: 'bramwick-crafting-shop',
+    name: 'Artificer',
+    map: 'Bramwick Crafting Shop',
+    row: 2,
+    col: 5,
+    items: [
+      { label: 'empty vial', price: 5 },
+      { label: 'focus gem', price: 10 },
+    ],
+    greeting: 'Vials, focus gems, whatever your crafting table needs.',
   },
 ];
 

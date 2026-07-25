@@ -7,7 +7,7 @@
 // WorldScene's own pointerdown handler), so there's no separate
 // "killed by another player"-style rejection UI needed here.
 import { network, setMyProfile, myProfile } from '../state.js';
-import { logCombatMessage } from './log.js';
+import { logCombatMessage, logAckMessage } from './log.js';
 import { updateStatusBar } from './statusBar.js';
 import { stackedItemsLabel } from './corpseModal.js';
 import {
@@ -59,7 +59,7 @@ function grabPetCorpseItem(index: number): void {
     .lootPetCorpseItem(currentCorpseId, index)
     .then((ack) => {
       if (!ack.ok) {
-        if (ack.message) logCombatMessage(ack.message);
+        logAckMessage(ack);
         return;
       }
       const [item] = currentCorpseItems.splice(index, 1);
@@ -81,7 +81,7 @@ petCorpseGrabAllBtn.addEventListener('click', () => {
     .lootPetCorpse(currentCorpseId)
     .then((ack) => {
       if (!ack.ok) {
-        if (ack.message) logCombatMessage(ack.message);
+        logAckMessage(ack);
         return;
       }
       if (currentCorpseItems.length > 0) logCombatMessage(`You pick up the ${stackedItemsLabel(currentCorpseItems)}.`);

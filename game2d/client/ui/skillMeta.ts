@@ -93,8 +93,6 @@ import {
   CREATE_DUPLICATE_SKILL,
   CREATE_DUPLICATE_MANA_COST,
   CREATE_DUPLICATE_HP_MULTIPLIER,
-  DRINK_SKILL,
-  POUR_SKILL,
   SKILL_COOLDOWN_MS,
   FLIGHT_SKILL,
   FLIGHT_MANA_COST,
@@ -184,8 +182,6 @@ export function isUsableSkill(skillName: string): boolean {
     skillName === SUMMON_DEMON_IMP_SKILL ||
     skillName === INVISIBILITY_SKILL ||
     skillName === CREATE_DUPLICATE_SKILL ||
-    skillName === DRINK_SKILL ||
-    skillName === POUR_SKILL ||
     skillName === FLIGHT_SKILL
   );
 }
@@ -252,8 +248,6 @@ export const SKILL_DESCRIPTIONS: Record<string, string> = {
   [ENHANCED_HOLY_DAMAGE_SKILL]: `Diabolist-only: a flat +${ENHANCED_HOLY_DAMAGE_BONUS} bonus added to your ranged/physical attacks against anything classified holy. (No monster or race in the game is classified holy yet.)`,
   [INVISIBILITY_SKILL]: `Illusionist-only. No target needed — turns you invisible to monsters and other players for 1 minute (your own sprite just looks faded to you). Attacking breaks it early. Costs ${INVISIBILITY_MANA_COST} mana; a successful cast has its own 2-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
   [CREATE_DUPLICATE_SKILL]: `Illusionist-only. No target needed — creates a duplicate of yourself with ${Math.round(CREATE_DUPLICATE_HP_MULTIPLIER * 100)}% of your hp, lasting 5 minutes. Costs ${CREATE_DUPLICATE_MANA_COST} mana; a successful cast has its own 6-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
-  [DRINK_SKILL]: 'Takes a drink from a targeted container (a canteen). Select it in your inventory first, then click this.',
-  [POUR_SKILL]: 'Empties out a targeted container (a canteen). Select it in your inventory first, then click this.',
   [FLIGHT_SKILL]: `Available to every specialization. No target needed — take to the air for 3 minutes, floating instead of walking, moving faster, and able to cross water. Press spacebar while flying for a ${FLIGHT_BURST_TILES}-foot forward burst (its own 10-second cooldown). Costs ${FLIGHT_MANA_COST} mana; a successful cast has its own 4-minute cooldown. Success chance scales with skill percent, intelligence, and luck.`,
 };
 
@@ -417,8 +411,6 @@ const SKILL_CATEGORY_MAP: Record<string, SkillCategory> = {
   [HASTE_SKILL]: 'Utility',
   [UNLOCK_SKILL]: 'Utility',
   [RECALL_SKILL]: 'Utility',
-  [DRINK_SKILL]: 'Utility',
-  [POUR_SKILL]: 'Utility',
   [INFRAVISION_SKILL]: 'Utility',
   [EAT_BRAINS_SKILL]: 'Utility',
   [STONE_WALL_SKILL]: 'Summoning',

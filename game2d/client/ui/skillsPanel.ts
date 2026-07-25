@@ -4,7 +4,7 @@ import { attachTooltip } from './tooltip.js';
 import { SKILL_DESCRIPTIONS, SKILL_CATEGORIES, skillCategory, createCooldownOverlay, isAttackSkill, isUsableSkill, skillIconColor } from './skillMeta.js';
 import { SKILL_SPECIALIZATION_REQUIREMENT } from '../../shared/skills.js';
 import { skillIconGlyphUrl } from './skillIcons.js';
-import { actionBarSkills, assignActionSlot, beginDragVisual, endDragVisual, removeFromActionBar, saveActionBar, updateDragVisual } from './actionBar.js';
+import { assignActionBarSlot, beginDragVisual, endDragVisual, findActionBarSlot, findFreeActionBarSlot, removeSkillFromActionBars, saveActionBars, updateDragVisual } from './actionBars.js';
 import { logCombatMessage } from './log.js';
 import { registerModalOpenHandler, registerModalRefreshHandler, skillsBody, skillsModal } from './modalCore.js';
 
@@ -40,7 +40,7 @@ function renderSkillRow(skillName: string, valueText: string): void {
       // quick-assign below, no need to open the action bar and drag it
       // off by hand.
       if (!e.shiftKey) return;
-      if (!removeFromActionBar(skillName)) {
+      if (!removeSkillFromActionBars(skillName)) {
         logCombatMessage(`${skillName} isn't on your action bar.`);
       }
     });
@@ -51,17 +51,15 @@ function renderSkillRow(skillName: string, valueText: string): void {
     // already slotted somewhere, instead of stacking a duplicate icon
     // into the next free slot every time it's double-clicked (item 3).
     icon.addEventListener('dblclick', () => {
-      const existingIndex = actionBarSkills.findIndex(
-        (s) => s === skillName || (isAttackSkill(skillName) && s !== null && isAttackSkill(s))
-      );
-      if (existingIndex !== -1) return;
-      const freeIndex = actionBarSkills.findIndex((s) => s === null);
-      if (freeIndex === -1) {
+      const existing = findActionBarSlot((s) => s === skillName || (isAttackSkill(skillName) && isAttackSkill(s)));
+      if (existing) return;
+      const free = findFreeActionBarSlot();
+      if (!free) {
         logCombatMessage('Your action bar is full.');
         return;
       }
-      assignActionSlot(freeIndex, skillName);
-      saveActionBar();
+      assignActionBarSlot(free.barId, free.index, skillName);
+      saveActionBars();
     });
   }
   icon.appendChild(createCooldownOverlay(skillName));

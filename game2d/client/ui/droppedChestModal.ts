@@ -3,7 +3,7 @@
 // corpse modal the chest itself is gone the instant its last item is
 // taken, so this modal closes rather than sticking around empty.
 import { myProfile, network, setMyProfile } from '../state.js';
-import { logCombatMessage } from './log.js';
+import { logCombatMessage, logAckMessage } from './log.js';
 import { stackedItemsLabel } from './corpseModal.js';
 import {
   closeAllModals,
@@ -55,7 +55,7 @@ function grabDroppedChestItem(index: number): void {
     .lootDroppedChestItem(currentChestId, index)
     .then((ack) => {
       if (!ack.ok) {
-        if (ack.message) logCombatMessage(ack.message);
+        logAckMessage(ack);
         return;
       }
       const [item] = currentChestItems.splice(index, 1);
@@ -75,7 +75,7 @@ droppedChestGrabAllBtn.addEventListener('click', () => {
     .lootDroppedChest(currentChestId)
     .then((ack) => {
       if (!ack.ok) {
-        if (ack.message) logCombatMessage(ack.message);
+        logAckMessage(ack);
         return;
       }
       if (currentChestItems.length > 0) logCombatMessage(`You pick up the ${stackedItemsLabel(currentChestItems)}.`);

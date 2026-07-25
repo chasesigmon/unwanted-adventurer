@@ -57,6 +57,16 @@ export class TamedBeastManagerService {
     return snapshots;
   }
 
+  // A later follow-up ask: "give the player the ability to name their pet
+  // or tamed beast and it should persist" — same shape as PetManagerService's
+  // own rename.
+  rename(ownerUsername: string, name: string): TamedBeast | undefined {
+    const beast = this.beasts.get(ownerUsername);
+    if (!beast) return undefined;
+    beast.name = name;
+    return beast;
+  }
+
   setCommand(ownerUsername: string, command: PetCommand): TamedBeast | undefined {
     const beast = this.beasts.get(ownerUsername);
     if (!beast) return undefined;

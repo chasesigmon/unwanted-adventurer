@@ -22,7 +22,7 @@ import {
 import { openChatInput, openChatInputWithSlash } from './log.js';
 import { dismissAutopilotModal } from './autopilotModal.js';
 import { openLogoutConfirmModal } from './logoutModal.js';
-import { triggerActionSlot } from './actionBar.js';
+import { comboForKeyboardEvent, triggerHotkeyIfBound } from './actionBars.js';
 
 const gameRoot = document.getElementById('game-root') as HTMLDivElement;
 
@@ -73,6 +73,18 @@ export function initGlobalKeyboardShortcuts(): void {
     if (e.key === '/' && !isInputCaptured()) {
       e.preventDefault();
       openChatInputWithSlash();
+      return;
+    }
+
+    // A later follow-up ask: "capture the tab button being pressed and
+    // prevent default. The tab button should instead try to select the
+    // closest monster or player" — preventDefault unconditionally (Tab's
+    // browser default of shifting focus around the page is never useful
+    // here), but only actually cycle targets while not already typing
+    // somewhere else captured (same gate Enter/'/' use above).
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      if (!isInputCaptured()) activeScene?.cycleTabTarget();
       return;
     }
 
@@ -138,21 +150,16 @@ export function initGlobalKeyboardShortcuts(): void {
       e.preventDefault();
       activeScene?.triggerFlightBurst();
     } else {
-      // The action bar's own two groups of 10 slots (a follow-up ask) —
-      // 1-9 then 0 map onto slots 0-9 in order, Shift+(1-9,0) onto slots
-      // 10-19, triggering whatever's slotted there the exact same way
-      // clicking it would (see actionBar.ts's triggerActionSlot, shared
-      // with the slot's own click handler). Same mapping regardless of
-      // which side the bar is currently docked to — docking only changes
-      // where each slot is drawn on screen, not which hotkey reaches it.
+      // Item 3: every action-bar slot's hotkey is now fully customizable
+      // (any bar, any slot, any modifier combo — see actionBars.ts's own
+      // ActionBarSlotConfig.hotkey doc comment and settingsModal.ts's own
+      // rebind UI), replacing the old fixed "1-9,0 / Shift+1-9,0" mapping.
       // `e.code` (the physical key), not `e.key` — Shift+1 changes `e.key`
       // entirely on a US layout ('!'), but `e.code` stays 'Digit1' either
-      // way.
-      const digitCodes = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0'];
-      const digitIndex = digitCodes.indexOf(e.code);
-      if (digitIndex !== -1) {
+      // way; comboForKeyboardEvent uses the same convention every stored
+      // hotkey does.
+      if (triggerHotkeyIfBound(comboForKeyboardEvent(e))) {
         e.preventDefault();
-        triggerActionSlot(e.shiftKey ? digitIndex + 10 : digitIndex);
       }
     }
   });

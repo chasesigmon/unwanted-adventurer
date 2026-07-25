@@ -818,6 +818,11 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
     expReward: monsterExpRewardForLevel(30),
     attackDamage: monsterAttackDamageForLevel(30),
     goldRewardRange: [50, 65],
+    // A later follow-up ask: "the orcs in the labyrinth should be
+    // aggressive" — same proximity-aggro mechanism the 4 portal-dungeon
+    // species already use (see MonsterManagerService.checkProximityAggro),
+    // reusing their same 5-tile detection radius.
+    aggroRadiusTiles: 5,
     carriedItemRolls: [
       { label: 'chainmail armor', chance: 0.12 },
       { label: 'chainmail helmet', chance: 0.12 },

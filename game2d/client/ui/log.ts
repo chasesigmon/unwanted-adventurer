@@ -5,6 +5,7 @@
 // drag-to-resize + persisted size/position (item 6).
 import { network } from '../state.js';
 import { setupCollapsible } from './collapsible.js';
+import { showCenterToast } from './toast.js';
 
 const COMBAT_LOG_MAX_LINES = 60;
 
@@ -128,12 +129,19 @@ function saveLogPanelRect(): void {
 // panel at that size with no way to grab the handle again. Clamps
 // height so the panel's bottom edge stays clear of the action bar's own
 // top edge whenever their horizontal spans would overlap.
-const actionBar = document.getElementById('action-bar') as HTMLDivElement;
+// Item 3: there's no longer exactly one fixed `#action-bar` — any number
+// of bars can exist at runtime (added/removed/resized via the Settings
+// modal), so every currently-rendered `.action-bar-wrapper` is checked
+// fresh each time rather than a single element grabbed once at load.
 function clampHeightForActionBar(top: number, left: number, width: number, height: number): number {
-  const barRect = actionBar.getBoundingClientRect();
-  const horizontallyOverlaps = left < barRect.right && left + width > barRect.left;
-  if (!horizontallyOverlaps) return height;
-  return Math.max(LOG_PANEL_MIN_HEIGHT, Math.min(height, barRect.top - top - 8));
+  let clamped = height;
+  document.querySelectorAll<HTMLElement>('.action-bar-wrapper').forEach((wrapper) => {
+    const barRect = wrapper.getBoundingClientRect();
+    const horizontallyOverlaps = left < barRect.right && left + width > barRect.left;
+    if (!horizontallyOverlaps) return;
+    clamped = Math.max(LOG_PANEL_MIN_HEIGHT, Math.min(clamped, barRect.top - top - 8));
+  });
+  return clamped;
 }
 
 // Restores whatever size/position the player last dragged this panel to
@@ -261,6 +269,19 @@ function appendLogLine(sourceKind: 'combat' | 'chat', text: string, kind?: 'leve
 
 export function logCombatMessage(message: string, kind?: 'level-up' | 'death'): void {
   appendLogLine('combat', message, kind);
+}
+
+// Item 29: "show a tooltip message and chat message" for an inventory-full
+// rejection — every loot/buy/craft-claim/auction-collect/take-from-follower
+// ack now carries a `full` flag alongside its message (see game.gateway.ts's
+// inventoryCapacityRejection) specifically for this one failure reason, so
+// callers can route it through both the ordinary chat-log line AND a
+// center-screen toast in one call, instead of duplicating the `if (ack.full)`
+// check at every one of those call sites.
+export function logAckMessage(ack: { message?: string; full?: boolean }): void {
+  if (!ack.message) return;
+  if (ack.full) showCenterToast(ack.message);
+  logCombatMessage(ack.message);
 }
 
 export function logChatMessage(username: string, message: string): void {

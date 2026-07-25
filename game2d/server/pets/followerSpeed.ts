@@ -8,6 +8,7 @@
 // itself needing to speed up).
 import type { PlayerState } from '../worlds/types.js';
 import { effectiveMoveCooldownMs, BASE_MOVE_COOLDOWN_MS } from '../../shared/skills.js';
+import { inventoryWeightLbs, maxInventoryWeightLbs } from '../../shared/inventory.js';
 
 // A later follow-up ask: "the followers still don't match speed, just
 // with haste activated my battlemage was able to outrun the pet cat" —
@@ -33,6 +34,7 @@ export function stepsForOwnerSpeed(id: string, owner: PlayerState | undefined): 
     beastTransformKind: owner.beastTransformKind,
     dexterity: owner.dexterity,
     bootsItem: owner.equipment.boots,
+    overweight: inventoryWeightLbs(owner.inventory) > maxInventoryWeightLbs(owner.strength, owner.level),
   });
   const ratio = BASE_MOVE_COOLDOWN_MS / cooldown;
   const total = (followerSpeedAccumulators.get(id) ?? 0) + ratio;

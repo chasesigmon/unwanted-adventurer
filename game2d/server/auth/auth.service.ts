@@ -113,6 +113,23 @@ export class AuthService {
     return this.sessionStore.isSessionValid('character', username, sessionId);
   }
 
+  // Item 3's Settings modal Account tab: "shows real account username +
+  // current character name" — the game socket only ever knows the
+  // CHARACTER's own name (see CharacterSessionTokenPayload's own doc
+  // comment, which carries no accountId at all), so there was previously
+  // no way for an already-in-game client to learn its own real account
+  // username/email. Takes the ACCOUNT token still held client-side
+  // (net.ts's own accountToken, never discarded once a character is
+  // picked), not the character token the socket connects with.
+  async getAccountInfo(token: string): Promise<{ username: string; email: string }> {
+    const payload = await this.verifyAccountToken(token);
+    const account = await this.accountsService.findById(payload.accountId);
+    if (!account) {
+      throw new NotFoundException('Account no longer exists.');
+    }
+    return { username: account.username, email: account.email };
+  }
+
   // ---------- Account-level: register/login/logout ----------
 
   async register({ email, username, password }: RegisterAccountDto): Promise<{ token: string }> {

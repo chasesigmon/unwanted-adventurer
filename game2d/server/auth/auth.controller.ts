@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Headers, HttpCode, HttpStatus, Post, UseGuards, UsePipes } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, HttpCode, HttpStatus, Post, UseGuards, UsePipes } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 
 import { AuthService } from './auth.service.js';
@@ -27,6 +27,19 @@ export class AuthController {
   async login(@Body() body: CredentialsDto): Promise<{ ok: true; token: string }> {
     const { token } = await this.authService.login(body);
     return { ok: true, token };
+  }
+
+  // Item 3's Settings modal Account tab — see AuthService.getAccountInfo's
+  // own doc comment for why this needs the ACCOUNT token, not the
+  // character one the game socket connects with.
+  @Get('me')
+  async me(@Headers('authorization') authorization?: string): Promise<{ ok: true; username: string; email: string }> {
+    const token = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : null;
+    if (!token) {
+      throw new BadRequestException('Missing session token.');
+    }
+    const info = await this.authService.getAccountInfo(token);
+    return { ok: true, ...info };
   }
 
   @Post('logout')

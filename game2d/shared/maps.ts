@@ -60,6 +60,14 @@ export const GREAT_PLAINS_MID_COL = Math.floor(GREAT_PLAINS_SIZE / 2);
 const GREAT_PLAINS_MID_ROW = Math.floor(GREAT_PLAINS_SIZE / 2);
 // Exported — same reasoning as LABYRINTH_SIZE above.
 export const LABYRINTH_MID_COL = Math.floor(LABYRINTH_SIZE / 2);
+// A later follow-up ask: "cave entrances facing any direction [should]
+// allow the player to walk through the cave at any part/the full width of
+// it" — the Great Plains <-> Labyrinth connection was still a single-tile
+// exit (unlike Hexstone Cavern's/Brimstone Cave's own roadBandExits-based
+// 5-tile bands, see GREAT_PLAINS_HEXSTONE_HALF_WIDTH_TILES/
+// BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES), the real actionable gap behind
+// this ask — same width as those two for consistency.
+export const GREAT_PLAINS_LABYRINTH_HALF_WIDTH_TILES = 2;
 export const TOWN_MID_ROW = Math.floor(TOWN_SIZE / 2);
 
 // Floro's 7 shop interiors (item 13, phase 1) — a small room each,
@@ -116,6 +124,14 @@ const FLORO_SHOP_DOORS: Record<(typeof FLORO_SHOP_MAPS)[number], { row: number; 
   // Kortho" — same row-32 grid, one more slot east with the same 10-tile
   // gap every other door in this row already uses.
   'Floro Auction House': { row: 32, col: 45 },
+  // A later follow-up ask: "Add a 'Crafting Shop' in Floro, Kortho, and
+  // Bramwick" — rows 15/32 are already fully packed (4 buildings each,
+  // 6-wide footprints with only ~4 tiles of gap between neighbors, too
+  // tight to slot a 9th building into either row) — a new row 45, clear
+  // of both existing rows' own building footprints (which only reach up
+  // to row 25 at the highest), with enough clearance to the south edge
+  // (TOWN_SIZE-1) for a normal door approach.
+  'Floro Crafting Shop': { row: 45, col: 25 },
 };
 
 function shopInteriorDefinition(name: (typeof FLORO_SHOP_MAPS)[number]): MapDefinition {
@@ -177,6 +193,9 @@ const KORTHO_SHOP_DOORS: Record<(typeof KORTHO_SHOP_MAPS)[number], { row: number
   // A later follow-up ask: "Create an Auction House in both Floro and
   // Kortho" — same slot Floro's own FLORO_SHOP_DOORS uses.
   'Kortho Auction House': { row: 32, col: 45 },
+  // A later follow-up ask: "Add a 'Crafting Shop' in Floro, Kortho, and
+  // Bramwick" — same new row-45 slot Floro's own FLORO_SHOP_DOORS uses.
+  'Kortho Crafting Shop': { row: 45, col: 25 },
 };
 
 function korthoShopInteriorDefinition(name: (typeof KORTHO_SHOP_MAPS)[number]): MapDefinition {
@@ -928,6 +947,21 @@ const FLOOR2_CHAMBER_DOORS: Array<{ col: number; name: MapName }> = [
   { col: 16, name: 'Summoner Chamber' },
   { col: 20, name: 'Illusionist Chamber' },
 ];
+// A later follow-up ask: "make an update to the stairs on the 2nd floor
+// and instead of them being to the south, put them on the north wall...
+// between Shaman and Elementalist" (the user's own answer resolving an
+// otherwise-impossible "left of Necromancer AND right of Illusionist"
+// literal reading) — the midpoint between Shaman (8) and Elementalist
+// (12) above, clear of both.
+// Exported — shared/lighting.ts's portalPositionsFor needs this same
+// column to keep the 4th floor's own north portal's VISUAL position in
+// sync with where its real MapExit (see FLOOR4_LANDING.exits.push below)
+// actually sits.
+export const FLOOR2_NORTH_STAIRS_COL = 10;
+// One tile south of the north wall — the mirror of
+// FLOOR_LANDING_STAIRS_ARRIVAL_ROW's own "one tile in from the wall you
+// arrived through" convention, for a north-wall arrival instead of south.
+const FLOOR_LANDING_NORTH_ARRIVAL_ROW = 1;
 const FLOOR3_CHAMBER_DOORS: Array<{ col: number; name: MapName }> = [
   { col: 4, name: 'Battlemage Chamber' },
   { col: 8, name: 'Cleric Chamber' },
@@ -1005,16 +1039,36 @@ function floorLandingDefinition(
   return { name, rows: FLOOR_LANDING_ROWS, cols: FLOOR_LANDING_COLS, terrain: 'stone', exits };
 }
 
+// A later follow-up ask moved the 2nd floor's own stairs up to the 3rd
+// floor off this south wall (see FLOOR2_LANDING.exits.push below,
+// FLOOR2_NORTH_STAIRS_COL) — no upStairs 4th argument here anymore.
 const FLOOR2_LANDING = floorLandingDefinition(
   'Grimoak Castle 2nd Floor',
   FLOOR2_CHAMBER_DOORS,
-  { toMap: 'Grimoak Entrance Hall', toRow: ENTRANCE_HALL_UP_STAIRS.row - 1, toCol: ENTRANCE_HALL_UP_STAIRS.col },
-  { toMap: 'Grimoak Castle 3rd Floor', toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW, toCol: FLOOR_LANDING_DOWN_STAIRS_COL }
+  { toMap: 'Grimoak Entrance Hall', toRow: ENTRANCE_HALL_UP_STAIRS.row - 1, toCol: ENTRANCE_HALL_UP_STAIRS.col }
 );
+// The reciprocal north-wall stairs itself — pushed on afterward, same
+// "define the room, then push an additional exit once the target's own
+// info is known" shape FLOOR4_LANDING's own portals below already use.
+// Leads to the exact same arrival point on floor 3 the old south-wall
+// up-stairs did (floor 3's own down-stairs, unchanged) — only THIS side's
+// position/orientation moved, not where it leads.
+FLOOR2_LANDING.exits.push({
+  row: 0,
+  col: FLOOR2_NORTH_STAIRS_COL,
+  direction: 'north',
+  kind: 'stairs',
+  toMap: 'Grimoak Castle 3rd Floor',
+  toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW,
+  toCol: FLOOR_LANDING_DOWN_STAIRS_COL,
+});
 const FLOOR3_LANDING = floorLandingDefinition(
   'Grimoak Castle 3rd Floor',
   FLOOR3_CHAMBER_DOORS,
-  { toMap: 'Grimoak Castle 2nd Floor', toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW, toCol: FLOOR_LANDING_UP_STAIRS_COL },
+  // A later follow-up ask moved floor 2's own reciprocal stairs from its
+  // south wall to its north wall (FLOOR2_NORTH_STAIRS_COL) — this arrival
+  // point follows it there instead of the old south-wall position.
+  { toMap: 'Grimoak Castle 2nd Floor', toRow: FLOOR_LANDING_NORTH_ARRIVAL_ROW, toCol: FLOOR2_NORTH_STAIRS_COL },
   { toMap: 'Grimoak Castle 4th Floor', toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW, toCol: FLOOR_LANDING_DOWN_STAIRS_COL }
 );
 // Floor 4 has no chambers of its own (no north-wall doors) and nothing
@@ -1048,6 +1102,22 @@ export const PORTAL_DUNGEON_SIZE_COLS = 50;
 export const PORTAL_DUNGEON_MID_COL = Math.floor(PORTAL_DUNGEON_SIZE_COLS / 2);
 export const PORTAL_DUNGEON_MAPS = ['Sunken Crypt', 'Goblin Warcamp', 'Imp Hollow', 'Ashen Wastes'] as const;
 
+// The 4th floor's own 4 portals were originally scoped to these specific
+// level bands (see this section's own doc comment above: "level 10-15
+// monsters, 15-20, 20-30, 30-40") — the actual monster.level values used
+// (12/17/25/35, server/monsters/monster.ts) are just one representative
+// point picked within each band, never a literal single-level dungeon. A
+// later follow-up ask ("update the portal's title to be the level of
+// monsters they have, example: 'Monsters 10 - 15'") surfaces these same
+// original bands on the portal's own click-target label (see WorldScene's
+// renderMap) rather than inventing a new range from the single stored level.
+export const PORTAL_DUNGEON_LEVEL_RANGES: Record<(typeof PORTAL_DUNGEON_MAPS)[number], [number, number]> = {
+  'Sunken Crypt': [10, 15],
+  'Goblin Warcamp': [15, 20],
+  'Imp Hollow': [20, 30],
+  'Ashen Wastes': [30, 40],
+};
+
 // `returnRow`/`returnCol` (a later follow-up ask: "the exit portal should
 // take you back next to the portal you had originally gone into") — each
 // of the 4 dungeons now returns to the ONE TILE INSIDE its own specific
@@ -1078,7 +1148,16 @@ const FLOOR4_PORTAL_MID_COL = Math.floor(FLOOR_LANDING_COLS / 2);
 FLOOR4_LANDING.exits.push(
   {
     row: 0,
-    col: FLOOR4_PORTAL_MID_COL,
+    // A later follow-up ask: "move the door on the 4th floor to the north
+    // wall in the same position as the door on the left/north wall of the
+    // 2nd floor" — this north portal (the only one on the north wall)
+    // moves off dead-center to line up in the exact same column as floor
+    // 2's own new north-wall stairs (FLOOR2_NORTH_STAIRS_COL), stacking
+    // the two vertically. See shared/lighting.ts's own portalPositionsFor
+    // for the matching visual-position update (kept in sync by hand —
+    // that file can't import this constant, see this file's own
+    // circular-import doc comment elsewhere).
+    col: FLOOR2_NORTH_STAIRS_COL,
     direction: 'north',
     toMap: 'Sunken Crypt',
     toRow: PORTAL_DUNGEON_SIZE_ROWS - 2,
@@ -1158,6 +1237,10 @@ const BRAMWICK_SHOP_DOORS: Record<(typeof BRAMWICK_SHOP_MAPS)[number], { row: nu
   // Phase C's "pet shop cottage" — centered on the top row, between the
   // two existing front shops, with plenty of clearance on both sides.
   'Bramwick Pet Shop': { row: 10, col: BRAMWICK_MID_COL },
+  // A later follow-up ask: "Add a 'Crafting Shop' in Floro, Kortho, and
+  // Bramwick" — the one open slot left in this 2x3 grid: the bottom row's
+  // own center, directly mirroring the Pet Shop's position on the top row.
+  'Bramwick Crafting Shop': { row: 28, col: BRAMWICK_MID_COL },
 };
 
 function bramwickShopInteriorDefinition(name: (typeof BRAMWICK_SHOP_MAPS)[number]): MapDefinition {
@@ -1472,13 +1555,16 @@ export const RUNESTONE_WAY_ROWS = BRAMWICK_SIZE;
 export const RUNESTONE_WAY_COLS = Math.round(BRAMWICK_SIZE * 0.25);
 export const RUNESTONE_WAY_MID_COL = Math.floor(RUNESTONE_WAY_COLS / 2);
 export const RUNESTONE_WAY_HALF_WIDTH_TILES = 2;
-// Bramwick's own north-edge column for this connection — NOT
-// BRAMWICK_MID_COL (20): the Pet Shop's own door sits at (10,
-// BRAMWICK_MID_COL) with its building footprint reaching rows 3-9 at
-// cols 17-22 (see BRAMWICK_SHOP_DOORS/shopBuildingFootprint), directly in
-// the path north from the map's own top edge. 36 sits in the clear gap
-// east of the Weapons shop's own footprint (cols 27-32).
-export const BRAMWICK_RUNESTONE_COL = 36;
+// Bramwick's own north-edge column for this connection — originally 36
+// (a clear gap east of the Weapons shop's own footprint, cols 27-32) to
+// dodge the Pet Shop's own door/footprint sitting at BRAMWICK_MID_COL
+// (reaching rows 3-9 at cols 17-22), but a later follow-up ask ("move the
+// entrance to Boulder Pass to the top middle instead of the top right")
+// moved it back to true dead-center — the exit tile itself only ever sits
+// at row 0/1 (well above where the Pet Shop's footprint starts at row 3),
+// so a player heading south from it just walks around the shop like any
+// other building in the way, same as everywhere else in this town.
+export const BRAMWICK_RUNESTONE_COL = BRAMWICK_MID_COL;
 
 // Blocks every tile OFF the walkable road band — the "boulders and rocks
 // and impassable looking terrain" flanking it. Never bypassed by flying
@@ -1661,16 +1747,21 @@ export const MAPS: Record<MapName, MapDefinition> = {
       // the labyrinth from the great plains is a cave entrance with no
       // door, this cave entrance can be facing south" — `kind: 'open'`
       // added (was a plain door before), same convention every other
-      // cave-mouth connection in this file already uses.
-      {
+      // cave-mouth connection in this file already uses. A later
+      // follow-up ask ("walk through the cave at any part/the full width
+      // of it") widened this from a single-tile exit to a real
+      // roadBandExits band, same shape as every other cave-mouth
+      // connection now uses.
+      ...roadBandExits({
         row: 0,
         col: GREAT_PLAINS_MID_COL,
         direction: 'north',
         toMap: 'Labyrinth',
         toRow: LABYRINTH_SIZE - 1,
         toCol: LABYRINTH_MID_COL,
-        kind: 'open',
-      },
+        halfWidthTiles: GREAT_PLAINS_LABYRINTH_HALF_WIDTH_TILES,
+        spread: 'col',
+      }),
       // A later follow-up ask: "it should have a dirt road connection at
       // the top right/north east with sign 'Floro'... it should connect
       // to Floro" — replaces the old stale west/east exits above (which
@@ -1714,16 +1805,18 @@ export const MAPS: Record<MapName, MapDefinition> = {
     exits: [
       // A later follow-up ask: "from inside of the labyrinth, remove the
       // door and make it a cave entrance that faces north" — same
-      // `kind: 'open'` fix as the reciprocal Great Plains exit above.
-      {
+      // `kind: 'open'` fix as the reciprocal Great Plains exit above, and
+      // the same later "full width" widening too.
+      ...roadBandExits({
         row: LABYRINTH_SIZE - 1,
         col: LABYRINTH_MID_COL,
         direction: 'south',
         toMap: 'Great Plains',
         toRow: 0,
         toCol: GREAT_PLAINS_MID_COL,
-        kind: 'open',
-      },
+        halfWidthTiles: GREAT_PLAINS_LABYRINTH_HALF_WIDTH_TILES,
+        spread: 'col',
+      }),
     ],
   },
   'Hexstone Cavern': {
@@ -1808,6 +1901,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Floro Pet Salesman': shopInteriorDefinition('Floro Pet Salesman'),
   'Floro Boat Shop': shopInteriorDefinition('Floro Boat Shop'),
   'Floro Auction House': shopInteriorDefinition('Floro Auction House'),
+  'Floro Crafting Shop': shopInteriorDefinition('Floro Crafting Shop'),
   Kortho: {
     name: 'Kortho',
     rows: TOWN_SIZE,
@@ -1863,6 +1957,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Kortho Pet Salesman': korthoShopInteriorDefinition('Kortho Pet Salesman'),
   'Kortho Boat Shop': korthoShopInteriorDefinition('Kortho Boat Shop'),
   'Kortho Auction House': korthoShopInteriorDefinition('Kortho Auction House'),
+  'Kortho Crafting Shop': korthoShopInteriorDefinition('Kortho Crafting Shop'),
   'Road to Kortho': {
     name: 'Road to Kortho',
     rows: ROAD_TO_KORTHO_ROWS,
@@ -2034,6 +2129,7 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Bramwick Armor': bramwickShopInteriorDefinition('Bramwick Armor'),
   'Bramwick Potions': bramwickShopInteriorDefinition('Bramwick Potions'),
   'Bramwick Pet Shop': bramwickShopInteriorDefinition('Bramwick Pet Shop'),
+  'Bramwick Crafting Shop': bramwickShopInteriorDefinition('Bramwick Crafting Shop'),
   'Brimstone Cave': {
     name: 'Brimstone Cave',
     rows: BRIMSTONE_CAVE_SIZE,

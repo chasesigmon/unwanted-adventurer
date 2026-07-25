@@ -31,8 +31,6 @@ import {
   HASTE_SKILL,
   UNLOCK_SKILL,
   ARCANE_BOLT_SKILL,
-  DRINK_SKILL,
-  POUR_SKILL,
   STUN_SKILL,
   DISARM_SKILL,
   AEGIS_SKILL,
@@ -197,8 +195,6 @@ const ICONS: Record<string, string> = {
       STROKE +
       '"/><path d="M5 5 l2.5 2.5 M19 5 l-2.5 2.5" stroke-width="1.4"/>'
   ),
-  [DRINK_SKILL]: svgUrl('<path d="M6 4 h12 l-1.5 14 a2 2 0 0 1 -2 1.8 h-5 a2 2 0 0 1 -2 -1.8 Z"/><path d="M7 9 h10"/>'),
-  [POUR_SKILL]: svgUrl('<path d="M5 5 h10 l-1 9 a2 2 0 0 1 -2 1.7 h-4 a2 2 0 0 1 -2 -1.7 Z" transform="rotate(-25 10 12)"/><path d="M17 8 q4 1 4 4"/>'),
   [STUN_SKILL]: svgUrl(
     '<circle cx="12" cy="12" r="2"/><path d="M12 4 a8 8 0 0 1 8 8" stroke-dasharray="2 3"/><path d="M4 12 a8 8 0 0 1 3 -6.2" stroke-dasharray="2 3"/><path d="M6 18.5 a8 8 0 0 1 -2 -4.5" stroke-dasharray="2 3"/>'
   ),

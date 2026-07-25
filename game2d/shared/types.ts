@@ -305,6 +305,10 @@ export interface PlayerSnapshot {
   // last set, or null/undefined if they never have. Same "optional,
   // self-only" shape as visitedPois above.
   recallPointId?: string | null;
+  // The Crafting Shop's own crafting table (a later follow-up ask) — see
+  // SocketData.pendingCraftedItem's own doc comment. Same "optional,
+  // self-only" shape as visitedPois/recallPointId above.
+  pendingCraftedItem?: string | null;
   // A later follow-up ask: dying now takes a real 10s respawn countdown
   // ("have a countdown shown on screen... the screen darken while the
   // yellow text countdown happens") — the absolute epoch-ms it ends, same
@@ -630,11 +634,35 @@ export interface AuctionListingSnapshot {
   // would drift stale the instant network latency or the interval
   // between broadcasts crept in.
   endsAt: number;
+  // A later follow-up ask: "if a player's item time limit expires, then
+  // it should remain in the auction house waiting for someone to collect
+  // it with 'Expired' labelled on it" — a listing past endsAt no longer
+  // auto-resolves; it just flips this flag and sticks around (still in
+  // the same listings map, still broadcast) until whoever's entitled to
+  // it (the winning bidder, or the seller if nobody ever bid) actually
+  // clicks to collect it (see game.gateway.ts's handleCollectAuctionItem).
+  expired?: boolean;
 }
 
 export interface PetCommandAck {
   ok: boolean;
   pet?: PetSnapshot;
+  message?: string;
+}
+
+// A later follow-up ask: "give the player the ability to name their pet
+// or tamed beast and it should persist" — same shape as PetCommandAck
+// above, one per follower kind (pet vs. tamed beast use separate manager
+// services and separate snapshot types).
+export interface RenamePetAck {
+  ok: boolean;
+  pet?: PetSnapshot;
+  message?: string;
+}
+
+export interface RenameTamedBeastAck {
+  ok: boolean;
+  tamedBeast?: TamedBeastSnapshot;
   message?: string;
 }
 
@@ -660,6 +688,11 @@ export interface CommandFollowerAttackAck {
 export interface FollowerItemAck {
   ok: boolean;
   message?: string;
+  // Item 29: set when `message` is specifically an inventory-capacity
+  // rejection — lets the client show a center-screen toast on top of its
+  // usual chat-log line for this one failure reason (see
+  // GameGateway.inventoryCapacityRejection's own doc comment).
+  full?: boolean;
 }
 
 // Broadcast to a map's room whenever a punch actually lands on a target
@@ -740,6 +773,8 @@ export interface LootAck {
   // otherwise wouldn't update until the next unrelated stat-tick sync.
   gold?: number;
   message?: string;
+  // Item 29: see FollowerItemAck.full's own doc comment.
+  full?: boolean;
 }
 
 // Item 12: dropping an item onto the ground (or merging into an existing
@@ -763,6 +798,8 @@ export interface LootDroppedChestAck {
   inventory?: string[];
   chestGone?: boolean;
   message?: string;
+  // Item 29: see FollowerItemAck.full's own doc comment.
+  full?: boolean;
 }
 
 export interface BuyAck {
@@ -773,6 +810,8 @@ export interface BuyAck {
   // filled at 6/6") — see game.gateway.ts's handleBuyItem.
   canteenDrinks?: number;
   message?: string;
+  // Item 29: see FollowerItemAck.full's own doc comment.
+  full?: boolean;
 }
 
 // A later follow-up ask: "sell to vendor" — see server/worlds/vendors.ts's
@@ -1113,6 +1152,10 @@ export interface ClientToServerEvents {
     ack: (res: { ok: boolean; message?: string; listings?: AuctionListingSnapshot[] }) => void
   ) => void;
   auctionBid: (payload: { auctionId: string; amount: number }, ack: (res: { ok: boolean; message?: string }) => void) => void;
+  // A later follow-up ask: "it should remain in the auction house waiting
+  // for someone to collect it" — see game.gateway.ts's
+  // handleCollectAuctionItem.
+  collectAuctionItem: (listingId: string, ack: (res: { ok: boolean; message?: string }) => void) => void;
   // Item 17: Kortho's/Floro's own Bank vendor — one shared balance, free
   // deposit, a 5% withdrawal fee. Depositing `amount: undefined` deposits
   // everything currently carried.
@@ -1152,6 +1195,18 @@ export interface ClientToServerEvents {
   // Monster-corpse-only "sacrifice it to the gods" — see
   // game.gateway.ts's handleSacrificeCorpse for the gold formula.
   sacrificeCorpse: (corpseId: string, ack: (res: SacrificeAck) => void) => void;
+  // A later follow-up ask: "if the player has any 'empty vial' in their
+  // inventory then they should have another option in the corpse modal...
+  // to fill a vial with monster blood" — see game.gateway.ts's
+  // handleFillVialFromCorpse.
+  fillVialFromCorpse: (corpseId: string, ack: (res: { ok: boolean; inventory?: string[]; message?: string }) => void) => void;
+  // A later follow-up ask: "Add a 'Crafting Shop'... create a crafting
+  // table" — see game.gateway.ts's handleCraftItem/handleClaimCraftedItem.
+  craftItem: (
+    payload: { slots: Array<{ item: string; count: number } | null> },
+    ack: (res: { ok: boolean; resultItem?: string; inventory?: string[]; message?: string }) => void
+  ) => void;
+  claimCraftedItem: (ack: (res: { ok: boolean; inventory?: string[]; message?: string }) => void) => void;
   // A later follow-up ask: pet corpses — same loot/loot-one/sacrifice
   // shape as the monster-corpse trio above, just against
   // PetCorpseManagerService and restricted to the pet's own owner only
@@ -1209,6 +1264,11 @@ export interface ClientToServerEvents {
   // A later follow-up ask: "add a 'Remove' option to the pet window" —
   // same plain voluntary permanent release as removeTamedBeast above.
   removePet: (ack: (res: { ok: boolean; message?: string }) => void) => void;
+  // A later follow-up ask: "give the player the ability to name their pet
+  // or tamed beast and it should persist" — see game.gateway.ts's
+  // handleRenamePet/handleRenameTamedBeast.
+  renamePet: (payload: { name: string }, ack: (res: RenamePetAck) => void) => void;
+  renameTamedBeast: (payload: { name: string }, ack: (res: RenameTamedBeastAck) => void) => void;
   // The Summoner's own monster-summons modal pick (a later follow-up
   // ask) — no target selection needed, just which kind to summon.
   castMonsterSummons: (payload: { monsterKind: string }, ack: (res: { ok: boolean; message?: string }) => void) => void;
@@ -1465,6 +1525,13 @@ export interface SocketData {
   // loaded from the player doc on connect. null until the player ever
   // sets one (see shared/recall.ts's RecallPoint/RECALL_POINTS).
   recallPointId: string | null;
+  // The Crafting Shop's own crafting table (a later follow-up ask) — set
+  // the instant a craft succeeds (ingredients already consumed at that
+  // point), cleared once the player clicks it to actually add it to their
+  // inventory. Persisted (not one of the "resets on reconnect" toggles
+  // above) so a disconnect between crafting and claiming can't destroy
+  // the crafted item.
+  pendingCraftedItem: string | null;
   // The 10s respawn countdown (a later follow-up ask) — never persisted,
   // same tradeoff as every other ephemeral toggle here; checked on the
   // same fast tick flight/wisp/etc already expire on (see

@@ -5,10 +5,12 @@ import { activeScene, currentWorldTick, lastWorldTickAt, myProfile, network, set
 import { MONSTER_KINDS } from '../../shared/constants.js';
 import { attachTooltip } from './tooltip.js';
 import { applyCooldownOverlayFraction } from './skillMeta.js';
-import { logCombatMessage } from './log.js';
+import { logCombatMessage, logAckMessage } from './log.js';
 import { updateStatusBar } from './statusBar.js';
+import { EMPTY_VIAL_ITEM } from '../../shared/items.js';
 import {
   corpseEatBrainsBtn,
+  corpseFillVialBtn,
   corpseGrabAllBtn,
   corpseItemList,
   corpseModal,
@@ -110,6 +112,19 @@ function updateSacrificeButton(): void {
   corpseSacrificeBtn.hidden = !canSacrifice;
 }
 
+// A later follow-up ask: "if the player has any 'empty vial' in their
+// inventory then they should have another option in the corpse modal of
+// a monster to fill a vial with monster blood. If the player doesn't
+// have any empty vials then that option should not appear at all, even
+// grayed out" — hidden entirely (not disabled) on either condition
+// failing, same shape updateSacrificeButton already uses for its own
+// monster-only gate.
+export function updateFillVialButton(): void {
+  const isMonsterCorpse = currentCorpseKind !== undefined && (MONSTER_KINDS as readonly string[]).includes(currentCorpseKind);
+  const hasEmptyVial = (myProfile?.inventory ?? []).includes(EMPTY_VIAL_ITEM);
+  corpseFillVialBtn.hidden = !isMonsterCorpse || !hasEmptyVial;
+}
+
 // A corpse no longer disappears once its last item is grabbed — it
 // sticks around until its TTL or, for a monster corpse, sacrifice — so an
 // empty item list just means nothing left to grab, not "close the modal".
@@ -158,6 +173,7 @@ export function openCorpseModal(corpseId: string, items: string[], kind: string,
   updateInputCaptured();
   updateEatBrainsButton();
   updateSacrificeButton();
+  updateFillVialButton();
   renderCorpseModal();
 }
 
@@ -177,6 +193,27 @@ corpseSacrificeBtn.addEventListener('click', () => {
       if (ack.message) logCombatMessage(ack.message);
       hideModal(corpseModal);
       updateInputCaptured();
+    })
+    .catch(() => {
+      /* nothing to show */
+    });
+});
+
+corpseFillVialBtn.addEventListener('click', () => {
+  if (!currentCorpseId) return;
+  network
+    .fillVialFromCorpse(currentCorpseId)
+    .then((ack) => {
+      if (!ack.ok) {
+        if (ack.message) logCombatMessage(ack.message);
+        return;
+      }
+      if (myProfile && ack.inventory) {
+        setMyProfile({ ...myProfile, inventory: ack.inventory });
+        refreshOpenModals();
+        updateFillVialButton();
+      }
+      if (ack.message) logCombatMessage(ack.message);
     })
     .catch(() => {
       /* nothing to show */
@@ -218,7 +255,7 @@ function grabCorpseItem(index: number): void {
     .lootItem(currentCorpseId, index)
     .then((ack) => {
       if (!ack.ok) {
-        if (ack.message) logCombatMessage(ack.message);
+        logAckMessage(ack);
         return;
       }
       const [item] = currentCorpseItems.splice(index, 1);
@@ -266,7 +303,7 @@ corpseGrabAllBtn.addEventListener('click', () => {
     .loot(currentCorpseId)
     .then((ack) => {
       if (!ack.ok) {
-        if (ack.message) logCombatMessage(ack.message);
+        logAckMessage(ack);
         return;
       }
       if (currentCorpseItems.length > 0) logCombatMessage(`You pick up the ${stackedItemsLabel(currentCorpseItems)}.`);

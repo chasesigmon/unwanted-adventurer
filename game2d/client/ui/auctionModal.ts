@@ -15,7 +15,7 @@ import { myProfile, network, setMyProfile } from '../state.js';
 import type { AuctionListingSnapshot } from '../../shared/types.js';
 import { AUCTION_MIN_BID_LEVEL } from '../../shared/auctionHouse.js';
 import { groupInventoryItems } from '../../shared/items.js';
-import { logCombatMessage } from './log.js';
+import { logCombatMessage, logAckMessage } from './log.js';
 import { auctionGoldLine, auctionListingList, auctionListItemForm, auctionModal, closeAllModals, registerModalRefreshHandler, updateInputCaptured } from './modalCore.js';
 import { updateStatusBar } from './statusBar.js';
 import { attachTooltip } from './tooltip.js';
@@ -48,33 +48,57 @@ export function renderAuctionModal(): void {
 
     const label = document.createElement('span');
     const bidText = listing.currentBidderUsername ? `current bid ${listing.currentBid} gold (${listing.currentBidderUsername})` : `starting bid ${listing.startingGold} gold`;
-    label.textContent = `${listing.itemLabel} — ${bidText} — ${formatRemaining(listing.endsAt)} left`;
+    // A later follow-up ask: "if a player's item time limit expires, then
+    // it should remain in the auction house... labelled 'Expired'" —
+    // replaces the live countdown once the listing crosses endsAt, rather
+    // than ticking down into a confusing negative time.
+    const timeText = listing.expired ? 'Expired' : `${formatRemaining(listing.endsAt)} left`;
+    label.textContent = `${listing.itemLabel} — ${bidText} — ${timeText}`;
     label.className = 'auction-listing-label';
     attachTooltip(label, () => itemTooltip(listing.itemLabel));
     li.appendChild(label);
 
     const isOwnListing = listing.sellerUsername === myProfile?.username;
-    const canBid = !isOwnListing && (myProfile?.level ?? 0) > AUCTION_MIN_BID_LEVEL;
-    if (canBid) {
-      const bidInput = document.createElement('input');
-      bidInput.type = 'number';
-      bidInput.min = String(listing.currentBidderUsername ? listing.currentBid + 1 : listing.currentBid);
-      bidInput.placeholder = String(listing.currentBidderUsername ? listing.currentBid + 1 : listing.currentBid);
-      bidInput.className = 'shop-bank-amount';
-      const bidBtn = document.createElement('button');
-      bidBtn.type = 'button';
-      bidBtn.textContent = 'Bid';
-      bidBtn.addEventListener('click', () => placeBid(listing.id, bidInput.value));
-      li.appendChild(bidInput);
-      li.appendChild(bidBtn);
-    } else if (isOwnListing) {
-      const ownLabel = document.createElement('span');
-      ownLabel.textContent = '(your listing)';
-      li.appendChild(ownLabel);
+    // A later follow-up ask: "the player to collect it will either be the
+    // highest bidder or the player that originally placed the item for
+    // auction if no one bid on it" — same entitlement rule
+    // AuctionHouseService's own collectItem enforces server-side.
+    const entitledToCollect = listing.currentBidderUsername ? listing.currentBidderUsername === myProfile?.username : isOwnListing;
+    if (listing.expired) {
+      if (entitledToCollect) {
+        const collectBtn = document.createElement('button');
+        collectBtn.type = 'button';
+        collectBtn.textContent = 'Collect';
+        collectBtn.addEventListener('click', () => collectItem(listing.id));
+        li.appendChild(collectBtn);
+      } else {
+        const waitingLabel = document.createElement('span');
+        waitingLabel.textContent = '(awaiting collection)';
+        li.appendChild(waitingLabel);
+      }
     } else {
-      const gatedLabel = document.createElement('span');
-      gatedLabel.textContent = `(level ${AUCTION_MIN_BID_LEVEL + 1}+ to bid)`;
-      li.appendChild(gatedLabel);
+      const canBid = !isOwnListing && (myProfile?.level ?? 0) > AUCTION_MIN_BID_LEVEL;
+      if (canBid) {
+        const bidInput = document.createElement('input');
+        bidInput.type = 'number';
+        bidInput.min = String(listing.currentBidderUsername ? listing.currentBid + 1 : listing.currentBid);
+        bidInput.placeholder = String(listing.currentBidderUsername ? listing.currentBid + 1 : listing.currentBid);
+        bidInput.className = 'shop-bank-amount';
+        const bidBtn = document.createElement('button');
+        bidBtn.type = 'button';
+        bidBtn.textContent = 'Bid';
+        bidBtn.addEventListener('click', () => placeBid(listing.id, bidInput.value));
+        li.appendChild(bidInput);
+        li.appendChild(bidBtn);
+      } else if (isOwnListing) {
+        const ownLabel = document.createElement('span');
+        ownLabel.textContent = '(your listing)';
+        li.appendChild(ownLabel);
+      } else {
+        const gatedLabel = document.createElement('span');
+        gatedLabel.textContent = `(level ${AUCTION_MIN_BID_LEVEL + 1}+ to bid)`;
+        li.appendChild(gatedLabel);
+      }
     }
 
     auctionListingList.appendChild(li);
@@ -90,6 +114,7 @@ export function renderAuctionModal(): void {
 function tickCountdowns(): void {
   if (auctionModal.hidden) return;
   for (const listing of listings) {
+    if (listing.expired) continue; // static "Expired" text, nothing to tick
     const li = auctionListingList.querySelector<HTMLLIElement>(`li[data-auction-id="${listing.id}"]`);
     const label = li?.querySelector<HTMLSpanElement>('.auction-listing-label');
     if (!label) continue;
@@ -193,6 +218,22 @@ function placeBid(auctionId: string, rawAmount: string): void {
       // broadcast (see registerAuctionStateListener below), which every
       // OTHER open client also receives — no need to duplicate that
       // here on success.
+    })
+    .catch(() => {
+      /* nothing to show */
+    });
+}
+
+// A later follow-up ask: "it should remain in the auction house waiting
+// for someone to collect it" — the gold/inventory change arrives via the
+// server's own fresh 'sync' right after (see handleCollectAuctionItem),
+// and the listing's own removal arrives via 'auctionState', same
+// "broadcasts handle the rest" shape placeBid above already uses.
+function collectItem(listingId: string): void {
+  network
+    .collectAuctionItem(listingId)
+    .then((ack) => {
+      logAckMessage(ack);
     })
     .catch(() => {
       /* nothing to show */

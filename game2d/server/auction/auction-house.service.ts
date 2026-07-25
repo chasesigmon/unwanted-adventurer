@@ -35,6 +35,15 @@ export class AuctionHouseService {
     return Array.from(this.listings.values()).map((l) => ({ ...l }));
   }
 
+  // Item 29: GameGateway needs to check the requester's inventory capacity
+  // BEFORE calling collectItem below, since collectItem deletes the
+  // listing immediately on success — checking capacity only after would
+  // mean a rejected-for-being-full collect attempt has already destroyed
+  // the listing, losing the item for good. A read-only peek, no mutation.
+  peek(id: string): AuctionListingSnapshot | undefined {
+    return this.listings.get(id);
+  }
+
   // Places a bid, applying the anti-snipe extension ("if at the last
   // minute or less of the auction a player bids... increase the duration
   // by another 2 minutes") in the same step. Returns the previous
@@ -60,19 +69,40 @@ export class AuctionHouseService {
     return { ok: true, previousBidder, extended };
   }
 
-  // Called on a periodic tick — returns every listing whose time is up,
-  // removing them from the active map. The caller (GameGateway) resolves
-  // the actual gold/item transfer, since that needs access to connected
-  // sockets and the players DB, neither of which this service knows about.
+  // Called on a periodic tick — flips every listing whose time is up to
+  // `expired: true` and returns the ones that JUST crossed that line (so
+  // the caller only sends a one-time "your auction expired" notice, not
+  // one every tick forever). A later follow-up ask ("it should remain in
+  // the auction house waiting for someone to collect it") means expiry no
+  // longer removes the listing itself — see collectItem below for the
+  // actual gold/item transfer, which only now happens on request.
   takeExpired(): AuctionListingSnapshot[] {
     const now = Date.now();
-    const expired: AuctionListingSnapshot[] = [];
-    for (const [id, listing] of this.listings) {
-      if (listing.endsAt <= now) {
-        expired.push(listing);
-        this.listings.delete(id);
+    const justExpired: AuctionListingSnapshot[] = [];
+    for (const listing of this.listings.values()) {
+      if (!listing.expired && listing.endsAt <= now) {
+        listing.expired = true;
+        justExpired.push(listing);
       }
     }
-    return expired;
+    return justExpired;
+  }
+
+  // A later follow-up ask: "the player to collect it will either be the
+  // highest bidder or the player that originally placed the item for
+  // auction if no one bid on it" — removes the listing only once whoever's
+  // actually entitled to it claims it; the caller (GameGateway) still owns
+  // the real gold/item transfer, same division of labor takeExpired above
+  // already has.
+  collectItem(id: string, requesterUsername: string): { ok: true; listing: AuctionListingSnapshot } | { ok: false; message: string } {
+    const listing = this.listings.get(id);
+    if (!listing) return { ok: false, message: 'That listing no longer exists.' };
+    if (!listing.expired) return { ok: false, message: "That auction hasn't ended yet." };
+    const entitled = listing.currentBidderUsername ?? listing.sellerUsername;
+    if (requesterUsername !== entitled) {
+      return { ok: false, message: "You aren't the one who can collect this." };
+    }
+    this.listings.delete(id);
+    return { ok: true, listing };
   }
 }

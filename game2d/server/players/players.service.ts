@@ -90,10 +90,15 @@ export interface PlayerStatsUpdate {
   hunger?: number;
   thirst?: number;
   quests?: Record<string, QuestProgress>;
+  // Item 22 follow-up — see player.entity.ts's own skillCooldowns column
+  // comment for why this one persists while the other buff-timer fields
+  // deliberately don't.
+  skillCooldowns?: Record<string, number>;
   house?: HouseName | null;
   specialization?: SpecializationPath | null;
   visitedPois?: string[];
   recallPointId?: string | null;
+  pendingCraftedItem?: string | null;
   killedMonsterKinds?: string[];
   tamedBeastKinds?: string[];
   // A follow-up bug fix: "the pet is a permanent part of the player's

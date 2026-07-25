@@ -11,7 +11,16 @@ export const charSheetUsername = document.getElementById('char-sheet-username') 
 export const charSheetPreview = document.getElementById('char-sheet-preview') as HTMLDivElement;
 export const charSheetBody = document.getElementById('char-sheet-body') as HTMLDivElement;
 export const inventoryModal = document.getElementById('inventory-modal') as HTMLDivElement;
+export const inventoryCapacity = document.getElementById('inventory-capacity') as HTMLDivElement;
 export const inventoryList = document.getElementById('inventory-list') as HTMLUListElement;
+// Item 3's gear-icon Settings modal (Account + Action Bars tabs) — its
+// own tab-switching logic lives in settingsModal.ts (same pattern as
+// mapModal.ts's own Here/World Map/Who/Where tabs), these are just the
+// shared element handles other modules need.
+export const settingsModal = document.getElementById('settings-modal') as HTMLDivElement;
+export const settingsBody = document.getElementById('settings-body') as HTMLDivElement;
+export const settingsTabAccountBtn = document.getElementById('settings-tab-account') as HTMLButtonElement;
+export const settingsTabActionBarsBtn = document.getElementById('settings-tab-actionbars') as HTMLButtonElement;
 // The quest log (a follow-up ask) — a list of started quest titles;
 // clicking one swaps this same body to a detail view (description +
 // objective checklist) instead of opening a second modal.
@@ -45,6 +54,7 @@ export const corpseItemList = document.getElementById('corpse-item-list') as HTM
 export const corpseGrabAllBtn = document.getElementById('corpse-grab-all') as HTMLButtonElement;
 export const corpseEatBrainsBtn = document.getElementById('corpse-eat-brains') as HTMLButtonElement;
 export const corpseSacrificeBtn = document.getElementById('corpse-sacrifice') as HTMLButtonElement;
+export const corpseFillVialBtn = document.getElementById('corpse-fill-vial') as HTMLButtonElement;
 // A later follow-up ask: pet corpses — see petCorpseModal.ts.
 export const petCorpseModal = document.getElementById('pet-corpse-modal') as HTMLDivElement;
 export const petCorpseModalTitle = document.getElementById('pet-corpse-modal-title') as HTMLHeadingElement;
@@ -127,6 +137,14 @@ export const auctionModal = document.getElementById('auction-modal') as HTMLDivE
 export const auctionGoldLine = document.getElementById('auction-gold-line') as HTMLDivElement;
 export const auctionListingList = document.getElementById('auction-listing-list') as HTMLUListElement;
 export const auctionListItemForm = document.getElementById('auction-list-item-form') as HTMLUListElement;
+// A later follow-up ask: "Add a 'Crafting Shop'... create a crafting
+// table" — see craftingModal.ts.
+export const craftingModal = document.getElementById('crafting-modal') as HTMLDivElement;
+export const craftingGrid = document.getElementById('crafting-grid') as HTMLDivElement;
+export const craftingHint = document.getElementById('crafting-hint') as HTMLParagraphElement;
+export const craftingOutputSlot = document.getElementById('crafting-output-slot') as HTMLDivElement;
+export const craftingCraftBtn = document.getElementById('crafting-craft-btn') as HTMLButtonElement;
+export const craftingSpinnerOverlay = document.getElementById('crafting-spinner-overlay') as HTMLDivElement;
 
 export const ALL_MODALS = [
   charSheetModal,
@@ -154,6 +172,8 @@ export const ALL_MODALS = [
   benchModal,
   logoutConfirmModal,
   auctionModal,
+  craftingModal,
+  settingsModal,
 ];
 
 // A later follow-up ask ("make it so that when any modal is open the
@@ -251,8 +271,20 @@ export function hideModal(modal: HTMLDivElement): void {
   hideCustomTooltip();
 }
 
-export function closeAllModals(): void {
-  for (const modal of ALL_MODALS) hideModal(modal);
+// `opening` (a later follow-up ask: "while the Crafting table modal is
+// open the player can also open the inventory modal alongside it to the
+// right") is the one exception to "only one modal open at a time" in this
+// whole project — passed through from toggleModal/openCraftingModal below
+// so closing every OTHER modal doesn't ALSO close the one pairing partner
+// this specific modal is about to open alongside. Every other caller
+// (Escape, a backdrop click, ...) omits it and gets the original
+// close-everything behavior.
+export function closeAllModals(opening?: HTMLDivElement): void {
+  for (const modal of ALL_MODALS) {
+    if (opening === inventoryModal && modal === craftingModal) continue;
+    if (opening === craftingModal && modal === inventoryModal) continue;
+    hideModal(modal);
+  }
   updateInputCaptured();
 }
 
@@ -262,7 +294,7 @@ export function closeAllModals(): void {
 // it.
 export function toggleModal(modal: HTMLDivElement): void {
   const wasOpen = !modal.hidden;
-  closeAllModals();
+  closeAllModals(modal);
   if (wasOpen) return;
   modal.hidden = false;
   updateInputCaptured();
@@ -339,6 +371,7 @@ const equipmentBtn = document.getElementById('equipment-btn') as HTMLButtonEleme
 const mapBtn = document.getElementById('map-btn') as HTMLButtonElement;
 const affectsBtn = document.getElementById('affects-btn') as HTMLButtonElement;
 const questLogBtn = document.getElementById('quest-log-btn') as HTMLButtonElement;
+const settingsBtn = document.getElementById('settings-btn') as HTMLButtonElement;
 
 charSheetBtn.addEventListener('click', () => toggleModal(charSheetModal));
 inventoryBtn.addEventListener('click', () => toggleModal(inventoryModal));
@@ -348,6 +381,7 @@ equipmentBtn.addEventListener('click', () => toggleModal(equipmentModal));
 mapBtn.addEventListener('click', () => toggleModal(mapModal));
 affectsBtn.addEventListener('click', () => toggleModal(affectsModal));
 questLogBtn.addEventListener('click', () => toggleModal(questLogModal));
+settingsBtn.addEventListener('click', () => toggleModal(settingsModal));
 
 // Item 10's zoom toggle — not a modal, just flips WorldScene's own
 // camera zoom; the button's label/tooltip flip to reflect the current

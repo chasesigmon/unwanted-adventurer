@@ -10,7 +10,7 @@ import { hideAuthScreen, initAuthScreen } from './ui/authScreen.js';
 import { hideCharacterSelectScreen, showCharacterSelectScreen } from './ui/characterSelect.js';
 import { initGlobalKeyboardShortcuts } from './ui/keyboard.js';
 import { refreshCooldownOverlays } from './ui/skillMeta.js';
-import { updateEatBrainsButton } from './ui/corpseModal.js';
+import { updateEatBrainsButton, updateFillVialButton } from './ui/corpseModal.js';
 
 // Modules whose only job at this point is registering DOM event
 // listeners (button clicks, drag/drop, ...) — imported for that side
@@ -24,6 +24,7 @@ import './ui/questLog.js';
 import './ui/autopilotModal.js';
 import './ui/affectsPanel.js';
 import './ui/helpModal.js';
+import './ui/settingsModal.js';
 
 const gameRoot = document.getElementById('game-root') as HTMLDivElement;
 
@@ -32,6 +33,7 @@ initGlobalKeyboardShortcuts();
 setInterval(() => {
   refreshCooldownOverlays();
   updateEatBrainsButton();
+  updateFillVialButton();
 }, 250);
 
 let gameInstance: Phaser.Game | null = null;
@@ -124,9 +126,21 @@ function onCharacterChosen(): void {
 // would double them up) — restoreAccountSession picks the account
 // session back up from localStorage so that reload lands straight on
 // character select instead of making the player log in again.
-void network.restoreAccountSession().then((restored) => {
+void network.restoreAccountSession().then(async (restored) => {
   if (restored) {
     hideAuthScreen();
+    // A refresh (or crash) while actively playing a character used to
+    // always bounce back to character select, since only the account
+    // session was ever restorable — see restoreCharacterSession's own doc
+    // comment. Try to resume the SAME character's live session first;
+    // only fall back to character select if there's no stored character
+    // token or it's no longer valid (e.g. the character was logged out
+    // elsewhere, or the token expired).
+    const resumed = await network.restoreCharacterSession();
+    if (resumed) {
+      startGame();
+      return;
+    }
     showCharacterSelectScreen(onCharacterChosen);
     return;
   }

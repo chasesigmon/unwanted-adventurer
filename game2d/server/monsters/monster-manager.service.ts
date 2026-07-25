@@ -23,6 +23,7 @@ import {
   isBramwickSignBlocked,
   isStandingTorchBlocked,
   isWithinRadius,
+  isCraftingTableBlocked,
 } from '../../shared/lighting.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { MONSTER_SPECIES, MONSTER_LEVEL, skillsForCarriedItems, type Monster, type MonsterSpecies } from './monster.js';
@@ -376,6 +377,7 @@ export class MonsterManagerService {
     if (isGateTile(mapName, row, col)) return false;
     if (isFireplaceBlocked(mapName, row, col)) return false;
     if (isBenchBlocked(mapName, row, col)) return false;
+    if (isCraftingTableBlocked(mapName, row, col)) return false;
     if (isBedBlocked(mapName, row, col)) return false;
     if (studentDeskPositionsFor(mapName).some((p) => p.row === row && p.col === col)) return false;
     if (isGreatHallTableBlocked(mapName, row, col)) return false;

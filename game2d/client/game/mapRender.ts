@@ -186,6 +186,9 @@ export const SHOP_COUNTER_HEIGHT = 44;
 // A social gathering spot's benches (a follow-up ask upgraded these from
 // plain chairs) — see shared/lighting.ts's benchPositionsFor.
 export const BENCH_TEXTURE_KEY = 'bench';
+// A later follow-up ask: "Add a 'Crafting Shop'... create a crafting
+// table" — see shared/lighting.ts's craftingTablePositionFor.
+export const CRAFTING_TABLE_TEXTURE_KEY = 'crafting-table';
 // Spell/attack projectiles (a follow-up ask) — see WorldScene's
 // playProjectileEffect, triggered off a 'combat' event's own `skill`.
 export const FIREBALL_TEXTURE_KEY = 'fireball';

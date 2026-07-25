@@ -4,6 +4,7 @@
 // now with equipment, resistances, and dodge/parry/shield-block ported
 // from the text game).
 import { isWandItem } from '../../shared/equipment.js';
+import { craftedItemBaseName } from '../../shared/crafting.js';
 import type { MonsterClass, Race } from '../../shared/constants.js';
 import { maxTnlForLevel } from '../../shared/leveling.js';
 export { maxTnlForLevel } from '../../shared/leveling.js';
@@ -289,7 +290,11 @@ export function wandRangedDamageBonus(equipment: Record<string, string>): number
 export function weaponBonusFor(equipment: Record<string, string>, skills: Record<string, number>): number {
   const weapon = equipment.weapon;
   if (!weapon) return 0;
-  const flat = WEAPON_DAMAGE_BONUS[weapon] ?? 0;
+  // A crafted weapon (a later follow-up ask) carries a " of Mana +N"
+  // suffix on top of its base name (see shared/crafting.ts's own doc
+  // comment) — falls back to the base name so it still gets the same
+  // flat damage bonus its uncrafted counterpart would.
+  const flat = WEAPON_DAMAGE_BONUS[weapon] ?? WEAPON_DAMAGE_BONUS[craftedItemBaseName(weapon)] ?? 0;
   const daggerBonus = weapon.toLowerCase().includes('dagger') ? skillBonus(skills[DAGGER_SKILL] ?? 0) : 0;
   return flat + daggerBonus;
 }
@@ -364,7 +369,10 @@ export const ARMOR_ITEM_MAGICAL_BONUS: Record<string, number> = {};
 // lookup per equipped item, 0 for anything not in ARMOR_ITEM_PHYSICAL_BONUS
 // (a weapon, a torch, jewelry, ...).
 export function physicalArmorEquipmentBonus(equipment: Record<string, string>): number {
-  let bonus = equipment.shield === 'bone shield' ? BONE_SHIELD_ARMOR_BONUS : 0;
+  // A crafted "bone shield of Mana +N" (a later follow-up ask) still
+  // counts as a bone shield for its own armor bonus — see
+  // craftedItemBaseName's own doc comment.
+  let bonus = craftedItemBaseName(equipment.shield ?? '') === 'bone shield' ? BONE_SHIELD_ARMOR_BONUS : 0;
   for (const item of Object.values(equipment)) {
     bonus += ARMOR_ITEM_PHYSICAL_BONUS[item] ?? 0;
   }
@@ -408,7 +416,9 @@ const JEWELRY_DEXTERITY_BONUS: Record<string, number> = {
 export function dexterityEquipmentBonus(equipment: Record<string, string>): number {
   let bonus = 0;
   for (const item of Object.values(equipment)) {
-    bonus += JEWELRY_DEXTERITY_BONUS[item] ?? 0;
+    // A crafted item's own base-name fallback — see weaponBonusFor's own
+    // doc comment on why (shared/crafting.ts's craftedItemBaseName).
+    bonus += JEWELRY_DEXTERITY_BONUS[item] ?? JEWELRY_DEXTERITY_BONUS[craftedItemBaseName(item)] ?? 0;
   }
   return bonus;
 }
@@ -438,7 +448,7 @@ const JEWELRY_INTELLIGENCE_BONUS: Record<string, number> = {
 export function intelligenceEquipmentBonus(equipment: Record<string, string>): number {
   let bonus = 0;
   for (const item of Object.values(equipment)) {
-    bonus += JEWELRY_INTELLIGENCE_BONUS[item] ?? 0;
+    bonus += JEWELRY_INTELLIGENCE_BONUS[item] ?? JEWELRY_INTELLIGENCE_BONUS[craftedItemBaseName(item)] ?? 0;
   }
   return bonus;
 }
@@ -461,7 +471,7 @@ const JEWELRY_CONSTITUTION_BONUS: Record<string, number> = {
 export function constitutionEquipmentBonus(equipment: Record<string, string>): number {
   let bonus = 0;
   for (const item of Object.values(equipment)) {
-    bonus += JEWELRY_CONSTITUTION_BONUS[item] ?? 0;
+    bonus += JEWELRY_CONSTITUTION_BONUS[item] ?? JEWELRY_CONSTITUTION_BONUS[craftedItemBaseName(item)] ?? 0;
   }
   return bonus;
 }
@@ -479,7 +489,7 @@ const STRENGTH_EQUIPMENT_BONUS: Record<string, number> = {
 export function strengthEquipmentBonus(equipment: Record<string, string>): number {
   let bonus = 0;
   for (const item of Object.values(equipment)) {
-    bonus += STRENGTH_EQUIPMENT_BONUS[item] ?? 0;
+    bonus += STRENGTH_EQUIPMENT_BONUS[item] ?? STRENGTH_EQUIPMENT_BONUS[craftedItemBaseName(item)] ?? 0;
   }
   return bonus;
 }
@@ -493,7 +503,7 @@ const WISDOM_EQUIPMENT_BONUS: Record<string, number> = {
 export function wisdomEquipmentBonus(equipment: Record<string, string>): number {
   let bonus = 0;
   for (const item of Object.values(equipment)) {
-    bonus += WISDOM_EQUIPMENT_BONUS[item] ?? 0;
+    bonus += WISDOM_EQUIPMENT_BONUS[item] ?? WISDOM_EQUIPMENT_BONUS[craftedItemBaseName(item)] ?? 0;
   }
   return bonus;
 }
@@ -507,7 +517,7 @@ const LUCK_EQUIPMENT_BONUS: Record<string, number> = {
 export function luckEquipmentBonus(equipment: Record<string, string>): number {
   let bonus = 0;
   for (const item of Object.values(equipment)) {
-    bonus += LUCK_EQUIPMENT_BONUS[item] ?? 0;
+    bonus += LUCK_EQUIPMENT_BONUS[item] ?? LUCK_EQUIPMENT_BONUS[craftedItemBaseName(item)] ?? 0;
   }
   return bonus;
 }
@@ -618,7 +628,9 @@ export function computeShieldBlockChance(
   defenderEquipment: Record<string, string>,
   defenderConstitution: number
 ): number {
-  if (defenderEquipment.shield !== 'bone shield') return 0;
+  // A crafted "bone shield of Mana +N" (a later follow-up ask) still
+  // blocks like a bone shield — see craftedItemBaseName's own doc comment.
+  if (craftedItemBaseName(defenderEquipment.shield ?? '') !== 'bone shield') return 0;
   const constitutionBonus = Math.floor(defenderConstitution / SHIELD_BLOCK_CONSTITUTION_DIVISOR) / 100;
   return Math.min(SCALED_SKILL_MAX_CHANCE, scaledSkillChance(defenderSkills[SHIELD_BLOCK_SKILL] ?? 0) + constitutionBonus);
 }
@@ -833,9 +845,11 @@ export function perLevelMvGain(): number {
 // percent when casting any spell — 10 intelligence would grant +10%
 // chance." A flat 1 percentage point per point, added directly to the
 // caster's own successChance before the roll (see game.gateway.ts's
-// rollSpellSuccess).
+// rollSpellSuccess). Reduced to 0.33 percentage points per point by a
+// later follow-up ask ("reduce the amount that intelligence increases the
+// chance a spell cast will work to .33 instead of 1% for each point").
 export function intelligenceSpellBonus(intelligence: number): number {
-  return intelligence;
+  return intelligence * 0.33;
 }
 
 // "The base damage that I have given for all offensive spells should

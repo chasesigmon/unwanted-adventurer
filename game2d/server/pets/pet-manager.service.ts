@@ -125,6 +125,18 @@ export class PetManagerService {
     this.pets.set(ownerUsername, { ...snapshot, size: snapshot.size ?? 'small', map, row, col });
   }
 
+  // A later follow-up ask: "give the player the ability to name their pet
+  // or tamed beast and it should persist" — PetSnapshot.name was already
+  // mutable (set to a default label at buy() above), just never had a
+  // player-facing way to change it. Same ownership/aliveness gate as
+  // setCommand above.
+  rename(ownerUsername: string, name: string): Pet | undefined {
+    const pet = this.pets.get(ownerUsername);
+    if (!pet || !pet.alive) return undefined;
+    pet.name = name;
+    return pet;
+  }
+
   setCommand(ownerUsername: string, command: PetCommand): Pet | undefined {
     const pet = this.pets.get(ownerUsername);
     if (!pet || !pet.alive) return undefined;

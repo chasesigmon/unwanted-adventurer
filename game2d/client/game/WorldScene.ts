@@ -103,6 +103,8 @@ import {
   KORTHO_DIREFELL_ROW,
   DIREFELL_KORTHO_ROW,
   DIREFELL_SIZE,
+  PORTAL_DUNGEON_MAPS,
+  PORTAL_DUNGEON_LEVEL_RANGES,
 } from '../../shared/maps.js';
 import { treePositionsFor } from '../../shared/trees.js';
 import { labyrinthWallPositions } from '../../shared/labyrinthMaze.js';
@@ -145,8 +147,6 @@ import {
   INVISIBILITY_SKILL,
   CREATE_DUPLICATE_SKILL,
   SPELL_ATTACK_RANGE_TILES,
-  DRINK_SKILL,
-  POUR_SKILL,
   FLIGHT_SKILL,
   FLIGHT_MOVE_COOLDOWN_FACTOR,
 } from '../../shared/skills.js';
@@ -168,6 +168,8 @@ import {
   bedPositionsFor,
   BED_REACH_TILES,
   isNearBench,
+  craftingTablePositionFor,
+  isNearCraftingTable,
   greatHallTableFootprint,
   greatHallChairPositionsFor,
   greatHallStagePlatform,
@@ -225,6 +227,7 @@ import {
 } from '../../shared/constants.js';
 import { DIRECTION_DELTAS } from '../../shared/directions.js';
 import { WAND_ITEM, isWandItem, isSwordItem } from '../../shared/equipment.js';
+import { inventoryWeightLbs, maxInventoryWeightLbs, OVERWEIGHT_MOVE_COOLDOWN_FACTOR } from '../../shared/inventory.js';
 import { questIconStateFor, activeQuestIdFor } from '../../shared/quests.js';
 import type { MapName, Race, Direction, MonsterKind, Gender, HairColor, SkinTone } from '../../shared/constants.js';
 import type {
@@ -254,6 +257,7 @@ import {
   SHOP_COUNTER_TEXTURE_KEY,
   CLASSROOM_SYMBOL_TEXTURE_KEYS,
   BENCH_TEXTURE_KEY,
+  CRAFTING_TABLE_TEXTURE_KEY,
   FIREBALL_TEXTURE_KEY,
   BOLT_TEXTURE_KEY,
   ARCANE_BOLT_TEXTURE_KEY,
@@ -359,7 +363,7 @@ import {
 import { logChatMessage, logCombatMessage, noteCombatActivity } from '../ui/log.js';
 import { showCenterToast } from '../ui/toast.js';
 import { updateRespawnOverlay } from '../ui/respawnOverlay.js';
-import { loadActionBarOnce } from '../ui/actionBar.js';
+import { loadActionBarsOnce } from '../ui/actionBars.js';
 import { closeAllModals, isInputCaptured, isMovementBlocked, refreshOpenModals, updateMapButtonVisibility } from '../ui/modalCore.js';
 import { refreshCharSheetIfOpen } from '../ui/charSheet.js';
 import { openCorpseModal, stackedItemsLabel, updateEatBrainsButton } from '../ui/corpseModal.js';
@@ -368,6 +372,7 @@ import { openChestModal } from '../ui/chestModal.js';
 import { openDroppedChestModal } from '../ui/droppedChestModal.js';
 import { openBedModal } from '../ui/bedModal.js';
 import { openBenchModal } from '../ui/benchModal.js';
+import { openCraftingModal } from '../ui/craftingModal.js';
 import { openShopModal } from '../ui/shopModal.js';
 import { openAuctionModal, registerAuctionStateListener } from '../ui/auctionModal.js';
 import { openTargetInfoModal } from '../ui/targetInfoModal.js';
@@ -491,6 +496,15 @@ export class WorldScene extends Phaser.Scene {
   // the group panel, but there's no reason world-clicking it shouldn't
   // also work the same way).
   private selectedPetId: string | null = null;
+  // A later follow-up ask: "make all of the village people selectable
+  // with unique names" — ambient townspeople/fishermen (see
+  // spawnTownspeople/spawnFishermen below) are purely decorative, client-
+  // only sprites with no server-side id to key off of the way a pet/
+  // corpse's own selection does; the label itself (each one's own unique
+  // generated name) doubles as the selection key since only one can ever
+  // be selected at a time. Same "not a real combat target, purely
+  // informational" reasoning as every other selection concept above.
+  private selectedVillagerLabel: string | null = null;
   // The decorative shop building standing behind each of Floro's shop
   // doors (item 13) — only populated while rendering the 'Floro' map
   // itself (the shop interiors don't need their own exterior rendered).
@@ -591,18 +605,31 @@ export class WorldScene extends Phaser.Scene {
   // sits still fishing, doesn't wander) — a slow drift within a small
   // radius plus the same gentle bob the water itself already animates
   // with is enough to read as "alive" without needing real boat-steering
-  // logic.
-  private static readonly FISHERMAN_COUNT = 3;
+  // logic. A later follow-up ask ("add a few more fisherman") bumped the
+  // count from 3 to 6, and ("make them occasionally move around") added
+  // nextMoveAt to drift the anchor itself every so often (see
+  // updateFishermen).
+  private static readonly FISHERMAN_COUNT = 6;
   private fishermen: Array<{
     canoeSprite: Phaser.GameObjects.Sprite;
     riderSprite: Phaser.GameObjects.Sprite;
     homeX: number;
     homeY: number;
+    nextMoveAt: number;
   }> = [];
   // Item 20's animated wave water — a separate reference from
   // korthoSeaSprites above (which still gets destroyed/cleared the same
   // way) purely so update() has a typed handle to scroll each frame.
   private korthoWaterSprite: Phaser.GameObjects.TileSprite | null = null;
+  // A later follow-up ask: "make the water look more shimmering since it
+  // is called 'The Shimmering Sea'" — a second copy of the same wave
+  // texture layered on top with additive blending, scrolling the OPPOSITE
+  // direction and faster than the base layer below plus a pulsing alpha,
+  // so light-colored wave crests cross the base pattern at a different
+  // phase and glint in and out — a classic layered-scroll shimmer trick,
+  // no new art needed. Kortho-only (the moat/Silverbranch Lake weren't
+  // part of the ask) — cleared alongside korthoSeaSprites above.
+  private korthoWaterShimmerSprite: Phaser.GameObjects.TileSprite | null = null;
   // Silverbranch Lake (a later follow-up ask) — same "sprites layered
   // over the base floor" shape as korthoSeaSprites above: dirt + sand
   // beach, an animated water fill, and per-tile island patches.
@@ -643,6 +670,11 @@ export class WorldScene extends Phaser.Scene {
   // from plain chairs) — Entrance Hall and common-room-only, see
   // shared/lighting.ts's benchPositionsFor.
   private benchSprites: Phaser.GameObjects.Sprite[] = [];
+  // A later follow-up ask: "Add a 'Crafting Shop'... create a crafting
+  // table on the right wall" — one fixed table per Crafting Shop interior
+  // (see shared/lighting.ts's craftingTablePositionFor), null everywhere
+  // else.
+  private craftingTableSprite: Phaser.GameObjects.Sprite | null = null;
   // The Dorms rooms' own 5 beds (a later follow-up ask) — clickable, see
   // bedPositionsFor.
   private bedSprites: Phaser.GameObjects.Sprite[] = [];
@@ -931,6 +963,7 @@ export class WorldScene extends Phaser.Scene {
       this.load.svg(key, `/${key}.svg`, { width: 20, height: 20 });
     }
     this.load.image(BENCH_TEXTURE_KEY, '/bench.png');
+    this.load.image(CRAFTING_TABLE_TEXTURE_KEY, '/crafting-table.png');
     this.load.image(FIREBALL_TEXTURE_KEY, '/fireball.png');
     this.load.image(BOLT_TEXTURE_KEY, '/bolt.png');
     this.load.image(ARCANE_BOLT_TEXTURE_KEY, '/arcane-bolt.png');
@@ -1080,12 +1113,15 @@ export class WorldScene extends Phaser.Scene {
         Boolean(hoveredTeacher?.getData('specializationGate')) ||
         Boolean(hoveredTeacher?.getData('houseChoiceGate')) ||
         ((hoveredTeacher?.getData('teachesSkills') as string[] | undefined)?.length ?? 0) > 0;
-      // A key cursor over any door or the treasure chest (a follow-up
-      // ask) — every door is resera-targetable now, not just the secret
-      // one (see the doorSprites click handler below).
-      const overLockable =
-        this.doorSprites.some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY)) ||
-        Boolean(this.chestSprite?.getBounds().contains(pointer.worldX, pointer.worldY));
+      // Doors used to share a key cursor with the treasure chest (a
+      // follow-up ask made every door resera-targetable, not just the
+      // secret one — see the doorSprites click handler below), but a later
+      // follow-up ask ("change the cursor when hovering over doors to a
+      // pointer instead of a key") split them apart — the chest alone
+      // still gets the key cursor, doors now read as a plain clickable
+      // pointer like every other interactive prop.
+      const overDoor = this.doorSprites.some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
+      const overChest = Boolean(this.chestSprite?.getBounds().contains(pointer.worldX, pointer.worldY));
       const overBed = this.bedSprites.some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
       // A follow-up ask: "the portals... should have a pointer" on hover
       // — same reasoning as teachers/vendors above, this handler
@@ -1110,9 +1146,16 @@ export class WorldScene extends Phaser.Scene {
       // — a plain pointer, not the bed's own SLEEP_CURSOR, since resting
       // on a bench (unlike sleeping) doesn't black out the screen.
       const overBench = this.benchSprites.some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
+      // A later follow-up ask: "make all of the village people selectable"
+      // — same plain pointer hint as every other clickable decorative prop
+      // above.
+      const overVillager = [...this.townspeople.map((p) => p.sprite), ...this.fishermen.map((f) => f.riderSprite)].some((s) =>
+        s.getBounds().contains(pointer.worldX, pointer.worldY)
+      );
+      const overCraftingTable = Boolean(this.craftingTableSprite?.getBounds().contains(pointer.worldX, pointer.worldY));
       this.game.canvas.style.cursor = overEnemy
         ? SWORD_CURSOR
-        : overLockable
+        : overChest
           ? KEY_CURSOR
           : overBed
             ? SLEEP_CURSOR
@@ -1120,7 +1163,7 @@ export class WorldScene extends Phaser.Scene {
                 ? 'pointer'
                 : overTeacher
                   ? 'help'
-                  : overVendor || overCorpse || overDroppedChest || overBench || overPortal
+                  : overVendor || overCorpse || overDroppedChest || overBench || overPortal || overDoor || overVillager || overCraftingTable
                     ? 'pointer'
                     : '';
     });
@@ -1218,6 +1261,16 @@ export class WorldScene extends Phaser.Scene {
     if (this.korthoWaterSprite) {
       this.korthoWaterSprite.tilePositionX += 0.15;
       this.korthoWaterSprite.tilePositionY = Math.sin(this.time.now / 900) * 2;
+    }
+    // Item 20 follow-up: "make the water look more shimmering" — the
+    // overlay scrolls the opposite way and faster than the base layer
+    // above, with its own alpha pulsing between ~0.15 and ~0.4, so bright
+    // wave-crest highlights sweep across the base pattern at a shifting
+    // phase and glint rather than sitting in lockstep with it.
+    if (this.korthoWaterShimmerSprite) {
+      this.korthoWaterShimmerSprite.tilePositionX -= 0.4;
+      this.korthoWaterShimmerSprite.tilePositionY = Math.sin(this.time.now / 600 + 1.5) * 3;
+      this.korthoWaterShimmerSprite.setAlpha(0.275 + Math.sin(this.time.now / 450) * 0.125);
     }
     // Silverbranch Lake's own animated water (a later follow-up ask:
     // "make it animated/interactive/moving") — same scroll+bob as
@@ -2254,6 +2307,16 @@ export class WorldScene extends Phaser.Scene {
     // local player's own sprite (see effectiveMoveCooldownMs's own
     // FLIGHT_MOVE_COOLDOWN_FACTOR doc comment).
     const flying = Boolean(sprite.getData('flightActive'));
+    // A later follow-up ask: "make [falcon and wyvern] look as though they
+    // are flapping their wings to fly so it appears more natural and
+    // smooth" — their own walk-animation row already IS a wing-flap cycle
+    // (see tools/gen-falcon-sprites.mjs's FLAP_POSES), but every other
+    // kind's walk anim is meant to stop dead the instant a step finishes
+    // (a static standing pose reads naturally for a grounded creature).
+    // For these two specifically, keep that same loop running once
+    // started instead of snapping to a single frozen frame below, so a
+    // hovering/following flyer never goes rigid mid-air between steps.
+    const keepFlapping = isFlyingBeastKind(kind as MonsterKind);
     if (!sprite.getData('isPunching')) {
       if (flying) sprite.setTexture(textureKeyFor(kind), idleFrameFor(kind, facing));
       else sprite.play(walkAnimKey(kind, facing), true);
@@ -2265,6 +2328,7 @@ export class WorldScene extends Phaser.Scene {
       duration: REMOTE_STEP_TWEEN_MS,
       onComplete: () => {
         if (sprite.getData('isPunching')) return; // let the swing animation keep playing/finish on its own
+        if (keepFlapping && !flying) return; // let the flap loop keep looping instead of freezing on a static frame
         sprite.anims.stop();
         sprite.setTexture(textureKeyFor(kind), idleFrameFor(kind, facing));
       },
@@ -2580,9 +2644,81 @@ export class WorldScene extends Phaser.Scene {
     return undefined;
   }
 
+  // Bug fix: "the NPC movement in Floro and Kortho... right now they are
+  // jumping from one part of the screen to another." moveOrSnap's own
+  // tween duration (REMOTE_STEP_TWEEN_MS) is calibrated for a single-tile
+  // step, same as a real player/monster's own movement — picking a
+  // completely random destination ANYWHERE on the street (the old
+  // randomTownStreetTile, still used as a fallback below) could be 20+
+  // tiles away, tweened over that same short fixed duration, which reads
+  // as an instant warp rather than walking. A short hop within a small
+  // radius of wherever they already are reads as natural ambling instead.
+  private randomNearbyStreetTile(mapName: MapName, fromRow: number, fromCol: number): { row: number; col: number } | undefined {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const row = Phaser.Math.Clamp(fromRow + Phaser.Math.Between(-3, 3), 4, TOWN_SIZE - 5);
+      const col = Phaser.Math.Clamp(fromCol + Phaser.Math.Between(-3, 3), 4, TOWN_SIZE - 5);
+      if (isShopBuildingBlocked(mapName, row, col)) continue;
+      if (mapName === 'Kortho' && isKorthoSeaBlocked(mapName, row, col)) continue;
+      return { row, col };
+    }
+    // Rare fallback (boxed in by buildings on every side) — a full-map
+    // pick is still better than never moving again.
+    return this.randomTownStreetTile(mapName);
+  }
+
+  // A short hop within Kortho's own sea band, same "nearby, not a warp"
+  // reasoning as randomNearbyStreetTile above — every tile in this band is
+  // already open water (see spawnFishermen's own unchecked Between call),
+  // so no blocked-tile retry is needed, just clamping to stay in bounds.
+  private randomNearbySeaTile(fromX: number, fromY: number): { x: number; y: number } {
+    const { row: fromRow, col: fromCol } = this.tileAt(fromX, fromY);
+    const row = Phaser.Math.Clamp(fromRow + Phaser.Math.Between(-3, 3), 4, TOWN_SIZE - 5);
+    const col = Phaser.Math.Clamp(fromCol + Phaser.Math.Between(-3, 3), KORTHO_SEA_COL_START, KORTHO_SEA_COL_END);
+    return this.tilePosition(row, col);
+  }
+
+  // A later follow-up ask: "make all of the village people selectable
+  // with unique names" — a small hand-picked name pool per gender (same
+  // axis townspeople/fishermen already vary their appearance on), drawn
+  // without replacement per map so nobody standing on the same street
+  // shares a name; falls back to a numbered variant only if a pool is
+  // ever fully exhausted (11 villagers max today against 12 names per
+  // pool, so this should be rare in practice).
+  private static readonly VILLAGER_MALE_NAMES = [
+    'Alaric', 'Bram', 'Cedric', 'Dorian', 'Edmund', 'Finnian', 'Godfrey', 'Hadrian', 'Ivo', 'Jasper', 'Corwin', 'Leland',
+  ] as const;
+  private static readonly VILLAGER_FEMALE_NAMES = [
+    'Aveline', 'Briar', 'Clara', 'Delphine', 'Elowen', 'Fiora', 'Greta', 'Hazel', 'Iris', 'Junia', 'Marigold', 'Nessa',
+  ] as const;
+  private usedVillagerNames = new Set<string>();
+
+  private randomVillagerName(gender: Gender): string {
+    const pool = gender === 'female' ? WorldScene.VILLAGER_FEMALE_NAMES : WorldScene.VILLAGER_MALE_NAMES;
+    const available = pool.filter((n) => !this.usedVillagerNames.has(n));
+    const name = available.length > 0 ? WorldScene.randomFrom(available) : `${WorldScene.randomFrom(pool)} ${Phaser.Math.Between(2, 99)}`;
+    this.usedVillagerNames.add(name);
+    return name;
+  }
+
   private destroyTownspeople(): void {
+    // CRITICAL bug fix: "everything froze... the graphics froze like the
+    // white wisps" on leaving Kortho/Floro — same root cause
+    // destroyEntitySprite's own doc comment already diagnosed for other
+    // players/monsters/NPCs, and renderMap's own tree/torch destroy loops
+    // already guard against (this was the one place that never got the
+    // memo): updateTownspeople drives each townsperson through a REAL
+    // Phaser tween (moveOrSnap), so leaving the map mid-tween and
+    // destroying the sprite without first killing its tween lets the
+    // tween's own next step throw against a destroyed target — an
+    // uncaught exception inside Phaser's tween-step halts ALL tween
+    // processing for the rest of the session, which is exactly why an
+    // unrelated system (the ambient wisps) also visibly froze, and why
+    // the player's own in-flight move tween never reached onComplete,
+    // permanently blocking movement until a full page refresh.
+    this.tweens.killTweensOf(this.townspeople.map((p) => p.sprite));
     for (const person of this.townspeople) person.sprite.destroy();
     this.townspeople = [];
+    this.usedVillagerNames.clear();
   }
 
   private spawnTownspeople(mapName: MapName): void {
@@ -2593,11 +2729,25 @@ export class WorldScene extends Phaser.Scene {
       // gender/skin/hair axes a real character can pick at creation, see
       // effectiveSpriteKind) rather than every one of them looking
       // identical.
-      const kind = effectiveSpriteKind('human', WorldScene.randomFrom(GENDERS), WorldScene.randomFrom(SKIN_TONES), WorldScene.randomFrom(HAIR_COLORS));
+      const gender = WorldScene.randomFrom(GENDERS);
+      const kind = effectiveSpriteKind('human', gender, WorldScene.randomFrom(SKIN_TONES), WorldScene.randomFrom(HAIR_COLORS));
       const pos = this.tilePosition(start.row, start.col);
-      const sprite = this.add.sprite(pos.x, pos.y, textureKeyFor(kind), idleFrameFor(kind, 'down')).setScale(CHAR_SCALE);
+      const name = this.randomVillagerName(gender);
+      const sprite = this.add
+        .sprite(pos.x, pos.y, textureKeyFor(kind), idleFrameFor(kind, 'down'))
+        .setScale(CHAR_SCALE)
+        .setInteractive();
       sprite.setData('row', start.row);
       sprite.setData('col', start.col);
+      // A later follow-up ask: "make all of the village people selectable
+      // with unique names" — same plain "handled entirely by its own
+      // pointerdown listener" shape every other decorative prop (vendor,
+      // corpse, pet) in this file already uses (see handleLeftClick's own
+      // hitVillager passthrough check).
+      sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (isInputCaptured() || !pointer.leftButtonDown()) return;
+        this.setVillagerTarget(name);
+      });
       this.townspeople.push({
         sprite,
         kind,
@@ -2609,15 +2759,17 @@ export class WorldScene extends Phaser.Scene {
   }
 
   // Called every frame from update() — each townsperson ambles to a
-  // fresh random street tile every few seconds (moveOrSnap handles the
-  // actual walk-cycle animation/facing/tween, same as a real remote
-  // player's own movement).
+  // nearby street tile every few seconds (moveOrSnap handles the actual
+  // walk-cycle animation/facing/tween, same as a real remote player's own
+  // movement) — see randomNearbyStreetTile's own doc comment for why
+  // "nearby" (not the old fully-random destination) is what actually
+  // fixed the "jumping from one part of the screen to another" bug.
   private updateTownspeople(mapName: MapName): void {
     if (this.townspeople.length === 0) return;
     const now = this.time.now;
     for (const person of this.townspeople) {
       if (now < person.nextMoveAt) continue;
-      const next = this.randomTownStreetTile(mapName);
+      const next = this.randomNearbyStreetTile(mapName, person.targetRow, person.targetCol);
       if (next) {
         person.targetRow = next.row;
         person.targetCol = next.col;
@@ -2628,18 +2780,27 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private destroyFishermen(): void {
+    // Same tween-before-destroy safety every other ambient/entity destroy
+    // path in this file needs (see destroyTownspeople's own doc comment
+    // on the exact failure mode) — these tweens target the plain tracking
+    // object (homeX/homeY), not a sprite directly, so this is defensive
+    // hygiene rather than a required crash-prevention fix, but cheap
+    // enough to just always do.
+    this.tweens.killTweensOf(this.fishermen);
     for (const fisherman of this.fishermen) {
       fisherman.canoeSprite.destroy();
       fisherman.riderSprite.destroy();
     }
     this.fishermen = [];
+    this.usedVillagerNames.clear();
   }
 
   // A later follow-up ask: "put some fisherman out in the water on
   // canoes in Kortho to make it more lively" — spread out across
   // Kortho's own sea band (KORTHO_SEA_COL_START..KORTHO_SEA_COL_END),
   // reusing the exact same canoe texture/facing-frame convention a real
-  // player's own boat already uses (see updateBoatVisual).
+  // player's own boat already uses (see updateBoatVisual). A later
+  // follow-up ask ("add a few more fisherman") bumped the count.
   private spawnFishermen(): void {
     for (let i = 0; i < WorldScene.FISHERMAN_COUNT; i++) {
       const row = Phaser.Math.Between(4, TOWN_SIZE - 5);
@@ -2647,26 +2808,47 @@ export class WorldScene extends Phaser.Scene {
       const pos = this.tilePosition(row, col);
       const facing: Facing = Math.random() < 0.5 ? 'left' : 'right';
       const canoeSprite = this.add.sprite(pos.x, pos.y, CANOE_TEXTURE_KEY, BOAT_FRAME_FOR_FACING[facing]);
-      const kind = effectiveSpriteKind('human', WorldScene.randomFrom(GENDERS), WorldScene.randomFrom(SKIN_TONES), WorldScene.randomFrom(HAIR_COLORS));
+      const gender = WorldScene.randomFrom(GENDERS);
+      const kind = effectiveSpriteKind('human', gender, WorldScene.randomFrom(SKIN_TONES), WorldScene.randomFrom(HAIR_COLORS));
+      const name = this.randomVillagerName(gender);
       const riderSprite = this.add
         .sprite(pos.x, pos.y, textureKeyFor(kind), idleFrameFor(kind, facing === 'left' ? 'left' : 'right'))
         .setScale(CHAR_SCALE)
-        .setDepth(canoeSprite.depth + 0.01);
-      this.fishermen.push({ canoeSprite, riderSprite, homeX: pos.x, homeY: pos.y });
+        .setDepth(canoeSprite.depth + 0.01)
+        .setInteractive();
+      // Same "make all of the village people selectable with unique
+      // names" ask as townspeople above — the rider (not the bare canoe)
+      // is the clickable part, matching how a real player's own boat
+      // still shows the rider on top.
+      riderSprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (isInputCaptured() || !pointer.leftButtonDown()) return;
+        this.setVillagerTarget(name);
+      });
+      this.fishermen.push({ canoeSprite, riderSprite, homeX: pos.x, homeY: pos.y, nextMoveAt: this.time.now + Phaser.Math.Between(4000, 12000) });
     }
   }
 
-  // Called every frame from update() — a fisherman stays anchored near
-  // their own spot (a real fisherman sits still fishing, doesn't wander
-  // the way townspeople do above), just a gentle bob matching the sea's
-  // own animated water beneath them so they read as floating on it
-  // rather than pasted on top.
+  // Called every frame from update() — a fisherman mostly sits still
+  // fishing (a gentle bob matching the sea's own animated water beneath
+  // them, so they read as floating on it rather than pasted on top), but
+  // a later follow-up ask ("make them occasionally move around, naturally
+  // and smooth") has them drift to a nearby spot every so often — a slow
+  // tween on the plain homeX/homeY anchor itself (not the sprites
+  // directly), which this same per-frame loop already reads every tick to
+  // position both sprites, so the drift and the bob compose automatically
+  // without any extra bookkeeping.
   private updateFishermen(): void {
     if (this.fishermen.length === 0) return;
+    const now = this.time.now;
     for (const fisherman of this.fishermen) {
-      const bobY = Math.sin(this.time.now / 900 + fisherman.homeX) * 2;
+      const bobY = Math.sin(now / 900 + fisherman.homeX) * 2;
       fisherman.canoeSprite.setPosition(fisherman.homeX, fisherman.homeY + bobY);
       fisherman.riderSprite.setPosition(fisherman.homeX, fisherman.homeY + bobY);
+      if (now >= fisherman.nextMoveAt) {
+        const next = this.randomNearbySeaTile(fisherman.homeX, fisherman.homeY);
+        this.tweens.add({ targets: fisherman, homeX: next.x, homeY: next.y, duration: 4000, ease: 'Sine.easeInOut' });
+        fisherman.nextMoveAt = now + Phaser.Math.Between(10000, 20000);
+      }
     }
   }
 
@@ -2710,10 +2892,13 @@ export class WorldScene extends Phaser.Scene {
       this.spawnFishermen();
     }
 
-    // A lock target/Blockman selection from the PREVIOUS map never
-    // applies here.
+    // A lock target/Blockman/villager selection from the PREVIOUS map
+    // never applies here — townspeople/fishermen are destroyed and
+    // respawned wholesale above, so a lingering selection would show a
+    // name with no sprite behind it.
     if (this.lockTarget) this.clearLockTarget();
     if (this.selectedStoneBlockId) this.clearBlockmanTarget();
+    if (this.selectedVillagerLabel) this.clearVillagerTarget();
 
     // Doors + the secret room's own treasure chest (item 4's follow-up
     // fix: "the teacher and desk disappeared" when resera re-rendered
@@ -2991,6 +3176,7 @@ export class WorldScene extends Phaser.Scene {
     for (const sprite of this.korthoSeaSprites) sprite.destroy();
     this.korthoSeaSprites = [];
     this.korthoWaterSprite = null;
+    this.korthoWaterShimmerSprite = null;
     for (const sprite of this.silverbranchLakeSprites) sprite.destroy();
     this.silverbranchLakeSprites = [];
     this.silverbranchLakeWaterSprite = null;
@@ -3383,6 +3569,23 @@ export class WorldScene extends Phaser.Scene {
         .setDepth(-0.98);
       this.korthoSeaSprites.push(waterSprite);
       this.korthoWaterSprite = waterSprite;
+      // Item 20 follow-up: "make the water look more shimmering" — see
+      // korthoWaterShimmerSprite's own doc comment.
+      const shimmerSprite = this.add
+        .tileSprite(
+          KORTHO_SEA_COL_START * TILE_SIZE,
+          0,
+          (KORTHO_SEA_COL_END - KORTHO_SEA_COL_START + 1) * TILE_SIZE,
+          TOWN_SIZE * TILE_SIZE,
+          'water-wave'
+        )
+        .setOrigin(0, 0)
+        .setDepth(-0.97)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(0xdff6ff)
+        .setAlpha(0.25);
+      this.korthoSeaSprites.push(shimmerSprite);
+      this.korthoWaterShimmerSprite = shimmerSprite;
       this.korthoSeaSprites.push(
         this.add
           .tileSprite(
@@ -3592,7 +3795,12 @@ export class WorldScene extends Phaser.Scene {
       // generic door sprite here; this just adds the actual cave-mouth
       // art. South-facing (unrotated) matches a player standing inside
       // Great Plains, approaching this north-edge exit from the south.
-      this.addCaveEntranceSprite(0, GREAT_PLAINS_MID_COL, 'south');
+      // A later follow-up ask ("full width" walkthrough) widened this
+      // connection's own walkable band to match Hexstone Cavern's/
+      // Brimstone Cave's (see GREAT_PLAINS_LABYRINTH_HALF_WIDTH_TILES) —
+      // the same `wide` visual scale bump keeps the cosmetic cave-mouth
+      // consistent with the other now-equally-wide connections.
+      this.addCaveEntranceSprite(0, GREAT_PLAINS_MID_COL, 'south', true);
     } else if (mapName === 'Hexstone Cavern') {
       // A later follow-up ask ("remove the dirt road from hexstone
       // cavern") removed the reciprocal thin dirt patch that used to sit
@@ -3610,8 +3818,9 @@ export class WorldScene extends Phaser.Scene {
       // door and make it a cave entrance that faces north") — its own
       // MapExit already has `kind: 'open'` (see shared/maps.ts). North-
       // facing matches a player standing inside the Labyrinth,
-      // approaching this south-edge exit from the north.
-      this.addCaveEntranceSprite(LABYRINTH_SIZE - 1, LABYRINTH_MID_COL, 'north');
+      // approaching this south-edge exit from the north. Same later
+      // "full width" widening as the reciprocal Great Plains side above.
+      this.addCaveEntranceSprite(LABYRINTH_SIZE - 1, LABYRINTH_MID_COL, 'north', true);
     } else if (mapName === 'Mystical Timberland') {
       // Same small entrance-patch treatment as Kortho/Floro above (a
       // later follow-up ask: "make the entrance to it have a similar
@@ -3825,6 +4034,27 @@ export class WorldScene extends Phaser.Scene {
       this.benchSprites.push(bench);
     }
 
+    // A later follow-up ask: "Add a 'Crafting Shop'... create a crafting
+    // table on the right wall of each Crafting Shop... collision, cursor
+    // pointer on hover... when a player gets close enough and clicks on
+    // the crafting table then a modal should open."
+    this.craftingTableSprite?.destroy();
+    this.craftingTableSprite = null;
+    const craftingTablePos = craftingTablePositionFor(mapName);
+    if (craftingTablePos) {
+      const pos = this.tilePosition(craftingTablePos.row, craftingTablePos.col);
+      const table = this.add.sprite(pos.x, pos.y, CRAFTING_TABLE_TEXTURE_KEY).setOrigin(0.5, 0.75).setDepth(-0.5).setInteractive();
+      table.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (isInputCaptured() || !pointer.leftButtonDown()) return;
+        if (!isNearCraftingTable(mapName, this.row, this.col)) {
+          logCombatMessage("You're too far away to reach the crafting table.");
+          return;
+        }
+        openCraftingModal();
+      });
+      this.craftingTableSprite = table;
+    }
+
     // The Dorms rooms' own 5 beds (a later follow-up ask) — clickable,
     // opens a sleep-confirmation modal if the player's within
     // BED_REACH_TILES, otherwise just a message (matching the server's
@@ -3899,9 +4129,20 @@ export class WorldScene extends Phaser.Scene {
       this.tweens.add({ targets: sprite, angle: 360, duration: 5000, repeat: -1, ease: 'Linear' });
       // A later follow-up ask's own return portal (each dungeon has just
       // the one) reads better labeled by where it actually goes than a
-      // numbered "Portal 1" — the 4th floor's own 4 still need the
-      // number since all 4 look identical and lead to different places.
-      const label = mapName === 'Grimoak Castle 4th Floor' ? `Portal ${index + 1}` : 'Portal to Grimoak Castle';
+      // numbered "Portal 1". A later follow-up ask ("update the portal's
+      // title to be the level of monsters they have, example: 'Monsters
+      // 10 - 15'") replaced the 4th floor's own bare numbering with the
+      // dungeon's own level band it leads to — still distinguishable from
+      // each other (each band is different), and now actually useful
+      // information instead of an arbitrary index.
+      const dungeonName = PORTAL_DUNGEON_MAPS[index] as (typeof PORTAL_DUNGEON_MAPS)[number] | undefined;
+      const levelRange = dungeonName ? PORTAL_DUNGEON_LEVEL_RANGES[dungeonName] : undefined;
+      const label =
+        mapName === 'Grimoak Castle 4th Floor'
+          ? levelRange
+            ? `Monsters ${levelRange[0]} - ${levelRange[1]}`
+            : `Portal ${index + 1}`
+          : 'Portal to Grimoak Castle';
       sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (isInputCaptured() || !pointer.leftButtonDown()) return;
         this.setLockTarget({ kind: 'door', map: mapName, row, col }, label);
@@ -4048,7 +4289,23 @@ export class WorldScene extends Phaser.Scene {
       // them above the floor (-1) but below every character.
       const sprite =
         exit.kind === 'stairs'
-          ? this.add.sprite(pos.x, pos.y, STAIRS_TEXTURE_KEY).setDepth(-0.5)
+          ? this.add
+              .sprite(pos.x, pos.y, STAIRS_TEXTURE_KEY)
+              .setDepth(-0.5)
+              // A later follow-up ask: "make the stairs a little wider on
+              // each floor" — same modest horizontal scale bump
+              // addCaveEntranceSprite's own `wide` flag already uses for
+              // "make X wider" asks elsewhere, applied to every stairs
+              // sprite in the castle (not just floor 2's new one).
+              .setScale(1.35, 1)
+              // Every stairs exit used to sit on a south-facing wall (the
+              // texture itself is drawn face-on for that orientation) —
+              // floor 2's own new stairs (a later follow-up ask moved them
+              // to the north wall instead, see shared/maps.ts's
+              // FLOOR2_NORTH_STAIRS_COL) is the first one approached from
+              // the opposite side, so it needs a 180° flip to still read
+              // as a staircase leading further in rather than backwards.
+              .setAngle(exit.direction === 'north' ? 180 : 0)
           : this.add.sprite(pos.x, pos.y, GRAND_DOOR_TEXTURE_KEY).setDepth(-0.5);
 
       // EVERY door is targetable/resera-able now (a follow-up ask: "make
@@ -4139,6 +4396,7 @@ export class WorldScene extends Phaser.Scene {
     this.selectedStoneBlockId = null;
     this.selectedCorpseId = null;
     this.selectedPetId = null;
+    this.selectedVillagerLabel = null;
     updateLockTargetPanel(label);
   }
 
@@ -4163,6 +4421,7 @@ export class WorldScene extends Phaser.Scene {
     this.lockTarget = null;
     this.selectedCorpseId = null;
     this.selectedPetId = null;
+    this.selectedVillagerLabel = null;
     updateTargetPanel('Blockman', 1, hp, maxHp);
   }
 
@@ -4182,6 +4441,7 @@ export class WorldScene extends Phaser.Scene {
     this.lockTarget = null;
     this.selectedStoneBlockId = null;
     this.selectedPetId = null;
+    this.selectedVillagerLabel = null;
     updateLockTargetPanel(label);
   }
 
@@ -4205,11 +4465,33 @@ export class WorldScene extends Phaser.Scene {
     this.lockTarget = null;
     this.selectedStoneBlockId = null;
     this.selectedCorpseId = null;
+    this.selectedVillagerLabel = null;
     updateTargetPanel(label, level, hp, maxHp);
   }
 
   private clearPetTarget(): void {
     this.selectedPetId = null;
+    hideTargetPanel();
+  }
+
+  // An ambient townsperson/fisherman "target" (a later follow-up ask:
+  // "make all of the village people selectable with unique names") — same
+  // top-left panel a door/chest's own lockTarget uses (no hp bar, just a
+  // name — these are purely decorative, not real combat targets), mutually
+  // exclusive with every other selection concept in the scene.
+  private setVillagerTarget(label: string): void {
+    this.selectedVillagerLabel = label;
+    this.targetKind = null;
+    this.targetId = null;
+    this.lockTarget = null;
+    this.selectedStoneBlockId = null;
+    this.selectedCorpseId = null;
+    this.selectedPetId = null;
+    updateLockTargetPanel(label);
+  }
+
+  private clearVillagerTarget(): void {
+    this.selectedVillagerLabel = null;
     hideTargetPanel();
   }
 
@@ -4245,7 +4527,7 @@ export class WorldScene extends Phaser.Scene {
     const pos = this.tilePosition(player.row, player.col);
     this.player.setPosition(pos.x, pos.y);
     setMyProfile(player);
-    loadActionBarOnce(player.username);
+    loadActionBarsOnce(player.username);
     updateStatusBar();
     updateMapButtonVisibility(Boolean(player.mapUnlocked));
     updateWorldLabel(player.map);
@@ -5882,6 +6164,54 @@ export class WorldScene extends Phaser.Scene {
     return null;
   }
 
+  // The Tab hotkey (a later follow-up ask: "capture the tab button...
+  // try to select the closest monster or player... if there are none
+  // nearby on screen... show a tooltip message... select the closest one
+  // first... pressing tab again should cycle to the next closest target
+  // and so on until it starts back at the first"). Recomputed fresh from
+  // the CURRENT selection every press (rather than tracking a separate
+  // "current index" field that could go stale the instant a monster died,
+  // moved off-screen, or the player moved) — sorted nearest-to-farthest
+  // from the player, with a screen-position (top-left-most first) tie-
+  // break for anything at an equal distance. Only monsters and
+  // (PVP-eligible) other players count as "possible enemies" here — NPCs
+  // are deliberately excluded, same as findTargetableAt's own click
+  // priority order treats them differently.
+  cycleTabTarget(): void {
+    const view = this.cameras.main.worldView;
+    const candidates: Array<{ kind: 'player' | 'monster'; id: string; sprite: Phaser.GameObjects.Sprite; dist: number }> = [];
+    for (const [id, sprite] of this.monsterSprites) {
+      if (!view.contains(sprite.x, sprite.y)) continue;
+      candidates.push({ kind: 'monster', id, sprite, dist: Phaser.Math.Distance.Between(this.player.x, this.player.y, sprite.x, sprite.y) });
+    }
+    for (const [username, sprite] of this.otherPlayers) {
+      if (!view.contains(sprite.x, sprite.y)) continue;
+      // Same PVP eligibility the sword-cursor hover check (this.input's
+      // own pointermove handler) already uses for "is this player even a
+      // possible enemy right now."
+      if ((myProfile?.level ?? 0) < PVP_MIN_LEVEL) continue;
+      if (((sprite.getData('level') as number | undefined) ?? 0) < PVP_MIN_LEVEL) continue;
+      if (!isPvpAllowedMap(this.currentMap)) continue;
+      if ((myProfile?.party ?? []).includes(username)) continue;
+      candidates.push({ kind: 'player', id: username, sprite, dist: Phaser.Math.Distance.Between(this.player.x, this.player.y, sprite.x, sprite.y) });
+    }
+    if (candidates.length === 0) {
+      showCenterToast('No targets nearby.');
+      return;
+    }
+    candidates.sort((a, b) => {
+      if (a.dist !== b.dist) return a.dist - b.dist;
+      // Tie-break: top-left-most on screen first ("it should be selected
+      // top left").
+      if (a.sprite.y !== b.sprite.y) return a.sprite.y - b.sprite.y;
+      return a.sprite.x - b.sprite.x;
+    });
+    const currentKey = this.targetKind && this.targetId ? `${this.targetKind}:${this.targetId}` : null;
+    const currentIndex = currentKey ? candidates.findIndex((c) => `${c.kind}:${c.id}` === currentKey) : -1;
+    const next = candidates[currentIndex === -1 ? 0 : (currentIndex + 1) % candidates.length]!;
+    this.setTarget(next.kind, next.id, next.sprite);
+  }
+
   private lastClickKey: string | null = null;
   private lastClickAt = 0;
   private static readonly DOUBLE_CLICK_MS = 350;
@@ -5959,6 +6289,13 @@ export class WorldScene extends Phaser.Scene {
       // selection (a later follow-up ask).
       const hitPet = [...this.petSprites.values()].some((s) => s.getBounds().contains(pointer.worldX, pointer.worldY));
       if (!hitPet && this.selectedPetId) this.clearPetTarget();
+      // Same "already handled by its own pointerdown handler on this SAME
+      // click, don't immediately undo it" reasoning for an ambient
+      // townsperson/fisherman selection (a later follow-up ask).
+      const hitVillager = [...this.townspeople.map((p) => p.sprite), ...this.fishermen.map((f) => f.riderSprite)].some((s) =>
+        s.getBounds().contains(pointer.worldX, pointer.worldY)
+      );
+      if (!hitVillager && this.selectedVillagerLabel) this.clearVillagerTarget();
       return;
     }
     this.setTarget(found.kind, found.id, found.sprite);
@@ -5982,6 +6319,7 @@ export class WorldScene extends Phaser.Scene {
     this.selectedStoneBlockId = null;
     this.selectedCorpseId = null;
     this.selectedPetId = null;
+    this.selectedVillagerLabel = null;
     this.targetKind = kind;
     this.targetId = id;
     const label = (sprite.getData('label') as string | undefined) ?? id;
@@ -6010,7 +6348,9 @@ export class WorldScene extends Phaser.Scene {
   // all three covers "is anything selected right now" regardless of
   // which kind it is.
   hasSelection(): boolean {
-    return Boolean(this.targetKind || this.lockTarget || this.selectedStoneBlockId || this.selectedCorpseId || this.selectedPetId);
+    return Boolean(
+      this.targetKind || this.lockTarget || this.selectedStoneBlockId || this.selectedCorpseId || this.selectedPetId || this.selectedVillagerLabel
+    );
   }
 
   clearSelection(): void {
@@ -6019,6 +6359,7 @@ export class WorldScene extends Phaser.Scene {
     if (this.selectedStoneBlockId) this.clearBlockmanTarget();
     if (this.selectedCorpseId) this.clearCorpseTarget();
     if (this.selectedPetId) this.clearPetTarget();
+    if (this.selectedVillagerLabel) this.clearVillagerTarget();
   }
 
   // A wholly separate targeting concept from targetKind/targetId above —
@@ -6051,14 +6392,18 @@ export class WorldScene extends Phaser.Scene {
     return this.targetItemName;
   }
 
-  // Drink/pour/irrigo all resolve the targeted item's CURRENT index fresh
-  // (see targetItemName's own doc comment) and apply the same shape of
-  // ack back onto myProfile. Irrigo's own message is ALSO toasted (a
-  // later follow-up ask: "messages... even if a modal like inventory is
-  // open") since casting it is most likely to happen with the Inventory
-  // modal open (that's how its target gets picked in the first place),
-  // where the plain combat-log line would be hidden behind the modal.
-  private useItemTargetedSkill(skillName: string): void {
+  // Irrigo resolves the targeted item's CURRENT index fresh (see
+  // targetItemName's own doc comment) and applies the ack back onto
+  // myProfile. Its own message is ALSO toasted (a later follow-up ask:
+  // "messages... even if a modal like inventory is open") since casting it
+  // is most likely to happen with the Inventory modal open (that's how
+  // its target gets picked in the first place), where the plain combat-log
+  // line would be hidden behind the modal. Drink/pour used to share this
+  // same path as skills, but item 22's follow-up removed them as Skills-
+  // modal entries entirely — they're plain inventory actions now (see
+  // inventoryEquipment.ts's own Drink/Pour out buttons, calling
+  // network.drinkItem/pourItem directly), so this is irrigo-only now.
+  private useItemTargetedSkill(): void {
     if (!myProfile || !this.targetItemName) {
       logCombatMessage('Select an item in your inventory first.');
       return;
@@ -6069,16 +6414,10 @@ export class WorldScene extends Phaser.Scene {
       this.clearItemTarget();
       return;
     }
-    const action =
-      skillName === DRINK_SKILL
-        ? this.network.drinkItem(itemIndex)
-        : skillName === POUR_SKILL
-          ? this.network.pourItem(itemIndex)
-          : this.network.castIrrigo(itemIndex);
-    void action.then((ack) => {
+    void this.network.castIrrigo(itemIndex).then((ack) => {
       if (ack.message) {
         logCombatMessage(ack.message);
-        if (skillName === WATERFILL_SKILL) showCenterToast(ack.message);
+        showCenterToast(ack.message);
       }
       if (!ack.ok || !myProfile) return;
       setMyProfile({
@@ -6147,7 +6486,14 @@ export class WorldScene extends Phaser.Scene {
     // STARTING_ATTRIBUTE) — only points ABOVE that baseline speed you up.
     const dexterity = myProfile?.dexterity ?? 1;
     const dexReduction = Math.max(0, dexterity - 1) * WorldScene.DEX_MOVE_SPEED_PERCENT_PER_POINT;
-    return Math.round(base * Math.max(WorldScene.MIN_MOVE_COOLDOWN_FACTOR, 1 - dexReduction));
+    base = Math.round(base * Math.max(WorldScene.MIN_MOVE_COOLDOWN_FACTOR, 1 - dexReduction));
+    // Item 29: "if the player goes over their max weight... slow the
+    // player's movement speed down considerably" — mirrors the server's own
+    // shared/skills.ts effectiveMoveCooldownMs exactly (same factor).
+    if (myProfile && inventoryWeightLbs(myProfile.inventory) > maxInventoryWeightLbs(myProfile.strength, myProfile.level)) {
+      base = Math.round(base * OVERWEIGHT_MOVE_COOLDOWN_FACTOR);
+    }
+    return base;
   }
 
   // Lucem/celeritas's own ack-based cast (a later follow-up ask,
@@ -6291,13 +6637,12 @@ export class WorldScene extends Phaser.Scene {
       this.castToggleSpell(() => this.network.castEnhanceDamage());
       return;
     }
-    // Drink/pour/irrigo (items 7, 8 & 11's follow-up asks) act on a
-    // targeted INVENTORY item, not a player/npc/monster — a wholly
-    // separate targeting concept (see setItemTarget, driven by clicking a
-    // fillable item in the Inventory modal) from targetKind/targetId
-    // below.
-    if (skillName === DRINK_SKILL || skillName === POUR_SKILL || skillName === WATERFILL_SKILL) {
-      this.useItemTargetedSkill(skillName);
+    // Irrigo (items 7, 8 & 11's follow-up asks) acts on a targeted
+    // INVENTORY item, not a player/npc/monster — a wholly separate
+    // targeting concept (see setItemTarget, driven by clicking a fillable
+    // item in the Inventory modal) from targetKind/targetId below.
+    if (skillName === WATERFILL_SKILL) {
+      this.useItemTargetedSkill();
       return;
     }
     // Identify (a later follow-up ask) — same "targeted inventory item"

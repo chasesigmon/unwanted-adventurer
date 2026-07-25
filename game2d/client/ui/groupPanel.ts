@@ -5,7 +5,7 @@
 // updateGroupPanel with fresh data on every map:state, so this always
 // reflects live server state rather than needing its own polling.
 import { network } from '../state.js';
-import { logCombatMessage } from './log.js';
+import { logCombatMessage, logAckMessage } from './log.js';
 import { repositionTargetPanel } from './targetPanel.js';
 import {
   FOLLOWER_EQUIPMENT_SLOTS,
@@ -71,12 +71,12 @@ function buildFollowerItemsSection(
   const section = document.createElement('div');
   section.className = 'group-member-items';
 
-  const run = (action: () => Promise<{ ok: boolean; message?: string }>) => {
+  const run = (action: () => Promise<{ ok: boolean; message?: string; full?: boolean }>) => {
     if (sendingCommand) return;
     sendingCommand = true;
     action()
       .then((ack) => {
-        if (!ack.ok && ack.message) logCombatMessage(ack.message);
+        if (!ack.ok) logAckMessage(ack);
       })
       .finally(() => {
         sendingCommand = false;
@@ -152,7 +152,12 @@ function buildMemberCard(
   expText: string | undefined,
   onCommand: (command: PetCommand) => void,
   itemsSection: HTMLDivElement,
-  onRemove?: () => void
+  onRemove?: () => void,
+  // A later follow-up ask: "give the player the ability to name their pet
+  // or tamed beast and it should persist" — animated monsters aren't part
+  // of that ask, so onRename is simply absent for their own card, same
+  // "not every card gets every action" shape onRemove already uses above.
+  onRename?: (name: string) => void
 ): HTMLDivElement {
   const card = document.createElement('div');
   card.className = 'group-member';
@@ -161,6 +166,36 @@ function buildMemberCard(
   nameEl.className = 'group-member-name';
   nameEl.textContent = alive ? name : `${name} — fallen`;
   card.appendChild(nameEl);
+
+  if (onRename) {
+    const renameRow = document.createElement('div');
+    renameRow.className = 'group-member-rename-row';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.maxLength = 24;
+    input.placeholder = 'New name...';
+    input.disabled = !alive;
+    const renameBtn = document.createElement('button');
+    renameBtn.type = 'button';
+    renameBtn.textContent = 'Rename';
+    renameBtn.disabled = !alive;
+    renameBtn.addEventListener('click', () => {
+      const trimmed = input.value.trim();
+      if (!trimmed || sendingCommand) return;
+      sendingCommand = true;
+      Promise.resolve(onRename(trimmed)).finally(() => {
+        sendingCommand = false;
+        input.value = '';
+      });
+    });
+    // Enter in the input submits, same convenience the chat input offers.
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') renameBtn.click();
+    });
+    renameRow.appendChild(input);
+    renameRow.appendChild(renameBtn);
+    card.appendChild(renameRow);
+  }
 
   const hpBar = document.createElement('div');
   hpBar.className = 'group-member-hp-bar';
@@ -284,6 +319,11 @@ export function updateGroupPanel(
         () =>
           network.removePet().then((ack) => {
             if (!ack.ok && ack.message) logCombatMessage(ack.message);
+          }),
+        (name) =>
+          network.renamePet(name).then((ack) => {
+            if (!ack.ok && ack.message) logCombatMessage(ack.message);
+            else if (ack.ok && ack.pet) updateGroupPanel(ack.pet, animatedMonsters, currentTamedBeast);
           })
       )
     );
@@ -306,6 +346,11 @@ export function updateGroupPanel(
         () =>
           network.removeTamedBeast().then((ack) => {
             if (!ack.ok && ack.message) logCombatMessage(ack.message);
+          }),
+        (name) =>
+          network.renameTamedBeast(name).then((ack) => {
+            if (!ack.ok && ack.message) logCombatMessage(ack.message);
+            else if (ack.ok && ack.tamedBeast) updateGroupPanel(currentPet, animatedMonsters, ack.tamedBeast);
           })
       )
     );
