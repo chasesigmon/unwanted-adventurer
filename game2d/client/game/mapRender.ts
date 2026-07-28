@@ -28,6 +28,84 @@ export const CLASSROOM_ZOOM = 3;
 // directly rather than needing its own constant.
 export const COMMON_ROOM_ZOOM = 1.4;
 export const DORM_ZOOM = 3.1;
+
+// A big follow-up ask: a third zoom state — real first-person, not just a
+// tighter top-down camera (see WorldScene's own enterFirstPerson/
+// exitFirstPerson and its raycast render pass). Tuned to this game's
+// existing chunky 32px tile art rather than a photorealistic FOV/ray
+// density — see each constant's own doc comment.
+// 66 degrees, the classic Wolfenstein/DOOM-era FOV — wide enough to feel
+// like looking around, narrow enough that distant tiles don't warp at the
+// screen edges the way a genuinely wide FOV would on flat-shaded
+// (untextured) walls.
+export const FP_FOV_RAD = (66 * Math.PI) / 180;
+// How far (in tiles) the raycaster bothers marching/rendering — matches
+// this project's other "reach" numbers (spell ranges top out around 7-10
+// tiles) rather than the whole map; distance-based shading fades a wall
+// toward the floor/sky color well before this, so raising it further
+// wouldn't change what's actually visible, just how many empty DDA steps
+// get walked past on a long open sightline.
+export const FP_MAX_RENDER_DISTANCE_TILES = 20;
+// One ray per this many device pixels of canvas width, not one ray per
+// physical pixel — keeps the per-frame ray count in the low hundreds
+// regardless of window size, and the resulting slightly-chunky vertical
+// wall strips read as an intentional retro style matching the rest of
+// this game's pixel art rather than a performance compromise.
+export const FP_RAY_STRIDE_PX = 4;
+// The angular tolerance (each side of dead-center) a billboard is still
+// considered "in view" for — kept slightly wider than the raw half-FOV so
+// a monster/tree just at the edge of the rendered wall strips doesn't pop
+// in/out of existence one frame before its own wall backdrop would.
+export const FP_BILLBOARD_FOV_PAD_RAD = (4 * Math.PI) / 180;
+// Radians of look-rotation per pixel of raw Pointer-Lock `movementX` —
+// tuned by feel (a full 360° turn takes a few slow mouse-pad sweeps, not
+// one twitch) rather than derived from anything else in this file.
+export const FP_MOUSE_LOOK_SENSITIVITY = 0.0025;
+// The tile distance at which a billboarded entity renders at exactly its
+// own normal top-down scale (see projectFirstPersonBillboard) — roughly
+// "just outside melee range," so anything closer looms larger (as real
+// perspective would) and anything farther shrinks, rather than every
+// entity rendering flatly at one fixed size regardless of distance like
+// the ordinary top-down view does today.
+// Bug fix: a follow-up report ("monsters & NPCs should appear a little
+// closer... compared to now" + "the shopkeeper appeared really far away")
+// found 1.5 read as too small/distant at ordinary conversation/shop-
+// counter range — bumped so a nearby NPC/monster fills a more believable
+// share of the screen without needing melee-range closeness first.
+export const FP_BILLBOARD_REFERENCE_DISTANCE_TILES = 2.75;
+// Caps how large a billboard is ever allowed to render (as a multiple of
+// its own normal top-down scale) — without this, an entity standing
+// right next to the player (perpDistance approaching 0) would blow up
+// toward infinite scale.
+export const FP_BILLBOARD_MAX_SCALE_MULTIPLIER = 3.5;
+// Bug fix: sampling the wall pass's per-column distance at the entity's
+// own EXACT column (a single ray) caused nearby monsters/NPCs to flicker
+// in and out of view as they walked (a slightly different column landing
+// on/off a wall-adjacent tile edge frame to frame) and made anything just
+// past a tree/wall corner vanish outright even when clearly visible past
+// it. Sampling a small spread of neighboring columns and using the
+// FARTHEST of them (most lenient) smooths both problems out — a real
+// wall still reliably occludes (every column across its own width agrees
+// it's there), but a single grazing corner no longer flickers an entity
+// behind it in and out of existence.
+export const FP_OCCLUSION_COLUMN_SPREAD = 3;
+// A small forgiveness margin on top of the sampled wall distance itself —
+// an entity standing essentially AT a doorway/wall-edge shouldn't pop out
+// of view from one pixel of parallax error in the distance sampling.
+export const FP_OCCLUSION_MARGIN_TILES = 0.5;
+// How far (in device pixels) the horizon/billboards can shift for "look
+// up/down" (a follow-up ask) — this is a 2.5D raycaster with no real
+// vertical geometry, so pitch is the classic "shift the horizon line and
+// clip" trick rather than true 3D, same honest "for now" tradeoff as the
+// flat-shaded (untextured) walls. Clamped well short of the full screen
+// half-height so the illusion never inverts on itself.
+export const FP_MAX_PITCH_OFFSET_PX = 220;
+// Radians... no, PIXELS of vertical Pointer-Lock movementY per pixel of
+// pitch offset — 1:1 feels the most direct/natural for a "look up/down"
+// drag, unlike yaw (which needs its own radians-per-pixel conversion
+// since it's an angle, not a screen offset).
+export const FP_PITCH_SENSITIVITY = 1;
+
 export const TREE_TEXTURE_KEY = 'tree';
 // Silverbranch Road's own trees (a later follow-up ask: "trees on the
 // grass with silver branches... to match the naming theme of the road")
@@ -487,4 +565,291 @@ export function drawHpBar(bar: Phaser.GameObjects.Graphics, hp: number, maxHp: n
   const ratio = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
   const color = ratio > 0.5 ? 0x3ecf5e : ratio > 0.25 ? 0xd9a53c : 0xd9403c;
   drawStatBar(bar, ratio, color);
+}
+
+// ---------- First-person raycasting (a big follow-up ask: "make another
+// zoom option that takes the player into first person... everything
+// should be to scale") — a real Wolfenstein/DOOM-style raycaster, the only
+// way to get genuine distance-based scale out of this game's otherwise
+// 100% flat top-down rendering. All positions here are in TILE units
+// (row/col, fractional), not pixels — WorldScene's own first-person
+// update pass converts its sprites' pixel x/y by dividing by TILE_SIZE
+// before calling into any of this. Angles are radians, with angle 0
+// pointing toward -row (screen "north") and increasing clockwise toward
+// +col (screen "east") — i.e. direction vector (sin(angle), -cos(angle))
+// — chosen so it matches atan2(dCol, -dRow) directly with no conversion,
+// the same convention shared/aiming.ts's own isAimedAtTarget uses for the
+// server-side "is the player's wand actually pointed at this" check, so
+// the two can never drift apart from using different angle conventions.
+import { wallHitKindAt, type WallHit } from '../../shared/raycastWalls.js';
+
+const FP_WALL_COLOR_BY_KIND: Record<Exclude<WallHit['kind'], 'none'>, number> = {
+  tree: 0x2f4d2a,
+  castleWall: 0x6b6b76,
+  shopWall: 0x7a5c3e,
+  moat: 0x2f5468,
+  labyrinth: 0x3a3a42,
+};
+// Distant walls darken toward the floor color rather than all the way to
+// black, so the far end of a long sightline still reads as "wall," not a
+// void.
+const FP_MIN_WALL_BRIGHTNESS = 0.25;
+
+// A follow-up ask: "in any area considered outside there should be a blue
+// sky above, in shops a stone texture, in the castle what they use
+// respectively, in caves a cave texture" — the ceiling/ "sky" half of the
+// view is a flat color keyed off which of these 4 broad categories the
+// CURRENT map falls into (no per-map ceiling texture exists to sample, so
+// this is the same "a real distinguishing flat color, not a texture" v1
+// tradeoff the wall pass itself already makes).
+export type FirstPersonEnvironment = 'outside' | 'cave' | 'castle' | 'indoor';
+
+const FP_CAVE_MAPS: readonly MapName[] = ['Hexstone Cavern', 'Brimstone Cave'];
+const FP_INDOOR_SHOP_MAPS: readonly MapName[] = [
+  ...FLORO_SHOP_MAPS,
+  ...KORTHO_SHOP_MAPS,
+  ...BRAMWICK_SHOP_MAPS,
+  ...GOBBLER_VILLAGE_HUT_MAPS,
+];
+
+export function firstPersonEnvironmentFor(mapName: MapName): FirstPersonEnvironment {
+  if ((GRIMOAK_CASTLE_MAPS as readonly string[]).includes(mapName)) return 'castle';
+  if (FP_CAVE_MAPS.includes(mapName)) return 'cave';
+  if (FP_INDOOR_SHOP_MAPS.includes(mapName)) return 'indoor';
+  return 'outside';
+}
+
+const FP_SKY_COLOR_BY_ENV: Record<FirstPersonEnvironment, number> = {
+  outside: 0x5b8fd9, // a real blue sky, not the dim night-tinted navy this used to always show
+  cave: 0x241f1a, // near-black rock ceiling
+  castle: 0x4c4d57, // grey castle stonework, matching floorTextureFor's own 'stone'
+  indoor: 0x5a4630, // warm timber/stone shop-interior ceiling
+};
+
+export function firstPersonSkyColorFor(environment: FirstPersonEnvironment): number {
+  return FP_SKY_COLOR_BY_ENV[environment];
+}
+
+// A follow-up ask: "the ground... is all the same, it doesn't match the
+// grass or stone textures" — reuses floorTextureFor's OWN per-map texture
+// key (the exact same one the ordinary top-down floor tile already uses)
+// rather than a second, separately-maintained map classification, so the
+// two can never disagree about what a given map's ground is supposed to
+// look like. Still a flat representative color per key (no true texture
+// sampling in the raycaster yet), but now it actually varies map to map.
+const FP_FLOOR_COLOR_BY_TEXTURE: Record<string, number> = {
+  grass: 0x3a6b2f,
+  'dark-grass': 0x2c5324,
+  stone: 0x55555f,
+  concrete: 0x5c5c5c,
+  dirt: 0x5a4632,
+  cave: 0x3a3226,
+  'boulder-field': 0x4a473f,
+  'haunted-forest': 0x2a2f26,
+};
+const FP_DEFAULT_FLOOR_COLOR = FP_FLOOR_COLOR_BY_TEXTURE.grass!;
+
+export function firstPersonFloorColorFor(floorTexture: string): number {
+  return FP_FLOOR_COLOR_BY_TEXTURE[floorTexture] ?? FP_DEFAULT_FLOOR_COLOR;
+}
+
+export interface FirstPersonColumnHit {
+  perpDistance: number;
+  kind: WallHit['kind'];
+  // Which pair of grid lines this ray actually crossed to register its hit
+  // (a column-step vs a row-step in the DDA march) — used purely to shade
+  // one orientation of wall face a touch darker than the other, the
+  // classic cheap raycaster trick that makes adjacent walls at right
+  // angles read as distinct surfaces instead of one flat mass.
+  side: 0 | 1;
+}
+
+// One ray, marched cell-to-cell via DDA (digital differential analysis) —
+// the standard, numerically exact way to raycast against an integer tile
+// grid (no fixed-step marching, so no risk of stepping clean over a
+// 1-tile-thin wall at a shallow angle). `wallHitKindAt` (shared/
+// raycastWalls.ts) is the exact same static-obstacle check
+// shared/lineOfSight.ts's own hasLineOfSight already uses for combat LOS —
+// deliberately reused rather than reimplemented, so "what a player can see
+// through" and "what a player can walk through" can never silently drift
+// apart from each other.
+function castFirstPersonRay(
+  mapName: MapName,
+  originCol: number,
+  originRow: number,
+  angle: number,
+  maxDistanceTiles: number
+): { distance: number; kind: WallHit['kind']; side: 0 | 1 } {
+  const dirCol = Math.sin(angle);
+  const dirRow = -Math.cos(angle);
+  let mapCol = Math.floor(originCol);
+  let mapRow = Math.floor(originRow);
+  const deltaDistCol = dirCol === 0 ? Infinity : Math.abs(1 / dirCol);
+  const deltaDistRow = dirRow === 0 ? Infinity : Math.abs(1 / dirRow);
+  let stepCol: number;
+  let stepRow: number;
+  let sideDistCol: number;
+  let sideDistRow: number;
+  if (dirCol < 0) {
+    stepCol = -1;
+    sideDistCol = (originCol - mapCol) * deltaDistCol;
+  } else {
+    stepCol = 1;
+    sideDistCol = (mapCol + 1 - originCol) * deltaDistCol;
+  }
+  if (dirRow < 0) {
+    stepRow = -1;
+    sideDistRow = (originRow - mapRow) * deltaDistRow;
+  } else {
+    stepRow = 1;
+    sideDistRow = (mapRow + 1 - originRow) * deltaDistRow;
+  }
+
+  let side: 0 | 1 = 0;
+  let distance = 0;
+  while (distance < maxDistanceTiles) {
+    if (sideDistCol < sideDistRow) {
+      distance = sideDistCol;
+      sideDistCol += deltaDistCol;
+      mapCol += stepCol;
+      side = 0;
+    } else {
+      distance = sideDistRow;
+      sideDistRow += deltaDistRow;
+      mapRow += stepRow;
+      side = 1;
+    }
+    const hit = wallHitKindAt(mapName, mapRow, mapCol);
+    if (hit.kind !== 'none') return { distance, kind: hit.kind, side };
+  }
+  return { distance: maxDistanceTiles, kind: 'none', side: 0 };
+}
+
+// Casts one ray per screen column (evenly spread across `fovRad` centered
+// on `facingAngle`) and returns each column's PERPENDICULAR distance (the
+// raw DDA distance projected onto the view-forward axis, via
+// `* cos(relativeAngle)`) — using perpendicular rather than raw Euclidean
+// distance is what avoids the classic "fisheye" bulge a naive raycaster
+// gets at wide FOVs, and keeps this buffer directly comparable to a
+// billboard's own perpDistance (see projectFirstPersonBillboard) for
+// correct occlusion.
+export function castFirstPersonWalls(
+  mapName: MapName,
+  playerCol: number,
+  playerRow: number,
+  facingAngle: number,
+  fovRad: number,
+  columnCount: number,
+  maxDistanceTiles: number
+): FirstPersonColumnHit[] {
+  const halfFov = fovRad / 2;
+  const columns: FirstPersonColumnHit[] = [];
+  for (let i = 0; i < columnCount; i++) {
+    const t = columnCount === 1 ? 0.5 : i / (columnCount - 1);
+    const relativeAngle = -halfFov + t * fovRad;
+    const rayAngle = facingAngle + relativeAngle;
+    const hit = castFirstPersonRay(mapName, playerCol, playerRow, rayAngle, maxDistanceTiles);
+    columns.push({ perpDistance: hit.distance * Math.cos(relativeAngle), kind: hit.kind, side: hit.side });
+  }
+  return columns;
+}
+
+function shadeColor(color: number, factor: number): number {
+  const clamped = Math.max(0, Math.min(1, factor));
+  const r = Math.round(((color >> 16) & 0xff) * clamped);
+  const g = Math.round(((color >> 8) & 0xff) * clamped);
+  const b = Math.round((color & 0xff) * clamped);
+  return (r << 16) | (g << 8) | b;
+}
+
+// Draws the sky/floor/wall-strip pass into an already-created Graphics
+// object (see WorldScene's own firstPersonWallGraphics) — fully cleared
+// and redrawn every frame, same "just recompute it, it's cheap" treatment
+// drawHpBar already gets. Flat-shaded per WallHit.kind (no textures, per
+// the "for now" framing of the ask), linearly darkened by distance down to
+// FP_MIN_WALL_BRIGHTNESS so distant walls dim toward the horizon rather
+// than vanishing to pure black.
+export function drawFirstPersonWalls(
+  graphics: Phaser.GameObjects.Graphics,
+  columns: FirstPersonColumnHit[],
+  screenWidth: number,
+  screenHeight: number,
+  rayStridePx: number,
+  maxDistanceTiles: number,
+  skyColor: number,
+  floorColor: number,
+  pitchOffsetPx: number
+): void {
+  graphics.clear();
+  // A follow-up ask: "the player should be able to look up and down" —
+  // this is a 2.5D raycaster with no real vertical geometry, so pitch is
+  // the classic "shift the horizon line (and everything drawn relative to
+  // it) up or down, then clip at the screen edges" trick rather than true
+  // 3D — see FP_MAX_PITCH_OFFSET_PX's own doc comment. Positive
+  // pitchOffsetPx = looking up = the horizon (and more sky) shifts down.
+  const horizonY = screenHeight / 2 + pitchOffsetPx;
+  graphics.fillStyle(skyColor, 1);
+  graphics.fillRect(0, 0, screenWidth, Math.max(0, horizonY));
+  graphics.fillStyle(floorColor, 1);
+  graphics.fillRect(0, Math.max(0, horizonY), screenWidth, screenHeight - Math.max(0, horizonY));
+
+  columns.forEach((column, i) => {
+    if (column.kind === 'none') return;
+    const brightness = Math.max(FP_MIN_WALL_BRIGHTNESS, 1 - column.perpDistance / maxDistanceTiles);
+    const baseColor = FP_WALL_COLOR_BY_KIND[column.kind];
+    const shaded = shadeColor(baseColor, brightness * (column.side === 1 ? 0.8 : 1));
+    const wallScreenHeight = Math.min(screenHeight * 4, screenHeight / Math.max(column.perpDistance, 0.0001));
+    const x = i * rayStridePx;
+    graphics.fillStyle(shaded, 1);
+    graphics.fillRect(x, horizonY - wallScreenHeight / 2, rayStridePx, wallScreenHeight);
+  });
+}
+
+export interface FirstPersonProjection {
+  screenX: number;
+  scale: number;
+  perpDistance: number;
+}
+
+// Billboard projection for a monster/tree/player/NPC/whatever else while
+// in first-person (see WorldScene's own billboard pool pass) — reuses
+// whichever top-down texture/frame the entity's own ordinary sprite
+// already has; this only computes WHERE on screen and how BIG to draw it,
+// never what texture (see this file's own header comment on why: a flat
+// scaled billboard of existing art, not a new first-person model per
+// creature, is the deliberate v1 scope). Returns undefined when the
+// entity is outside the (slightly padded, see FP_BILLBOARD_FOV_PAD_RAD)
+// field of view — callers should hide/skip their pooled Image in that
+// case rather than drawing something off to the side that'll never be
+// seen.
+export function projectFirstPersonBillboard(
+  playerCol: number,
+  playerRow: number,
+  facingAngle: number,
+  fovRad: number,
+  fovPadRad: number,
+  screenWidth: number,
+  entityCol: number,
+  entityRow: number,
+  baseScale: number,
+  referenceDistanceTiles: number
+): FirstPersonProjection | undefined {
+  const dCol = entityCol - playerCol;
+  const dRow = entityRow - playerRow;
+  const distance = Math.sqrt(dCol * dCol + dRow * dRow);
+  if (distance < 0.0001) return undefined;
+  const worldAngle = Math.atan2(dCol, -dRow);
+  let relativeAngle = worldAngle - facingAngle;
+  while (relativeAngle > Math.PI) relativeAngle -= Math.PI * 2;
+  while (relativeAngle <= -Math.PI) relativeAngle += Math.PI * 2;
+  const halfFov = fovRad / 2 + fovPadRad;
+  if (relativeAngle < -halfFov || relativeAngle > halfFov) return undefined;
+  const perpDistance = distance * Math.cos(relativeAngle);
+  if (perpDistance <= 0.0001) return undefined;
+  const screenX = (relativeAngle / (fovRad / 2)) * (screenWidth / 2) + screenWidth / 2;
+  // Clamped (see FP_BILLBOARD_MAX_SCALE_MULTIPLIER's own doc comment) —
+  // without this, an entity standing right next to the player
+  // (perpDistance approaching 0) would blow up toward infinite scale.
+  const scale = Math.min(baseScale * FP_BILLBOARD_MAX_SCALE_MULTIPLIER, baseScale * (referenceDistanceTiles / perpDistance));
+  return { screenX, scale, perpDistance };
 }

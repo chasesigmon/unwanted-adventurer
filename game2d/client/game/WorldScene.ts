@@ -347,6 +347,22 @@ import {
   drawStatBar,
   facingForDirection,
   floorTextureFor,
+  FP_FOV_RAD,
+  FP_MAX_RENDER_DISTANCE_TILES,
+  FP_RAY_STRIDE_PX,
+  FP_BILLBOARD_FOV_PAD_RAD,
+  FP_MOUSE_LOOK_SENSITIVITY,
+  FP_BILLBOARD_REFERENCE_DISTANCE_TILES,
+  FP_OCCLUSION_COLUMN_SPREAD,
+  FP_OCCLUSION_MARGIN_TILES,
+  FP_MAX_PITCH_OFFSET_PX,
+  FP_PITCH_SENSITIVITY,
+  castFirstPersonWalls,
+  drawFirstPersonWalls,
+  projectFirstPersonBillboard,
+  firstPersonEnvironmentFor,
+  firstPersonSkyColorFor,
+  firstPersonFloorColorFor,
 } from './mapRender.js';
 import { myProfile, setActiveScene, setMyProfile, currentWorldHour, worldTimeKnown, setWorldTime } from '../state.js';
 import {
@@ -364,7 +380,7 @@ import { logChatMessage, logCombatMessage, noteCombatActivity } from '../ui/log.
 import { showCenterToast } from '../ui/toast.js';
 import { updateRespawnOverlay } from '../ui/respawnOverlay.js';
 import { loadActionBarsOnce } from '../ui/actionBars.js';
-import { closeAllModals, isInputCaptured, isMovementBlocked, refreshOpenModals, updateMapButtonVisibility } from '../ui/modalCore.js';
+import { closeAllModals, isInputCaptured, isMovementBlocked, refreshOpenModals, updateMapButtonVisibility, updateZoomButtonLabel } from '../ui/modalCore.js';
 import { refreshCharSheetIfOpen } from '../ui/charSheet.js';
 import { openCorpseModal, stackedItemsLabel, updateEatBrainsButton } from '../ui/corpseModal.js';
 import { openPetCorpseModal } from '../ui/petCorpseModal.js';
@@ -413,6 +429,11 @@ const AMBIENT_WISP_TEXTURE_KEY = 'ambient-wisp';
 // screen" sizing keeps working exactly as it does today; this just zooms
 // in further from wherever the player already was.
 const PLAYER_ZOOM_IN_FACTOR = 1.5;
+// The first-person wand view-model's own art (see setupFirstPersonScene) —
+// a dedicated first-person-POV sprite, distinct from the ordinary
+// top-down WAND_TEXTURE_KEY icon used for playerWandSprite.
+const FIRST_PERSON_WAND_TEXTURE_KEY = 'wand-first-person-viewmodel';
+const FIRST_PERSON_WAND_SCALE = 2;
 
 export class WorldScene extends Phaser.Scene {
   private network!: NetworkManager;
@@ -726,10 +747,95 @@ export class WorldScene extends Phaser.Scene {
   private cameraFollowsY = true;
   private cameraMapPixelWidth = 0;
   private cameraMapPixelHeight = 0;
-  // Item 10's zoom toggle — false (the default) is "full zoom out, as the
-  // game is now" per the ask; see PLAYER_ZOOM_IN_FACTOR's own doc comment
-  // for how this actually changes the camera.
-  private zoomedIn = false;
+  // Item 10's zoom toggle, extended by a big later follow-up ask into a
+  // 3rd state: 'out' (full zoom out, as the game always was) -> 'in'
+  // (today's original 50%-further-in toggle, see PLAYER_ZOOM_IN_FACTOR's
+  // own doc comment) -> 'firstPerson' (a real raycasting first-person
+  // view of the player's own character, see enterFirstPerson/
+  // exitFirstPerson below). 'out'/'in' still go through applyCameraBounds
+  // exactly as before; 'firstPerson' owns its own camera/rendering
+  // entirely and does NOT touch applyCameraBounds's per-map baseZoom/
+  // scroll math at all.
+  private zoomLevel: 'out' | 'in' | 'firstPerson' = 'out';
+  // The first-person view's own dedicated camera + the one Layer holding
+  // everything ONLY it should ever show (see setupFirstPersonScene's own
+  // doc comment on why the exclusion is computed fresh every frame rather
+  // than via a second "topDown" layer) — set up once in create(), never
+  // destroyed/recreated on toggling modes (see enterFirstPerson/
+  // exitFirstPerson, which just flip visibility).
+  private fpCamera!: Phaser.Cameras.Scene2D.Camera;
+  private firstPersonLayer!: Phaser.GameObjects.Layer;
+  // Redrawn from scratch every first-person frame (see renderFirstPersonFrame/
+  // mapRender.ts's own drawFirstPersonWalls) — the wall/sky/floor pass.
+  private firstPersonWallGraphics!: Phaser.GameObjects.Graphics;
+  // A fixed pool of plain Images reused every frame for monster/player/
+  // npc/etc. billboards (see mapRender.ts's own projectFirstPersonBillboard
+  // doc comment on why this reuses each entity's EXISTING top-down
+  // texture/frame rather than needing new first-person-specific art) —
+  // created once, sized generously above what's ever likely visible
+  // within the FOV/render distance at once, so there's no per-frame
+  // GameObject creation/destruction churn.
+  private static readonly FP_BILLBOARD_POOL_SIZE = 96;
+  private firstPersonBillboardPool: Phaser.GameObjects.Image[] = [];
+  // The wand-in-hand view-model (a big follow-up ask's own "for now just
+  // show their wand... out in front of their face") — fixed to screen
+  // space, not world space; see enterFirstPerson's own idle-bob tween.
+  private firstPersonWandSprite!: Phaser.GameObjects.Image;
+  private firstPersonWandBobTween: Phaser.Tweens.Tween | null = null;
+  // The center-of-screen aiming reticle (a follow-up ask) — see
+  // setupFirstPersonScene/drawFirstPersonReticle.
+  private firstPersonReticle!: Phaser.GameObjects.Graphics;
+  // The player's own continuous look/aim angle while in first-person —
+  // radians, 0 = facing screen-"north" (-row), increasing toward +col
+  // ("east") — see mapRender.ts's own header comment on this convention.
+  // Deliberately separate from the existing 4-directional `facing` field
+  // above (sprite-animation rows only, far too coarse for real aiming).
+  // Persists across mode toggles (re-entering first-person keeps whatever
+  // direction you were last looking, rather than resetting to 0/north).
+  private facingAngle = 0;
+  // "The player should be able to look up and down as well" (a follow-up
+  // ask) — a pixel offset applied to the horizon/billboards, NOT a real
+  // 3D pitch angle (see mapRender.ts's own FP_MAX_PITCH_OFFSET_PX doc
+  // comment on why a 2.5D raycaster fakes this rather than modeling true
+  // vertical geometry).
+  private pitchOffsetPx = 0;
+  // Throttles how often the new angle actually gets sent to the server
+  // (see handlePointerLockMouseMove below) — mousemove can fire far more
+  // often than this game's every-other-network-message needs, and the
+  // server-side aim-cone check this feeds only cares about "roughly where
+  // is the player looking right now," not a perfectly live-updated value.
+  private static readonly FP_AIM_SEND_THROTTLE_MS = 100;
+  private lastAimAngleSentAt = 0;
+  // Bound once so addEventListener/removeEventListener reference the exact
+  // same function — see enterFirstPerson/exitFirstPerson.
+  private readonly handlePointerLockMouseMove = (e: MouseEvent): void => {
+    if (this.zoomLevel !== 'firstPerson' || document.pointerLockElement !== this.game.canvas) return;
+    this.facingAngle += e.movementX * FP_MOUSE_LOOK_SENSITIVITY;
+    // Wrap to (-pi, pi] purely so the value never grows unbounded over a
+    // long play session — the actual math everywhere else already handles
+    // any angle via its own normalization.
+    if (this.facingAngle > Math.PI) this.facingAngle -= Math.PI * 2;
+    else if (this.facingAngle <= -Math.PI) this.facingAngle += Math.PI * 2;
+    // Moving the mouse up (a negative movementY) looks UP — the horizon
+    // (and everything drawn relative to it) shifts DOWN the screen,
+    // revealing more sky, exactly like tilting a real camera upward.
+    this.pitchOffsetPx = Phaser.Math.Clamp(this.pitchOffsetPx - e.movementY * FP_PITCH_SENSITIVITY, -FP_MAX_PITCH_OFFSET_PX, FP_MAX_PITCH_OFFSET_PX);
+    const now = Date.now();
+    if (now - this.lastAimAngleSentAt < WorldScene.FP_AIM_SEND_THROTTLE_MS) return;
+    this.lastAimAngleSentAt = now;
+    this.network.setAimAngle(this.facingAngle);
+  };
+  // The browser force-exits pointer lock on Escape (cannot be intercepted
+  // or prevented) — this is the ONLY reliable signal that's happened, so
+  // it doubles as the safety net for any OTHER unexpected lock loss too,
+  // treating either exactly like the player pressing 'v'/the corner
+  // button again rather than leaving the game stuck with dead mouse input.
+  private readonly handlePointerLockChange = (): void => {
+    if (this.zoomLevel === 'firstPerson' && document.pointerLockElement !== this.game.canvas) {
+      this.toggleZoom();
+      updateZoomButtonLabel();
+    }
+  };
   private row = 0;
   private col = 0;
   private myUsername = '';
@@ -919,6 +1025,10 @@ export class WorldScene extends Phaser.Scene {
     this.load.svg(BONE_SHIELD_TEXTURE_KEY, '/bone-shield.svg', { width: 16, height: 16 });
     this.load.svg(TORCH_HELD_TEXTURE_KEY, '/torch.svg', { width: 16, height: 20 });
     this.load.svg(WAND_TEXTURE_KEY, '/wand.svg', { width: 16, height: 16 });
+    // A big follow-up ask's own first-person mode — the wand-in-hand
+    // view-model, a dedicated first-person-POV sprite distinct from the
+    // ordinary top-down wand icon above (see setupFirstPersonScene).
+    this.load.image(FIRST_PERSON_WAND_TEXTURE_KEY, '/wand-first-person-viewmodel.png');
     this.load.svg('shopfront', '/shopfront.svg', { width: 40, height: 36 });
     // Bramwick's own 4 shop cottages (a later follow-up ask) — one frame
     // per shop, each with its own baked-in name sign, in BRAMWICK_SHOP_MAPS
@@ -1036,6 +1146,8 @@ export class WorldScene extends Phaser.Scene {
     // pixel bounds (set per-map in renderMap, since maps differ in size).
     this.cameras.main.startFollow(this.player, true, 1, 1);
 
+    this.setupFirstPersonScene();
+
     const keyboard = this.input.keyboard!;
     this.moveKeys = {
       w: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
@@ -1061,6 +1173,19 @@ export class WorldScene extends Phaser.Scene {
 
     this.input.mouse?.disableContextMenu();
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      // A big follow-up ask's own first-person mode — the mouse is
+      // captured by Pointer Lock for looking around/aiming, not for
+      // ordinary click-to-target/click-to-move (there's no meaningful
+      // "world position" for a locked, hidden cursor to click on anyway).
+      // A left click instead selects whatever's nearest the crosshair
+      // (see handleFirstPersonCrosshairSelect) — the follow-up ask's own
+      // "a way to click or select... followers or enemies" while looking
+      // around.
+      if (this.zoomLevel === 'firstPerson') {
+        if (isInputCaptured()) return;
+        if (pointer.leftButtonDown()) this.handleFirstPersonCrosshairSelect();
+        return;
+      }
       if (isInputCaptured()) return;
       if (pointer.rightButtonDown()) this.handleRightClick(pointer);
       else if (pointer.leftButtonDown()) this.handleLeftClick(pointer);
@@ -1072,6 +1197,10 @@ export class WorldScene extends Phaser.Scene {
     // (see findTargetableAt's own bounds-based hit-testing), hence the
     // manual check here.
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      // Same first-person carve-out as pointerdown above — the ordinary
+      // cursor-hint logic below has no meaning while the cursor itself is
+      // locked/hidden for mouse-look.
+      if (this.zoomLevel === 'firstPerson') return;
       if (isInputCaptured()) {
         this.game.canvas.style.cursor = '';
         return;
@@ -1299,6 +1428,11 @@ export class WorldScene extends Phaser.Scene {
     this.updateTownspeople(this.currentMap);
     this.updateFishermen();
     this.updateCameraScroll();
+    // A big follow-up ask's own first-person mode — the top-down camera
+    // above keeps tracking the player's position underneath regardless
+    // (so 'out'/'in' are instantly correct the moment first-person is
+    // exited), but only actually RENDERS while first-person is active.
+    if (this.zoomLevel === 'firstPerson') this.renderFirstPersonFrame();
     this.repositionHpBars();
     this.updateDarkFog();
     applyDaynightTint(isAlwaysLit(this.currentMap), myProfile ? myProfile.skills[INFRAVISION_SKILL] !== undefined : false);
@@ -1334,6 +1468,24 @@ export class WorldScene extends Phaser.Scene {
     const right = this.moveKeys.d.isDown || this.cursorKeys.right.isDown;
     const up = this.moveKeys.w.isDown || this.cursorKeys.up.isDown;
     const down = this.moveKeys.s.isDown || this.cursorKeys.down.isDown;
+
+    // A follow-up ask: "wasd and arrow movements should move in the
+    // direction the player is facing in first person mode, not follow the
+    // direction the character was in before" — W/S become forward/back
+    // and A/D become strafe-left/right RELATIVE to facingAngle, snapped to
+    // the nearest of 8 compass directions so it still drives the exact
+    // same tile-stepped move()/moveDiagonal() calls every other mode uses
+    // (see resolveFirstPersonMoveDirection's own doc comment) — normal
+    // top-down/'in' zoom keeps the original absolute-compass mapping
+    // below untouched.
+    if (this.zoomLevel === 'firstPerson') {
+      const resolved = this.resolveFirstPersonMoveDirection(up, down, left, right);
+      if (!resolved) return;
+      this.lastMoveAt = now;
+      if (resolved.dRow !== 0 && resolved.dCol !== 0) this.attemptDiagonalMove(resolved.dRow as -1 | 1, resolved.dCol as -1 | 1);
+      else this.attemptMove(resolved.direction!);
+      return;
+    }
 
     // Item 1: "press W+A at the same time to go northwest" — checked
     // before the single-direction chain below, and before it too, since a
@@ -2474,7 +2626,7 @@ export class WorldScene extends Phaser.Scene {
     // closer look, accepting the camera now needs to follow/scroll) —
     // cameraFollowsX/Y below correctly switches to tracking the player in
     // that case rather than staying pinned to the pre-zoom centered view.
-    const zoom = baseZoom * (this.zoomedIn ? PLAYER_ZOOM_IN_FACTOR : 1);
+    const zoom = baseZoom * (this.zoomLevel === 'in' ? PLAYER_ZOOM_IN_FACTOR : 1);
     cam.setZoom(zoom);
     cam.setBounds(0, 0, pixelWidth, pixelHeight);
     // Item 5 of a later follow-up ask ("the road to Floro... is all the
@@ -2517,18 +2669,398 @@ export class WorldScene extends Phaser.Scene {
     this.updateCameraScroll();
   }
 
-  // Item 10's zoom toggle — flips between the default "full zoom out, as
-  // the game is now" and 50% further zoomed in, then re-applies the
-  // current map's own camera bounds (its per-map base zoom, follow axes,
-  // and centering all still need recomputing against the new effective
-  // zoom — see applyCameraBounds).
+  // Item 10's zoom toggle, extended by a big later follow-up ask into a
+  // fixed 3-state forward cycle: 'out' -> 'in' -> 'firstPerson' -> 'out'
+  // -> ... 'out'/'in' both re-apply the current map's own ordinary camera
+  // bounds (unchanged from before this ask); crossing into/out of
+  // 'firstPerson' additionally enters/exits the dedicated first-person
+  // camera/render mode (see enterFirstPerson/exitFirstPerson).
+  private static readonly ZOOM_CYCLE = ['out', 'in', 'firstPerson'] as const;
   toggleZoom(): void {
-    this.zoomedIn = !this.zoomedIn;
-    this.applyCameraBounds(this.cameraMapPixelWidth, this.cameraMapPixelHeight);
+    const wasFirstPerson = this.zoomLevel === 'firstPerson';
+    const currentIndex = WorldScene.ZOOM_CYCLE.indexOf(this.zoomLevel);
+    this.zoomLevel = WorldScene.ZOOM_CYCLE[(currentIndex + 1) % WorldScene.ZOOM_CYCLE.length]!;
+    if (wasFirstPerson) this.exitFirstPerson();
+    if (this.zoomLevel === 'firstPerson') this.enterFirstPerson();
+    else this.applyCameraBounds(this.cameraMapPixelWidth, this.cameraMapPixelHeight);
   }
 
-  isZoomedIn(): boolean {
-    return this.zoomedIn;
+  getZoomLevel(): 'out' | 'in' | 'firstPerson' {
+    return this.zoomLevel;
+  }
+
+  // One-time setup (called once from create()) for the first-person
+  // view's own camera + the one Layer holding everything ONLY it should
+  // ever show — see this.fpCamera/firstPersonLayer's own doc comments
+  // (near zoomLevel's declaration) for why this is a second CAMERA on the
+  // same scene rather than a second parallel Scene. Everything created
+  // here starts hidden/inert and is never destroyed — toggling modes is
+  // purely a visibility flip (see enterFirstPerson/exitFirstPerson).
+  //
+  // Getting "which camera shows what" right here matters a lot: the main
+  // camera must NEVER show first-person's own wall/billboard/wand
+  // GameObjects, and the fpCamera must NEVER show any of the ordinary
+  // top-down world (the player sprite, every monster/npc/other-player,
+  // every tree/building/floor tile — hundreds of GameObjects created all
+  // over this file, not just a handful declared here). Retrofitting a
+  // "topDownLayer.add(...)" call onto every one of those existing
+  // creation sites across this ~7000-line file would be a huge, easy-to-
+  // miss-one-spot mechanical change — instead, firstPersonLayer is the
+  // ONLY custom Layer that exists, and fpCamera's own ignore list is
+  // recomputed fresh every first-person frame (see renderFirstPersonFrame)
+  // as "everything in the scene's own top-level display list EXCEPT
+  // firstPersonLayer itself" — self-healing against anything created
+  // later (a newly spawned monster, a freshly rendered map's tiles, ...)
+  // with no risk of missing a creation site, at the cost of one cheap
+  // per-frame array filter.
+  private setupFirstPersonScene(): void {
+    this.firstPersonLayer = this.add.layer();
+    this.firstPersonLayer.setVisible(false);
+
+    this.fpCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
+    this.fpCamera.setVisible(false);
+
+    this.firstPersonWallGraphics = this.add.graphics().setDepth(-1000);
+    this.firstPersonLayer.add(this.firstPersonWallGraphics);
+    for (let i = 0; i < WorldScene.FP_BILLBOARD_POOL_SIZE; i++) {
+      const image = this.add.image(0, 0, textureKeyFor('goblin'), idleFrameFor('goblin', 'down')).setVisible(false);
+      this.firstPersonBillboardPool.push(image);
+      this.firstPersonLayer.add(image);
+    }
+    // The wand view-model (see FIRST_PERSON_WAND_TEXTURE_KEY's own doc
+    // comment) — anchored near the bottom-right of the canvas ("out in
+    // front of their face"), well above the billboard pool's own depth so
+    // it always draws on top of anything the raycaster puts on screen.
+    this.firstPersonWandSprite = this.add
+      .image(this.scale.width * 0.78, this.scale.height * 0.86, FIRST_PERSON_WAND_TEXTURE_KEY)
+      .setScale(FIRST_PERSON_WAND_SCALE)
+      .setDepth(1000)
+      .setVisible(false);
+    this.firstPersonLayer.add(this.firstPersonWandSprite);
+
+    // A follow-up ask: "a little target reticle in the center so the
+    // player knows where they are aiming (this will be customizable
+    // later)" — a plain crosshair, drawn once (it never needs to move,
+    // only the world around it does) and re-centered on resize; well
+    // above even the wand's own depth so it's never obscured by anything.
+    this.firstPersonReticle = this.add.graphics().setDepth(2000);
+    this.drawFirstPersonReticle();
+    this.firstPersonLayer.add(this.firstPersonReticle);
+
+    // Only firstPersonLayer's own children (everything just created
+    // above) are static for the rest of the scene's life — safe to fix
+    // once, unlike the fpCamera side (see this method's own doc comment).
+    this.cameras.main.ignore(this.firstPersonLayer);
+
+    // Keep the fpCamera's own viewport (and screen-centered content)
+    // matched to the canvas on resize — the main camera already gets this
+    // for free from Phaser's own RESIZE scale mode, but a manually-added
+    // second camera, and plain screen-space GameObjects like the reticle/
+    // wand, don't.
+    this.scale.on('resize', (size: Phaser.Structs.Size) => {
+      this.fpCamera?.setSize(size.width, size.height);
+      this.drawFirstPersonReticle();
+      this.firstPersonWandSprite?.setPosition(size.width * 0.78, size.height * 0.86);
+    });
+
+    document.addEventListener('mousemove', this.handlePointerLockMouseMove);
+    document.addEventListener('pointerlockchange', this.handlePointerLockChange);
+  }
+
+  // A plain crosshair (a short horizontal + vertical tick either side of
+  // dead-center, with a gap in the middle so it doesn't obscure whatever's
+  // directly behind it) — "this will be customizable later" per the ask,
+  // so kept simple/swappable rather than art-directed further right now.
+  private drawFirstPersonReticle(): void {
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
+    const gap = 4;
+    const length = 8;
+    const thickness = 2;
+    this.firstPersonReticle.clear();
+    this.firstPersonReticle.fillStyle(0xffffff, 0.85);
+    this.firstPersonReticle.fillRect(cx - thickness / 2, cy - gap - length, thickness, length);
+    this.firstPersonReticle.fillRect(cx - thickness / 2, cy + gap, thickness, length);
+    this.firstPersonReticle.fillRect(cx - gap - length, cy - thickness / 2, length, thickness);
+    this.firstPersonReticle.fillRect(cx + gap, cy - thickness / 2, length, thickness);
+  }
+
+  // Crossing INTO 'firstPerson' in the zoom cycle (see toggleZoom) —
+  // requests the browser's own Pointer Lock (the only mechanism that
+  // gives unlimited continuous relative mouse movement; see
+  // handlePointerLockMouseMove) and swaps which camera is actually
+  // visible. The normal top-down camera's own scroll/zoom state is left
+  // completely untouched underneath (applyCameraBounds simply isn't
+  // called while first-person is active), so returning to 'out'/'in'
+  // later needs no special restore logic beyond calling it again exactly
+  // as toggleZoom already does for those two states.
+  private enterFirstPerson(): void {
+    this.cameras.main.setVisible(false);
+    this.fpCamera.setVisible(true);
+    // Bug fix: firstPersonLayer starts hidden (see setupFirstPersonScene)
+    // so it can't flash visible for a frame before enterFirstPerson ever
+    // runs — but nothing ever flipped it back on, so the wall graphics/
+    // billboard pool/wand sprite it holds rendered nowhere at all,
+    // regardless of which camera was active (a Layer's own `visible`
+    // flag gates whether ANY camera ever renders its children, same as
+    // any other GameObject) — this was the actual "dark screen, nothing
+    // visible" bug, not a camera/ignore-list problem.
+    this.firstPersonLayer.setVisible(true);
+    this.firstPersonWandSprite.setVisible(true);
+    this.firstPersonWandBobTween?.stop();
+    this.firstPersonWandBobTween = this.tweens.add({
+      targets: this.firstPersonWandSprite,
+      y: this.firstPersonWandSprite.y - 4,
+      yoyo: true,
+      repeat: -1,
+      duration: 900,
+      ease: 'Sine.easeInOut',
+    });
+    void this.game.canvas.requestPointerLock?.();
+    this.network.setFirstPersonMode(true);
+    this.network.setAimAngle(this.facingAngle);
+  }
+
+  private exitFirstPerson(): void {
+    this.cameras.main.setVisible(true);
+    this.fpCamera.setVisible(false);
+    this.firstPersonLayer.setVisible(false);
+    this.firstPersonWandSprite.setVisible(false);
+    this.firstPersonWandBobTween?.stop();
+    this.firstPersonWandBobTween = null;
+    if (document.pointerLockElement === this.game.canvas) document.exitPointerLock();
+    this.network.setFirstPersonMode(false);
+    // A follow-up ask: "being in first person mode should also change the
+    // direction the character is facing in the other modes... if the
+    // player leaves first person mode the character is facing the right
+    // direction" — snaps the continuous look angle to the nearest of the
+    // 4 sprite-facing directions and applies it immediately (same idle-
+    // frame update attemptMove's own facing change gets, since the player
+    // isn't necessarily mid-move right now).
+    this.facing = WorldScene.facingFromAngle(this.facingAngle);
+    this.player.setTexture(textureKeyFor(this.displayKind()), idleFrameFor(this.displayKind(), this.facing));
+  }
+
+  private static facingFromAngle(angle: number): Facing {
+    const quadrant = (Math.round(angle / (Math.PI / 2)) + 4) % 4;
+    return (['up', 'right', 'down', 'left'] as const)[quadrant]!;
+  }
+
+  // The per-frame first-person render pass (called from update() only
+  // while zoomLevel === 'firstPerson') — a wall/sky/floor pass (see
+  // mapRender.ts's own castFirstPersonWalls/drawFirstPersonWalls) followed
+  // by a billboard pass that reuses every already-loaded top-down sprite's
+  // own texture/frame as a distance-scaled, angle-projected Image (see
+  // mapRender.ts's own projectFirstPersonBillboard doc comment on why this
+  // is the deliberate v1 approach rather than new first-person-specific
+  // creature art).
+  // Populated fresh every renderFirstPersonFrame — the subset of that
+  // frame's visible billboards that are real combat targets (see
+  // handleFirstPersonCrosshairSelect below), so a click can pick "whatever
+  // is nearest my crosshair" without re-running the whole projection pass.
+  private firstPersonTargetableCandidates: Array<{ kind: 'player' | 'npc' | 'monster'; id: string; sprite: Phaser.GameObjects.Sprite; screenX: number }> =
+    [];
+
+  private renderFirstPersonFrame(): void {
+    // See setupFirstPersonScene's own doc comment on why this is
+    // recomputed every frame rather than set once: it has to catch
+    // anything created into the scene's top-level display list AFTER
+    // setup (a newly spawned monster, a freshly rendered map's tiles/
+    // buildings, ...), which a one-time ignore() call would silently miss.
+    this.fpCamera.ignore(this.children.list.filter((obj) => (obj as unknown) !== (this.firstPersonLayer as unknown)));
+
+    const screenWidth = this.scale.width;
+    const screenHeight = this.scale.height;
+    const playerCol = this.player.x / TILE_SIZE;
+    const playerRow = this.player.y / TILE_SIZE;
+    const columnCount = Math.max(1, Math.ceil(screenWidth / FP_RAY_STRIDE_PX));
+
+    // A follow-up ask: "in any area considered outside there should be a
+    // blue sky, in shops a stone texture, in the castle what they use, in
+    // caves a cave texture" + "the ground doesn't match the grass/stone
+    // textures" — both keyed off the CURRENT map, the ceiling by broad
+    // category (see firstPersonEnvironmentFor), the floor by the exact
+    // same per-map texture key the ordinary top-down floor tile uses (see
+    // floorTextureFor), so the two views can never visually disagree.
+    const environment = firstPersonEnvironmentFor(this.currentMap);
+    const skyColor = firstPersonSkyColorFor(environment);
+    const floorColor = firstPersonFloorColorFor(floorTextureFor(this.currentMap));
+
+    const columns = castFirstPersonWalls(this.currentMap, playerCol, playerRow, this.facingAngle, FP_FOV_RAD, columnCount, FP_MAX_RENDER_DISTANCE_TILES);
+    drawFirstPersonWalls(
+      this.firstPersonWallGraphics,
+      columns,
+      screenWidth,
+      screenHeight,
+      FP_RAY_STRIDE_PX,
+      FP_MAX_RENDER_DISTANCE_TILES,
+      skyColor,
+      floorColor,
+      this.pitchOffsetPx
+    );
+
+    const horizonY = screenHeight / 2 + this.pitchOffsetPx;
+    const candidates: Array<{ sprite: Phaser.GameObjects.Sprite; kind?: 'player' | 'npc' | 'monster'; id?: string }> = [
+      ...this.firstPersonBillboardSourceSprites().map((sprite) => ({ sprite })),
+    ];
+    for (const [kind, map] of this.firstPersonBillboardSourceMaps()) {
+      for (const [id, sprite] of map) candidates.push({ sprite, kind, id });
+    }
+
+    // Bug fix: sampling the wall pass's per-column distance at the
+    // entity's own EXACT column made monsters/NPCs flicker in and out of
+    // view as they walked (a slightly different column landing on/off a
+    // wall-adjacent tile edge frame to frame), and hid anything visible
+    // just past a tree/wall corner outright. Sampling a small spread of
+    // neighboring columns and taking the FARTHEST (most lenient), plus a
+    // small forgiveness margin, fixes both — see FP_OCCLUSION_COLUMN_SPREAD/
+    // FP_OCCLUSION_MARGIN_TILES's own doc comments.
+    const wallDistanceNear = (screenX: number): number => {
+      const centerIndex = Math.min(columns.length - 1, Math.max(0, Math.floor(screenX / FP_RAY_STRIDE_PX)));
+      let farthest = 0;
+      for (let i = -FP_OCCLUSION_COLUMN_SPREAD; i <= FP_OCCLUSION_COLUMN_SPREAD; i++) {
+        const index = centerIndex + i;
+        if (index < 0 || index >= columns.length) continue;
+        farthest = Math.max(farthest, columns[index]!.perpDistance);
+      }
+      return farthest + FP_OCCLUSION_MARGIN_TILES;
+    };
+
+    const projected: Array<{
+      sprite: Phaser.GameObjects.Sprite;
+      kind?: 'player' | 'npc' | 'monster';
+      id?: string;
+      screenX: number;
+      scale: number;
+      perpDistance: number;
+    }> = [];
+    for (const candidate of candidates) {
+      const sprite = candidate.sprite;
+      if (!sprite.visible || !sprite.active) continue;
+      const entityCol = sprite.x / TILE_SIZE;
+      const entityRow = sprite.y / TILE_SIZE;
+      const projection = projectFirstPersonBillboard(
+        playerCol,
+        playerRow,
+        this.facingAngle,
+        FP_FOV_RAD,
+        FP_BILLBOARD_FOV_PAD_RAD,
+        screenWidth,
+        entityCol,
+        entityRow,
+        sprite.scaleX || CHAR_SCALE,
+        FP_BILLBOARD_REFERENCE_DISTANCE_TILES
+      );
+      if (!projection) continue;
+      if (projection.perpDistance > wallDistanceNear(projection.screenX)) continue;
+      projected.push({ ...candidate, screenX: projection.screenX, scale: projection.scale, perpDistance: projection.perpDistance });
+    }
+    // Back-to-front so nearer billboards visually cover farther ones
+    // sharing the same screen column (setDepth below is a cheap secondary
+    // correctness net, not load-bearing on its own).
+    projected.sort((a, b) => b.perpDistance - a.perpDistance);
+
+    this.firstPersonTargetableCandidates = [];
+    let poolIndex = 0;
+    for (const entry of projected) {
+      if (poolIndex >= this.firstPersonBillboardPool.length) break;
+      const image = this.firstPersonBillboardPool[poolIndex++]!;
+      image.setTexture(entry.sprite.texture.key, entry.sprite.frame.name);
+      image.setPosition(entry.screenX, horizonY);
+      image.setScale(entry.scale);
+      image.setDepth(-entry.perpDistance);
+      image.setVisible(true);
+      // A follow-up ask: "highlight the target or show their name... to
+      // know it is possible to select them" — the currently-selected
+      // combat target's own billboard gets a warm highlight tint every
+      // frame it's rendered; everything else keeps its real top-down tint
+      // (usually none, but rare monsters/tamed beasts etc. do carry one).
+      const isCurrentTarget = entry.kind && entry.id && this.targetKind === entry.kind && this.targetId === entry.id;
+      image.setTint(isCurrentTarget ? 0xffcc55 : entry.sprite.tintTopLeft === 0xffffff ? 0xffffff : entry.sprite.tintTopLeft);
+      if (entry.kind && entry.id) {
+        this.firstPersonTargetableCandidates.push({ kind: entry.kind, id: entry.id, sprite: entry.sprite, screenX: entry.screenX });
+      }
+    }
+    for (; poolIndex < this.firstPersonBillboardPool.length; poolIndex++) {
+      this.firstPersonBillboardPool[poolIndex]!.setVisible(false);
+    }
+  }
+
+  // Every live-entity sprite Map worth billboarding in first-person,
+  // tagged with the 'kind' handleFirstPersonCrosshairSelect/setTarget need
+  // to actually select one (see that method's own doc comment) — undefined
+  // for Maps holding something that isn't a real combat target (a corpse,
+  // a vendor, ...); those still render as billboards, they just aren't
+  // click-selectable via the crosshair yet. The local player's OWN sprite
+  // is deliberately excluded (you don't see yourself from behind your own
+  // eyes), and static decoration that's already handled by the WALL pass
+  // instead (trees, the castle facade, shop buildings — see
+  // shared/raycastWalls.ts) is excluded too, since billboarding those on
+  // top of their own wall strip would double-render them.
+  private firstPersonBillboardSourceMaps(): Array<[('player' | 'npc' | 'monster') | undefined, Map<string, Phaser.GameObjects.Sprite>]> {
+    return [
+      ['player', this.otherPlayers],
+      ['monster', this.monsterSprites],
+      ['npc', this.npcSprites],
+      [undefined, this.petSprites],
+      [undefined, this.tamedBeastSprites],
+      [undefined, this.animatedMonsterSprites],
+      [undefined, this.vendorSprites],
+      [undefined, this.vendorFrontSprites],
+      [undefined, this.teacherSprites],
+      [undefined, this.teacherDeskSprites],
+      [undefined, this.teacherQuestIconSprites],
+      [undefined, this.corpseSprites],
+      [undefined, this.petCorpseSprites],
+      [undefined, this.droppedChestSprites],
+      [undefined, this.stoneBlockSprites],
+    ];
+  }
+
+  // Bug fix: a first pass at this only wired up a handful of Maps, which
+  // left a town/castle room looking empty and cut-off in first-person —
+  // no ambient people "walking around," no signs, no doors, no furniture
+  // — even though these were exactly the kind of thing "everything to
+  // scale" was asked for. Building facades (shopBuildingSprites/
+  // cottageSprites/korthoShopSprites/gobblerHutSprites/castleExteriorSprites/
+  // treeSprites/labyrinthWallSprites) are deliberately NOT included here —
+  // those already render via the WALL pass (see this method's own doc
+  // comment above), and double-billboarding them would draw a flat sprite
+  // floating in front of their own already-rendered wall strip. Doors ARE
+  // included — a shop building's own footprint deliberately leaves its
+  // door tile unblocked/walkable (see shared/maps.ts's shopBuildingFootprint),
+  // which the wall pass alone renders as an unexplained gap; billboarding
+  // the real door sprite right in that gap is what actually makes it read
+  // as a door instead of a hole.
+  private firstPersonBillboardSourceSprites(): Phaser.GameObjects.Sprite[] {
+    const single = [
+      this.chestSprite,
+      this.craftingTableSprite,
+      this.bedSprites,
+      this.greatHallTableSprite,
+      this.greatHallStageSprite,
+      this.gateLeftSprite,
+      this.gateRightSprite,
+      this.northGateLeftSprite,
+      this.northGateRightSprite,
+    ].flat();
+    return [
+      ...this.doorSprites,
+      ...this.classroomSymbolSprites,
+      ...(single.filter((s): s is Phaser.GameObjects.Sprite => s !== null) as Phaser.GameObjects.Sprite[]),
+      ...this.standingTorchSprites,
+      ...this.wallTorchSprites,
+      ...this.crowSprites,
+      ...this.fireplaceSprites,
+      ...this.studentDeskSprites,
+      ...this.benchSprites,
+      ...this.greatHallChairSprites,
+      ...this.portalSprites,
+      ...this.caveEntranceSprites,
+      ...this.signSprites,
+      ...this.townspeople.map((t) => t.sprite),
+      ...this.fishermen.flatMap((f) => [f.canoeSprite, f.riderSprite]),
+    ];
   }
 
   // See applyCameraBounds's own doc comment above for why this replaces
@@ -5884,6 +6416,55 @@ export class WorldScene extends Phaser.Scene {
     return null;
   }
 
+  // Turns "which of W/A/S/D are held" into a world-space move, relative to
+  // facingAngle instead of absolute compass directions (see the ask this
+  // answers in update()'s own movement block). Builds a combined vector
+  // from forward (W=+1/S=-1 along facingAngle) and strafe (D=+1/A=-1
+  // along facingAngle+90°) components, then snaps the RESULT to the
+  // nearest of 8 compass directions — so, for example, holding W+D while
+  // facing east moves the player world-northeast, matching what "forward
+  // and strafe-right while looking east" should actually do, while still
+  // only ever driving the same discrete tile-stepped move()/moveDiagonal()
+  // every other mode already uses (this game has no continuous-position
+  // movement to switch to).
+  private resolveFirstPersonMoveDirection(
+    up: boolean,
+    down: boolean,
+    left: boolean,
+    right: boolean
+  ): { dRow: -1 | 0 | 1; dCol: -1 | 0 | 1; direction: Direction | undefined } | null {
+    const forward = (up ? 1 : 0) - (down ? 1 : 0);
+    const strafe = (right ? 1 : 0) - (left ? 1 : 0);
+    if (forward === 0 && strafe === 0) return null;
+    const theta = this.facingAngle;
+    // direction(θ) = (sinθ, -cosθ); direction(θ+90°) = (cosθ, sinθ) — see
+    // this method's own doc comment for the derivation.
+    const worldCol = forward * Math.sin(theta) + strafe * Math.cos(theta);
+    const worldRow = forward * -Math.cos(theta) + strafe * Math.sin(theta);
+    if (Math.abs(worldCol) < 0.0001 && Math.abs(worldRow) < 0.0001) return null;
+    const worldAngle = Math.atan2(worldCol, -worldRow);
+    // Snap to the nearest 45° step (8 compass points), matching this
+    // file's own angle convention (0 = north, clockwise toward east).
+    const octant = (Math.round(worldAngle / (Math.PI / 4)) + 8) % 8;
+    const OCTANT_DELTAS: ReadonlyArray<{ dRow: -1 | 0 | 1; dCol: -1 | 0 | 1 }> = [
+      { dRow: -1, dCol: 0 }, // N
+      { dRow: -1, dCol: 1 }, // NE
+      { dRow: 0, dCol: 1 }, // E
+      { dRow: 1, dCol: 1 }, // SE
+      { dRow: 1, dCol: 0 }, // S
+      { dRow: 1, dCol: -1 }, // SW
+      { dRow: 0, dCol: -1 }, // W
+      { dRow: -1, dCol: -1 }, // NW
+    ];
+    const { dRow, dCol } = OCTANT_DELTAS[octant]!;
+    let direction: Direction | undefined;
+    if (dRow === -1 && dCol === 0) direction = 'north';
+    else if (dRow === 1 && dCol === 0) direction = 'south';
+    else if (dRow === 0 && dCol === -1) direction = 'west';
+    else if (dRow === 0 && dCol === 1) direction = 'east';
+    return { dRow, dCol, direction };
+  }
+
   private attemptMove(direction: Direction): void {
     const { dr, dc } = DIRECTION_DELTAS[direction];
     const blocked = this.townspersonBlockingMessage(this.row + dr, this.col + dc);
@@ -6410,6 +6991,35 @@ export class WorldScene extends Phaser.Scene {
       this.lastClickKey = key;
       this.lastClickAt = now;
     }
+  }
+
+  // A follow-up ask: "I don't have a way to click or select any sort of
+  // target like followers or enemies while in first person mode." The
+  // cursor itself is locked/hidden for mouse-look, so a click can't hit-
+  // test a world position the way handleLeftClick's own findTargetableAt
+  // does — instead, whichever currently-rendered billboard sits nearest
+  // the crosshair (dead-center) gets selected, using the exact same
+  // setTarget every top-down click already funnels through (so the same
+  // top-left name/level/hp panel — and this frame's own highlight tint in
+  // renderFirstPersonFrame — both just work with no separate UI needed).
+  // Scoped to real combat targets (player/npc/monster) for now, matching
+  // findTargetableAt's own set — a follower/pet's own selection goes
+  // through separate per-kind plumbing (setPetTarget and friends) this
+  // pass doesn't wire up yet.
+  private static readonly FP_CROSSHAIR_SELECT_MAX_SCREEN_FRACTION = 0.12;
+  private handleFirstPersonCrosshairSelect(): void {
+    const centerX = this.scale.width / 2;
+    const maxDist = this.scale.width * WorldScene.FP_CROSSHAIR_SELECT_MAX_SCREEN_FRACTION;
+    let best: { kind: 'player' | 'npc' | 'monster'; id: string; sprite: Phaser.GameObjects.Sprite } | null = null;
+    let bestDist = maxDist;
+    for (const candidate of this.firstPersonTargetableCandidates) {
+      const dist = Math.abs(candidate.screenX - centerX);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = candidate;
+      }
+    }
+    if (best) this.setTarget(best.kind, best.id, best.sprite);
   }
 
   private setTarget(kind: 'player' | 'npc' | 'monster', id: string, sprite: Phaser.GameObjects.Sprite): void {

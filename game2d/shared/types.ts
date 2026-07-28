@@ -1134,6 +1134,20 @@ export interface ClientToServerEvents {
   // hit resolves on the next combat tick (see game.gateway.ts's
   // handleUseSkill/combatTick).
   useSkill: (payload: { direction: Direction; skill: string }) => void;
+  // A big follow-up ask's own first-person mode — sent once per mode
+  // transition (entering/exiting via the zoom cycle), not per-frame; sets
+  // SocketData.firstPerson server-side, which gates whether setAimAngle
+  // below (and the aiming-cone check it enables on wand auto-attack/
+  // targeted spells) means anything at all for this connection.
+  setFirstPersonMode: (payload: { active: boolean }) => void;
+  // Only meaningful while firstPerson is true (silently ignored
+  // otherwise, see game.gateway.ts's own handler) — the player's current
+  // look/aim angle in radians, same 0=north/+col=east convention
+  // shared/aiming.ts's isAimedAtTarget expects. Sent on a client-side
+  // throttle (see WorldScene's own handlePointerLockMouseMove), not tied
+  // to any server tick — this is purely client input being reported, not
+  // something the server's own combat-tick cadence should gate.
+  setAimAngle: (payload: { angle: number }) => void;
   loot: (corpseId: string, ack: (res: LootAck) => void) => void;
   // Grabs a single item out of a corpse by index (the corpse loot modal's
   // "click one item" path) rather than everything at once — the corpse
@@ -1480,6 +1494,14 @@ export interface SocketData {
   // as a torch's own torchLitAt/checkTorchBurnout.
   wandLit: boolean;
   wandLitUntil: number | null;
+  // A big follow-up ask's own first-person mode — never persisted, resets
+  // to false/0 on reconnect same as wandLit above. `firstPerson` gates
+  // whether `facingAngle` means anything at all: while false, every
+  // wand-auto-attack/targeted-spell handler behaves exactly as it always
+  // has (no aiming requirement); while true, those same handlers also
+  // require shared/aiming.ts's isAimedAtTarget to pass using this angle.
+  firstPerson: boolean;
+  facingAngle: number;
   // Quick movement's own toggle (a follow-up ask) — same shape as
   // wandLit/wandLitUntil above, see PlayerSnapshot's celeritasActive.
   celeritasActive: boolean;

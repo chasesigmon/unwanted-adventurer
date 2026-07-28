@@ -429,10 +429,21 @@ settingsBtn.addEventListener('click', () => toggleModal(settingsModal));
 // state (shared with keyboard.ts's own 'v' hotkey, so either path stays
 // in sync no matter which one the player used last).
 const zoomBtn = document.getElementById('zoom-btn') as HTMLButtonElement;
+// A big follow-up ask extended the original 2-state toggle into 3: 'out'
+// -> 'in' (the original toggle) -> 'firstPerson' (a real first-person
+// view, see WorldScene's own enterFirstPerson) -> back to 'out'.
 export function updateZoomButtonLabel(): void {
-  const zoomedIn = activeScene?.isZoomedIn() ?? false;
-  zoomBtn.textContent = zoomedIn ? '🔎' : '🔍';
-  zoomBtn.dataset.tooltip = zoomedIn ? 'Zoom out (v)' : 'Zoom in (v)';
+  const zoomLevel = activeScene?.getZoomLevel() ?? 'out';
+  if (zoomLevel === 'firstPerson') {
+    zoomBtn.textContent = '🧙';
+    zoomBtn.dataset.tooltip = 'Exit first-person (v)';
+  } else if (zoomLevel === 'in') {
+    zoomBtn.textContent = '🔎';
+    zoomBtn.dataset.tooltip = 'Zoom in further (v)';
+  } else {
+    zoomBtn.textContent = '🔍';
+    zoomBtn.dataset.tooltip = 'Zoom in (v)';
+  }
 }
 zoomBtn.addEventListener('click', () => {
   activeScene?.toggleZoom();

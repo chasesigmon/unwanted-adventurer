@@ -455,6 +455,20 @@ export class NetworkManager extends EventTarget {
     this.socket?.emit('punch', direction);
   }
 
+  // A big follow-up ask's own first-person mode — see WorldScene's own
+  // enterFirstPerson/exitFirstPerson, both fire-and-forget like punch
+  // above (this is just informing the server which mode the player is in,
+  // not something that can fail in a way worth an ack for).
+  setFirstPersonMode(active: boolean): void {
+    this.socket?.emit('setFirstPersonMode', { active });
+  }
+
+  // Same fire-and-forget shape — sent on a client-side throttle (see
+  // WorldScene's own handlePointerLockMouseMove), not per-frame.
+  setAimAngle(angle: number): void {
+    this.socket?.emit('setAimAngle', { angle });
+  }
+
   // No ack — same fire-and-forget shape as punch. Used for any queued
   // skill besides the default punch/dagger swing (bone finger strike,
   // glare) — the server engages combat with this skill instead of the

@@ -198,6 +198,7 @@ import {
   isNearCraftingTable,
 } from '../../shared/lighting.js';
 import { hasLineOfSight } from '../../shared/lineOfSight.js';
+import { isAimedAtTarget } from '../../shared/aiming.js';
 import { WAND_ITEM, isWandItem } from '../../shared/equipment.js';
 import { craftedItemBaseName, craftedItemManaBonus, matchRecipe, type CraftSlot } from '../../shared/crafting.js';
 import { maxInventoryItemCount } from '../../shared/inventory.js';
@@ -334,6 +335,9 @@ import type { Direction, MapName, MonsterClass, MonsterKind, Race } from '../../
 const directionSchema = z.enum(DIRECTIONS);
 const equipmentSlotSchema = z.enum(EQUIPMENT_SLOTS);
 const useSkillSchema = z.object({ direction: directionSchema, skill: z.string() });
+// A big follow-up ask's own first-person mode.
+const setFirstPersonModeSchema = z.object({ active: z.boolean() });
+const setAimAngleSchema = z.object({ angle: z.number().finite() });
 const augueTargetSchema = z.object({ targetKind: z.enum(['player', 'npc', 'monster']), targetId: z.string() });
 // Lesser heal (a later follow-up ask) — nullable since "no friendly
 // target selected" is a valid, explicitly-specced request (heal self).
@@ -1481,6 +1485,21 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       return { ok: false, message: `You cannot attack ${targetUsername} — they're in your party.` };
     }
     return { ok: true };
+  }
+
+  // A big follow-up ask: while actually in first-person mode, every
+  // targeted spell (arcane bolt, the elemental bolts/kinetic strike, sap
+  // health, stun, disarm) requires the player to be facing/pointed at the
+  // target, same as the wand's own ranged auto-attack (see combatTick's
+  // own inRange/isAimed). Normal top-down play (client.data.firstPerson
+  // false) always returns true here — every call site below is a no-op
+  // outside first-person, so nothing about ordinary combat changes.
+  // Shared rather than repeated inline at each of the ~15 target-kind
+  // branches across those 6 handlers, all of which follow the exact same
+  // "isWithinRadius, then hasLineOfSight" shape this slots in right after.
+  private isAimedAtCombatTarget(client: GameSocket, targetRow: number, targetCol: number): boolean {
+    if (!client.data.firstPerson) return true;
+    return isAimedAtTarget(client.data.row, client.data.col, client.data.facingAngle, targetRow, targetCol);
   }
 
   // A later follow-up ask: "right click on a player... moves in range to
@@ -3056,6 +3075,11 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // starts unlit; same tradeoff as restState.
     client.data.wandLit = false;
     client.data.wandLitUntil = null;
+    // A big follow-up ask's own first-person mode — never carries over
+    // either; a fresh connection always starts in the ordinary top-down
+    // view with no aim angle recorded yet.
+    client.data.firstPerson = false;
+    client.data.facingAngle = 0;
     // Same tradeoff again — celeritas never carries over either.
     client.data.celeritasActive = false;
     client.data.celeritasActiveUntil = null;
@@ -3493,6 +3517,31 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     client.emit('sync', { player: this.snapshotFor(client) });
   }
 
+  // A big follow-up ask's own first-person mode — sent once per mode
+  // transition (see WorldScene's own enterFirstPerson/exitFirstPerson),
+  // not per-frame. Purely a flag flip; the actual aiming-cone gate this
+  // enables lives in combatTick/resolveRangedAutoAttack and every
+  // targeted-spell handler (see shared/aiming.ts's isAimedAtTarget).
+  @SubscribeMessage('setFirstPersonMode')
+  handleSetFirstPersonMode(@ConnectedSocket() client: GameSocket, @MessageBody() raw: unknown): void {
+    const parsed = setFirstPersonModeSchema.safeParse(raw);
+    if (!parsed.success) return;
+    client.data.firstPerson = parsed.data.active;
+  }
+
+  // Only meaningful while client.data.firstPerson is true — a stale/late
+  // message that arrives just after exiting first-person is harmless
+  // either way (every aim-gated handler also re-checks firstPerson at
+  // read time), but there's no reason to even bother storing an angle
+  // nothing will read.
+  @SubscribeMessage('setAimAngle')
+  handleSetAimAngle(@ConnectedSocket() client: GameSocket, @MessageBody() raw: unknown): void {
+    if (!client.data.firstPerson) return;
+    const parsed = setAimAngleSchema.safeParse(raw);
+    if (!parsed.success) return;
+    client.data.facingAngle = parsed.data.angle;
+  }
+
   // A right-click punch always plays its swing animation (broadcast via
   // the 'punch' event below) — but it only actually deals damage if an
   // NPC/monster/other player is standing exactly one tile ahead, in the
@@ -3837,13 +3886,25 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       // players through collision/walls" — hasLineOfSight is a no-op for
       // melee (adjacent tiles always have line of sight, nothing can sit
       // between them) but genuinely gates the ranged wand-bolt case.
+      // A big follow-up ask: while actually in first-person mode, the
+      // wand's own ranged auto-attack additionally requires the player to
+      // be facing/pointed at the target — melee (session.range undefined)
+      // is deliberately EXEMPT (already strict-adjacency, and the ask was
+      // specifically about the wand/spells), and normal top-down play
+      // (client.data.firstPerson false) is unaffected either way.
+      const isAimed =
+        session.range === undefined ||
+        !client.data.firstPerson ||
+        targetLoc === undefined ||
+        isAimedAtTarget(client.data.row, client.data.col, client.data.facingAngle, targetLoc.row, targetLoc.col);
       const inRange =
         targetLoc !== undefined &&
         targetLoc.mapName === client.data.map &&
         (session.range === undefined
           ? Math.abs(targetLoc.row - client.data.row) + Math.abs(targetLoc.col - client.data.col) === 1
           : Math.abs(targetLoc.row - client.data.row) <= session.range && Math.abs(targetLoc.col - client.data.col) <= session.range) &&
-        hasLineOfSight(client.data.map, client.data.row, client.data.col, targetLoc.row, targetLoc.col);
+        hasLineOfSight(client.data.map, client.data.row, client.data.col, targetLoc.row, targetLoc.col) &&
+        isAimed;
 
       if (!inRange) {
         // A monster target that's STILL actively chasing this exact
@@ -6372,6 +6433,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, npc.row, npc.col)) {
         return { ok: false, message: "You don't have a clear line of sight to that." };
       }
+      if (!this.isAimedAtCombatTarget(client, npc.row, npc.col)) {
+        return { ok: false, message: "You need to point your wand at the target." };
+      }
 
       client.data.mana -= ARCANE_BOLT_MANA_COST;
       this.startSkillCooldown(client, ARCANE_BOLT_SKILL);
@@ -6462,6 +6526,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, targetLoc.row, targetLoc.col)) {
         return { ok: false, message: "You don't have a clear line of sight to that." };
       }
+      if (!this.isAimedAtCombatTarget(client, targetLoc.row, targetLoc.col)) {
+        return { ok: false, message: "You need to point your wand at the target." };
+      }
 
       client.data.mana -= ARCANE_BOLT_MANA_COST;
       this.startSkillCooldown(client, ARCANE_BOLT_SKILL);
@@ -6521,6 +6588,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, monster.row, monster.col)) {
       return { ok: false, message: "You don't have a clear line of sight to that." };
+    }
+    if (!this.isAimedAtCombatTarget(client, monster.row, monster.col)) {
+      return { ok: false, message: "You need to point your wand at the target." };
     }
 
     client.data.mana -= ARCANE_BOLT_MANA_COST;
@@ -6673,6 +6743,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, npc.row, npc.col)) {
         return { ok: false, message: "You don't have a clear line of sight to that." };
       }
+      if (!this.isAimedAtCombatTarget(client, npc.row, npc.col)) {
+        return { ok: false, message: "You need to point your wand at the target." };
+      }
 
       client.data.mana -= manaCost;
       this.startSkillCooldown(client, skill);
@@ -6757,6 +6830,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, monster.row, monster.col)) {
       return { ok: false, message: "You don't have a clear line of sight to that." };
+    }
+    if (!this.isAimedAtCombatTarget(client, monster.row, monster.col)) {
+      return { ok: false, message: "You need to point your wand at the target." };
     }
 
     client.data.mana -= manaCost;
@@ -6979,6 +7055,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, npc.row, npc.col)) {
         return { ok: false, message: "You don't have a clear line of sight to that." };
       }
+      if (!this.isAimedAtCombatTarget(client, npc.row, npc.col)) {
+        return { ok: false, message: "You need to point your wand at the target." };
+      }
 
       const overdraftMessage = applyBpCost();
       this.startSkillCooldown(client, SAP_HEALTH_SKILL);
@@ -7051,6 +7130,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, monster.row, monster.col)) {
       return { ok: false, message: "You don't have a clear line of sight to that." };
+    }
+    if (!this.isAimedAtCombatTarget(client, monster.row, monster.col)) {
+      return { ok: false, message: "You need to point your wand at the target." };
     }
 
     const overdraftMessage = applyBpCost();
@@ -7710,6 +7792,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, npc.row, npc.col)) {
         return { ok: false, message: "You don't have a clear line of sight to that." };
       }
+      if (!this.isAimedAtCombatTarget(client, npc.row, npc.col)) {
+        return { ok: false, message: "You need to point your wand at the target." };
+      }
       client.data.mana -= STUPEFACIANT_MANA_COST;
       this.startSkillCooldown(client, STUN_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
@@ -7746,6 +7831,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, targetLoc.row, targetLoc.col)) {
         return { ok: false, message: "You don't have a clear line of sight to that." };
       }
+      if (!this.isAimedAtCombatTarget(client, targetLoc.row, targetLoc.col)) {
+        return { ok: false, message: "You need to point your wand at the target." };
+      }
       client.data.mana -= STUPEFACIANT_MANA_COST;
       this.startSkillCooldown(client, STUN_SKILL);
       this.startAutoAttackAfterSpell(client, 'player', targetUsername);
@@ -7777,6 +7865,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, monster.row, monster.col)) {
       return { ok: false, message: "You don't have a clear line of sight to that." };
+    }
+    if (!this.isAimedAtCombatTarget(client, monster.row, monster.col)) {
+      return { ok: false, message: "You need to point your wand at the target." };
     }
 
     client.data.mana -= STUPEFACIANT_MANA_COST;
@@ -7838,6 +7929,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, npc.row, npc.col)) {
         return { ok: false, message: "You don't have a clear line of sight to that." };
       }
+      if (!this.isAimedAtCombatTarget(client, npc.row, npc.col)) {
+        return { ok: false, message: "You need to point your wand at the target." };
+      }
       client.data.mana -= EXARME_MANA_COST;
       this.startSkillCooldown(client, DISARM_SKILL);
       this.startAutoAttackAfterSpell(client, 'npc', npc.id);
@@ -7893,6 +7987,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
       if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, targetLoc.row, targetLoc.col)) {
         return { ok: false, message: "You don't have a clear line of sight to that." };
       }
+      if (!this.isAimedAtCombatTarget(client, targetLoc.row, targetLoc.col)) {
+        return { ok: false, message: "You need to point your wand at the target." };
+      }
       const targetClient = this.getActiveClient(targetUsername);
       if (!targetClient) {
         return { ok: false, message: 'Your target is no longer here.' };
@@ -7941,6 +8038,9 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     }
     if (!hasLineOfSight(client.data.map, client.data.row, client.data.col, monster.row, monster.col)) {
       return { ok: false, message: "You don't have a clear line of sight to that." };
+    }
+    if (!this.isAimedAtCombatTarget(client, monster.row, monster.col)) {
+      return { ok: false, message: "You need to point your wand at the target." };
     }
 
     client.data.mana -= EXARME_MANA_COST;

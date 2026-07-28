@@ -9,9 +9,7 @@
 // (all one-directional, no cycle) rather than being imported BY any of
 // them.
 import type { MapName } from './constants.js';
-import { isCastleExteriorBlocked, isMoatBlocked, isShopBuildingBlocked } from './maps.js';
-import { isTreeTile } from './trees.js';
-import { isLabyrinthWallTile } from './labyrinthMaze.js';
+import { wallHitKindAt } from './raycastWalls.js';
 
 // Only the STATIC/structural obstacles that already block ordinary
 // movement (see world-manager.service.ts's own isOccupied, which this
@@ -20,14 +18,14 @@ import { isLabyrinthWallTile } from './labyrinthMaze.js';
 // (another player standing in the way, a vendor, a chest, ...) are NOT
 // checked here: a real wall blocks sight, a person standing between you
 // and your target doesn't the way this game is meant to play.
+// A later follow-up ask (the first-person raycasting mode) needed this
+// same "what's a structural wall here" check but tagged with WHICH kind of
+// wall, so the raycaster can pick a wall color/texture per hit — rather
+// than keep two separate lists that could drift, this is now a thin
+// wrapper around shared/raycastWalls.ts's own wallHitKindAt (identical
+// if-chain, just returning a tagged kind instead of a bare boolean).
 function blocksLineOfSight(mapName: MapName, row: number, col: number): boolean {
-  return (
-    isTreeTile(mapName, row, col) ||
-    isCastleExteriorBlocked(mapName, row, col) ||
-    isShopBuildingBlocked(mapName, row, col) ||
-    isMoatBlocked(mapName, row, col) ||
-    isLabyrinthWallTile(mapName, row, col)
-  );
+  return wallHitKindAt(mapName, row, col).kind !== 'none';
 }
 
 // A simple grid line-walk (samples `steps` evenly-spaced interpolated
