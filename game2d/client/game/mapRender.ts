@@ -302,6 +302,13 @@ export const PET_TEXTURE_KEYS: Record<PetKind, string> = {
   griffin: 'pet-griffin',
   elemental: 'pet-elemental',
   phoenix: 'pet-phoenix',
+  lion: 'pet-lion',
+  tiger: 'pet-tiger',
+  panther: 'pet-panther',
+  cougar: 'pet-cougar',
+  cheetah: 'pet-cheetah',
+  jaguar: 'pet-jaguar',
+  leopard: 'pet-leopard',
 };
 export const PET_FRAME_WIDTH = 24;
 export const PET_FRAME_HEIGHT = 24;
@@ -328,6 +335,13 @@ export const PET_EVOLVED_TEXTURE_KEYS: Record<PetKind, string> = {
   griffin: 'pet-griffin-evolved',
   elemental: 'pet-elemental-evolved',
   phoenix: 'pet-phoenix-evolved',
+  lion: 'pet-lion-evolved',
+  tiger: 'pet-tiger-evolved',
+  panther: 'pet-panther-evolved',
+  cougar: 'pet-cougar-evolved',
+  cheetah: 'pet-cheetah-evolved',
+  jaguar: 'pet-jaguar-evolved',
+  leopard: 'pet-leopard-evolved',
 };
 export const PET_EVOLVED_FRAME_WIDTH = 32;
 export const PET_EVOLVED_FRAME_HEIGHT = 32;

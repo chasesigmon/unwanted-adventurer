@@ -98,7 +98,9 @@ import {
   FLIGHT_MANA_COST,
   FLIGHT_BURST_TILES,
 } from '../../shared/skills.js';
-import { CANTEEN_CAPACITY, isFillableItem, isManaCrystal } from '../../shared/items.js';
+import { CANTEEN_CAPACITY, FILLED_VIAL_ITEM, isFillableItem, isManaCrystal } from '../../shared/items.js';
+import { EQUIPMENT_ITEM_BONUS_LABEL, EQUIPMENT_SLOT_FOR_ITEM, EQUIPMENT_SLOT_LABELS } from '../../shared/equipment.js';
+import { craftedItemBaseName, craftedItemManaBonus } from '../../shared/crafting.js';
 import { myProfile } from '../state.js';
 
 // A shared red for every "Attack" (A-icon) skill — they already collapse
@@ -287,12 +289,58 @@ export const ITEM_DESCRIPTIONS: Record<string, string> = {
   'a woodland ring': 'A delicate ring woven from living vine. Equip it as a ring.',
   // Item 28's rune beast drop — a future mechanic, no use yet.
   'a glowing rune': 'A softly glowing stone rune. No use yet; hold onto it.',
+  // A follow-up bug report: this used to fall through to the generic
+  // "right-click to force-use it" fallback (removed) — a filled vial
+  // isn't usable from the inventory at all, it's a crafting-table
+  // ingredient (see shared/crafting.ts's matchRecipe).
+  [FILLED_VIAL_ITEM]: 'A vial filled with monster blood. A crafting ingredient — take it to a crafting table to use it.',
 };
+
+// A follow-up ask: "add the ability to hover over any equipment the
+// player has and get a description... right now it seems like it's
+// maybe just wand and a few others" — ITEM_DESCRIPTIONS above only ever
+// covered a handful of items by hand; every equippable item already has
+// an entry in EQUIPMENT_SLOT_FOR_ITEM (and usually EQUIPMENT_ITEM_BONUS_LABEL
+// too), so this composes a real description out of those instead of
+// requiring a bespoke ITEM_DESCRIPTIONS entry for every wand/sword/armor
+// variant. craftedItemBaseName strips a crafted item's own " of Mana +N"
+// suffix so a player-crafted "wand of intelligence of Mana +50" is still
+// recognized as the same equipment its base name already describes.
+// Exported (rather than kept private to itemTooltip below) so the
+// Equipment modal's own already-equipped-item tooltip (see
+// inventoryEquipment.ts's renderEquipmentRow) can share the exact same
+// description+bonus composition without also getting itemTooltip's
+// "Click to equip." suffix, which wouldn't make sense there — there's no
+// click-to-equip gesture on something already worn, just the row's own
+// separate "×" remove button.
+export function equipmentDescriptionBody(item: string): string | undefined {
+  const baseName = craftedItemBaseName(item);
+  const slot = EQUIPMENT_SLOT_FOR_ITEM[baseName];
+  if (slot === undefined) return undefined;
+  const description = ITEM_DESCRIPTIONS[item] ?? ITEM_DESCRIPTIONS[baseName];
+  const bonusParts = [EQUIPMENT_ITEM_BONUS_LABEL[baseName]].filter((part): part is string => Boolean(part));
+  const manaBonus = craftedItemManaBonus(item);
+  if (manaBonus > 0) bonusParts.push(`+${manaBonus} max mana`);
+  const bonusLine = bonusParts.length > 0 ? `Grants ${bonusParts.join(', ')}.` : undefined;
+  return [description ?? `${EQUIPMENT_SLOT_LABELS[slot]} equipment.`, bonusLine].filter(Boolean).join('\n\n');
+}
+
+function equipmentTooltip(item: string): string | undefined {
+  const body = equipmentDescriptionBody(item);
+  return body ? `${body}\n\nClick to equip.` : undefined;
+}
 
 export function itemTooltip(item: string): string {
   const description = ITEM_DESCRIPTIONS[item];
   if (isFillableItem(item)) return description ?? 'Click to target it, then act on it from your action bar.';
   if (isManaCrystal(item)) return description ?? 'No use yet; hold onto it.';
+  if (item === FILLED_VIAL_ITEM) return description!;
+  // Item 4 (follow-up ask): "weapon tooltips on hover should say click to
+  // equip" — equipment previously fell all the way through to the plain
+  // consumable branch below, which always said "Click to use." even for
+  // a weapon/armor piece equipping is the only thing it ever does.
+  const equipmentDescription = equipmentTooltip(item);
+  if (equipmentDescription) return equipmentDescription;
   return description ? `${description}\n\nClick to use.` : 'Click to use.';
 }
 

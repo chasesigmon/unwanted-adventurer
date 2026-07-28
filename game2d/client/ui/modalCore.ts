@@ -337,6 +337,19 @@ for (const modal of ALL_MODALS) {
   if (modal === autopilotModal) continue;
   modal.addEventListener('click', (e) => {
     if (e.target !== modal) return;
+    // Bug fix: "when clicking outside of the inventory modal & crafting
+    // table modal then it should close them, the crafting table modal
+    // didn't close when clicking elsewhere on screen" — while paired,
+    // craftingModal has pointer-events:none (see applyModalPairPositions'
+    // own doc comment), so EVERY backdrop click funnels through to
+    // inventoryModal's own listener here, even one visually over
+    // crafting's side of the screen. A plain hideModal(inventoryModal)
+    // left craftingModal (which never itself received the click) open.
+    if (modal === inventoryModal && !craftingModal.hidden) {
+      closeAllModals();
+      updateInputCaptured();
+      return;
+    }
     hideModal(modal);
     updateInputCaptured();
   });

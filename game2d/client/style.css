@@ -1179,9 +1179,17 @@ body {
    sits later in the DOM than inventoryModal, so its own full-screen
    backdrop normally sits on top, silently swallowing clicks meant for an
    inventory item underneath. Disabled only while paired; re-enabled on
-   its own box so the crafting modal itself stays fully interactive. */
+   its own box so the crafting modal itself stays fully interactive.
+   The background is also cleared here — .modal's own rgba(0,0,0,0.55)
+   backdrop was still painting on top of inventoryModal's box even with
+   pointer-events off (that property only affects hit-testing, not
+   rendering), which is what made the inventory box look "grayed out"
+   whenever the two were paired. inventoryModal's own backdrop already
+   dims the game view behind both, so a second stacked dimming layer here
+   was pure double-darkening, not an intentional effect. */
 #crafting-modal.paired-with-inventory {
   pointer-events: none;
+  background: transparent;
 }
 
 #crafting-modal.paired-with-inventory .modal-box {

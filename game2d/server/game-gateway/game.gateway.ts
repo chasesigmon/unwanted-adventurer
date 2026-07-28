@@ -26,6 +26,7 @@ import {
   PET_KINDS,
   PET_COMMANDS,
   PET_ATTACK_DAMAGE,
+  PET_KIND_ATTACK_DAMAGE_BONUS,
   FOLLOWER_EQUIPMENT_SLOTS,
   FOLLOWER_WEAPON_DAMAGE_BONUS,
   PET_CORPSE_SACRIFICE_GOLD_PER_LEVEL,
@@ -4043,9 +4044,15 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // incoming damage is resolved separately (see monster-manager.
     // service.ts's own followerAggro/damageFollower — MONSTER_VS_FOLLOWER_DAMAGE).
     const weaponBonus = (pet?.equipment.weapon ?? animatedMonster?.equipment.weapon) ? FOLLOWER_WEAPON_DAMAGE_BONUS : 0;
+    // A later follow-up ask: Floro's 7 big-cat kinds hit for "the same
+    // damage mechanics as the kitten, but with 10 more base damage" — a
+    // flat per-kind addition on top of the shared PET_ATTACK_DAMAGE base
+    // (see PET_KIND_ATTACK_DAMAGE_BONUS's own doc comment), 0 for every
+    // other pet kind.
+    const kindDamageBonus = pet ? (PET_KIND_ATTACK_DAMAGE_BONUS[pet.kind] ?? 0) : 0;
     const rawDamage =
       (followerType === 'pet'
-        ? PET_ATTACK_DAMAGE + (pet?.attackDamageBonus ?? 0)
+        ? PET_ATTACK_DAMAGE + kindDamageBonus + (pet?.attackDamageBonus ?? 0)
         : followerType === 'tamedBeast'
           ? (tamedBeast?.attackDamage ?? 0)
           : (animatedMonster?.attackDamage ?? 0)) + weaponBonus;
@@ -5358,10 +5365,12 @@ export class GameGateway implements OnGatewayInit<GameServer>, OnGatewayConnecti
     // The Pet Shop's own items (a later follow-up ask) are special —
     // buying one creates a real Pet, not an inventory item string, and
     // "a player should only be allowed to have 1 pet at a time". Item 15
-    // added Kortho's own pet salesman as a second pet-selling vendor
-    // (its own 3 exotic kinds only — see vendors.ts's kortho-pet-salesman).
+    // added Kortho's own pet salesman as a second pet-selling vendor (its
+    // own 3 exotic kinds only — see vendors.ts's kortho-pet-salesman); a
+    // later follow-up ask added Floro's own pet salesman as a third,
+    // selling its own 7 big-cat kinds (see vendors.ts's floro-pet-salesman).
     if (
-      (vendorId === 'bramwick-pet-shop' || vendorId === 'kortho-pet-salesman') &&
+      (vendorId === 'bramwick-pet-shop' || vendorId === 'kortho-pet-salesman' || vendorId === 'floro-pet-salesman') &&
       (PET_KINDS as readonly string[]).includes(item.label)
     ) {
       if (this.petManager.hasPet(client.data.username)) {

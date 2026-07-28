@@ -19,7 +19,26 @@ import { isLabyrinthWallTile } from './labyrinthMaze.js';
 // phoenix'" to Kortho's own pet shop specifically (see server/worlds/
 // vendors.ts's kortho-pet-salesman — NOT Floro's, per the user's own
 // explicit "don't add these pets to Floro").
-export const PET_KINDS = ['puppy', 'kitten', 'piglet', 'griffin', 'elemental', 'phoenix'] as const;
+// A later follow-up ask added 7 big-cat kinds to FLORO's own pet
+// salesman specifically (see vendors.ts's floro-pet-salesman) — same
+// "young form now, real evolved form at PET_EVOLUTION_LEVEL" shape as
+// every other pet, just a bigger one-town batch than griffin/elemental/
+// phoenix's 3.
+export const PET_KINDS = [
+  'puppy',
+  'kitten',
+  'piglet',
+  'griffin',
+  'elemental',
+  'phoenix',
+  'lion',
+  'tiger',
+  'panther',
+  'cougar',
+  'cheetah',
+  'jaguar',
+  'leopard',
+] as const;
 export type PetKind = (typeof PET_KINDS)[number];
 
 export const PET_KIND_LABELS: Record<PetKind, string> = {
@@ -29,6 +48,13 @@ export const PET_KIND_LABELS: Record<PetKind, string> = {
   griffin: 'Young Griffin',
   elemental: 'Lesser Elemental',
   phoenix: 'Young Phoenix',
+  lion: 'Young Lion',
+  tiger: 'Young Tiger',
+  panther: 'Young Panther',
+  cougar: 'Young Cougar',
+  cheetah: 'Young Cheetah',
+  jaguar: 'Young Jaguar',
+  leopard: 'Young Leopard',
 };
 
 // Item 15: "these pets should start at level 1 and have higher base
@@ -42,6 +68,16 @@ export const PET_STARTING_HP: Record<PetKind, number> = {
   griffin: 90,
   elemental: 90,
   phoenix: 90,
+  // "Same damage mechanics as the kitten" (a later follow-up ask) — same
+  // starting hp tier as the original 3 too, not the exotic griffin/
+  // elemental/phoenix's higher pool.
+  lion: 50,
+  tiger: 50,
+  panther: 50,
+  cougar: 50,
+  cheetah: 50,
+  jaguar: 50,
+  leopard: 50,
 };
 
 // Which pet kinds actually have real "evolved form" art (PET_EVOLUTION_LEVEL,
@@ -52,7 +88,21 @@ export const PET_STARTING_HP: Record<PetKind, number> = {
 // to defer griffin/elemental/phoenix on ("no new art was asked for") —
 // PetManagerService.grantExp gates the entire evolve-in-place mechanic on
 // this list.
-export const EVOLVABLE_PET_KINDS = ['puppy', 'kitten', 'piglet', 'griffin', 'elemental', 'phoenix'] as const;
+export const EVOLVABLE_PET_KINDS = [
+  'puppy',
+  'kitten',
+  'piglet',
+  'griffin',
+  'elemental',
+  'phoenix',
+  'lion',
+  'tiger',
+  'panther',
+  'cougar',
+  'cheetah',
+  'jaguar',
+  'leopard',
+] as const;
 
 // "Commandable like stay by side or attack or sleep" — 'follow' is the
 // default the moment a pet is purchased ("should follow the player").
@@ -111,9 +161,34 @@ export const PET_EVOLVED_NAME: Record<PetKind, string> = {
   griffin: 'Griffin',
   elemental: 'Elemental',
   phoenix: 'Phoenix',
+  lion: 'Lion',
+  tiger: 'Tiger',
+  panther: 'Panther',
+  cougar: 'Cougar',
+  cheetah: 'Cheetah',
+  jaguar: 'Jaguar',
+  leopard: 'Leopard',
 };
 export const PET_EVOLUTION_HP_BONUS = 25;
 export const PET_EVOLUTION_ATTACK_BONUS = 3;
+
+// A later follow-up ask: Floro's 7 new big-cat pets should have "the same
+// damage mechanics as the kitten, but with 10 more base damage" — every
+// other pet kind shares one flat PET_ATTACK_DAMAGE with no per-kind
+// variance at all (see its own doc comment), so this is a new, narrow
+// per-kind ADDITION on top of that shared base rather than a replacement
+// — resolveFollowerContact (game.gateway.ts) adds it in alongside the
+// existing evolution-only attackDamageBonus and any equipped-weapon
+// bonus. Absent (0) for every kind that isn't one of these 7.
+export const PET_KIND_ATTACK_DAMAGE_BONUS: Partial<Record<PetKind, number>> = {
+  lion: 10,
+  tiger: 10,
+  panther: 10,
+  cougar: 10,
+  cheetah: 10,
+  jaguar: 10,
+  leopard: 10,
+};
 
 // A later follow-up ask: "Lesser elemental/evolved form should do RANGED
 // magical damage (currently attacks physically)." Every OTHER pet kind
@@ -392,6 +467,21 @@ export function computeFollowerStep(
     if (isFollowerBlockedByTerrain(mapName, candidate.row, candidate.col, canCrossWater)) return undefined;
     return candidate;
   };
+
+  // A later follow-up ask: "these [pet] sprites should have wasd and
+  // diagonal movement" — a follower used to only ever step ONE axis per
+  // tick even when it needed to close distance on both (the same
+  // diagonal move a player's own WASD combo already does, see
+  // game.gateway.ts's resolveDiagonalMove/processDiagonalMove), so it
+  // visibly zig-zagged in a staircase pattern chasing a target that
+  // wasn't directly north/south/east/west of it. Tried FIRST whenever
+  // both axes actually need closing; falls back to the existing single-
+  // axis behavior below (still preferring whichever axis has more
+  // distance left) if the diagonal tile itself is blocked.
+  if (dRow !== 0 && dCol !== 0) {
+    const diagonal = tryStep(Math.sign(dRow), Math.sign(dCol));
+    if (diagonal) return diagonal;
+  }
 
   const preferRow = Math.abs(dRow) >= Math.abs(dCol);
   const primary = preferRow ? tryStep(Math.sign(dRow), 0) : tryStep(0, Math.sign(dCol));

@@ -2,12 +2,13 @@
 // unequipping, consuming, and using an item all funnel through the same
 // applyUseItemAck reconciliation of myProfile.
 import { activeScene, myProfile, network, setMyProfile } from '../state.js';
-import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, EQUIPMENT_ITEM_BONUS_LABEL, EQUIPMENT_SLOT_FOR_ITEM, type EquipmentSlot } from '../../shared/equipment.js';
+import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_LABELS, EQUIPMENT_SLOT_FOR_ITEM, type EquipmentSlot } from '../../shared/equipment.js';
 import { CANTEEN_ITEM, CANTEEN_CAPACITY, isFillableItem, isDrinkableItem, isEdibleItem, groupInventoryItems } from '../../shared/items.js';
+import { craftedItemBaseName } from '../../shared/crafting.js';
 import { FOLLOWER_EQUIPMENT_SLOTS } from '../../shared/pets.js';
 import type { UseItemAck } from '../../shared/types.js';
 import { attachTooltip } from './tooltip.js';
-import { itemTooltip, ITEM_DESCRIPTIONS } from './skillMeta.js';
+import { itemTooltip, equipmentDescriptionBody } from './skillMeta.js';
 import { logCombatMessage } from './log.js';
 import { showCenterToastLines } from './toast.js';
 import { updateStatusBar } from './statusBar.js';
@@ -39,7 +40,7 @@ function livingFollowers(): Array<{ followerKind: 'pet' | 'animatedMonster'; fol
 // equippable AT ALL (a mana crystal) or that fills some OTHER slot a
 // follower has no use for (a helmet, a ring) never gets the option.
 function isFollowerEquippableItem(item: string): boolean {
-  const slot = EQUIPMENT_SLOT_FOR_ITEM[item];
+  const slot = EQUIPMENT_SLOT_FOR_ITEM[craftedItemBaseName(item)];
   return slot !== undefined && (FOLLOWER_EQUIPMENT_SLOTS as readonly string[]).includes(slot);
 }
 
@@ -49,7 +50,14 @@ function isFollowerEquippableItem(item: string): boolean {
 // handleUseItem doc comment) — this is purely which LABEL to show; both
 // buttons dispatch the exact same network.useItem call underneath.
 function isEquipmentItem(item: string): boolean {
-  return EQUIPMENT_SLOT_FOR_ITEM[item] !== undefined;
+  // Bug fix: "the crafted wand of intelligence + 50 mana... has the
+  // option 'Use', which equips it" — a crafted item's own name gets a
+  // " of Mana +N" suffix appended (see shared/crafting.ts's own
+  // matchRecipe) which never matched this table's plain "wand of
+  // intelligence" key, so a crafted weapon silently fell through to the
+  // generic "Use" label despite equipping just fine either way.
+  // craftedItemBaseName is a no-op for anything that isn't crafted.
+  return EQUIPMENT_SLOT_FOR_ITEM[craftedItemBaseName(item)] !== undefined;
 }
 
 // Which stacked row (keyed by its first index) currently has its Equip/
@@ -470,13 +478,13 @@ function renderEquipmentRow(slot: EquipmentSlot, label: string, item: string | u
   text.textContent = item ?? '(none)';
   // A later follow-up ask: "show what bonus a piece of gear actually
   // gives" — a hover tooltip on the item's own name, same convention
-  // every other tooltip-bearing label in this project already uses. Item
-  // 33 added the item's own plain description (same ITEM_DESCRIPTIONS
-  // table the Inventory modal already reads from) above the bonus line,
-  // when one exists for this item.
-  const bonus = item ? EQUIPMENT_ITEM_BONUS_LABEL[item] : undefined;
-  const description = item ? ITEM_DESCRIPTIONS[item] : undefined;
-  const tooltip = [description, bonus].filter(Boolean).join('\n\n');
+  // every other tooltip-bearing label in this project already uses.
+  // equipmentDescriptionBody is shared with the Inventory modal's own
+  // itemTooltip (see skillMeta.ts) so a crafted item's " of Mana +N"
+  // suffix is stripped the same way in both places, rather than this row
+  // keying ITEM_DESCRIPTIONS/EQUIPMENT_ITEM_BONUS_LABEL off the raw
+  // (possibly-crafted) item string a second time.
+  const tooltip = item ? equipmentDescriptionBody(item) : undefined;
   if (tooltip) {
     attachTooltip(text, () => tooltip);
     text.style.cursor = 'help';

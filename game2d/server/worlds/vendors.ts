@@ -186,8 +186,19 @@ const VENDOR_SEEDS: VendorSeed[] = [
     map: 'Floro Pet Salesman',
     row: 3,
     col: 15,
-    items: [],
-    greeting: "No creatures for sale just yet, but I'm always looking for stock.",
+    // A later follow-up ask: 7 young big cats, all the same price — see
+    // game.gateway.ts's own handleBuyItem for the pet-purchase special
+    // case this vendor id now needs to be included in.
+    items: [
+      { label: 'lion', price: 80 },
+      { label: 'tiger', price: 80 },
+      { label: 'panther', price: 80 },
+      { label: 'cougar', price: 80 },
+      { label: 'cheetah', price: 80 },
+      { label: 'jaguar', price: 80 },
+      { label: 'leopard', price: 80 },
+    ],
+    greeting: "Big cats, freshly tamed — a lion, tiger, panther, cougar, cheetah, jaguar, or leopard, 80 gold each.",
   },
   // A later follow-up ask ("have the floro boat shop sell the same items
   // as the kortho boat shop") repurposed Floro's own Jobs Office into a
