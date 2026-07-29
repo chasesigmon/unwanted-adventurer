@@ -250,31 +250,91 @@ function korthoShopDoorExits(): MapExit[] {
 // PLUS a full moat ring around it with a real margin on every side (see
 // MOAT_BUFFER_TILES/MOAT_WIDTH_TILES/MOAT_OUTER_BANK_TILES below); going
 // all the way down to a literal 1/3 (60) would leave the moat with
-// nowhere to sit outside the castle's own footprint.
+// nowhere to sit outside the castle's own footprint. Still the "one unit"
+// for how big each open-ground band around the moat is (see
+// GRIMOAK_GROUNDS_EXPANSION_TILES below), even after later follow-up asks
+// stopped deriving ROWS/COLS as a flat multiple of it directly.
 const GRIMOAK_GROUNDS_SIZE = 80;
-// Extended 25% wider to the right (a follow-up ask) — the castle/moat/
-// gate below are all positioned from CASTLE_DOOR_ON_GROUNDS's own fixed
-// col (40) and fixed offsets from it, not from this size constant, so
-// widening only the COLS here leaves every one of them exactly where
-// they already are; the new 20-tile strip (cols 80-99) is just empty
-// ground to their east for the new wild skeleton/goblin populations
-// (see server/monsters/monster.ts) to roam.
-export const GRIMOAK_GROUNDS_COLS = Math.round(GRIMOAK_GROUNDS_SIZE * 1.25);
-// Where the new 25%-wider strip actually starts (col 80) — the new wild
-// skeleton/goblin populations (server/monsters/monster.ts) only spawn at
-// or past this column.
-export const GRIMOAK_GROUNDS_EXTENSION_MIN_COL = GRIMOAK_GROUNDS_SIZE;
-// Extended another 10% to the south (a later follow-up ask) — same
-// "widen without moving anything" shape as the COLS widening above: the
-// castle/moat/gates are all positioned from CASTLE_DOOR_ON_GROUNDS's own
-// fixed row (55) and fixed offsets from it, not from this size constant,
-// so growing ROWS only adds new open ground south of the existing south
-// gate (already 17-odd rows clear of it) rather than shifting anything.
-// This is also where the new southwest "Floro Road" exit (a later
-// follow-up ask) actually gets its room — the moat's own footprint spans
-// nearly the full original 80-wide band, so there's no real "southwest"
-// until south of the south gate, which this newly-added strip provides.
-export const GRIMOAK_GROUNDS_ROWS = Math.round(GRIMOAK_GROUNDS_SIZE * 1.1);
+
+// The castle exterior's own footprint in tiles (item 5's collision) —
+// derived from its raw asset size (1920x672px, see
+// tools/gen-castle-exterior.mjs — widened by adding towers/wings, not by
+// stretching, per item 2's correction) times its 1x render scale (see
+// src/game/mapRender.ts's CASTLE_EXTERIOR_SCALE, halved again per a
+// follow-up "same building count, half the size" request) divided by the
+// 32px tile size, computed here as plain numbers since this shared module
+// (read by the server for collision) has no reason to depend on Phaser
+// or any client-only rendering constant. Declared up here (moved from
+// right next to isCastleExteriorBlocked/CASTLE_DOOR_ON_GROUNDS further
+// down, where this used to live) so CASTLE_DOOR_ON_GROUNDS/
+// GRIMOAK_GROUNDS_ROWS/COLS below can be computed FROM these instead of
+// the other way around — a big follow-up ask ("make Grimoak Grounds have
+// 25% more height north of the moat and 25% more height south of the
+// moat and 25% more width east of the moat and make west of the moat the
+// same width as east") needed the castle's own position to move, which
+// this file's old layout couldn't express without this reordering.
+const CASTLE_FOOTPRINT_WIDTH_TILES = 60; // (1920 * 1) / 32
+const CASTLE_FOOTPRINT_HEIGHT_TILES = 21; // (672 * 1) / 32
+
+// The moat + bridge's own dimensions (a follow-up ask: "add a mote that
+// goes around it with a bridge in the front") — a rectangular ring
+// standing off from the castle's own footprint by MOAT_BUFFER_TILES,
+// MOAT_WIDTH_TILES wide. Also moved up here for the same reason as the
+// castle footprint above.
+const MOAT_BUFFER_TILES = 4; // clear ground between the castle's walls and the moat's inner edge
+const MOAT_WIDTH_TILES = 3;
+const BRIDGE_HALF_WIDTH_TILES = 2; // a 5-tile-wide bridge
+
+// How far the moat's own OUTER edge sits from the castle door on each
+// axis — castle footprint + buffer + moat width, the same math
+// MOAT_OUTER_LEFT/RIGHT/TOP/BOTTOM further down this file use (duplicated
+// here as its own name only because CASTLE_DOOR_ON_GROUNDS/
+// GRIMOAK_GROUNDS_ROWS/COLS below need it before those later exports are
+// declared).
+const MOAT_OUTER_HALF_SPAN_COLS = Math.floor(CASTLE_FOOTPRINT_WIDTH_TILES / 2) + MOAT_BUFFER_TILES + MOAT_WIDTH_TILES; // 37
+const MOAT_OUTER_SPAN_ROWS_NORTH = CASTLE_FOOTPRINT_HEIGHT_TILES + MOAT_BUFFER_TILES + MOAT_WIDTH_TILES; // 28
+const MOAT_OUTER_SPAN_ROWS_SOUTH = MOAT_BUFFER_TILES + MOAT_WIDTH_TILES; // 7
+
+// A big follow-up ask: "make Grimoak Grounds have 25% more height north
+// of the moat and 25% more height south of the moat and 25% more width
+// east of the moat and make west of the moat the same width as east of
+// the moat." Two EARLIER follow-up asks had already made this lopsided in
+// exactly the two ways this one calls out — "extended 25% wider to the
+// right" (a 20-tile strip added east only, for new wild skeleton/goblin
+// populations to roam) and "extended another 10% to the south" (for the
+// new southwest Floro Road exit) — leaving the open band on each side of
+// the moat at: north 27, south 25, west 3 (barely any — the original
+// design's own "real margin on every side" had already been pushed
+// east/south by those two asks), east 22. This ask both widens
+// north/south further AND fixes the leftover west/east lopsidedness.
+// GRIMOAK_GROUNDS_SIZE is still the "25%" unit those earlier asks used.
+const GRIMOAK_GROUNDS_EXPANSION_TILES = Math.round(GRIMOAK_GROUNDS_SIZE * 0.25); // 20
+const GRIMOAK_GROUNDS_NORTH_OF_MOAT_TILES = 27 + GRIMOAK_GROUNDS_EXPANSION_TILES; // 47
+const GRIMOAK_GROUNDS_SOUTH_OF_MOAT_TILES = 25 + GRIMOAK_GROUNDS_EXPANSION_TILES; // 45
+const GRIMOAK_GROUNDS_EAST_OF_MOAT_TILES = 22 + GRIMOAK_GROUNDS_EXPANSION_TILES; // 42
+// "Make west of the moat the same width as east of the moat" — no longer
+// its own separate figure at all, just mirrors the east band above.
+const GRIMOAK_GROUNDS_WEST_OF_MOAT_TILES = GRIMOAK_GROUNDS_EAST_OF_MOAT_TILES; // 42
+
+// Centered within the 4 open-ground bands above (plus the moat's own
+// span) rather than the hand-picked {row: 55, col: 40} this used to be.
+export const CASTLE_DOOR_ON_GROUNDS = {
+  row: GRIMOAK_GROUNDS_NORTH_OF_MOAT_TILES + MOAT_OUTER_SPAN_ROWS_NORTH, // 75
+  col: GRIMOAK_GROUNDS_WEST_OF_MOAT_TILES + MOAT_OUTER_HALF_SPAN_COLS, // 79
+};
+
+// Where the new eastward band actually starts — the new wild skeleton/
+// goblin populations (server/monsters/monster.ts) only spawn at or past
+// this column. Was simply GRIMOAK_GROUNDS_SIZE (col 80, "where the old
+// 25%-wider strip started") before this same big follow-up ask moved the
+// castle/moat itself substantially east to make room for the new
+// matching WEST band — col 80 would now land almost on top of the castle
+// itself, so this now tracks the moat's own new east edge instead (see
+// MOAT_OUTER_RIGHT further down this file).
+export const GRIMOAK_GROUNDS_EXTENSION_MIN_COL = CASTLE_DOOR_ON_GROUNDS.col + MOAT_OUTER_HALF_SPAN_COLS + 1; // 117
+
+export const GRIMOAK_GROUNDS_COLS = CASTLE_DOOR_ON_GROUNDS.col + MOAT_OUTER_HALF_SPAN_COLS + GRIMOAK_GROUNDS_EAST_OF_MOAT_TILES + 1; // 159
+export const GRIMOAK_GROUNDS_ROWS = CASTLE_DOOR_ON_GROUNDS.row + MOAT_OUTER_SPAN_ROWS_SOUTH + GRIMOAK_GROUNDS_SOUTH_OF_MOAT_TILES + 1; // 128
 
 // ---------- Mystical Timberland (a later follow-up ask: "create a new
 // World/area called 'Mystical Timberland' that is to the left of Grimoak
@@ -331,23 +391,6 @@ export const ROAD_TO_FLORO_HALF_WIDTH_TILES = 2;
 // spans nearly the entire original 80-wide band further north).
 export const GRIMOAK_GROUNDS_ROAD_TO_FLORO_COL = 10;
 
-// Centered horizontally; positioned to leave enough headroom north of the
-// castle (and south of it, for the moat + bridge + a spawn point OUTSIDE
-// the moat) — see GRIMOAK_GROUNDS_SPAWN/startingPositionFor below.
-export const CASTLE_DOOR_ON_GROUNDS = { row: 55, col: 40 };
-
-// The castle exterior's own footprint in tiles (item 5's collision) —
-// derived from its raw asset size (1920x672px, see
-// tools/gen-castle-exterior.mjs — widened by adding towers/wings, not by
-// stretching, per item 2's correction) times its 1x render scale (see
-// src/game/mapRender.ts's CASTLE_EXTERIOR_SCALE, halved again per a
-// follow-up "same building count, half the size" request) divided by the
-// 32px tile size, computed here as plain numbers since this shared module
-// (read by the server for collision) has no reason to depend on Phaser
-// or any client-only rendering constant.
-const CASTLE_FOOTPRINT_WIDTH_TILES = 60; // (1920 * 1) / 32
-const CASTLE_FOOTPRINT_HEIGHT_TILES = 21; // (672 * 1) / 32
-
 // True for any tile the castle's own exterior sprite visually covers,
 // EXCEPT the door tile itself (still walkable — it's the entrance) —
 // blocks a player from walking "through" the building's facade on the
@@ -368,10 +411,9 @@ export function isCastleExteriorBlocked(mapName: MapName, row: number, col: numb
 // footprint by MOAT_BUFFER_TILES, MOAT_WIDTH_TILES wide, with a single
 // gap in its south (front) side that the bridge crosses. Blocks movement
 // everywhere except that bridge gap, so reaching the castle door actually
-// requires using it. ----------
-const MOAT_BUFFER_TILES = 4; // clear ground between the castle's walls and the moat's inner edge
-const MOAT_WIDTH_TILES = 3;
-const BRIDGE_HALF_WIDTH_TILES = 2; // a 5-tile-wide bridge
+// requires using it. (MOAT_BUFFER_TILES/MOAT_WIDTH_TILES/
+// BRIDGE_HALF_WIDTH_TILES themselves now live up near GRIMOAK_GROUNDS_SIZE
+// — see that section's own doc comment on why.) ----------
 
 // Exported too — the client needs these same inner-edge coordinates to
 // know exactly where to stop drawing the moat's water (see WorldScene's
@@ -1066,7 +1108,16 @@ FLOOR3_LANDING.exits.push(
     direction: 'south',
     kind: 'stairs',
     toMap: 'Grimoak Castle 4th Floor',
-    toRow: FLOOR_LANDING_STAIRS_ARRIVAL_ROW,
+    // Bug fix: this used to arrive near the SOUTH wall
+    // (FLOOR_LANDING_STAIRS_ARRIVAL_ROW), which was correct back when the
+    // 4th floor's own down-stairs were also on its south wall — but a
+    // later follow-up ask moved those specifically onto the NORTH wall
+    // instead (see FLOOR4_LANDING's own exits.push below, row 0), leaving
+    // this arrival point stranded clear across the room from the actual
+    // stairs. FLOOR_LANDING_NORTH_ARRIVAL_ROW (row 1) is the same "one
+    // tile in front of a north-wall staircase" convention the floor
+    // 2->3 transition just above already uses for exactly this reason.
+    toRow: FLOOR_LANDING_NORTH_ARRIVAL_ROW,
     toCol: FLOOR_LANDING_DOWN_STAIRS_COL,
   }
 );
@@ -1450,9 +1501,15 @@ function roadBandExits(config: {
 export const GOBBLER_VILLAGE_SIZE = BRAMWICK_SIZE;
 export const GOBBLER_VILLAGE_MID = Math.floor(GOBBLER_VILLAGE_SIZE / 2);
 // Where Grimoak Grounds' own new SE exit sits — well south of the moat
-// (MOAT_OUTER_BOTTOM is row 62) and at the map's own far east edge, same
-// "southeast" placement the ask itself describes.
-export const GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW = 75;
+// and at the map's own far east edge, same "southeast" placement the ask
+// itself describes. Bug fix: a later big follow-up ask (see
+// GRIMOAK_GROUNDS_NORTH_OF_MOAT_TILES's own doc comment) moved the moat
+// itself substantially further south — this was a fixed row 75, chosen
+// back when MOAT_OUTER_BOTTOM was row 62 (13 rows further south), and
+// never updated when the moat moved, which would have landed it INSIDE
+// the moat's own new footprint. Kept at that same 13-row offset past the
+// moat's own (now bigger) south edge instead of a bare fixed number.
+export const GRIMOAK_GROUNDS_GOBBLER_VILLAGE_ROW = 95; // MOAT_OUTER_BOTTOM (82) + 13
 
 const GOBBLER_HUT_DOORS: Record<(typeof GOBBLER_VILLAGE_HUT_MAPS)[number], { row: number; col: number }> = {
   'Gobbler Hut 1': { row: 10, col: 14 },
@@ -1704,9 +1761,15 @@ export const RUNESTONE_CANYON_STAIRS_HALF_WIDTH_TILES = 2;
 // row range the stairs cut crosses — gets blocked outside the stairs'
 // own walkable column range, so the stairs remain the one way through
 // that specific edge instead of scrambling over the boulders flanking it.
+// A follow-up ask ("make it so that the boulders/rocks on the left and
+// right of the stairs can't be walked on") originally only blocked the
+// SOUTH rim near the entrance stairs; a later follow-up ask ("make it so
+// that any of the boulder/rock area is not walkable... all monsters
+// should be inside the dirt/not-boulder area") widened this to the WHOLE
+// rim (all 4 sides — see isRunestoneCanyonRimTile), still carving out the
+// stairs gap itself so the entrance stays walkable.
 export function isRunestoneCanyonBoulderBlocked(mapName: MapName, row: number, col: number): boolean {
-  if (mapName !== 'Runestone Canyon') return false;
-  if (row < RUNESTONE_CANYON_ROWS - RUNESTONE_CANYON_RIM_WIDTH_TILES) return false;
+  if (!isRunestoneCanyonRimTile(mapName, row, col)) return false;
   return !isRunestoneCanyonStairsTile(mapName, row, col);
 }
 
@@ -2094,15 +2157,17 @@ export const MAPS: Record<MapName, MapDefinition> = {
       ...bramwickGroundsEntranceExits('south'),
       ...bramwickShopDoorExits(),
       // A later follow-up ask: "a cave connection to the west of
-      // Bramwick with a sign that reads 'Brimstone Cave'." Brimstone
-      // Cave's own door swung between its east and west edge twice since
-      // (see that map's own exits below) — most recently back to its east
-      // edge, so this lands the player right next to it there now.
+      // Bramwick with a sign that reads 'Brimstone Cave'" (renamed to
+      // "Trolls Lair" by a still-later ask — see that map's own doc
+      // comment below). Its own door swung between its east and west
+      // edge twice since (see that map's own exits below) — most recently
+      // back to its east edge, so this lands the player right next to it
+      // there now.
       ...roadBandExits({
         row: BRAMWICK_BRIMSTONE_ROW,
         col: 0,
         direction: 'west',
-        toMap: 'Brimstone Cave',
+        toMap: 'Trolls Lair',
         toRow: BRIMSTONE_CAVE_MID_ROW,
         toCol: BRIMSTONE_CAVE_SIZE - 2,
         halfWidthTiles: BRAMWICK_BRIMSTONE_HALF_WIDTH_TILES,
@@ -2142,8 +2207,13 @@ export const MAPS: Record<MapName, MapDefinition> = {
   'Bramwick Potions': bramwickShopInteriorDefinition('Bramwick Potions'),
   'Bramwick Pet Shop': bramwickShopInteriorDefinition('Bramwick Pet Shop'),
   'Bramwick Crafting Shop': bramwickShopInteriorDefinition('Bramwick Crafting Shop'),
-  'Brimstone Cave': {
-    name: 'Brimstone Cave',
+  // Renamed from "Brimstone Cave" (a later follow-up ask) — same map,
+  // same trolls, just a name that actually signals who lives here. Kept
+  // as BRIMSTONE_CAVE_SIZE/BRIMSTONE_CAVE_MID_ROW etc. for the underlying
+  // constants (renaming every one of those too was unnecessary churn for
+  // a display-name-only ask).
+  'Trolls Lair': {
+    name: 'Trolls Lair',
     rows: BRIMSTONE_CAVE_SIZE,
     cols: BRIMSTONE_CAVE_SIZE,
     // Unused metadata — real texture is 'cave' via floorTextureFor, same

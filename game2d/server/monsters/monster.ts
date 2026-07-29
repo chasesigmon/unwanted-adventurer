@@ -778,7 +778,7 @@ export const MONSTER_SPECIES: MonsterSpecies[] = [
   {
     kind: 'troll',
     monsterClass: 'normal',
-    homeMap: 'Brimstone Cave',
+    homeMap: 'Trolls Lair',
     maxCount: 24,
     level: 10,
     startingHp: monsterHpForLevel(10),

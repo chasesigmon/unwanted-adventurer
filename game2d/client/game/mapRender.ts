@@ -525,7 +525,7 @@ export function floorTextureFor(mapName: MapName): string {
   if (mapName === 'Gobbler Village' || (GOBBLER_VILLAGE_HUT_MAPS as readonly string[]).includes(mapName)) return 'dirt';
   // A later follow-up ask: "make it have a cave texture" — Hexstone
   // Cavern's own rocky floor, reused as-is for Brimstone Cave.
-  if (mapName === 'Hexstone Cavern' || mapName === 'Brimstone Cave') return 'cave';
+  if (mapName === 'Hexstone Cavern' || mapName === 'Trolls Lair') return 'cave';
   // A later follow-up ask: "instead of the grass on either side, create
   // boulders and rocks and impassable looking terrain" — Runestone Way's
   // own off-road ground (the walkable band itself is still the usual
@@ -604,7 +604,7 @@ const FP_MIN_WALL_BRIGHTNESS = 0.25;
 // tradeoff the wall pass itself already makes).
 export type FirstPersonEnvironment = 'outside' | 'cave' | 'castle' | 'indoor';
 
-const FP_CAVE_MAPS: readonly MapName[] = ['Hexstone Cavern', 'Brimstone Cave'];
+const FP_CAVE_MAPS: readonly MapName[] = ['Hexstone Cavern', 'Trolls Lair'];
 const FP_INDOOR_SHOP_MAPS: readonly MapName[] = [
   ...FLORO_SHOP_MAPS,
   ...KORTHO_SHOP_MAPS,

@@ -3122,6 +3122,26 @@ export class WorldScene extends Phaser.Scene {
   // one doesn't spawn/relocate exactly at the view's own edge, where it'd
   // immediately count as "outside" again next frame.
   private static readonly WISP_VIEW_MARGIN_TILES = 2;
+  // Bug fix: "flow more freely across the whole screen and even come in
+  // from off screen... instead of how they are now where you can clearly
+  // see boundaries to where they turn." Every wander target used to be
+  // clamped strictly INSIDE the current camera view (via the tight inset
+  // margin above), which made a wisp visibly reverse course right at the
+  // view's own edge, like hitting an invisible wall. Ongoing wander
+  // targets (see randomWanderTarget) are now picked from a much WIDER
+  // area extending well beyond the visible viewport — a wisp can
+  // genuinely wander off-screen and drift back in on its own, on foot,
+  // rather than every target being confined to "somewhere currently
+  // visible." Initial spawn (spawnWisps) still uses the tight margin
+  // above so a freshly loaded map immediately shows some on screen,
+  // rather than the player waiting for one to wander in from nowhere.
+  private static readonly WISP_WANDER_MARGIN_TILES = 10;
+  // Only forcibly TELEPORT a wisp back into view if it's drifted this far
+  // outside the current viewport — far enough that it can only mean the
+  // camera itself jumped (a map change/teleport mid-wander), not ordinary
+  // off-screen wandering, which should keep walking itself back in
+  // instead of popping back into existence.
+  private static readonly WISP_FORCE_RELOCATE_MARGIN_TILES = 24;
 
   private randomPointInView(pixelWidth: number, pixelHeight: number): { x: number; y: number } {
     const view = this.cameras.main.worldView;
@@ -3133,6 +3153,63 @@ export class WorldScene extends Phaser.Scene {
     return {
       x: Phaser.Math.Between(Math.min(minX, maxX), Math.max(minX, maxX)),
       y: Phaser.Math.Between(Math.min(minY, maxY), Math.max(minY, maxY)),
+    };
+  }
+
+  // See WISP_WANDER_MARGIN_TILES's own doc comment — the ongoing-wander
+  // counterpart to randomPointInView above, extending WELL BEYOND the
+  // visible viewport instead of staying strictly inside it.
+  private randomWanderTarget(pixelWidth: number, pixelHeight: number): { x: number; y: number } {
+    const view = this.cameras.main.worldView;
+    const margin = WorldScene.WISP_WANDER_MARGIN_TILES * TILE_SIZE;
+    const minX = Phaser.Math.Clamp(view.x - margin, 0, pixelWidth);
+    const maxX = Phaser.Math.Clamp(view.x + view.width + margin, 0, pixelWidth);
+    const minY = Phaser.Math.Clamp(view.y - margin, 0, pixelHeight);
+    const maxY = Phaser.Math.Clamp(view.y + view.height + margin, 0, pixelHeight);
+    return {
+      x: Phaser.Math.Between(Math.min(minX, maxX), Math.max(minX, maxX)),
+      y: Phaser.Math.Between(Math.min(minY, maxY), Math.max(minY, maxY)),
+    };
+  }
+
+  // Bug fix: "if the player moves far the wisps look like they are
+  // following the player in, instead the wisps should appear as if coming
+  // in from off screen in every direction, not from the direction the
+  // player was just coming from." The force-relocate below used to call
+  // randomPointInView, which drops a wisp at a random point ALREADY
+  // ON-SCREEN — an instant pop-in right around the player, which reads as
+  // "following." This instead picks a uniformly random SIDE of the current
+  // view (independent of the player's own direction of travel) and places
+  // the wisp just past that edge, so it then walks itself into view like
+  // any other wander target — a genuine off-screen arrival, from a
+  // different random direction every time.
+  private randomPointJustOutsideView(pixelWidth: number, pixelHeight: number): { x: number; y: number } {
+    const view = this.cameras.main.worldView;
+    const margin = WorldScene.WISP_WANDER_MARGIN_TILES * TILE_SIZE;
+    const side = Phaser.Math.Between(0, 3);
+    let x: number;
+    let y: number;
+    switch (side) {
+      case 0: // north
+        x = Phaser.Math.Between(view.x - margin, view.x + view.width + margin);
+        y = view.y - margin;
+        break;
+      case 1: // east
+        x = view.x + view.width + margin;
+        y = Phaser.Math.Between(view.y - margin, view.y + view.height + margin);
+        break;
+      case 2: // south
+        x = Phaser.Math.Between(view.x - margin, view.x + view.width + margin);
+        y = view.y + view.height + margin;
+        break;
+      default: // west
+        x = view.x - margin;
+        y = Phaser.Math.Between(view.y - margin, view.y + view.height + margin);
+        break;
+    }
+    return {
+      x: Phaser.Math.Clamp(x, 0, pixelWidth),
+      y: Phaser.Math.Clamp(y, 0, pixelHeight),
     };
   }
 
@@ -3166,8 +3243,8 @@ export class WorldScene extends Phaser.Scene {
   private static readonly WISP_SPEED = 1;
 
   // Called every frame from update() — a gentle, organic wander: once a
-  // wisp gets close to its current random target, it picks a fresh one
-  // somewhere else currently on screen (see randomPointInView), never
+  // wisp gets close to its current random target, it picks a fresh one,
+  // now potentially well off-screen (see randomWanderTarget), never
   // stopping. Non-interactive by construction (no setInteractive, never
   // added to any targeting array), matching the ask's own "non
   // targettable or attackable."
@@ -3176,14 +3253,22 @@ export class WorldScene extends Phaser.Scene {
     const pixelWidth = this.cameraMapPixelWidth;
     const pixelHeight = this.cameraMapPixelHeight;
     const view = this.cameras.main.worldView;
+    // Bug fix: this used to be the raw camera view rect, teleporting a
+    // wisp back on screen the INSTANT it wandered even one pixel outside
+    // it — which both looked like "popping into existence" and meant a
+    // wander target could never actually take a wisp off-screen in the
+    // first place. A much wider margin here only catches a genuine camera
+    // jump (a map change/teleport), letting ordinary wandering drift off
+    // the edge and walk itself back in naturally instead.
+    const forceMargin = WorldScene.WISP_FORCE_RELOCATE_MARGIN_TILES * TILE_SIZE;
     for (const wisp of this.wisps) {
-      // The camera scrolling (the player walking) can leave a wisp
-      // outside the NEW visible area — relocate it into view instead of
-      // making it crawl all the way back, which would leave it out of
-      // sight for a long stretch on a big map.
-      const outsideView = wisp.sprite.x < view.x || wisp.sprite.x > view.x + view.width || wisp.sprite.y < view.y || wisp.sprite.y > view.y + view.height;
-      if (outsideView) {
-        const next = this.randomPointInView(pixelWidth, pixelHeight);
+      const farOutsideView =
+        wisp.sprite.x < view.x - forceMargin ||
+        wisp.sprite.x > view.x + view.width + forceMargin ||
+        wisp.sprite.y < view.y - forceMargin ||
+        wisp.sprite.y > view.y + view.height + forceMargin;
+      if (farOutsideView) {
+        const next = this.randomPointJustOutsideView(pixelWidth, pixelHeight);
         wisp.sprite.setPosition(next.x, next.y);
         wisp.targetX = next.x;
         wisp.targetY = next.y;
@@ -3194,7 +3279,7 @@ export class WorldScene extends Phaser.Scene {
       const dy = wisp.targetY - wisp.sprite.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < 4) {
-        const next = this.randomPointInView(pixelWidth, pixelHeight);
+        const next = this.randomWanderTarget(pixelWidth, pixelHeight);
         wisp.targetX = next.x;
         wisp.targetY = next.y;
       } else {
@@ -3846,7 +3931,7 @@ export class WorldScene extends Phaser.Scene {
           .setOrigin(0, 0)
           .setDepth(-0.99)
       );
-    } else if (mapName === 'Brimstone Cave') {
+    } else if (mapName === 'Trolls Lair') {
       // A still-later follow-up ask reversed the earlier "make the cave
       // exit face west" change: "exit to Bramwick should be on the EAST
       // of the cave, cave exit sprite facing WEST for the player" — the
@@ -4816,11 +4901,12 @@ export class WorldScene extends Phaser.Scene {
       { map: 'Great Plains', position: GREAT_PLAINS_LABYRINTH_SIGN_POSITION, label: 'Labyrinth' },
       { map: 'Labyrinth', position: LABYRINTH_GREAT_PLAINS_SIGN_POSITION, label: 'The Great Plains' },
       // Bramwick's own 3 new connections' sign(s) (a later follow-up
-      // ask): Brimstone Cave (both sides), Runestone Way/"Boulder Pass"
-      // (Bramwick's own side only — nothing was asked for at the far
-      // end), Silverbranch Road (both sides).
-      { map: 'Bramwick', position: BRAMWICK_BRIMSTONE_SIGN_POSITION, label: 'Brimstone Cave' },
-      { map: 'Brimstone Cave', position: BRIMSTONE_BRAMWICK_SIGN_POSITION, label: 'Bramwick' },
+      // ask): Trolls Lair (both sides, renamed from "Brimstone Cave" by a
+      // still-later ask), Runestone Way/"Boulder Pass" (Bramwick's own
+      // side only — nothing was asked for at the far end), Silverbranch
+      // Road (both sides).
+      { map: 'Bramwick', position: BRAMWICK_BRIMSTONE_SIGN_POSITION, label: 'Trolls Lair' },
+      { map: 'Trolls Lair', position: BRIMSTONE_BRAMWICK_SIGN_POSITION, label: 'Bramwick' },
       { map: 'Bramwick', position: BRAMWICK_RUNESTONE_SIGN_POSITION, label: 'Boulder Pass' },
       { map: 'Bramwick', position: BRAMWICK_SILVERBRANCH_SIGN_POSITION, label: 'Silverbranch Road' },
       { map: 'Silverbranch Road', position: SILVERBRANCH_BRAMWICK_SIGN_POSITION, label: 'Bramwick' },
@@ -6093,7 +6179,18 @@ export class WorldScene extends Phaser.Scene {
       // deskPositionFor for why).
       if (t.hasDesk !== false) {
         const deskPos = this.tilePosition(t.row + 1, t.col);
-        const deskSprite = this.add.sprite(deskPos.x, deskPos.y, CLASSROOM_DESK_TEXTURE_KEY).setOrigin(0.5, 0.85).setDepth(-0.5);
+        // Bug fix: "the professors all appear to be on top of their
+        // desks, they should appear to be behind them" — the real cause
+        // wasn't depth/z-order at all: unlike the student-desk sprite
+        // below (which scales this same texture down to 0.55), this desk
+        // rendered at the source PNG's native 88x56px, nearly 3 tiles
+        // wide. With its (0.5, 0.85) origin, that oversized sprite's own
+        // top edge extended north into the teacher's own tile, so any
+        // depth above the teacher's default made it fully cover them.
+        // Matching the student desk's 0.55 scale removes the overlap
+        // entirely, so the teacher (one tile north) now clearly renders
+        // behind/above a normally-sized desk.
+        const deskSprite = this.add.sprite(deskPos.x, deskPos.y, CLASSROOM_DESK_TEXTURE_KEY).setOrigin(0.5, 0.85).setScale(0.55).setDepth(-0.5);
         this.teacherDeskSprites.set(t.id, deskSprite);
       }
 

@@ -360,7 +360,7 @@ export const MAP_NAMES = [
   // A later follow-up ask: "a cave connection to the west of Bramwick...
   // Brimstone Cave" — same direct shared-border cave shape as Hexstone
   // Cavern above.
-  'Brimstone Cave',
+  'Trolls Lair',
   // A later follow-up ask: "a dirt road connection to the north of
   // Bramwick... Runestone Way... like the road to floro, except this
   // goes north" — a real separate corridor map, same shape as Road to
@@ -419,7 +419,7 @@ export const WISP_ELIGIBLE_MAPS: MapName[] = [
   'Mystical Timberland',
   'Gobbler Village',
   'Hexstone Cavern',
-  'Brimstone Cave',
+  'Trolls Lair',
   'Runestone Way',
   'Silverbranch Road',
   'Direfell',

@@ -1029,7 +1029,7 @@ export function isBramwickSignBlocked(mapName: MapName, row: number, col: number
       (row === BRAMWICK_SILVERBRANCH_SIGN_POSITION.row && col === BRAMWICK_SILVERBRANCH_SIGN_POSITION.col)
     );
   }
-  if (mapName === 'Brimstone Cave') {
+  if (mapName === 'Trolls Lair') {
     return row === BRIMSTONE_BRAMWICK_SIGN_POSITION.row && col === BRIMSTONE_BRAMWICK_SIGN_POSITION.col;
   }
   if (mapName === 'Silverbranch Road') {
